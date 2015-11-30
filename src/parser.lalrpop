@@ -1,0 +1,88 @@
+grammar;
+
+use lex::{Tok, Keyword};
+use ast::{Name, Str, Var, Params, E, Exp, UnOp, BinOp, S, Stmt, Block};
+
+extern {
+    enum Tok {
+        // punctuations
+        "+"   => Tok::Plus,
+        "-"   => Tok::Minus,
+        "*"   => Tok::Star,
+        "/"   => Tok::Slash,
+        "%"   => Tok::Percent,
+        "^"   => Tok::Caret,
+        "#"   => Tok::Hash,
+        "=="  => Tok::EqEq,
+        "~="  => Tok::TildeEq,
+        "<="  => Tok::LtEq,
+        ">="  => Tok::GtEq,
+        "<"   => Tok::Lt,
+        ">"   => Tok::Gt,
+        "="   => Tok::Eq,
+        "("   => Tok::LParen,
+        ")"   => Tok::RParen,
+        "{"   => Tok::LBrace,
+        "}"   => Tok::RBrace,
+        "["   => Tok::LBracket,
+        "]"   => Tok::RBracket,
+        ";"   => Tok::Semicolon,
+        ":"   => Tok::Colon,
+        ","   => Tok::Comma,
+        "."   => Tok::Dot,
+        ".."  => Tok::DotDot,
+        "..." => Tok::DotDotDot,
+
+        // keywords
+        "and"      => Tok::Keyword(Keyword::And),
+        "break"    => Tok::Keyword(Keyword::Break),
+        "do"       => Tok::Keyword(Keyword::Do),
+        "else"     => Tok::Keyword(Keyword::Else),
+        "elseif"   => Tok::Keyword(Keyword::Elseif),
+        "end"      => Tok::Keyword(Keyword::End),
+        "false"    => Tok::Keyword(Keyword::False),
+        "for"      => Tok::Keyword(Keyword::For),
+        "function" => Tok::Keyword(Keyword::Function),
+        "if"       => Tok::Keyword(Keyword::If),
+        "in"       => Tok::Keyword(Keyword::In),
+        "local"    => Tok::Keyword(Keyword::Local),
+        "nil"      => Tok::Keyword(Keyword::Nil),
+        "not"      => Tok::Keyword(Keyword::Not),
+        "or"       => Tok::Keyword(Keyword::Or),
+        "repeat"   => Tok::Keyword(Keyword::Repeat),
+        "return"   => Tok::Keyword(Keyword::Return),
+        "then"     => Tok::Keyword(Keyword::Then),
+        "true"     => Tok::Keyword(Keyword::True),
+        "until"    => Tok::Keyword(Keyword::Until),
+        "while"    => Tok::Keyword(Keyword::While),
+
+        Num => Tok::Num(<f64>),
+        Name => Tok::Name(<Vec<u8>>),
+        Str => Tok::Str(<Vec<u8>>),
+    }
+}
+
+pub Block: Block = {
+    <stmts:(<Stmt> ";"?)*> <laststmt:(<LastStmt> ";"?)?> => {
+        let mut stmts = stmts;
+        if let Some(laststmt) = laststmt {
+            stmts.push(laststmt);
+        }
+        stmts
+    },
+};
+
+Stmt: Stmt = {
+    "do" <Block> "end" => Box::new(S::Do(<>)),
+};
+
+LastStmt: Stmt = {
+    "break" => Box::new(S::Break),
+};
+
+pub Term: f64 = {
+    Num,
+    "(" <Term> ")",
+};
+
+// vim: ft=rust
