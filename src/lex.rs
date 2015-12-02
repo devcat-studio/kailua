@@ -3,8 +3,18 @@ use std::{str, iter, u64};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tok {
     Error, // dummy token
+    Punct(Punct),
+    Keyword(Keyword),
+    Num(f64),
+    Name(Vec<u8>),
+    Str(Vec<u8>),
+    EOF, // only used in the parser
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Punct {
     Plus,
-    Minus,
+    Dash,
     Star,
     Slash,
     Percent,
@@ -29,13 +39,18 @@ pub enum Tok {
     Dot,
     DotDot,
     DotDotDot,
-    Keyword(Keyword),
-    Num(f64),
-    Name(Vec<u8>),
-    Str(Vec<u8>),
+
+    // Kailua extensions
+    //DashDashHash,     // --#, --[[#
+    //DashDashV,        // --v, --[[v
+    //DashDashColon,    // --:, --[[:
+    //DashDashGt,       // -->, --[[>
+    //DashGt,           // ->
+    //
+    //also, EOC (end-of-comment)    // ]]?
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Keyword {
     And,
     Break,
@@ -219,6 +234,14 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
     }
 
     pub fn next_token(&mut self) -> Result<Option<Tok>, Error> {
+        macro_rules! tok {
+            (Keyword($e:expr)) => (Ok(Some(Tok::Keyword($e))));
+            (Name($e:expr))    => (Ok(Some(Tok::Name($e))));
+            (Num($e:expr))     => (Ok(Some(Tok::Num($e))));
+            (Str($e:expr))     => (Ok(Some(Tok::Str($e))));
+            ($i:ident)         => (Ok(Some(Tok::Punct(Punct::$i))));
+        }
+
         loop {
             // skip any whitespace
             self.scan_while(|c| c == b' ' || c == b'\t' || c == b'\r' || c == b'\n', |_| {});
@@ -233,9 +256,9 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
                         |c| name.push(c));
 
                     if let Some(keyword) = Keyword::from(&name) {
-                        return Ok(Some(Tok::Keyword(keyword)));
+                        return tok!(Keyword(keyword));
                     } else {
-                        return Ok(Some(Tok::Name(name)));
+                        return tok!(Name(name));
                     }
                 }
 
@@ -251,7 +274,7 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
 
                         if let Ok(s) = str::from_utf8(&num) {
                             if let Ok(v) = u64::from_str_radix(s, 16) {
-                                return Ok(Some(Tok::Num(v as f64)));
+                                return tok!(Num(v as f64));
                             }
                         }
                     } else {
@@ -271,7 +294,7 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
 
                         if let Ok(s) = str::from_utf8(&num) {
                             if let Ok(v) = s.parse::<f64>() {
-                                return Ok(Some(Tok::Num(v)));
+                                return tok!(Num(v));
                             }
                         }
                     }
@@ -283,7 +306,7 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
                 Some(q @ b'\'') | Some(q @ b'"') => {
                     let mut s = Vec::new();
                     try!(self.scan_quoted_string(q, |c| s.push(c)));
-                    return Ok(Some(Tok::Str(s)));
+                    return tok!(Str(s));
                 }
 
                 Some(b'[') => {
@@ -292,73 +315,69 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
                         if c == b'=' || c == b'[' {
                             let mut s = Vec::new();
                             try!(self.scan_long_bracket(|c| s.push(c)));
-                            return Ok(Some(Tok::Str(s)));
+                            return tok!(Str(s));
                         }
                     }
-                    return Ok(Some(Tok::LBracket));
+                    return tok!(LBracket);
                 }
 
                 Some(b'-') => {
                     // possibly comments
                     if let Some(_) = self.try(|c| c == b'-') {
                         if let Some(_) = self.try(|c| c == b'[') {
-                            try!(self.scan_long_bracket(|_| {}));
-                        } else {
-                            self.scan_while(|c| c != b'\r' && c != b'\n', |_| {});
-                            self.read(); // an excess newline
+                            if let Some(c) = self.try(|c| c == b'[' || c == b'=') {
+                                // long comment
+                                self.unread(c);
+                                try!(self.scan_long_bracket(|_| {}));
+                                continue;
+                            }
                         }
+
+                        // short comment
+                        self.scan_while(|c| c != b'\r' && c != b'\n', |_| {});
+                        self.read(); // an excess newline
                         continue;
                     }
 
-                    return Ok(Some(Tok::Minus));
+                    return tok!(Dash);
                 }
 
-                Some(b'+') => return Ok(Some(Tok::Plus)),
-                Some(b'*') => return Ok(Some(Tok::Star)),
-                Some(b'/') => return Ok(Some(Tok::Slash)),
-                Some(b'%') => return Ok(Some(Tok::Percent)),
-                Some(b'^') => return Ok(Some(Tok::Caret)),
-                Some(b'#') => return Ok(Some(Tok::Hash)),
+                Some(b'+') => return tok!(Plus),
+                Some(b'*') => return tok!(Star),
+                Some(b'/') => return tok!(Slash),
+                Some(b'%') => return tok!(Percent),
+                Some(b'^') => return tok!(Caret),
+                Some(b'#') => return tok!(Hash),
                 Some(b'=') => {
-                    if let Some(_) = self.try(|c| c == b'=') {
-                        return Ok(Some(Tok::EqEq));
-                    }
-                    return Ok(Some(Tok::Eq));
+                    if let Some(_) = self.try(|c| c == b'=') { return tok!(EqEq); }
+                    return tok!(Eq);
                 },
                 Some(b'~') => {
-                    if let Some(_) = self.try(|c| c == b'=') {
-                        return Ok(Some(Tok::TildeEq));
-                    }
+                    if let Some(_) = self.try(|c| c == b'=') { return tok!(TildeEq); }
                     return Err("unexpected character");
                 },
                 Some(b'<') => {
-                    if let Some(_) = self.try(|c| c == b'=') {
-                        return Ok(Some(Tok::LtEq));
-                    }
-                    return Ok(Some(Tok::Lt));
+                    if let Some(_) = self.try(|c| c == b'=') { return tok!(LtEq); }
+                    return tok!(Lt);
                 },
                 Some(b'>') => {
-                    if let Some(_) = self.try(|c| c == b'=') {
-                        return Ok(Some(Tok::GtEq));
-                    }
-                    return Ok(Some(Tok::Gt));
+                    if let Some(_) = self.try(|c| c == b'=') { return tok!(GtEq); }
+                    return tok!(Gt);
                 },
-                Some(b'(') => return Ok(Some(Tok::LParen)),
-                Some(b')') => return Ok(Some(Tok::RParen)),
-                Some(b'{') => return Ok(Some(Tok::LBrace)),
-                Some(b'}') => return Ok(Some(Tok::RBrace)),
-                Some(b']') => return Ok(Some(Tok::RBracket)),
-                Some(b';') => return Ok(Some(Tok::Semicolon)),
-                Some(b':') => return Ok(Some(Tok::Colon)),
-                Some(b',') => return Ok(Some(Tok::Comma)),
+                Some(b'(') => return tok!(LParen),
+                Some(b')') => return tok!(RParen),
+                Some(b'{') => return tok!(LBrace),
+                Some(b'}') => return tok!(RBrace),
+                Some(b']') => return tok!(RBracket),
+                Some(b';') => return tok!(Semicolon),
+                Some(b':') => return tok!(Colon),
+                Some(b',') => return tok!(Comma),
                 Some(b'.') => {
                     if let Some(_) = self.try(|c| c == b'.') {
-                        if let Some(_) = self.try(|c| c == b'.') {
-                            return Ok(Some(Tok::DotDotDot));
-                        }
-                        return Ok(Some(Tok::DotDot));
+                        if let Some(_) = self.try(|c| c == b'.') { return tok!(DotDotDot); }
+                        return tok!(DotDot);
                     }
-                    return Ok(Some(Tok::Dot));
+                    return tok!(Dot);
                 },
 
                 Some(_) => return Err("unexpected character"),

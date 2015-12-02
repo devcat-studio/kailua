@@ -2,12 +2,10 @@
 name = "kailua_syntax"
 version = "0.1.0"
 authors = ["Kang Seonghoon <public+git@mearie.org>"]
-build = "build.rs"
+
+[[bin]]
+name = "kailua-parse"
 
 [dependencies]
-lalrpop-util = "0.7.0"
 custom_derive = "0.1.2"
 newtype_derive = "0.1.2"
-
-[build-dependencies]
-lalrpop = "0.7.0"
