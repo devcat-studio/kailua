@@ -115,8 +115,24 @@ impl fmt::Debug for E {
             E::Table(ref fs) => write!(f, "Table({:?})", *fs),
 
             E::Var(ref n) => write!(f, "{:?}", *n),
-            E::FuncCall(ref e, ref args) => write!(f, "Call({:?}, {:?})", *e, *args),
-            E::MethodCall(ref e, ref n, ref args) => write!(f, "Call({:?}:{:?}, {:?})", *e, *n, *args),
+            E::FuncCall(ref e, ref args) => {
+                try!(write!(f, "{:?}(", *e));
+                let mut first = true;
+                for arg in args {
+                    if first { first = false; } else { try!(write!(f, ", ")); }
+                    try!(write!(f, "{:?}", arg));
+                }
+                write!(f, ")")
+            },
+            E::MethodCall(ref e, ref n, ref args) => {
+                try!(write!(f, "{:?}:{:?}(", *e, *n));
+                let mut first = true;
+                for arg in args {
+                    if first { first = false; } else { try!(write!(f, ", ")); }
+                    try!(write!(f, "{:?}", arg));
+                }
+                write!(f, ")")
+            },
             E::Index(ref e, ref i) => write!(f, "{:?}[{:?}]", *e, *i),
             E::Un(op, ref e) => write!(f, "({} {:?})", op.symbol(), *e),
             E::Bin(ref l, op, ref r) => write!(f, "({:?} {} {:?})", *l, op.symbol(), *r),

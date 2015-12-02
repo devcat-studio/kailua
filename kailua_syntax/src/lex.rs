@@ -41,13 +41,12 @@ pub enum Punct {
     DotDotDot,
 
     // Kailua extensions
-    //DashDashHash,     // --#, --[[#
-    //DashDashV,        // --v, --[[v
-    //DashDashColon,    // --:, --[[:
-    //DashDashGt,       // -->, --[[>
-    //DashGt,           // ->
-    //
-    //also, EOC (end-of-comment)    // ]]?
+    DashDashHash,
+    DashDashV,
+    DashDashColon,
+    DashDashGt,
+    DashGt,
+    Newline,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -107,6 +106,7 @@ impl Keyword {
 pub struct Lexer<T> {
     iter: iter::Fuse<T>,
     lookahead: Option<u8>,
+    meta: bool,
 }
 
 pub type Error = &'static str;
@@ -115,7 +115,7 @@ fn is_digit(c: u8) -> bool { b'0' <= c && c <= b'9' }
 
 impl<T: Iterator<Item=u8>> Lexer<T> {
     pub fn new(iter: T) -> Lexer<T> {
-        Lexer { iter: iter.fuse(), lookahead: None }
+        Lexer { iter: iter.fuse(), lookahead: None, meta: false }
     }
 
     fn read(&mut self) -> Option<u8> {
@@ -207,6 +207,7 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
                     Some(b'\'') => f(b'\''),
                     Some(b'"')  => f(b'"'),
                     Some(b'\n') => f(b'\n'),
+                    Some(c) if c == quote => f(c), // to account for `foo\`foo` in the Kailua block
                     Some(d @ b'0'...b'9') => { // up to three digits
                         let mut n = d - b'0';
                         if let Some(d) = self.try(is_digit) {
@@ -244,7 +245,12 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
 
         loop {
             // skip any whitespace
-            self.scan_while(|c| c == b' ' || c == b'\t' || c == b'\r' || c == b'\n', |_| {});
+            if self.meta {
+                // need to check for newline in the meta block
+                self.scan_while(|c| c == b' ' || c == b'\t', |_| {});
+            } else {
+                self.scan_while(|c| c == b' ' || c == b'\t' || c == b'\r' || c == b'\n', |_| {});
+            }
 
             match self.read() {
                 // names
@@ -321,16 +327,26 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
                     return tok!(LBracket);
                 }
 
-                Some(b'-') => {
-                    // possibly comments
-                    if let Some(_) = self.try(|c| c == b'-') {
-                        if let Some(_) = self.try(|c| c == b'[') {
-                            if let Some(c) = self.try(|c| c == b'[' || c == b'=') {
-                                // long comment
-                                self.unread(c);
-                                try!(self.scan_long_bracket(|_| {}));
-                                continue;
+                Some(b'-') => match self.read() {
+                    Some(b'-') => {
+                        match self.read() {
+                            Some(b'[') => {
+                                if let Some(c) = self.try(|c| c == b'[' || c == b'=') {
+                                    // long comment
+                                    self.unread(c);
+                                    try!(self.scan_long_bracket(|_| {}));
+                                    continue;
+                                }
                             }
+
+                            // Kailua extensions
+                            Some(b'#') if !self.meta => { self.meta = true; return tok!(DashDashHash); }
+                            Some(b':') if !self.meta => { self.meta = true; return tok!(DashDashColon); }
+                            Some(b'>') if !self.meta => { self.meta = true; return tok!(DashDashGt); }
+                            Some(b'v') if !self.meta => { self.meta = true; return tok!(DashDashV); }
+
+                            Some(c) => { self.unread(c); }
+                            None => {}
                         }
 
                         // short comment
@@ -339,8 +355,12 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
                         continue;
                     }
 
-                    return tok!(Dash);
-                }
+                    // Kailua extensions
+                    Some(b'>') if self.meta => return tok!(DashGt),
+
+                    Some(c) => { self.unread(c); return tok!(Dash); }
+                    None => { return tok!(Dash); }
+                },
 
                 Some(b'+') => return tok!(Plus),
                 Some(b'*') => return tok!(Star),
@@ -380,8 +400,21 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
                     return tok!(Dot);
                 },
 
+                // Kailua extensions
+                Some(b'\r') | Some(b'\n') if self.meta => {
+                    self.meta = false;
+                    return tok!(Newline);
+                },
+
                 Some(_) => return Err("unexpected character"),
-                None => return Ok(None),
+                None => {
+                    if self.meta { // the last line should be closed by the (dummy) Newline token
+                        self.meta = false;
+                        return tok!(Newline);
+                    } else {
+                        return Ok(None)
+                    }
+                },
             }
         }
     }

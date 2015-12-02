@@ -98,6 +98,8 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
     }
 
     fn try_parse_stmt(&mut self) -> ParseResult<Option<Stmt>> {
+        while try!(self.try_parse_kailua_spec()).is_some() {}
+
         match self.read() {
             Tok::Keyword(Keyword::Do) => {
                 let block = try!(self.parse_block());
@@ -222,6 +224,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                             self.read();
                             try!(self.scan_explist(|exp| exps.push(exp)));
                         }
+                        try!(self.try_parse_kailua_type_spec());
                         Ok(Some(Box::new(S::Local(names, exps))))
                     }
 
@@ -252,6 +255,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                         // var {"," var} "=" explist
                         Ok(var) => {
                             let mut lhs = vec![var];
+                            try!(self.try_parse_kailua_type_spec());
                             if self.lookahead(Punct::Comma) {
                                 self.read();
                                 try!(self.scan_varlist(|var| lhs.push(var)));
@@ -260,6 +264,8 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
 
                             let mut rhs = Vec::new();
                             try!(self.scan_explist(|exp| rhs.push(exp)));
+
+                            try!(self.try_parse_kailua_type_spec());
 
                             return Ok(Some(Box::new(S::Assign(lhs, rhs))));
                         }
@@ -293,17 +299,22 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
         match self.read() {
             Tok::Punct(Punct::DotDotDot) => {
                 varargs = true;
+                try!(self.try_parse_kailua_type_spec());
             }
             Tok::Name(name) => {
                 names.push(name.into());
+                try!(self.try_parse_kailua_type_spec());
                 while self.lookahead(Punct::Comma) {
                     self.read();
+                    try!(self.try_parse_kailua_type_spec());
                     if self.lookahead(Punct::DotDotDot) {
                         self.read();
+                        try!(self.try_parse_kailua_type_spec());
                         varargs = true;
                         break;
                     } else {
                         names.push(try!(self.parse_name()));
+                        try!(self.try_parse_kailua_type_spec());
                     }
                 }
             }
@@ -313,6 +324,9 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
             _ => return Err("unexpected token after `function ... (`")
         }
         try!(self.expect(Punct::RParen));
+        if try!(self.try_parse_kailua_rettype_spec()).is_none() {
+            try!(self.try_parse_kailua_type_spec());
+        }
         let block = try!(self.parse_block());
         try!(self.expect(Keyword::End));
 
@@ -640,6 +654,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
     fn try_parse_var(&mut self) -> ParseResult<Option<Var>> {
         if let Some(exp) = try!(self.try_parse_prefix_exp(true)) {
             let var = self.convert_prefix_exp_to_var(exp).unwrap();
+            try!(self.try_parse_kailua_type_spec());
             Ok(Some(var))
         } else {
             Ok(None)
@@ -691,6 +706,37 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
             Ok(true)
         } else {
             Ok(false)
+        }
+    }
+
+    // Kailua-specific syntaxes
+    fn try_parse_kailua_type_spec(&mut self) -> ParseResult<Option<()>> {
+        if self.lookahead(Punct::DashDashColon) {
+            self.read();
+            while self.read() != Tok::Punct(Punct::Newline) {}
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn try_parse_kailua_rettype_spec(&mut self) -> ParseResult<Option<()>> {
+        if self.lookahead(Punct::DashDashGt) {
+            self.read();
+            while self.read() != Tok::Punct(Punct::Newline) {}
+            Ok(Some(()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn try_parse_kailua_spec(&mut self) -> ParseResult<Option<()>> {
+        if self.lookahead(Punct::DashDashHash) {
+            self.read();
+            while self.read() != Tok::Punct(Punct::Newline) {}
+            Ok(Some(()))
+        } else {
+            Ok(None)
         }
     }
 

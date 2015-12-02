@@ -26,19 +26,23 @@ fn test_parse() {
     assert_eq!(test("function r(p) --[[...]] end"), "[FuncDecl(Global, `r`, [`p`], [])]");
     assert_eq!(test("local function r(p,...)\n\nend"), "[FuncDecl(Local, `r`, [`p`, ...], [])]");
     assert_eq!(test("local a, b"), "[Local([`a`, `b`], [])]");
-    assert_eq!(test("f()"), "[Void(Call(`f`, []))]");
-    assert_eq!(test("f(3)"), "[Void(Call(`f`, [3]))]");
-    assert_eq!(test("f(3+4)"), "[Void(Call(`f`, [(3 + 4)]))]");
-    assert_eq!(test("f(3+4-5)"), "[Void(Call(`f`, [((3 + 4) - 5)]))]");
-    assert_eq!(test("f(3+4*5)"), "[Void(Call(`f`, [(3 + (4 * 5))]))]");
-    assert_eq!(test("f((3+4)*5)"), "[Void(Call(`f`, [((3 + 4) * 5)]))]");
-    assert_eq!(test("f(2^3^4)"), "[Void(Call(`f`, [(2 ^ (3 ^ 4))]))]");
-    assert_eq!(test("f'oo'"), "[Void(Call(`f`, [\"oo\"]))]");
+    assert_eq!(test("f()"), "[Void(`f`())]");
+    assert_eq!(test("f(3)"), "[Void(`f`(3))]");
+    assert_eq!(test("f(3+4)"), "[Void(`f`((3 + 4)))]");
+    assert_eq!(test("f(3+4-5)"), "[Void(`f`(((3 + 4) - 5)))]");
+    assert_eq!(test("f(3+4*5)"), "[Void(`f`((3 + (4 * 5))))]");
+    assert_eq!(test("f((3+4)*5)"), "[Void(`f`(((3 + 4) * 5)))]");
+    assert_eq!(test("f(2^3^4)"), "[Void(`f`((2 ^ (3 ^ 4))))]");
+    assert_eq!(test("f'oo'"), "[Void(`f`(\"oo\"))]");
     assert_eq!(test("f{a=1,[3.1]=4e5;[=[[[]]]=],}"),
-               "[Void(Call(`f`, [Table([(Some(`a`), 1), \
-                                        (Some(3.1), 400000), \
-                                        (None, \"[[]]\")])]))]");
-    assert_eq!(test("f{a=a, a}"), "[Void(Call(`f`, [Table([(Some(`a`), `a`), (None, `a`)])]))]");
-    assert_eq!(test("--[a]"), "[]");
+               "[Void(`f`(Table([(Some(`a`), 1), \
+                                 (Some(3.1), 400000), \
+                                 (None, \"[[]]\")])))]");
+    assert_eq!(test("f{a=a, a}"), "[Void(`f`(Table([(Some(`a`), `a`), (None, `a`)])))]");
+    assert_eq!(test("--[a]\ndo end--]]"), "[Do([])]");
+    assert_eq!(test("--[[a]\ndo end--]]"), "[]");
+    assert_eq!(test("--#\ndo end"), "[Do([])]");
+    assert_eq!(test("--#\n"), "[]");
+    assert_eq!(test("--#"), "[]");
 }
 
