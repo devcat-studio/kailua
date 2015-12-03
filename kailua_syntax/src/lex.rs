@@ -183,6 +183,9 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
                         None => return Err("unexpected EOF in long bracket"),
                     }
                 },
+                Some(b'\r') | Some(b'\n') if self.meta => {
+                    return Err("newline disallowed in long bracket inside metablock")
+                },
                 Some(c) => f(c),
                 None => return Err("unexpected EOF in long bracket"),
             }
@@ -340,10 +343,12 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
                             }
 
                             // Kailua extensions
-                            Some(b'#') if !self.meta => { self.meta = true; return tok!(DashDashHash); }
-                            Some(b':') if !self.meta => { self.meta = true; return tok!(DashDashColon); }
-                            Some(b'>') if !self.meta => { self.meta = true; return tok!(DashDashGt); }
-                            Some(b'v') if !self.meta => { self.meta = true; return tok!(DashDashV); }
+                            // meta comment inside meta comment is tokenized but does not nest 
+                            // and thus is going to cause a parser error (intentional).
+                            Some(b'#') => { self.meta = true; return tok!(DashDashHash); }
+                            Some(b':') => { self.meta = true; return tok!(DashDashColon); }
+                            Some(b'>') => { self.meta = true; return tok!(DashDashGt); }
+                            Some(b'v') => { self.meta = true; return tok!(DashDashV); }
 
                             Some(c) => { self.unread(c); }
                             None => {}
@@ -351,7 +356,7 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
 
                         // short comment
                         self.scan_while(|c| c != b'\r' && c != b'\n', |_| {});
-                        self.read(); // an excess newline
+                        // do NOT read an excess newline, may be the end of meta block
                         continue;
                     }
 

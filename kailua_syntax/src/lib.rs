@@ -44,5 +44,8 @@ fn test_parse() {
     assert_eq!(test("--#\ndo end"), "[Do([])]");
     assert_eq!(test("--#\n"), "[]");
     assert_eq!(test("--#"), "[]");
+    assert_eq!(test("--# --foo\ndo end"), "[Do([])]");
+    assert_eq!(test("--# --[[foo]]\ndo end"), "[Do([])]");
+    assert_eq!(test("--# --[[foo\n--# --foo]]\ndo end"), "parse error");
 }
 

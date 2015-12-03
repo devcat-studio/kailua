@@ -146,6 +146,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
 
             Tok::Keyword(Keyword::For) => {
                 let name = try!(self.parse_name());
+                try!(self.try_parse_kailua_type_spec());
                 match self.read() {
                     // for NAME "=" ...
                     Tok::Punct(Punct::Eq) => {
@@ -221,7 +222,9 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                         let mut exps = Vec::new();
                         try!(self.scan_namelist(|name| names.push(name)));
                         if self.lookahead(Punct::Eq) {
+                            try!(self.try_parse_kailua_type_spec());
                             self.read();
+                            try!(self.try_parse_kailua_type_spec());
                             try!(self.scan_explist(|exp| exps.push(exp)));
                         }
                         try!(self.try_parse_kailua_type_spec());
@@ -261,6 +264,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                                 try!(self.scan_varlist(|var| lhs.push(var)));
                             }
                             try!(self.expect(Punct::Eq));
+                            try!(self.try_parse_kailua_type_spec());
 
                             let mut rhs = Vec::new();
                             try!(self.scan_explist(|exp| rhs.push(exp)));
@@ -680,9 +684,12 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
 
     fn scan_namelist<F>(&mut self, mut f: F) -> ParseResult<()> where F: FnMut(Name) {
         f(try!(self.parse_name()));
+        try!(self.try_parse_kailua_type_spec());
         while self.lookahead(Punct::Comma) {
             self.read();
+            try!(self.try_parse_kailua_type_spec());
             f(try!(self.parse_name()));
+            try!(self.try_parse_kailua_type_spec());
         }
         Ok(())
     }
@@ -713,7 +720,13 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
     fn try_parse_kailua_type_spec(&mut self) -> ParseResult<Option<()>> {
         if self.lookahead(Punct::DashDashColon) {
             self.read();
-            while self.read() != Tok::Punct(Punct::Newline) {}
+            loop {
+                match self.read() {
+                    Tok::Error => return Err("token error"),
+                    Tok::Punct(Punct::Newline) => break,
+                    _ => {}
+                }
+            }
             Ok(Some(()))
         } else {
             Ok(None)
@@ -723,7 +736,13 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
     fn try_parse_kailua_rettype_spec(&mut self) -> ParseResult<Option<()>> {
         if self.lookahead(Punct::DashDashGt) {
             self.read();
-            while self.read() != Tok::Punct(Punct::Newline) {}
+            loop {
+                match self.read() {
+                    Tok::Error => return Err("token error"),
+                    Tok::Punct(Punct::Newline) => break,
+                    _ => {}
+                }
+            }
             Ok(Some(()))
         } else {
             Ok(None)
@@ -733,7 +752,13 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
     fn try_parse_kailua_spec(&mut self) -> ParseResult<Option<()>> {
         if self.lookahead(Punct::DashDashHash) {
             self.read();
-            while self.read() != Tok::Punct(Punct::Newline) {}
+            loop {
+                match self.read() {
+                    Tok::Error => return Err("token error"),
+                    Tok::Punct(Punct::Newline) => break,
+                    _ => {}
+                }
+            }
             Ok(Some(()))
         } else {
             Ok(None)
