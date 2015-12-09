@@ -406,6 +406,11 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
                 },
 
                 // Kailua extensions
+                Some(q @ b'`') if self.meta => {
+                    let mut s = Vec::new();
+                    try!(self.scan_quoted_string(q, |c| s.push(c)));
+                    return tok!(Name(s));
+                }
                 Some(b'\r') | Some(b'\n') if self.meta => {
                     self.meta = false;
                     return tok!(Newline);

@@ -1,0 +1,7 @@
+[package]
+name = "kailua_check"
+version = "0.1.0"
+authors = ["Kang Seonghoon <public+git@mearie.org>"]
+
+[dependencies]
+kailua_syntax = { path = "../kailua_syntax" }

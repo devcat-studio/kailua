@@ -15,7 +15,7 @@ fn format_ascii_vec(f: &mut fmt::Formatter, s: &[u8]) -> fmt::Result {
 }
 
 custom_derive! {
-    #[derive(Clone, PartialEq, NewtypeFrom, NewtypeDeref)]
+    #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, NewtypeFrom, NewtypeDeref)]
     pub struct Name(Vec<u8>);
 }
 
@@ -29,7 +29,7 @@ impl fmt::Debug for Name {
 }
 
 custom_derive! {
-    #[derive(Clone, PartialEq, NewtypeFrom, NewtypeDeref)]
+    #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, NewtypeFrom, NewtypeDeref)]
     pub struct Str(Vec<u8>);
 }
 
@@ -40,6 +40,14 @@ impl fmt::Debug for Str {
         try!(write!(f, "\""));
         Ok(())
     }
+}
+
+impl<'a> From<&'a [u8]> for Name {
+    fn from(s: &'a [u8]) -> Name { Name(s.to_owned()) }
+}
+
+impl<'a> From<&'a [u8]> for Str {
+    fn from(s: &'a [u8]) -> Str { Str(s.to_owned()) }
 }
 
 impl From<Str> for Name {
