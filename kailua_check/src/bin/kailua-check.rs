@@ -62,11 +62,43 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
         }
     }
 
+    const BOOTSTRAP_CODE: &'static str = r#"
+        --# assume require: ? = "require"
+        --# assume package: ?
+        --# assume assert: ?
+        --# assume type: ?
+        --# assume tonumber: ?
+        --# assume tostring: ?
+        --# assume pairs: ?
+        --# assume ipairs: ?
+        --# assume pcall: ?
+        --# assume xpcall: ?
+        --# assume error: ?
+        --# assume getmetatable: ?
+        --# assume setmetatable: ?
+        --# assume rawget: ?
+        --# assume rawset: ?
+        --# assume select: ?
+        --# assume print: ?
+        --# assume loadstring: ?
+        --# assume pack: ?
+        --# assume unpack: ?
+        --# assume next: ?
+        --# assume _G: ? = "globals" -- not yet supported
+
+        --# assume string: ?
+        --# assume math: ?
+        --# assume table: ?
+        --# assume io: ?
+        --# assume os: ?
+        --# assume debug: ?
+    "#;
+
     let chunk = try!(parse(&mainpath));
     let mut globals = HashMap::new();
     let mut opts = Options { mainpath: mainpath, required: HashSet::new() };
     let mut env = kailua_check::Env::new(&mut globals, &mut opts);
-    env.open_libs();
+    try!(env.visit(&kailua_syntax::parse_chunk(BOOTSTRAP_CODE.as_bytes()).unwrap()));
     env.visit(&chunk)
 }
 

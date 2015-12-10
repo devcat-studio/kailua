@@ -36,40 +36,6 @@ impl<'a> Env<'a> {
         Env { globals: globals, names: HashMap::new(), opts: opts }
     }
 
-    // inject the base libraries to globals
-    pub fn open_libs(&mut self) {
-        self.globals.insert(Name::from(&b"require"[..]),
-                            TyInfo { ty: Box::new(T::Dynamic), builtin: Some(Builtin::Require) });
-        self.globals.insert(Name::from(&b"package"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"assert"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"type"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"tonumber"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"tostring"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"pairs"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"ipairs"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"pcall"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"xpcall"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"error"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"getmetatable"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"setmetatable"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"rawget"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"rawset"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"select"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"print"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"loadstring"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"pack"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"unpack"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"next"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"_G"[..]), TyInfo::new(T::Dynamic));
-
-        self.globals.insert(Name::from(&b"string"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"math"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"table"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"io"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"os"[..]), TyInfo::new(T::Dynamic));
-        self.globals.insert(Name::from(&b"debug"[..]), TyInfo::new(T::Dynamic));
-    }
-
     // since `Clone` does not preserve the lifetime of `Env` itself
     fn make_subenv<'x>(&'x mut self) -> Env<'x> {
         // XXX cloning names is very expensive
@@ -225,6 +191,23 @@ impl<'a> Env<'a> {
                 }
             }
             S::Break => {}
+
+            S::KailuaAssume(ref name, ref kind, ref builtin) => {
+                let builtin = if let Some(ref builtin) = *builtin {
+                    match &***builtin {
+                        b"require" => Some(Builtin::Require),
+                        _ => {
+                            println!("unrecognized builtin name {:?} for {:?} ignored",
+                                     *builtin, *name);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                let info = TyInfo { ty: Box::new(T::from(kind)), builtin: builtin };
+                try!(self.assign_to_var(name, info));
+            }
         }
         Ok(())
     }

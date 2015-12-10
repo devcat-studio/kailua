@@ -20,7 +20,15 @@ fn test_check() {
         }).is_some()
     }
 
-    assert!(check("local p   p()"));
-    assert!(!check("local c   if c then local p end   p()"));
-    //assert!(!check("local c, p   if c then p = 4 end   p()"));
+    assert!(check("local p
+                   p()"));
+    assert!(!check("local c
+                    if c then local p end
+                    p()"));
+    //assert!(!check("local c, p
+    //                if c then p = 4 end
+    //                p()"));
+    assert!(!check("p()"));
+    assert!(check("--# assume p: ?
+                   p()"));
 }

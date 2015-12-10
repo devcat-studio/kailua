@@ -2,6 +2,7 @@ use std::iter;
 
 use lex::{Tok, Punct, Keyword};
 use ast::{Name, Str, Var, Params, E, Exp, UnOp, BinOp, FuncScope, SelfParam, S, Stmt, Block};
+use ast::{K, Kind};
 
 pub struct Parser<T> {
     iter: iter::Fuse<T>,
@@ -98,7 +99,15 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
     }
 
     fn try_parse_stmt(&mut self) -> ParseResult<Option<Stmt>> {
-        while try!(self.try_parse_kailua_spec()).is_some() {}
+        // if there exists a spec stmt return it first.
+        // a spec may be empty, so loop until no spec exists or a spec is found.
+        loop {
+            match try!(self.try_parse_kailua_spec()) {
+                Some(Some(spec)) => return Ok(Some(spec)),
+                Some(None) => continue,
+                None => break,
+            }
+        }
 
         match self.read() {
             Tok::Keyword(Keyword::Do) => {
@@ -718,6 +727,24 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
     }
 
     // Kailua-specific syntaxes
+
+    fn try_parse_kailua_kind(&mut self) -> ParseResult<Option<Kind>> {
+        if self.lookahead(Punct::Ques) {
+            self.read();
+            Ok(Some(Box::new(K::Dynamic)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn parse_kailua_kind(&mut self) -> ParseResult<Kind> {
+        if let Some(kind) = try!(self.try_parse_kailua_kind()) {
+            Ok(kind)
+        } else {
+            Err("expected type")
+        }
+    }
+
     fn try_parse_kailua_type_spec(&mut self) -> ParseResult<Option<()>> {
         if self.lookahead(Punct::DashDashColon) {
             self.read();
@@ -750,9 +777,32 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
         }
     }
 
-    fn try_parse_kailua_spec(&mut self) -> ParseResult<Option<()>> {
+    fn try_parse_kailua_spec(&mut self) -> ParseResult<Option<Option<Stmt>>> {
         if self.lookahead(Punct::DashDashHash) {
             self.read();
+
+            // assume NAME ":" KIND
+            // assume NAME ":" KIND "=" STR (for builtin spec)
+            if self.lookahead(Keyword::Assume) {
+                self.read();
+                let name = try!(self.parse_name());
+                try!(self.expect(Punct::Colon));
+                let kind = try!(self.parse_kailua_kind());
+                let builtin;
+                if self.lookahead(Punct::Eq) {
+                    self.read();
+                    if let Tok::Str(s) = self.read() {
+                        builtin = Some(s.into());
+                    } else {
+                        return Err("string expected after `assume NAME : KIND =`");
+                    }
+                } else {
+                    builtin = None;
+                }
+                try!(self.expect(Punct::Newline));
+                return Ok(Some(Some(Box::new(S::KailuaAssume(name, kind, builtin)))));
+            }
+
             loop {
                 match self.read() {
                     Tok::Error => return Err("token error"),
@@ -760,7 +810,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                     _ => {}
                 }
             }
-            Ok(Some(()))
+            Ok(Some(None))
         } else {
             Ok(None)
         }

@@ -73,33 +73,39 @@ pub enum Keyword {
     True,
     Until,
     While,
+
+    // Kailua extensions
+    Assume,
 }
 
 impl Keyword {
-    pub fn from(s: &[u8]) -> Option<Keyword> {
-        match s {
-            b"and"      => Some(Keyword::And),
-            b"break"    => Some(Keyword::Break),
-            b"do"       => Some(Keyword::Do),
-            b"else"     => Some(Keyword::Else),
-            b"elseif"   => Some(Keyword::Elseif),
-            b"end"      => Some(Keyword::End),
-            b"false"    => Some(Keyword::False),
-            b"for"      => Some(Keyword::For),
-            b"function" => Some(Keyword::Function),
-            b"if"       => Some(Keyword::If),
-            b"in"       => Some(Keyword::In),
-            b"local"    => Some(Keyword::Local),
-            b"nil"      => Some(Keyword::Nil),
-            b"not"      => Some(Keyword::Not),
-            b"or"       => Some(Keyword::Or),
-            b"repeat"   => Some(Keyword::Repeat),
-            b"return"   => Some(Keyword::Return),
-            b"then"     => Some(Keyword::Then),
-            b"true"     => Some(Keyword::True),
-            b"until"    => Some(Keyword::Until),
-            b"while"    => Some(Keyword::While),
-            _           => None,
+    pub fn from(s: &[u8], allow_meta: bool) -> Option<Keyword> {
+        match (allow_meta, s) {
+            (_, b"and")      => Some(Keyword::And),
+            (_, b"break")    => Some(Keyword::Break),
+            (_, b"do")       => Some(Keyword::Do),
+            (_, b"else")     => Some(Keyword::Else),
+            (_, b"elseif")   => Some(Keyword::Elseif),
+            (_, b"end")      => Some(Keyword::End),
+            (_, b"false")    => Some(Keyword::False),
+            (_, b"for")      => Some(Keyword::For),
+            (_, b"function") => Some(Keyword::Function),
+            (_, b"if")       => Some(Keyword::If),
+            (_, b"in")       => Some(Keyword::In),
+            (_, b"local")    => Some(Keyword::Local),
+            (_, b"nil")      => Some(Keyword::Nil),
+            (_, b"not")      => Some(Keyword::Not),
+            (_, b"or")       => Some(Keyword::Or),
+            (_, b"repeat")   => Some(Keyword::Repeat),
+            (_, b"return")   => Some(Keyword::Return),
+            (_, b"then")     => Some(Keyword::Then),
+            (_, b"true")     => Some(Keyword::True),
+            (_, b"until")    => Some(Keyword::Until),
+            (_, b"while")    => Some(Keyword::While),
+
+            (true, b"assume") => Some(Keyword::Assume),
+
+            (_, _)           => None,
         }
     }
 }
@@ -265,7 +271,7 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
                                       _ => false },
                         |c| name.push(c));
 
-                    if let Some(keyword) = Keyword::from(&name) {
+                    if let Some(keyword) = Keyword::from(&name, self.meta) {
                         return tok!(Keyword(keyword));
                     } else {
                         return tok!(Name(name));

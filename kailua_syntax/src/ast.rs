@@ -252,6 +252,9 @@ pub enum S {
     Local(Vec<Name>, Vec<Exp>),
     Return(Vec<Exp>),
     Break,
+
+    // Kailua extensions
+    KailuaAssume(Name, Kind, Option<Str>),
 }
 
 impl From<Exp> for S { fn from(e: Exp) -> S { S::Void(e) } }
@@ -263,4 +266,12 @@ impl From<Exp> for Stmt { fn from(x: Exp) -> Stmt { Box::new(From::from(x)) } }
 impl From<Block> for Stmt { fn from(x: Block) -> Stmt { Box::new(From::from(x)) } }
 
 pub type Block = Vec<Stmt>;
+
+// not "type" to avoid a conflict (and it's not really a type but a spec that leads to a type)
+#[derive(Clone, Debug, PartialEq)]
+pub enum K {
+    Dynamic,
+}
+
+pub type Kind = Box<K>;
 
