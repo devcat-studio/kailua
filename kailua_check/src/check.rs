@@ -20,7 +20,9 @@ impl TyInfo {
 }
 
 pub trait Options {
-    fn require_block(&mut self, path: &[u8]) -> Option<Block>;
+    fn require_block(&mut self, path: &[u8]) -> CheckResult<Block> {
+        Err("not implemented".into())
+    }
 }
 
 pub struct Env<'a> {
@@ -32,6 +34,40 @@ pub struct Env<'a> {
 impl<'a> Env<'a> {
     pub fn new(globals: &'a mut HashMap<Name, TyInfo>, opts: &'a mut Options) -> Env<'a> {
         Env { globals: globals, names: HashMap::new(), opts: opts }
+    }
+
+    // inject the base libraries to globals
+    pub fn open_libs(&mut self) {
+        self.globals.insert(Name::from(&b"require"[..]),
+                            TyInfo { ty: Box::new(T::Dynamic), builtin: Some(Builtin::Require) });
+        self.globals.insert(Name::from(&b"package"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"assert"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"type"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"tonumber"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"tostring"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"pairs"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"ipairs"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"pcall"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"xpcall"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"error"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"getmetatable"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"setmetatable"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"rawget"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"rawset"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"select"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"print"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"loadstring"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"pack"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"unpack"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"next"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"_G"[..]), TyInfo::new(T::Dynamic));
+
+        self.globals.insert(Name::from(&b"string"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"math"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"table"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"io"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"os"[..]), TyInfo::new(T::Dynamic));
+        self.globals.insert(Name::from(&b"debug"[..]), TyInfo::new(T::Dynamic));
     }
 
     // since `Clone` does not preserve the lifetime of `Env` itself
@@ -63,6 +99,7 @@ impl<'a> Env<'a> {
                 Ok(())
             }
         } else {
+            println!("adding a global variable {:?}", *name);
             self.globals.insert(name.to_owned(), info);
             Ok(())
         }
@@ -93,6 +130,15 @@ impl<'a> Env<'a> {
                     let info = try!(self.visit_exp(exp));
                     if i < vars.len() {
                         if let &Var::Name(ref name) = &vars[i] {
+                            // XXX last exp should unpack
+                            try!(self.assign_to_var(name, info));
+                        }
+                    }
+                }
+                if vars.len() > exps.len() {
+                    for var in &vars[exps.len()..] {
+                        if let &Var::Name(ref name) = var {
+                            let info = TyInfo::new(T::Dynamic);
                             // XXX last exp should unpack
                             try!(self.assign_to_var(name, info));
                         }
@@ -164,6 +210,13 @@ impl<'a> Env<'a> {
                         self.add_local_var(&names[i], info);
                     }
                 }
+                if names.len() > exps.len() {
+                    for name in &names[exps.len()..] {
+                        let info = TyInfo::new(T::Dynamic);
+                        // XXX last exp should unpack
+                        self.add_local_var(name, info);
+                    }
+                }
             }
             S::Return(ref exps) => {
                 // XXX should unify with the current function
@@ -185,13 +238,14 @@ impl<'a> Env<'a> {
         for param in &params.0 {
             env.add_local_var(param, TyInfo::new(T::Dynamic));
         }
+        let vararg = Name::from(&b"..."[..]);
         if params.1 {
-            env.add_local_var(&Name::from(&b"..."[..]), TyInfo::new(T::Dynamic));
+            env.add_local_var(&vararg, TyInfo::new(T::Dynamic));
         } else {
             // function a(...)
             //   return function b() return ... end -- this is an error
             // end
-            env.remove_local_var(&Name::from(&b"..."[..]));
+            if env.names.contains_key(&vararg) { env.remove_local_var(&vararg); }
         }
         env.visit_block(block)
     }
@@ -252,11 +306,28 @@ impl<'a> Env<'a> {
             },
 
             E::FuncCall(ref func, ref args) => {
-                try!(self.visit_exp(func));
+                let funcinfo = try!(self.visit_exp(func));
                 for arg in args {
                     try!(self.visit_exp(arg));
                 }
-                Ok(TyInfo::new(T::Dynamic))
+
+                match funcinfo.builtin {
+                    // require("foo")
+                    Some(Builtin::Require) if args.len() >= 1 => {
+                        if let E::Str(ref path) = *args[0] {
+                            let block = match self.opts.require_block(path) {
+                                Ok(block) => block,
+                                Err(e) => return Err(format!("failed to require {:?}: {}",
+                                                             *path, e)),
+                            };
+                            let mut env = Env::new(self.globals, self.opts);
+                            try!(env.visit_block(&block));
+                        }
+                        Ok(TyInfo::new(T::Dynamic))
+                    },
+
+                    _ => Ok(TyInfo::new(T::Dynamic)),
+                }
             },
             E::MethodCall(ref func, ref _method, ref args) => {
                 try!(self.visit_exp(func));

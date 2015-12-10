@@ -370,7 +370,8 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                     };
                     match name_or_exp {
                         Ok(name) => {
-                            key = Some(name.into());
+                            let s: Str = name.into();
+                            key = Some(s.into());
                             try!(self.expect(Punct::Eq));
                             value = try!(self.parse_exp());
                         }
