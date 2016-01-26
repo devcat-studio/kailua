@@ -729,11 +729,25 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
     // Kailua-specific syntaxes
 
     fn try_parse_kailua_kind(&mut self) -> ParseResult<Option<Kind>> {
-        if self.lookahead(Punct::Ques) {
-            self.read();
-            Ok(Some(Box::new(K::Dynamic)))
-        } else {
-            Ok(None)
+        match self.read() {
+            Tok::Punct(Punct::Ques) => {
+                Ok(Some(Box::new(K::Dynamic)))
+            }
+            Tok::Name(name) => {
+                match &name[..] {
+                    b"nil"      => Ok(Some(Box::new(K::Nil))),
+                    b"boolean"  => Ok(Some(Box::new(K::Boolean))),
+                    b"number"   => Ok(Some(Box::new(K::Number))),
+                    b"string"   => Ok(Some(Box::new(K::String))),
+                    b"table"    => Ok(Some(Box::new(K::Table))),
+                    b"function" => Ok(Some(Box::new(K::Function))),
+                    _ => Err("unknown type name"),
+                }
+            }
+            tok => {
+                self.unread(tok);
+                Ok(None)
+            }
         }
     }
 

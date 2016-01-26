@@ -271,6 +271,12 @@ pub type Block = Vec<Stmt>;
 #[derive(Clone, Debug, PartialEq)]
 pub enum K {
     Dynamic,
+    Nil,
+    Boolean,
+    Number,
+    String,
+    Table,
+    Function,
 }
 
 pub type Kind = Box<K>;

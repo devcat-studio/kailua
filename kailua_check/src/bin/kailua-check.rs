@@ -97,9 +97,9 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
     let chunk = try!(parse(&mainpath));
     let mut globals = HashMap::new();
     let mut opts = Options { mainpath: mainpath, required: HashSet::new() };
-    let mut env = kailua_check::Env::new(&mut globals, &mut opts);
-    try!(env.visit(&kailua_syntax::parse_chunk(BOOTSTRAP_CODE.as_bytes()).unwrap()));
-    env.visit(&chunk)
+    let mut checker = kailua_check::Checker::new(&mut globals, &mut opts);
+    try!(checker.visit(&kailua_syntax::parse_chunk(BOOTSTRAP_CODE.as_bytes()).unwrap()));
+    checker.visit(&chunk)
 }
 
 pub fn main() {
