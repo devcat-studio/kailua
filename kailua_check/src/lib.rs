@@ -62,4 +62,14 @@ fn test_check() {
     assert_ok!("local f = function() end
                 --# assume f: table
                 local p = f.index");
+    assert_err!("local p = 'hello' or 4
+                 local q = p + 3");
+    assert_ok!("local p = 'hello' or 4
+                local q = p .. 3"); // since either one can be concatnated
+    assert_ok!("--# assume p: string | number
+                local q = p .. 3");
+    assert_err!("local p = 'hello' or true
+                 local q = p .. 3");
+    assert_err!("--# assume p: string | boolean
+                 local q = p .. 3");
 }

@@ -277,6 +277,7 @@ pub enum K {
     String,
     Table,
     Function,
+    Union(Vec<Kind>),
 }
 
 pub type Kind = Box<K>;

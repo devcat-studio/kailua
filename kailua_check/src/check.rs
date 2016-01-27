@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use kailua_syntax::{Name, Str, Var, Params, E, Exp, UnOp, BinOp, FuncScope, SelfParam, S, Stmt, Block};
-use ty::{Builtin, Ty, T};
+use ty::{Builtin, Ty, T, Union};
 use env::{Error, CheckResult, TyInfo, Env};
 
 pub trait Options {
@@ -17,11 +17,20 @@ pub struct Checker<'a> {
 
 fn is_possibly_numeric(ty: &T) -> bool {
     // strings can be also used in place of numbers in Lua but omitted here
-    match *ty { T::Number | T::Dynamic => true, _ => false }
+    match *ty {
+        T::Number | T::Dynamic => true,
+        _ => false,
+    }
 }
 
 fn is_possibly_stringy(ty: &T) -> bool {
-    match *ty { T::Number | T::String | T::Dynamic => true, _ => false }
+    match *ty {
+        T::Number | T::String | T::Dynamic => true,
+        T::Union(Union { has_dynamic: false, has_nil: false, has_boolean: false,
+                         has_number: true, has_string: true,
+                         has_table: false, has_function: false }) => true, // XXX
+        _ => false,
+    }
 }
 
 impl<'a> Checker<'a> {
@@ -84,15 +93,10 @@ impl<'a> Checker<'a> {
             }
 
             BinOp::And | BinOp::Or => {
-                // TODO we need union here...
-                match (lty, rty) {
-                    (&T::Nil,      _)            => return Ok(TyInfo::new(rty.clone())),
-                    (&T::Boolean,  &T::Boolean)  => return Ok(TyInfo::new(T::Boolean)),
-                    (&T::Number,   &T::Number)   => return Ok(TyInfo::new(T::Number)),
-                    (&T::String,   &T::String)   => return Ok(TyInfo::new(T::String)),
-                    (&T::Table,    &T::Table)    => return Ok(TyInfo::new(T::Table)),
-                    (&T::Function, &T::Function) => return Ok(TyInfo::new(T::Function)),
-                    (_,            _)            => return Ok(TyInfo::new(T::Dynamic)),
+                if let &T::Nil = lty {
+                    return Ok(TyInfo::new(rty.clone()));
+                } else {
+                    return Ok(TyInfo::new(lty.clone().union(rty.clone())));
                 }
             }
         }

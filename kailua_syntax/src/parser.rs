@@ -728,26 +728,57 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
 
     // Kailua-specific syntaxes
 
-    fn try_parse_kailua_kind(&mut self) -> ParseResult<Option<Kind>> {
+    fn try_parse_kailua_atomic_kind(&mut self) -> ParseResult<Option<Kind>> {
+        let mut kind;
         match self.read() {
             Tok::Punct(Punct::Ques) => {
-                Ok(Some(Box::new(K::Dynamic)))
+                kind = Box::new(K::Dynamic);
+            }
+            Tok::Punct(Punct::LParen) => {
+                kind = try!(self.parse_kailua_kind());
+                try!(self.expect(Punct::RParen));
             }
             Tok::Name(name) => {
-                match &name[..] {
-                    b"nil"      => Ok(Some(Box::new(K::Nil))),
-                    b"boolean"  => Ok(Some(Box::new(K::Boolean))),
-                    b"number"   => Ok(Some(Box::new(K::Number))),
-                    b"string"   => Ok(Some(Box::new(K::String))),
-                    b"table"    => Ok(Some(Box::new(K::Table))),
-                    b"function" => Ok(Some(Box::new(K::Function))),
-                    _ => Err("unknown type name"),
+                kind = match &name[..] {
+                    b"nil"      => Box::new(K::Nil),
+                    b"boolean"  => Box::new(K::Boolean),
+                    b"number"   => Box::new(K::Number),
+                    b"string"   => Box::new(K::String),
+                    b"table"    => Box::new(K::Table),
+                    b"function" => Box::new(K::Function),
+                    _ => return Err("unknown type name"),
                 }
             }
             tok => {
                 self.unread(tok);
-                Ok(None)
+                return Ok(None);
             }
+        }
+
+        // a following `?` are equal to `| nil`
+        if self.lookahead(Punct::Ques) {
+            self.read();
+            kind = Box::new(K::Union(vec![kind, Box::new(K::Nil)]));
+        }
+        Ok(Some(kind))
+    }
+
+    fn try_parse_kailua_kind(&mut self) -> ParseResult<Option<Kind>> {
+        if let Some(kind) = try!(self.try_parse_kailua_atomic_kind()) {
+            let mut kind = kind;
+            if self.lookahead(Punct::Pipe) { // A | B | ...
+                let mut kinds = vec![kind];
+                while self.lookahead(Punct::Pipe) {
+                    self.read();
+                    let kind2 = try!(try!(self.try_parse_kailua_atomic_kind())
+                                     .ok_or("expected type"));
+                    kinds.push(kind2);
+                }
+                kind = Box::new(K::Union(kinds));
+            }
+            Ok(Some(kind))
+        } else {
+            Ok(None)
         }
     }
 
