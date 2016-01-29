@@ -4,4 +4,5 @@ version = "0.1.0"
 authors = ["Kang Seonghoon <public+git@mearie.org>"]
 
 [dependencies]
+bitflags = "0.3"
 kailua_syntax = { path = "../kailua_syntax" }

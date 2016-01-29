@@ -1,4 +1,5 @@
 use std::iter;
+use std::i32;
 
 use lex::{Tok, Punct, Keyword};
 use ast::{Name, Str, Var, Params, E, Exp, UnOp, BinOp, FuncScope, SelfParam, S, Stmt, Block};
@@ -88,7 +89,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
 
             // if the statement is the final one, stop parsing
             let last = match &*stmt {
-                &S::Return(..) | &S::Break(..) => true,
+                &S::Return(..) | &S::Break => true,
                 _ => false,
             };
 
@@ -742,12 +743,21 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                 kind = match &name[..] {
                     b"nil"      => Box::new(K::Nil),
                     b"boolean"  => Box::new(K::Boolean),
+                    b"true"     => Box::new(K::BooleanLit(true)),
+                    b"false"    => Box::new(K::BooleanLit(false)),
                     b"number"   => Box::new(K::Number),
+                    b"integer"  => Box::new(K::Integer),
                     b"string"   => Box::new(K::String),
                     b"table"    => Box::new(K::Table),
                     b"function" => Box::new(K::Function),
                     _ => return Err("unknown type name"),
                 }
+            }
+            Tok::Num(v) if i32::MIN as f64 <= v && v <= i32::MAX as f64 && v.floor() == v => {
+                kind = Box::new(K::IntegerLit(v as i32));
+            }
+            Tok::Str(ref s) => {
+                kind = Box::new(K::StringLit(s.to_owned().into()));
             }
             tok => {
                 self.unread(tok);

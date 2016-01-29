@@ -1,4 +1,5 @@
 extern crate kailua_syntax;
+#[macro_use] extern crate bitflags;
 
 pub use ty::{Ty, T, Builtin};
 pub use env::{TyInfo, Env, CheckResult};
@@ -72,4 +73,31 @@ fn test_check() {
                  local q = p .. 3");
     assert_err!("--# assume p: string | boolean
                  local q = p .. 3");
+    assert_ok!("local x
+                --# assume x: 3
+                x = 3");
+    assert_ok!("local x
+                --# assume x: 3 | 4
+                x = 3");
+    assert_err!("local x
+                 --# assume x: 4 | 5
+                 x = 3");
+    assert_ok!("local x, y
+                --# assume x: 3 | 4
+                --# assume y: integer
+                x = 3
+                y = x");
+    assert_ok!("local x, y, z
+                --# assume x: integer
+                --# assume y: integer
+                --# assume z: integer
+                z = x + y
+                z = x - y
+                z = x * y
+                z = x % y");
+    assert_err!("local x, y, z
+                 --# assume x: integer
+                 --# assume y: integer
+                 --# assume z: integer
+                 z = x / y");
 }

@@ -1,7 +1,10 @@
+use std::i32;
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use kailua_syntax::{Name, Str, Var, Params, E, Exp, UnOp, BinOp, FuncScope, SelfParam, S, Stmt, Block};
 use ty::{Builtin, Ty, T, Union};
+use ty::flags::*;
 use env::{Error, CheckResult, TyInfo, Env};
 
 pub trait Options {
@@ -13,24 +16,6 @@ pub trait Options {
 pub struct Checker<'a> {
     env: Env<'a>,
     opts: &'a mut Options,
-}
-
-fn is_possibly_numeric(ty: &T) -> bool {
-    // strings can be also used in place of numbers in Lua but omitted here
-    match *ty {
-        T::Number | T::Dynamic => true,
-        _ => false,
-    }
-}
-
-fn is_possibly_stringy(ty: &T) -> bool {
-    match *ty {
-        T::Number | T::String | T::Dynamic => true,
-        T::Union(Union { has_dynamic: false, has_nil: false, has_boolean: false,
-                         has_number: true, has_string: true,
-                         has_table: false, has_function: false }) => true, // XXX
-        _ => false,
-    }
 }
 
 impl<'a> Checker<'a> {
@@ -45,63 +30,59 @@ impl<'a> Checker<'a> {
     }
 
     pub fn check_un_op(&mut self, op: UnOp, info: &TyInfo) -> CheckResult<TyInfo> {
-        match (op, &*info.ty) {
-            (UnOp::Neg, &T::Number)  => Ok(TyInfo::new(T::Number)),
-            (UnOp::Not, _)           => Ok(TyInfo::new(T::Boolean)),
-            (UnOp::Len, &T::String)  => Ok(TyInfo::new(T::Number)),
-            (UnOp::Len, &T::Table)   => Ok(TyInfo::new(T::Number)),
-            (_,         &T::Dynamic) => Ok(TyInfo::new(T::Dynamic)),
+        let ty = &info.ty;
+        let flags = ty.flags();
 
-            (op, ty) => Err(format!("tried to apply {} operator to {:?}", op.symbol(), ty)),
+        match op {
+            UnOp::Neg if flags == T_INTEGER =>
+                Ok(TyInfo::from(T::Integer)),
+
+            UnOp::Neg if flags.is_numeric() =>
+                Ok(TyInfo::from(T::Number)),
+
+            UnOp::Not =>
+                Ok(TyInfo::from(T::Boolean)),
+
+            UnOp::Len if flags.is_tabular() =>
+                Ok(TyInfo::from(T::Integer)),
+
+            _ => Err(format!("tried to apply {} operator to {:?}", op.symbol(), ty))
         }
     }
 
     pub fn check_bin_op(&mut self, lhs: &TyInfo, op: BinOp, rhs: &TyInfo) -> CheckResult<TyInfo> {
-        let lty = &*lhs.ty;
-        let rty = &*rhs.ty;
+        let lty = &lhs.ty;
+        let rty = &rhs.ty;
+        let lflags = lty.flags();
+        let rflags = rty.flags();
 
         match op {
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Mod => {
-                if is_possibly_numeric(lty) && is_possibly_numeric(rty) {
-                    return Ok(TyInfo::new(T::Number));
-                }
-            }
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Mod
+                    if lflags == T_INTEGER && rflags == T_INTEGER =>
+                Ok(TyInfo::from(T::Integer)),
 
-            BinOp::Cat => {
-                if is_possibly_stringy(lty) && is_possibly_stringy(rty) {
-                    return Ok(TyInfo::new(T::String));
-                }
-            }
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Mod
+                    if lflags.is_numeric() && rflags.is_numeric() =>
+                Ok(TyInfo::from(T::Number)),
 
-            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                match (lty, rty) {
-                    (&T::Number, &T::Number) |
-                    (&T::Number, &T::Dynamic) |
-                    (&T::String, &T::String) |
-                    (&T::String, &T::Dynamic) |
-                    (&T::Dynamic, &T::Number) |
-                    (&T::Dynamic, &T::String) |
-                    (&T::Dynamic, &T::Dynamic) => {
-                        return Ok(TyInfo::new(T::Boolean));
-                    }
-                    _ => {}
-                }
-            }
+            BinOp::Cat if lflags.is_stringy() && rflags.is_stringy() =>
+                Ok(TyInfo::from(T::String)),
 
-            BinOp::Eq | BinOp::Ne => {
-                return Ok(TyInfo::new(T::Boolean));
-            }
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+                    if lflags.is_stringy() && rflags.is_stringy() && lflags & rflags != T_NONE =>
+                Ok(TyInfo::from(T::Boolean)),
 
-            BinOp::And | BinOp::Or => {
-                if let &T::Nil = lty {
-                    return Ok(TyInfo::new(rty.clone()));
-                } else {
-                    return Ok(TyInfo::new(lty.clone().union(rty.clone())));
-                }
-            }
+            BinOp::Eq | BinOp::Ne =>
+                Ok(TyInfo::from(T::Boolean)),
+
+            BinOp::And | BinOp::Or if lflags == T_NIL | T_FALSE =>
+                Ok(TyInfo::new(rty.clone())),
+
+            BinOp::And | BinOp::Or =>
+                Ok(TyInfo::new(lty.clone().union(rty.clone()))),
+
+            _ => Err(format!("tried to apply {} operator to {:?} and {:?}", op.symbol(), lty, rty))
         }
-
-        Err(format!("tried to apply {} operator to {:?} and {:?}", op.symbol(), lty, rty))
     }
 
     pub fn visit(&mut self, chunk: &[Stmt]) -> CheckResult<()> {
@@ -139,7 +120,7 @@ impl<'a> Checker<'a> {
                 if vars.len() > exps.len() {
                     for var in &vars[exps.len()..] {
                         if let &Var::Name(ref name) = var {
-                            let info = TyInfo::new(T::Dynamic);
+                            let info = TyInfo::from(T::Dynamic);
                             // XXX last exp should unpack
                             try!(self.env.assign_to_var(name, info));
                         }
@@ -178,7 +159,7 @@ impl<'a> Checker<'a> {
                     try!(self.visit_exp(step));
                 }
                 try!(self.scoped(|scope| {
-                    scope.env.add_local_var(name, TyInfo::new(T::Number));
+                    scope.env.add_local_var(name, TyInfo::from(T::Number));
                     scope.visit_block(block)
                 }));
             }
@@ -189,14 +170,14 @@ impl<'a> Checker<'a> {
                 }
                 try!(self.scoped(|scope| {
                     for name in names {
-                        scope.env.add_local_var(name, TyInfo::new(T::Dynamic));
+                        scope.env.add_local_var(name, TyInfo::from(T::Dynamic));
                     }
                     scope.visit_block(block)
                 }));
             }
 
             S::FuncDecl(scope, ref name, ref params, ref block) => {
-                let info = TyInfo::new(T::Dynamic);
+                let info = TyInfo::from(T::Dynamic);
                 match scope {
                     FuncScope::Local => self.env.add_local_var(name, info),
                     FuncScope::Global => try!(self.env.assign_to_var(name, info)),
@@ -208,7 +189,7 @@ impl<'a> Checker<'a> {
             S::MethodDecl(ref names, selfparam, ref params, ref block) => {
                 // TODO verify names
                 let selfinfo = match selfparam {
-                    SelfParam::Yes => Some(TyInfo::new(T::Dynamic)),
+                    SelfParam::Yes => Some(TyInfo::from(T::Dynamic)),
                     SelfParam::No => None,
                 };
                 try!(self.visit_func_body(selfinfo, params, block));
@@ -224,7 +205,7 @@ impl<'a> Checker<'a> {
                 }
                 if names.len() > exps.len() {
                     for name in &names[exps.len()..] {
-                        let info = TyInfo::new(T::Nil);
+                        let info = TyInfo::from(T::Nil);
                         // XXX last exp should unpack
                         self.env.add_local_var(name, info);
                     }
@@ -253,7 +234,7 @@ impl<'a> Checker<'a> {
                 } else {
                     None
                 };
-                let info = TyInfo { ty: Box::new(T::from(kind)), builtin: builtin };
+                let info = TyInfo { ty: Union::from(T::from(kind)), builtin: builtin };
                 try!(self.env.assume_var(name, info));
             }
         }
@@ -268,11 +249,11 @@ impl<'a> Checker<'a> {
                 scope.env.add_local_var(&Name::from(&b"self"[..]), selfinfo);
             }
             for param in &params.0 {
-                scope.env.add_local_var(param, TyInfo::new(T::Dynamic));
+                scope.env.add_local_var(param, TyInfo::from(T::Dynamic));
             }
             let vararg = Name::from(&b"..."[..]);
             if params.1 {
-                scope.env.add_local_var(&vararg, TyInfo::new(T::Dynamic));
+                scope.env.add_local_var(&vararg, TyInfo::from(T::Dynamic));
             } else {
                 // function a(...)
                 //   return function b() return ... end -- this is an error
@@ -298,18 +279,24 @@ impl<'a> Checker<'a> {
             Var::Index(ref e, ref key) => {
                 try!(self.visit_exp(e));
                 try!(self.visit_exp(key));
-                Ok(Some(TyInfo::new(T::Dynamic))) // XXX
+                Ok(Some(TyInfo::from(T::Dynamic))) // XXX
             },
         }
     }
 
     fn visit_exp(&mut self, exp: &E) -> CheckResult<TyInfo> {
         match *exp {
-            E::Nil => Ok(TyInfo::new(T::Nil)),
-            E::False => Ok(TyInfo::new(T::Boolean)),
-            E::True => Ok(TyInfo::new(T::Boolean)),
-            E::Num(_) => Ok(TyInfo::new(T::Number)),
-            E::Str(_) => Ok(TyInfo::new(T::String)),
+            E::Nil => Ok(TyInfo::from(T::Nil)),
+            E::False => Ok(TyInfo::from(T::False)),
+            E::True => Ok(TyInfo::from(T::True)),
+            E::Num(v) if v.floor() == v =>
+                if i32::MIN as f64 <= v && v <= i32::MAX as f64 {
+                    Ok(TyInfo::from(T::SomeInteger(v as i32)))
+                } else {
+                    Ok(TyInfo::from(T::Integer))
+                },
+            E::Num(_) => Ok(TyInfo::from(T::Number)),
+            E::Str(ref s) => Ok(TyInfo::from(T::SomeString(Cow::Borrowed(s)))),
 
             E::Varargs => {
                 if let Some(info) = self.env.get_var(&Name::from(&b"..."[..])) {
@@ -328,7 +315,7 @@ impl<'a> Checker<'a> {
 
             E::Func(ref params, ref block) => {
                 try!(self.visit_func_body(None, params, block));
-                Ok(TyInfo::new(T::Function))
+                Ok(TyInfo::from(T::Function))
             },
             E::Table(ref fields) => {
                 for &(ref key, ref value) in fields {
@@ -337,14 +324,13 @@ impl<'a> Checker<'a> {
                     }
                     try!(self.visit_exp(value));
                 }
-                Ok(TyInfo::new(T::Table))
+                Ok(TyInfo::from(T::Table))
             },
 
             E::FuncCall(ref func, ref args) => {
                 let funcinfo = try!(self.visit_exp(func));
-                match &*funcinfo.ty {
-                    &T::Function | &T::Dynamic => {}
-                    functy => return Err(format!("tried to call a non-function type {:?}", functy))
+                if !funcinfo.ty.flags().is_callable() {
+                    return Err(format!("tried to call a non-function type {:?}", funcinfo.ty));
                 }
 
                 for arg in args {
@@ -363,39 +349,33 @@ impl<'a> Checker<'a> {
                             let mut sub = Checker { env: self.env.make_module(), opts: self.opts };
                             try!(sub.visit_block(&block));
                         }
-                        Ok(TyInfo::new(T::Dynamic))
+                        Ok(TyInfo::from(T::Dynamic))
                     },
 
-                    _ => Ok(TyInfo::new(T::Dynamic)),
+                    _ => Ok(TyInfo::from(T::Dynamic)),
                 }
             },
 
             E::MethodCall(ref e, ref _method, ref args) => {
                 let info = try!(self.visit_exp(e));
-                match &*info.ty {
-                    // "default" types that metatables are set or can be set
-                    // XXX shouldn't this be customizable?
-                    &T::Table | &T::String | &T::Dynamic => {}
-                    ty => return Err(format!("tried to index a non-table type {:?}", ty))
+                if !info.ty.flags().is_tabular() {
+                    return Err(format!("tried to index a non-table type {:?}", info.ty));
                 }
 
                 for arg in args {
                     try!(self.visit_exp(arg));
                 }
-                Ok(TyInfo::new(T::Dynamic))
+                Ok(TyInfo::from(T::Dynamic))
             },
 
             E::Index(ref e, ref key) => {
                 let info = try!(self.visit_exp(e));
-                match &*info.ty {
-                    // "default" types that metatables are set or can be set
-                    // XXX shouldn't this be customizable?
-                    &T::Table | &T::String | &T::Dynamic => {}
-                    ty => return Err(format!("tried to index a non-table type {:?}", ty))
+                if !info.ty.flags().is_tabular() {
+                    return Err(format!("tried to index a non-table type {:?}", info.ty));
                 }
 
                 try!(self.visit_exp(key));
-                Ok(TyInfo::new(T::Dynamic))
+                Ok(TyInfo::from(T::Dynamic))
             },
 
             E::Un(op, ref e) => {

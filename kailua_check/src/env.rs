@@ -1,21 +1,36 @@
+use std::fmt;
 use std::collections::HashMap;
 
 use kailua_syntax::Name;
-use ty::{Builtin, Ty, T};
+use ty::{Builtin, Ty, T, Union};
 
 pub type Error = String;
 
 pub type CheckResult<T> = Result<T, Error>;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct TyInfo {
-    pub ty: Ty,
+    pub ty: Union,
     pub builtin: Option<Builtin>,
 }
 
 impl TyInfo {
-    pub fn new(ty: T) -> TyInfo {
-        TyInfo { ty: Box::new(ty), builtin: None }
+    pub fn new(ty: Union) -> TyInfo {
+        TyInfo { ty: ty, builtin: None }
+    }
+
+    pub fn from<'a>(ty: T<'a>) -> TyInfo {
+        TyInfo::new(Union::from(ty))
+    }
+}
+
+impl fmt::Debug for TyInfo {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        try!(write!(f, "{:?}", self.ty));
+        if let Some(ref builtin) = self.builtin {
+            try!(write!(f, " (= {:?})", *builtin));
+        }
+        Ok(())
     }
 }
 
@@ -48,6 +63,7 @@ impl<'a> Env<'a> {
     }
 
     pub fn add_local_var(&mut self, name: &Name, info: TyInfo) {
+        println!("adding a local variable {:?} as {:?}", *name, info);
         self.names.insert(name.to_owned(), info);
     }
 
@@ -59,15 +75,16 @@ impl<'a> Env<'a> {
 
     pub fn assign_to_var(&mut self, name: &Name, info: TyInfo) -> CheckResult<()> {
         if let Some(previnfo) = self.names.get_mut(name) {
-            if previnfo.ty != info.ty {
+            if !previnfo.ty.accept(&info.ty) {
                 Err(format!("cannot assign {:?} to the variable {:?} with type {:?}",
                             info.ty, name, previnfo.ty))
             } else {
-                *previnfo = info;
+                println!("assigning {:?} to a local variable {:?} with type {:?}",
+                         info, *name, *previnfo);
                 Ok(())
             }
         } else {
-            println!("adding a global variable {:?}", *name);
+            println!("adding a global variable {:?} as {:?}", *name, info);
             self.globals.insert(name.to_owned(), info);
             Ok(())
         }
@@ -75,10 +92,10 @@ impl<'a> Env<'a> {
 
     pub fn assume_var(&mut self, name: &Name, info: TyInfo) -> CheckResult<()> {
         if self.names.contains_key(name) {
-            println!("(force) adding a global variable {:?}", *name);
+            println!("(force) adding a global variable {:?} as {:?}", *name, info);
             self.names.insert(name.to_owned(), info);
         } else {
-            println!("(force) adding a global variable {:?}", *name);
+            println!("(force) adding a global variable {:?} as {:?}", *name, info);
             self.globals.insert(name.to_owned(), info);
         }
         Ok(())
