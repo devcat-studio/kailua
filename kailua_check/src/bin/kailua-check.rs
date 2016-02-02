@@ -6,7 +6,7 @@ use std::env;
 use std::fs;
 use std::path::Path;
 use std::io::Read;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 fn parse(path: &Path) -> Result<kailua_syntax::Block, String> {
     let mut f = try!(fs::File::open(path).map_err(|e| e.to_string()));
@@ -95,9 +95,9 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
     "#;
 
     let chunk = try!(parse(&mainpath));
-    let mut globals = HashMap::new();
+    let mut context = kailua_check::Context::new();
     let mut opts = Options { mainpath: mainpath, required: HashSet::new() };
-    let mut checker = kailua_check::Checker::new(&mut globals, &mut opts);
+    let mut checker = kailua_check::Checker::new(&mut context, &mut opts);
     try!(checker.visit(&kailua_syntax::parse_chunk(BOOTSTRAP_CODE.as_bytes()).unwrap()));
     checker.visit(&chunk)
 }

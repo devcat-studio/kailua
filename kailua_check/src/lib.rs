@@ -2,7 +2,7 @@ extern crate kailua_syntax;
 #[macro_use] extern crate bitflags;
 
 pub use ty::{Ty, T, Builtin};
-pub use env::{TyInfo, Env, CheckResult};
+pub use env::{TyInfo, Context, CheckResult};
 pub use check::{Options, Checker};
 
 mod ty;
@@ -12,16 +12,14 @@ mod check;
 #[test]
 fn test_check() {
     fn check(s: &str) -> CheckResult<()> {
-        use std::collections::HashMap;
-
         let parsed = kailua_syntax::parse_chunk(s.as_bytes());
         let chunk = try!(parsed.map_err(|s| format!("parse error: {}", s)));
 
         struct Opts;
         impl Options for Opts {}
-        let mut globals = HashMap::new();
+        let mut context = Context::new();
         let mut opts = Opts;
-        let mut checker = Checker::new(&mut globals, &mut opts);
+        let mut checker = Checker::new(&mut context, &mut opts);
         checker.visit(&chunk)
     }
 
@@ -100,4 +98,13 @@ fn test_check() {
                  --# assume y: integer
                  --# assume z: integer
                  z = x / y");
+    assert_ok!("function a(...)
+                  return ...
+                end");
+    assert_err!("function a()
+                   return ...
+                 end");
+    assert_err!("function a(...)
+                   return function() return ... end
+                 end");
 }

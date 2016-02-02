@@ -1,11 +1,11 @@
 use std::i32;
+use std::ops::{Deref, DerefMut};
 use std::borrow::Cow;
-use std::collections::HashMap;
 
 use kailua_syntax::{Name, Str, Var, Params, E, Exp, UnOp, BinOp, FuncScope, SelfParam, S, Stmt, Block};
 use ty::{Builtin, Ty, T, Union};
 use ty::flags::*;
-use env::{Error, CheckResult, TyInfo, Env};
+use env::{Error, CheckResult, TyInfo, Env, Scope, Context};
 
 pub trait Options {
     fn require_block(&mut self, path: &[u8]) -> CheckResult<Block> {
@@ -13,20 +13,34 @@ pub trait Options {
     }
 }
 
-pub struct Checker<'a> {
-    env: Env<'a>,
-    opts: &'a mut Options,
+struct ScopedChecker<'chk, 'env: 'chk>(&'chk mut Checker<'env>);
+
+impl<'chk, 'env> Deref for ScopedChecker<'chk, 'env> {
+    type Target = &'chk mut Checker<'env>;
+    fn deref(&self) -> &&'chk mut Checker<'env> { &self.0 }
 }
 
-impl<'a> Checker<'a> {
-    pub fn new(globals: &'a mut HashMap<Name, TyInfo>, opts: &'a mut Options) -> Checker<'a> {
-        Checker { env: Env::new(globals), opts: opts }
+impl<'chk, 'env> DerefMut for ScopedChecker<'chk, 'env> {
+    fn deref_mut(&mut self) -> &mut &'chk mut Checker<'env> { &mut self.0 }
+}
+
+impl<'chk, 'env> Drop for ScopedChecker<'chk, 'env> {
+    fn drop(&mut self) { self.0.env.leave(); }
+}
+
+pub struct Checker<'env> {
+    env: Env<'env>,
+    opts: &'env mut Options,
+}
+
+impl<'env> Checker<'env> {
+    pub fn new(context: &'env mut Context, opts: &'env mut Options) -> Checker<'env> {
+        Checker { env: Env::new(context), opts: opts }
     }
 
-    fn scoped<F>(&mut self, f: F) -> CheckResult<()>
-            where F: FnOnce(&mut Checker) -> CheckResult<()> {
-        let mut sub = Checker { env: self.env.make_subenv(), opts: self.opts };
-        f(&mut sub)
+    fn scoped<'chk>(&'chk mut self, scope: Scope) -> ScopedChecker<'chk, 'env> {
+        self.env.enter(scope);
+        ScopedChecker(self)
     }
 
     pub fn check_un_op(&mut self, op: UnOp, info: &TyInfo) -> CheckResult<TyInfo> {
@@ -90,12 +104,11 @@ impl<'a> Checker<'a> {
     }
 
     fn visit_block(&mut self, block: &[Stmt]) -> CheckResult<()> {
-        self.scoped(|scope| {
-            for stmt in block {
-                try!(scope.visit_stmt(stmt));
-            }
-            Ok(())
-        })
+        let mut scope = self.scoped(Scope::new());
+        for stmt in block {
+            try!(scope.visit_stmt(stmt));
+        }
+        Ok(())
     }
 
     fn visit_stmt(&mut self, stmt: &S) -> CheckResult<()> {
@@ -158,22 +171,22 @@ impl<'a> Checker<'a> {
                 if let &Some(ref step) = step {
                     try!(self.visit_exp(step));
                 }
-                try!(self.scoped(|scope| {
-                    scope.env.add_local_var(name, TyInfo::from(T::Number));
-                    scope.visit_block(block)
-                }));
+
+                let mut scope = self.scoped(Scope::new());
+                scope.env.add_local_var(name, TyInfo::from(T::Number));
+                try!(scope.visit_block(block));
             }
 
             S::ForIn(ref names, ref exps, ref block) => {
                 for exp in exps {
                     try!(self.visit_exp(exp));
                 }
-                try!(self.scoped(|scope| {
-                    for name in names {
-                        scope.env.add_local_var(name, TyInfo::from(T::Dynamic));
-                    }
-                    scope.visit_block(block)
-                }));
+
+                let mut scope = self.scoped(Scope::new());
+                for name in names {
+                    scope.env.add_local_var(name, TyInfo::from(T::Dynamic));
+                }
+                try!(scope.visit_block(block));
             }
 
             S::FuncDecl(scope, ref name, ref params, ref block) => {
@@ -243,27 +256,21 @@ impl<'a> Checker<'a> {
 
     fn visit_func_body(&mut self, selfinfo: Option<TyInfo>, params: &Params,
                        block: &[Stmt]) -> CheckResult<()> {
-        self.scoped(|scope| {
-            let selfinfo = selfinfo;
-            if let Some(selfinfo) = selfinfo {
-                scope.env.add_local_var(&Name::from(&b"self"[..]), selfinfo);
-            }
-            for param in &params.0 {
-                scope.env.add_local_var(param, TyInfo::from(T::Dynamic));
-            }
-            let vararg = Name::from(&b"..."[..]);
-            if params.1 {
-                scope.env.add_local_var(&vararg, TyInfo::from(T::Dynamic));
-            } else {
-                // function a(...)
-                //   return function b() return ... end -- this is an error
-                // end
-                if scope.env.get_local_var(&vararg).is_some() {
-                    scope.env.remove_local_var(&vararg);
-                }
-            }
-            scope.visit_block(block)
-        })
+        let vainfo;
+        if params.1 {
+            vainfo = Some(TyInfo::from(T::Dynamic));
+        } else {
+            vainfo = None;
+        }
+
+        let mut scope = self.scoped(Scope::new_function(vainfo));
+        if let Some(selfinfo) = selfinfo {
+            scope.env.add_local_var(&Name::from(&b"self"[..]), selfinfo);
+        }
+        for param in &params.0 {
+            scope.env.add_local_var(param, TyInfo::from(T::Dynamic));
+        }
+        scope.visit_block(block)
     }
 
     fn visit_var(&mut self, var: &Var) -> CheckResult<Option<TyInfo>> {
@@ -299,7 +306,7 @@ impl<'a> Checker<'a> {
             E::Str(ref s) => Ok(TyInfo::from(T::SomeString(Cow::Borrowed(s)))),
 
             E::Varargs => {
-                if let Some(info) = self.env.get_var(&Name::from(&b"..."[..])) {
+                if let Some(info) = self.env.get_vararg() {
                     Ok(info.to_owned())
                 } else {
                     Err("vararg not declared in the innermost func".into())
@@ -346,7 +353,8 @@ impl<'a> Checker<'a> {
                                 Err(e) => return Err(format!("failed to require {:?}: {}",
                                                              *path, e)),
                             };
-                            let mut sub = Checker { env: self.env.make_module(), opts: self.opts };
+                            let mut sub = Checker { env: Env::new(self.env.context()),
+                                                    opts: self.opts };
                             try!(sub.visit_block(&block));
                         }
                         Ok(TyInfo::from(T::Dynamic))

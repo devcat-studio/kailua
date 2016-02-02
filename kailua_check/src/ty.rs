@@ -4,6 +4,8 @@ use std::borrow::{Cow, ToOwned};
 use std::collections::HashSet;
 use kailua_syntax::{K, Kind, Str};
 
+use env::Env;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Builtin {
     Require,        // (fixed string) -> table & sideeffect
