@@ -1,9 +1,10 @@
 use std::fmt;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use vec_map::VecMap;
 
 use kailua_syntax::Name;
-use ty::{Builtin, Ty, T, Union};
+use ty::{Builtin, Ty, T, Union, TVar, Seq};
 
 pub type Error = String;
 
@@ -70,13 +71,28 @@ impl Scope {
     }
 }
 
+#[derive(Clone, PartialEq)]
+pub struct TVarBounds {
+    pub min: Option<Union>,
+    pub max: Option<Union>,
+}
+
+impl TVarBounds {
+    pub fn new() -> TVarBounds {
+        TVarBounds { min: None, max: None }
+    }
+}
+
 pub struct Context {
     global_scope: Scope,
+    next_tvar: Cell<TVar>,
+    tvar_bounds: VecMap<RefCell<TVarBounds>>,
 }
 
 impl Context {
     pub fn new() -> Context {
-        Context { global_scope: Scope::new() }
+        Context { global_scope: Scope::new(), next_tvar: Cell::new(TVar(0)),
+                  tvar_bounds: VecMap::new() }
     }
 
     pub fn global_scope(&self) -> &Scope {
@@ -86,6 +102,47 @@ impl Context {
     pub fn global_scope_mut(&mut self) -> &mut Scope {
         &mut self.global_scope
     }
+
+    pub fn gen_tvar(&self) -> TVar {
+        let tvar = self.next_tvar.get();
+        self.next_tvar.set(TVar(tvar.0 + 1));
+        tvar
+    }
+
+    /*
+    pub fn assert_tvar_sub(&mut self, lhs: TVar, rhs: TVar) -> bool {
+        if lhs == rhs { return true; }
+
+        let ltv = lhs.0 as usize;
+        let rtv = rhs.0 as usize;
+
+        if !self.tvar_bounds.has_key(ltv) {
+            self.tvar_bounds.insert(ltv, TVarBounds::new());
+        }
+        if !self.tvar_bounds.has_key(rtv) {
+            self.tvar_bounds.insert(rtv, TVarBounds::new());
+        }
+
+        let lbounds = self.tvar_bounds.get(ltv).unwrap();
+        let rbounds = self.tvar_bounds.get(rtv).unwrap();
+
+        // lbounds.min <: lhs <: lbounds.max
+        // rbounds.min <: rhs <: rbounds.max
+
+        //       rbounds.max
+        //            |
+        //       rbounds.min
+        //         /
+        // lbounds.max
+        //     |
+        // lbounds.min
+
+        lbounds.borrow_mut().min
+    }
+
+    pub fn assert_tvar_eq(&mut self, lhs: TVar, rhs: TVar) -> bool {
+    }
+    */
 }
 
 pub struct Env<'ctx> {

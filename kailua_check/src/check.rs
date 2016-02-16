@@ -1,9 +1,10 @@
 use std::i32;
 use std::ops::{Deref, DerefMut};
+use std::collections::HashMap;
 use std::borrow::Cow;
 
 use kailua_syntax::{Name, Str, Var, Params, E, Exp, UnOp, BinOp, FuncScope, SelfParam, S, Stmt, Block};
-use ty::{Builtin, Ty, T, Union};
+use ty::{Builtin, Ty, T, Union, Unionable};
 use ty::flags::*;
 use env::{Error, CheckResult, TyInfo, Env, Scope, Context};
 
@@ -89,13 +90,85 @@ impl<'env> Checker<'env> {
             BinOp::Eq | BinOp::Ne =>
                 Ok(TyInfo::from(T::Boolean)),
 
-            BinOp::And | BinOp::Or if lflags == T_NIL | T_FALSE =>
+            BinOp::And | BinOp::Or if lflags & !(T_NIL | T_FALSE) == T_NONE =>
                 Ok(TyInfo::new(rty.clone())),
 
             BinOp::And | BinOp::Or =>
                 Ok(TyInfo::new(lty.clone().union(rty.clone()))),
 
             _ => Err(format!("tried to apply {} operator to {:?} and {:?}", op.symbol(), lty, rty))
+        }
+    }
+
+    fn check_index(&mut self, ety: &T, kty: &T) -> CheckResult<Option<TyInfo>> {
+        if !ety.is_tabular() {
+            return Err(format!("tried to index the non-table {:?}", ety));
+        }
+
+        // the type can be indexed, try to find the resulting type out
+        match *ety {
+            T::SomeRecord(ref fields) => {
+                if !kty.is_stringy() {
+                    return Err(format!("tried to index {:?} with non-string {:?}", ety, kty));
+                }
+
+                // can `kty` be restricted to strings known in compile time?
+                match *kty {
+                    T::SomeString(ref s) =>
+                        if let Some(vty) = fields.get(s) {
+                            Ok(Some(TyInfo::from(*vty.clone())))
+                        } else {
+                            Ok(None)
+                        },
+                    /*
+                    T::SomeStrings(_) => ...
+                    */
+                    _ => Ok(Some(TyInfo::from(T::Dynamic))),
+                }
+            }
+
+            T::SomeTuple(ref fields) => {
+                if !kty.is_integral() {
+                    return Err(format!("tried to index {:?} with non-integer {:?}", ety, kty));
+                }
+
+                // can `kty` be restricted to integers known in compile time?
+                match *kty {
+                    T::SomeInteger(v) =>
+                        if 0 <= v && (v as usize) < fields.len() {
+                            Ok(Some(TyInfo::from(*fields[v as usize].clone())))
+                        } else {
+                            Err(format!("{:?} has no index {:?}", ety, v))
+                        },
+                    /*
+                    T::SomeIntegers(_) => ...
+                    */
+                    _ => Ok(Some(TyInfo::from(T::Dynamic))),
+                }
+            }
+
+            T::SomeArray(ref t) => {
+                if !kty.is_integral() {
+                    return Err(format!("tried to index {:?} with non-integer {:?}", ety, kty));
+                }
+
+                Ok(Some(TyInfo::from(*t.clone().into_owned())))
+            }
+
+            T::SomeMap(ref k, ref v) => {
+                let k = &***k;
+                // XXX subtyping
+                if *k == T::Dynamic {
+                    Ok(Some(TyInfo::from(T::Dynamic)))
+                } else if k == kty { // XXX redundant
+                    Ok(Some(TyInfo::from(*v.clone().into_owned())))
+                } else {
+                    Err(format!("tried to index {:?} with {:?}", ety, kty))
+                }
+            }
+
+            // we don't know what ety is, but it should be partially possible to index it
+            _ => Ok(Some(TyInfo::from(T::Dynamic))),
         }
     }
 
@@ -283,10 +356,11 @@ impl<'env> Checker<'env> {
                     Ok(None)
                 }
             },
+
             Var::Index(ref e, ref key) => {
-                try!(self.visit_exp(e));
-                try!(self.visit_exp(key));
-                Ok(Some(TyInfo::from(T::Dynamic))) // XXX
+                let ty = try!(self.visit_exp(e)).ty.simplify();
+                let kty = try!(self.visit_exp(key)).ty.simplify();
+                self.check_index(&ty, &kty)
             },
         }
     }
@@ -325,13 +399,82 @@ impl<'env> Checker<'env> {
                 Ok(TyInfo::from(T::Function))
             },
             E::Table(ref fields) => {
+                enum Tab { Empty, Record(HashMap<Str, Ty>), Tuple(Vec<Ty>), Array(Ty), Map(Ty, Ty) }
+                let mut tab = Tab::Empty;
+
                 for &(ref key, ref value) in fields {
+                    let kty;
                     if let Some(ref key) = *key {
-                        try!(self.visit_exp(key));
+                        kty = Some(try!(self.visit_exp(key)).ty.simplify());
+                    } else {
+                        kty = None;
                     }
-                    try!(self.visit_exp(value));
+                    let vty = try!(self.visit_exp(value)).ty.simplify();
+
+                    // update the table type according to new field
+                    tab = match (kty, tab) {
+                        (Some(T::SomeString(s)), Tab::Empty) => {
+                            let mut fields = HashMap::new();
+                            fields.insert(s.into_owned(), Box::new(vty));
+                            Tab::Record(fields)
+                        },
+                        (Some(T::SomeString(s)), Tab::Record(mut fields)) => {
+                            // should override a duplicate field if any
+                            fields.insert(s.into_owned(), Box::new(vty));
+                            Tab::Record(fields)
+                        },
+
+                        // XXX tuple?
+                        (None, Tab::Empty) => Tab::Array(Box::new(vty)),
+                        (None, Tab::Array(t)) => Tab::Array(Box::new(vty.union(*t))),
+                        (None, Tab::Tuple(mut fields)) => {
+                            fields.push(Box::new(vty));
+                            Tab::Tuple(fields)
+                        },
+
+                        (Some(kty), Tab::Empty) => Tab::Map(Box::new(kty), Box::new(vty)),
+
+                        (kty, Tab::Record(fields)) => {
+                            let kty = Box::new(kty.unwrap_or(T::Integer).union(T::String));
+                            let mut vty = vty;
+                            for (_, ty) in fields {
+                                vty = vty.union(*ty);
+                            }
+                            Tab::Map(kty, Box::new(vty))
+                        },
+
+                        (kty, Tab::Tuple(fields)) => {
+                            let kty = Box::new(kty.unwrap_or(T::Integer).union(T::Integer));
+                            let mut vty = vty;
+                            for ty in fields {
+                                vty = vty.union(*ty);
+                            }
+                            Tab::Map(kty, Box::new(vty))
+                        },
+
+                        (kty, Tab::Array(t)) => {
+                            let kty = Box::new(kty.unwrap_or(T::Integer).union(T::Integer));
+                            let vty = Box::new(vty).union(t);
+                            Tab::Map(kty, vty)
+                        },
+
+                        (kty, Tab::Map(k, v)) => {
+                            let kty = Box::new(kty.unwrap_or(T::Integer)).union(k);
+                            let vty = Box::new(vty).union(v);
+                            Tab::Map(kty, vty)
+                        },
+                    };
                 }
-                Ok(TyInfo::from(T::Table))
+
+                // if the table remains intact, it is an empty record
+                let tabty = match tab {
+                    Tab::Empty => T::SomeRecord(Cow::Owned(HashMap::new())),
+                    Tab::Record(fields) => T::SomeRecord(Cow::Owned(fields)),
+                    Tab::Tuple(fields) => T::SomeTuple(Cow::Owned(fields)),
+                    Tab::Array(t) => T::SomeArray(Cow::Owned(t)),
+                    Tab::Map(k, v) => T::SomeMap(Cow::Owned(k), Cow::Owned(v)),
+                };
+                Ok(TyInfo::from(tabty))
             },
 
             E::FuncCall(ref func, ref args) => {
@@ -377,13 +520,13 @@ impl<'env> Checker<'env> {
             },
 
             E::Index(ref e, ref key) => {
-                let info = try!(self.visit_exp(e));
-                if !info.ty.flags().is_tabular() {
-                    return Err(format!("tried to index a non-table type {:?}", info.ty));
+                let ty = try!(self.visit_exp(e)).ty.simplify();
+                let kty = try!(self.visit_exp(key)).ty.simplify();
+                if let Some(vinfo) = try!(self.check_index(&ty, &kty)) {
+                    Ok(vinfo)
+                } else {
+                    Err(format!("cannot index {:?} with {:?}", ty, kty))
                 }
-
-                try!(self.visit_exp(key));
-                Ok(TyInfo::from(T::Dynamic))
             },
 
             E::Un(op, ref e) => {

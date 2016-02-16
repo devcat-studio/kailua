@@ -1,5 +1,6 @@
 extern crate kailua_syntax;
 #[macro_use] extern crate bitflags;
+extern crate vec_map;
 
 pub use ty::{Ty, T, Builtin};
 pub use env::{TyInfo, Context, CheckResult};
@@ -107,4 +108,12 @@ fn test_check() {
     assert_err!("function a(...)
                    return function() return ... end
                  end");
+    assert_ok!("local a = { x = 3, y = 'foo' }
+                local b = a.x
+                --# assume b: integer");
+    assert_ok!("local a = { x = 3, y = 'foo' }
+                local b = a.y
+                --# assume b: string");
+    assert_err!("local a = { x = 3, y = 'foo' }
+                 local b = a.z");
 }

@@ -5,4 +5,5 @@ authors = ["Kang Seonghoon <public+git@mearie.org>"]
 
 [dependencies]
 bitflags = "0.3"
+vec_map = "0.4"
 kailua_syntax = { path = "../kailua_syntax" }
