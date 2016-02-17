@@ -52,7 +52,7 @@ impl<T: fmt::Debug> fmt::Debug for Seq<T> {
             try!(write!(f, "{:?}", *e));
         }
         if let Some(ref e) = self.tail {
-            if first { first = false; } else { try!(write!(f, ", ")); }
+            if !first { try!(write!(f, ", ")); }
             try!(write!(f, "{:?}...", *e));
         }
         write!(f, ")")
@@ -835,4 +835,92 @@ impl<'a, 'b> Unionable<Box<T<'b>>> for Box<T<'a>> {
 }
 
 impl From<Kind> for Ty { fn from(x: Kind) -> Ty { Box::new(From::from(*x)) } }
+
+#[test]
+fn test_union() {
+    macro_rules! hash {
+        ($($k:ident = $v:expr),*) =>
+            (vec![$((s(stringify!($k)), $v)),*].into_iter().collect::<HashMap<_,_>>())
+    }
+    macro_rules! set {
+        ($($v:expr),*) => (vec![$($v),*].into_iter().collect::<HashSet<_>>())
+    }
+
+    macro_rules! ohash { ($($t:tt)*) => (Cow::Owned(hash![$($t)*])) }
+    macro_rules! oset { ($($t:tt)*) => (Cow::Owned(set![$($t)*])) }
+    macro_rules! ovec { ($($t:tt)*) => (Cow::Owned(vec![$($t)*])) }
+
+    fn b<T>(x: T) -> Box<T> { Box::new(x) }
+    fn s(x: &str) -> Str { Str::from(x.as_bytes().to_owned()) }
+    fn o<'a, T: ToOwned + Clone>(x: T::Owned) -> Cow<'a, T> { Cow::Owned(x) }
+    fn ob<'a, T: Clone>(x: T) -> Cow<'a, Box<T>> { Cow::Owned(Box::new(x)) }
+    fn os<'a>(x: &str) -> Cow<'a, Str> { Cow::Owned(s(x)) }
+
+    macro_rules! check { ($l:expr, $r:expr, $res:expr) => (assert_eq!($l.union($r), $res)) }
+
+    // dynamic vs. everything else
+    check!(T::Dynamic, T::Dynamic, T::Dynamic);
+    check!(T::Dynamic, T::Integer, T::Dynamic);
+    check!(T::SomeTuple(ovec![b(T::Integer), b(T::Boolean)]), T::Dynamic, T::Dynamic);
+
+    // integer literals
+    check!(T::Integer, T::Number, T::Number);
+    check!(T::Number, T::Integer, T::Number);
+    check!(T::SomeInteger(3), T::SomeInteger(3), T::SomeInteger(3));
+    check!(T::SomeInteger(3), T::Number, T::Number);
+    check!(T::Integer, T::SomeInteger(3), T::Integer);
+    check!(T::SomeInteger(3), T::SomeInteger(4), T::SomeIntegers(oset![3, 4]));
+    check!(T::SomeIntegers(oset![3, 4]), T::SomeInteger(3), T::SomeIntegers(oset![3, 4]));
+    check!(T::SomeInteger(5), T::SomeIntegers(oset![3, 4]), T::SomeIntegers(oset![3, 4, 5]));
+    check!(T::SomeIntegers(oset![3, 4]), T::SomeIntegers(oset![5, 4, 7]),
+           T::SomeIntegers(oset![3, 4, 5, 7]));
+
+    // string literals
+    check!(T::String, T::SomeString(os("hello")), T::String);
+    check!(T::SomeString(os("hello")), T::String, T::String);
+    check!(T::SomeString(os("hello")), T::SomeString(os("hello")), T::SomeString(os("hello")));
+    check!(T::SomeString(os("hello")), T::SomeString(os("goodbye")),
+           T::SomeStrings(oset![s("hello"), s("goodbye")]));
+    check!(T::SomeString(os("hello")), T::SomeStrings(oset![s("goodbye")]),
+           T::SomeStrings(oset![s("hello"), s("goodbye")]));
+    check!(T::SomeStrings(oset![s("hello"), s("goodbye")]), T::SomeString(os("goodbye")),
+           T::SomeStrings(oset![s("hello"), s("goodbye")]));
+    check!(T::SomeStrings(oset![s("hello"), s("goodbye")]), T::SomeStrings(oset![s("what"), s("goodbye")]),
+           T::SomeStrings(oset![s("hello"), s("goodbye"), s("what")]));
+
+    // tables
+    check!(T::Table, T::SomeArray(ob(T::Integer)), T::Table);
+    check!(T::SomeArray(ob(T::Integer)), T::SomeArray(ob(T::Integer)), T::SomeArray(ob(T::Integer)));
+    check!(T::SomeArray(ob(T::SomeInteger(3))), T::SomeArray(ob(T::SomeInteger(4))),
+           T::SomeArray(ob(T::SomeIntegers(oset![3, 4]))));
+    check!(T::SomeRecord(ohash![foo=b(T::Integer), bar=b(T::String)]), 
+           T::SomeRecord(ohash![quux=b(T::Boolean)]),
+           T::SomeRecord(ohash![foo=b(T::Integer), bar=b(T::String), quux=b(T::Boolean)]));
+    check!(T::SomeRecord(ohash![foo=b(T::SomeInteger(3)), bar=b(T::String)]), 
+           T::SomeRecord(ohash![foo=b(T::SomeInteger(4))]),
+           T::SomeRecord(ohash![foo=b(T::SomeIntegers(oset![3, 4])), bar=b(T::String)]));
+    check!(T::SomeRecord(ohash![foo=b(T::SomeInteger(3)), bar=b(T::Number)]), 
+           T::SomeMap(ob(T::String), ob(T::Integer)),
+           T::SomeMap(ob(T::String), ob(T::Number)));
+    check!(T::SomeMap(ob(T::SomeString(os("wat"))), ob(T::Integer)),
+           T::SomeMap(ob(T::String), ob(T::SomeInteger(42))),
+           T::SomeMap(ob(T::String), ob(T::Integer)));
+    check!(T::SomeArray(ob(T::Number)), T::SomeMap(ob(T::Dynamic), ob(T::Integer)),
+           T::SomeMap(ob(T::Dynamic), ob(T::Number)));
+    check!(T::SomeRecord(ohash![]), T::SomeArray(ob(T::Integer)),
+           T::SomeMap(ob(T::Integer), ob(T::Integer))); // a superset of T::SomeArray(ob(T::Integer))
+
+    // general unions
+    check!(T::True, T::False, T::Boolean);
+    check!(T::SomeInteger(3).union(T::Nil), T::SomeInteger(4).union(T::Nil),
+           T::SomeIntegers(oset![3, 4]).union(T::Nil));
+    check!(T::SomeIntegers(oset![3, 5]).union(T::Nil), T::SomeInteger(4).union(T::String),
+           T::String.union(T::SomeIntegers(oset![3, 4, 5])).union(T::Nil));
+    check!(T::SomeInteger(3).union(T::String), T::SomeString(os("wat")).union(T::SomeInteger(4)),
+           T::SomeIntegers(oset![3, 4]).union(T::String));
+    check!(T::SomeArray(ob(T::Integer)), T::SomeTuple(ovec![b(T::String)]),
+           T::SomeMap(ob(T::Integer), ob(T::Integer.union(T::String))));
+    //assert_eq!(T::SomeMap(ob(T::String), ob(T::Integer)),
+    //           T::SomeMap(ob(T::String), ob(T::Integer.union(T::Nil))));
+}
 
