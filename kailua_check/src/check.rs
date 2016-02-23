@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use std::borrow::Cow;
 
 use kailua_syntax::{Name, Str, Var, Params, E, Exp, UnOp, BinOp, FuncScope, SelfParam, S, Stmt, Block};
-use ty::{Builtin, Ty, T, Union, Unionable};
+use ty::{Builtin, Ty, T, Union, Lattice};
 use ty::flags::*;
-use env::{Error, CheckResult, TyInfo, Env, Scope, Context};
+use env::{Error, CheckResult, TyInfo, Env, Frame, Scope, Context};
 
 pub trait Options {
     fn require_block(&mut self, path: &[u8]) -> CheckResult<Block> {
@@ -330,17 +330,18 @@ impl<'env> Checker<'env> {
     fn visit_func_body(&mut self, selfinfo: Option<TyInfo>, params: &Params,
                        block: &[Stmt]) -> CheckResult<()> {
         let vainfo;
-        if params.1 {
+        if params.variadic {
             vainfo = Some(TyInfo::from(T::Dynamic));
         } else {
             vainfo = None;
         }
+        let frame = Frame { vararg: vainfo, returns: Box::new(T::Dynamic) };
 
-        let mut scope = self.scoped(Scope::new_function(vainfo));
+        let mut scope = self.scoped(Scope::new_function(frame));
         if let Some(selfinfo) = selfinfo {
             scope.env.add_local_var(&Name::from(&b"self"[..]), selfinfo);
         }
-        for param in &params.0 {
+        for param in &params.args {
             scope.env.add_local_var(param, TyInfo::from(T::Dynamic));
         }
         scope.visit_block(block)

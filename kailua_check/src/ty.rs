@@ -11,9 +11,10 @@ pub enum Builtin {
     Require,        // (fixed string) -> table & sideeffect
 }
 
-pub trait Unionable<Other = Self> {
+pub trait Lattice<Other = Self> {
     type Output;
     fn union(self, other: Other) -> Self::Output;
+    fn intersect(self, other: Other) -> Self::Output;
 }
 
 // used to create constraints for Self to Env
@@ -126,7 +127,7 @@ pub enum Numbers {
     All,
 }
 
-impl Unionable for Numbers {
+impl Lattice for Numbers {
     type Output = Numbers;
 
     fn union(self, other: Numbers) -> Numbers {
@@ -144,6 +145,26 @@ impl Unionable for Numbers {
                 a.extend(b.into_iter());
                 Numbers::SomeInt(a)
             }
+        }
+    }
+
+    fn intersect(self, other: Numbers) -> Numbers {
+        match (self, other) {
+            (Numbers::None, _) => Numbers::None,
+            (_, Numbers::None) => Numbers::None,
+
+            (Numbers::SomeInt(a), Numbers::SomeInt(b)) => {
+                let set: HashSet<i32> = a.intersection(&b).cloned().collect();
+                if set.is_empty() { Numbers::None } else { Numbers::SomeInt(set) }
+            }
+
+            (Numbers::SomeInt(set), _) => Numbers::SomeInt(set),
+            (_, Numbers::SomeInt(set)) => Numbers::SomeInt(set),
+
+            (Numbers::Int, _) => Numbers::Int,
+            (_, Numbers::Int) => Numbers::Int,
+
+            (Numbers::All, Numbers::All) => Numbers::All,
         }
     }
 }
@@ -171,7 +192,7 @@ pub enum Strings {
     All,
 }
 
-impl Unionable for Strings {
+impl Lattice for Strings {
     type Output = Strings;
 
     fn union(self, other: Strings) -> Strings {
@@ -186,6 +207,23 @@ impl Unionable for Strings {
                 a.extend(b.into_iter());
                 Strings::Some(a)
             }
+        }
+    }
+
+    fn intersect(self, other: Strings) -> Strings {
+        match (self, other) {
+            (Strings::None, _) => Strings::None,
+            (_, Strings::None) => Strings::None,
+
+            (Strings::Some(a), Strings::Some(b)) => {
+                let set: HashSet<Str> = a.intersection(&b).cloned().collect();
+                if set.is_empty() { Strings::None } else { Strings::Some(set) }
+            }
+
+            (Strings::Some(set), _) => Strings::Some(set),
+            (_, Strings::Some(set)) => Strings::Some(set),
+
+            (Strings::All, Strings::All) => Strings::All,
         }
     }
 }
@@ -215,7 +253,7 @@ pub enum Tables {
     All,
 }
 
-impl Unionable for Tables {
+impl Lattice for Tables {
     type Output = Tables;
 
     fn union(self, other: Tables) -> Tables {
@@ -311,6 +349,111 @@ impl Unionable for Tables {
                 Tables::Map(key1.union(Box::new(T::Integer)), value1.union(value2)),
         }
     }
+
+    fn intersect(self, other: Tables) -> Tables {
+        fn intersect_tup_arr(fields: Vec<Ty>, value: Ty) -> Tables {
+            // XXX not sure what to do when some field resolves to _|_
+            Tables::Tuple(fields.into_iter().map(|t| t.intersect(value.clone())).collect())
+        }
+
+        fn intersect_rec_map(fields: HashMap<Str, Ty>, key: Ty, value: Ty) -> Tables {
+            fn merge<F: Fn(&Str) -> bool>(fields: HashMap<Str, Ty>, value: Ty, cond: F) -> Tables {
+                let mut newfields = HashMap::new();
+                for (k, ty) in fields {
+                    if cond(&k) { 
+                        let v = ty.intersect(value.clone());
+                        if !v.is_none() { newfields.insert(k, v); }
+                    }
+                }
+                Tables::Record(newfields)
+            }
+
+            let key = Union::from(*key);
+            if key.has_dynamic {
+                merge(fields, value, |_| true)
+            } else {
+                match key.strings {
+                    Strings::None => Tables::Record(HashMap::new()),
+                    Strings::Some(ref set) => merge(fields, value, |k| set.contains(k)),
+                    Strings::All => merge(fields, value, |_| true),
+                }
+            }
+        }
+
+        fn intersect_tup_map(fields: Vec<Ty>, key: Ty, value: Ty) -> Tables {
+            fn merge<F: Fn(i32) -> bool>(fields: Vec<Ty>, value: Ty, cond: F) -> Tables {
+                let mut newfields = Vec::new();
+                for (k, ty) in fields.into_iter().enumerate() {
+                    if cond(k as i32) { 
+                        newfields.push(ty.intersect(value.clone()));
+                    } else {
+                        newfields.push(Box::new(T::None));
+                    }
+                }
+                Tables::Tuple(newfields)
+            };
+
+            let key = Union::from(*key);
+            if key.has_dynamic {
+                merge(fields, value, |_| true)
+            } else {
+                match key.numbers {
+                    Numbers::None => Tables::Tuple(Vec::new()),
+                    Numbers::SomeInt(ref set) => merge(fields, value, |k| set.contains(&k)),
+                    Numbers::Int | Numbers::All => merge(fields, value, |_| true),
+                }
+            }
+        }
+
+        match (self, other) {
+            (Tables::None, _) => Tables::None,
+            (_, Tables::None) => Tables::None,
+
+            (Tables::All, tab) => tab,
+            (tab, Tables::All) => tab,
+
+            (Tables::Record(mut fields1), Tables::Record(fields2)) => {
+                for (k, v2) in fields2 {
+                    if let Some(v1) = fields1.remove(&k) {
+                        fields1.insert(k, v1.intersect(v2));
+                    }
+                }
+                Tables::Record(fields1)
+            },
+
+            (Tables::Record(_), Tables::Tuple(_)) => Tables::Record(HashMap::new()),
+            (Tables::Tuple(_), Tables::Record(_)) => Tables::Record(HashMap::new()),
+
+            (Tables::Record(_), Tables::Array(_)) => Tables::Record(HashMap::new()),
+            (Tables::Array(_), Tables::Record(_)) => Tables::Record(HashMap::new()),
+
+            (Tables::Record(fields), Tables::Map(key, value)) => intersect_rec_map(fields, key, value),
+            (Tables::Map(key, value), Tables::Record(fields)) => intersect_rec_map(fields, key, value),
+
+            (Tables::Tuple(fields1), Tables::Tuple(fields2)) => {
+                let tys = fields1.into_iter().zip(fields2.into_iter());
+                Tables::Tuple(tys.map(|(lty, rty)| lty.intersect(rty)).collect())
+            },
+
+            (Tables::Tuple(fields), Tables::Array(value)) =>
+                intersect_tup_arr(fields, value),
+            (Tables::Array(value), Tables::Tuple(fields)) =>
+                intersect_tup_arr(fields, value),
+
+            (Tables::Tuple(fields), Tables::Map(key, value)) => intersect_tup_map(fields, key, value),
+            (Tables::Map(key, value), Tables::Tuple(fields)) => intersect_tup_map(fields, key, value),
+
+            (Tables::Array(value1), Tables::Array(value2)) => Tables::Array(value1.intersect(value2)),
+
+            (Tables::Map(key1, value1), Tables::Map(key2, value2)) =>
+                Tables::Map(key1.intersect(key2), value1.intersect(value2)),
+
+            (Tables::Array(value1), Tables::Map(key2, value2)) =>
+                Tables::Map(key2.intersect(Box::new(T::Integer)), value1.intersect(value2)),
+            (Tables::Map(key1, value1), Tables::Array(value2)) =>
+                Tables::Map(key1.intersect(Box::new(T::Integer)), value1.intersect(value2)),
+        }
+    }
 }
 
 impl PartialEq for Tables {
@@ -363,7 +506,7 @@ impl Functions {
     }
 }
 
-impl Unionable for Functions {
+impl Lattice for Functions {
     type Output = Functions;
 
     fn union(self, other: Functions) -> Functions {
@@ -377,6 +520,28 @@ impl Unionable for Functions {
             (Functions::Some(mut a), Functions::Some(b)) => {
                 a.extend(b.into_iter());
                 Functions::Some(a)
+            }
+        }
+    }
+
+    fn intersect(self, other: Functions) -> Functions {
+        match (self, other) {
+            (Functions::None, _) => Functions::None,
+            (_, Functions::None) => Functions::None,
+
+            (Functions::All, set) => set,
+            (set, Functions::All) => set,
+
+            (Functions::Some(a), Functions::Some(b)) => {
+                let mut set = Vec::new();
+                for i in &a {
+                    for j in &b {
+                        let mut ij = i.clone();
+                        ij.extend(j.iter().cloned());
+                        set.push(ij);
+                    }
+                }
+                Functions::Some(set)
             }
         }
     }
@@ -432,6 +597,7 @@ impl Union {
 
         match ty {
             T::Dynamic => { u.has_dynamic = true; }
+            T::None    => {}
             T::Nil     => { u.has_nil = true; }
             T::Boolean => { u.has_true = true; u.has_false = true; }
             T::True    => { u.has_true = true; }
@@ -500,27 +666,35 @@ impl Union {
         }
         match self.numbers {
             Numbers::None => {},
-            Numbers::SomeInt(ref set) if set.len() == 1 => {
-                let &v = set.iter().next().unwrap();
-                try!(f(T::SomeInteger(v)))
+            Numbers::SomeInt(ref set) => match set.len() {
+                0 => {},
+                1 => {
+                    let &v = set.iter().next().unwrap();
+                    try!(f(T::SomeInteger(v)))
+                },
+                _ => try!(f(T::SomeIntegers(Cow::Borrowed(set)))),
             },
-            Numbers::SomeInt(ref set) => try!(f(T::SomeIntegers(Cow::Borrowed(set)))),
             Numbers::Int => try!(f(T::Integer)),
             Numbers::All => try!(f(T::Number)),
         }
         match self.strings {
             Strings::None => {},
-            Strings::Some(ref set) if set.len() == 1 => {
-                let s = set.iter().next().unwrap();
-                try!(f(T::SomeString(Cow::Borrowed(s))))
+            Strings::Some(ref set) => match set.len() {
+                0 => {},
+                1 => {
+                    let s = set.iter().next().unwrap();
+                    try!(f(T::SomeString(Cow::Borrowed(s))))
+                },
+                _ => try!(f(T::SomeStrings(Cow::Borrowed(set)))),
             },
-            Strings::Some(ref set) => try!(f(T::SomeStrings(Cow::Borrowed(set)))),
             Strings::All => try!(f(T::String)),
         }
         match self.tables {
             Tables::None => {},
-            Tables::Record(ref fields) => try!(f(T::SomeRecord(Cow::Borrowed(fields)))),
-            Tables::Tuple(ref fields) => try!(f(T::SomeTuple(Cow::Borrowed(fields)))),
+            Tables::Record(ref fields) =>
+                if !fields.is_empty() { try!(f(T::SomeRecord(Cow::Borrowed(fields)))); },
+            Tables::Tuple(ref fields) =>
+                if !fields.is_empty() { try!(f(T::SomeTuple(Cow::Borrowed(fields)))); },
             Tables::Array(ref t) => try!(f(T::SomeArray(Cow::Borrowed(t)))),
             Tables::Map(ref k, ref v) => try!(f(T::SomeMap(Cow::Borrowed(k), Cow::Borrowed(v)))),
             Tables::All => try!(f(T::Table)),
@@ -546,7 +720,7 @@ impl Union {
                 Ok(())
             });
             if ret.is_ok() {
-                Some(single.expect("Union is empty").into_send())
+                Some(single.unwrap_or(T::None).into_send())
             } else {
                 None
             }
@@ -573,7 +747,7 @@ impl Union {
     }
 }
 
-impl Unionable for Union {
+impl Lattice for Union {
     type Output = Union;
 
     fn union(mut self, other: Union) -> Union {
@@ -585,6 +759,18 @@ impl Unionable for Union {
         self.strings      = self.strings.union(other.strings);
         self.tables       = self.tables.union(other.tables);
         self.functions    = self.functions.union(other.functions);
+        self
+    }
+
+    fn intersect(mut self, other: Union) -> Union {
+        self.has_dynamic &= other.has_dynamic;
+        self.has_nil     &= other.has_nil;
+        self.has_true    &= other.has_true;
+        self.has_false   &= other.has_false;
+        self.numbers      = self.numbers.intersect(other.numbers);
+        self.strings      = self.strings.intersect(other.strings);
+        self.tables       = self.tables.intersect(other.tables);
+        self.functions    = self.functions.intersect(other.functions);
         self
     }
 }
@@ -609,6 +795,7 @@ impl fmt::Debug for Union {
 #[derive(Clone, PartialEq)]
 pub enum T<'a> {
     Dynamic,                            // ?
+    None,                               // (bottom)
     Nil,                                // nil
     Boolean,                            // boolean
     True,                               // true
@@ -658,6 +845,19 @@ impl<'a> T<'a> {
         }
     }
 
+    pub fn is_none(&self) -> bool {
+        match *self {
+            T::None => true,
+            T::SomeIntegers(ref set) => set.is_empty(),
+            T::SomeStrings(ref set) => set.is_empty(),
+            T::SomeRecord(ref fields) => fields.is_empty(),
+            T::SomeTuple(ref fields) => fields.is_empty(),
+            T::SomeFunction(ref funcs) => funcs.is_empty(),
+            T::Union(ref u) => u.flags() == T_NONE,
+            _ => false,
+        }
+    }
+
     pub fn is_integral(&self) -> bool {
         match *self {
             T::Dynamic | T::Integer | T::SomeInteger(..) | T::SomeIntegers(..) => true,
@@ -703,6 +903,7 @@ impl<'a> T<'a> {
     pub fn into_send(self) -> T<'static> {
         match self {
             T::Dynamic  => T::Dynamic,
+            T::None     => T::None,
             T::Nil      => T::Nil,
             T::Boolean  => T::Boolean,
             T::True     => T::True,
@@ -731,7 +932,7 @@ impl<'a> T<'a> {
     }
 }
 
-impl<'a, 'b> Unionable<T<'b>> for T<'a> {
+impl<'a, 'b> Lattice<T<'b>> for T<'a> {
     type Output = T<'static>;
 
     fn union(self, other: T<'b>) -> T<'static> {
@@ -739,6 +940,9 @@ impl<'a, 'b> Unionable<T<'b>> for T<'a> {
             // dynamic eclipses everything else
             (T::Dynamic, _) => T::Dynamic,
             (_, T::Dynamic) => T::Dynamic,
+
+            (T::None, ty) => ty.into_send(),
+            (ty, T::None) => ty.into_send(),
 
             // A | A == A
             (T::Nil,      T::Nil)      => T::Nil,
@@ -752,12 +956,35 @@ impl<'a, 'b> Unionable<T<'b>> for T<'a> {
             (lhs, rhs) => Union::from(lhs).union(Union::from(rhs)).simplify(),
         }
     }
+
+    fn intersect(self, other: T<'b>) -> T<'static> {
+        match (self, other) {
+            // dynamic eclipses everything else
+            (T::Dynamic, _) => T::Dynamic,
+            (_, T::Dynamic) => T::Dynamic,
+
+            (T::None, ty) => ty.into_send(),
+            (ty, T::None) => ty.into_send(),
+
+            // A & A == A
+            (T::Nil,      T::Nil)      => T::Nil,
+            (T::Boolean,  T::Boolean)  => T::Boolean,
+            (T::Number,   T::Number)   => T::Number,
+            (T::String,   T::String)   => T::String,
+            (T::Table,    T::Table)    => T::Table,
+            (T::Function, T::Function) => T::Function,
+
+            // for everything else, convert to the "common" format
+            (lhs, rhs) => Union::from(lhs).intersect(Union::from(rhs)).simplify(),
+        }
+    }
 }
 
 impl<'a> fmt::Debug for T<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             T::Dynamic           => write!(f, "?"),
+            T::None              => write!(f, "bottom"),
             T::Nil               => write!(f, "nil"),
             T::Boolean           => write!(f, "boolean"),
             T::True              => write!(f, "true"),
@@ -826,11 +1053,15 @@ impl<'a> From<K> for T<'a> { fn from(x: K) -> T<'a> { T::from(&x) } }
 
 pub type Ty = Box<T<'static>>;
 
-impl<'a, 'b> Unionable<Box<T<'b>>> for Box<T<'a>> {
+impl<'a, 'b> Lattice<Box<T<'b>>> for Box<T<'a>> {
     type Output = Ty;
 
     fn union(self, other: Box<T<'b>>) -> Ty {
         Box::new((*self).union(*other))
+    }
+
+    fn intersect(self, other: Box<T<'b>>) -> Ty {
+        Box::new((*self).intersect(*other))
     }
 }
 

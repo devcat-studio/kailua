@@ -36,10 +36,10 @@ fn test_parse() {
     assert_eq!(test("f(2^3^4)"), "[Void(`f`((2 ^ (3 ^ 4))))]");
     assert_eq!(test("f'oo'"), "[Void(`f`(\"oo\"))]");
     assert_eq!(test("f{a=1,[3.1]=4e5;[=[[[]]]=],}"),
-               "[Void(`f`(Table([(Some(`a`), 1), \
+               "[Void(`f`(Table([(Some(\"a\"), 1), \
                                  (Some(3.1), 400000), \
                                  (None, \"[[]]\")])))]");
-    assert_eq!(test("f{a=a, a}"), "[Void(`f`(Table([(Some(`a`), `a`), (None, `a`)])))]");
+    assert_eq!(test("f{a=a, a}"), "[Void(`f`(Table([(Some(\"a\"), `a`), (None, `a`)])))]");
     assert_eq!(test("--[a]\ndo end--]]"), "[Do([])]");
     assert_eq!(test("--[[a]\ndo end--]]"), "[]");
     assert_eq!(test("--#\ndo end"), "[Do([])]");

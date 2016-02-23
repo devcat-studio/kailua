@@ -50,9 +50,14 @@ fn test_check() {
     assert_ok!("local p = 3 + 4");
     assert_err!("local p = 3 + 'foo'");
     assert_err!("local p = true + 7");
-    assert_ok!("local p = ({})[3]");
-    assert_ok!("local p = ({}):hello()");
-    assert_err!("local p = (function() end)[3]");
+    assert_err!("local p = ({})[3]");
+    assert_ok!("local p = ({[3] = 4})[3]");
+    assert_err!("local p = ({[2] = 4})[3]");
+    assert_err!("local p = ({}).a");
+    assert_ok!("local p = ({a = 4}).a");
+    assert_err!("local p = ({a = 4}).b");
+    assert_ok!("local p = ({}):hello()"); // XXX
+    assert_err!("local p = (function() end)[3]"); // XXX
     //assert_ok!("local f
     //            f = 'hello?'");
     assert_ok!("local f = function() end

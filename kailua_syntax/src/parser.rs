@@ -306,17 +306,16 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
     }
 
     fn parse_func_body(&mut self) -> ParseResult<(Params, Block)> {
-        let mut names = Vec::new();
-        let mut varargs = false;
+        let mut params = Params { args: Vec::new(), variadic: false };
 
         try!(self.expect(Punct::LParen));
         match self.read() {
             Tok::Punct(Punct::DotDotDot) => {
-                varargs = true;
+                params.variadic = true;
                 try!(self.try_parse_kailua_type_spec());
             }
             Tok::Name(name) => {
-                names.push(name.into());
+                params.args.push(name.into());
                 try!(self.try_parse_kailua_type_spec());
                 while self.lookahead(Punct::Comma) {
                     self.read();
@@ -324,10 +323,10 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                     if self.lookahead(Punct::DotDotDot) {
                         self.read();
                         try!(self.try_parse_kailua_type_spec());
-                        varargs = true;
+                        params.variadic = true;
                         break;
                     } else {
-                        names.push(try!(self.parse_name()));
+                        params.args.push(try!(self.parse_name()));
                         try!(self.try_parse_kailua_type_spec());
                     }
                 }
@@ -344,7 +343,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
         let block = try!(self.parse_block());
         try!(self.expect(Keyword::End));
 
-        Ok((Params(names, varargs), block))
+        Ok((params, block))
     }
 
     fn parse_table(&mut self) -> ParseResult<Vec<(Option<Exp>, Exp)>> {

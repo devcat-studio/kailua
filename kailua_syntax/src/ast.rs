@@ -69,14 +69,17 @@ impl From<Name> for Var {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct Params(pub Vec<Name>, pub bool /*varargs?*/);
+pub struct Params {
+    pub args: Vec<Name>,
+    pub variadic: bool,
+}
 
 impl fmt::Debug for Params {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.1 {
+        if self.variadic {
             try!(write!(f, "["));
             let mut first = true;
-            for name in &self.0 {
+            for name in &self.args {
                 if first { first = false; } else { try!(write!(f, ", ")); }
                 try!(write!(f, "{:?}", name));
             }
@@ -84,7 +87,7 @@ impl fmt::Debug for Params {
             try!(write!(f, "...]"));
             Ok(())
         } else {
-            fmt::Debug::fmt(&self.0, f)
+            fmt::Debug::fmt(&self.args, f)
         }
     }
 }

@@ -36,18 +36,23 @@ impl fmt::Debug for TyInfo {
     }
 }
 
+pub struct Frame {
+    pub vararg: Option<TyInfo>,
+    pub returns: Ty,
+}
+
 pub struct Scope {
     names: HashMap<Name, TyInfo>,
-    vararg: Option<Option<TyInfo>>,
+    frame: Option<Frame>,
 }
 
 impl Scope {
     pub fn new() -> Scope {
-        Scope { names: HashMap::new(), vararg: None }
+        Scope { names: HashMap::new(), frame: None }
     }
 
-    pub fn new_function(vararg: Option<TyInfo>) -> Scope {
-        Scope { names: HashMap::new(), vararg: Some(vararg) }
+    pub fn new_function(frame: Frame) -> Scope {
+        Scope { names: HashMap::new(), frame: Some(frame) }
     }
 
     pub fn get<'a>(&'a self, name: &Name) -> Option<&'a TyInfo> {
@@ -58,12 +63,12 @@ impl Scope {
         self.names.get_mut(name)
     }
 
-    pub fn get_vararg<'a>(&'a self) -> Option<Option<&'a TyInfo>> {
-        self.vararg.as_ref().map(|va| va.as_ref())
+    pub fn get_frame<'a>(&'a self) -> Option<&'a Frame> {
+        self.frame.as_ref()
     }
 
-    pub fn get_vararg_mut<'a>(&'a mut self) -> Option<Option<&'a mut TyInfo>> {
-        self.vararg.as_mut().map(|va| va.as_mut())
+    pub fn get_frame_mut<'a>(&'a mut self) -> Option<&'a mut Frame> {
+        self.frame.as_mut()
     }
 
     pub fn put(&mut self, name: Name, info: TyInfo) {
@@ -216,20 +221,26 @@ impl<'ctx> Env<'ctx> {
         None
     }
 
-    pub fn get_vararg<'a>(&'a self) -> Option<&'a TyInfo> {
+    pub fn get_frame<'a>(&'a self) -> Option<&'a Frame> {
         for scope in self.scopes.iter().rev() {
-            if let Some(vainfo) = scope.get_vararg() { return vainfo; }
+            if let Some(frame) = scope.get_frame() { return Some(frame); }
         }
-        if let Some(vainfo) = self.context.global_scope().get_vararg() { return vainfo; }
-        None
+        self.context.global_scope().get_frame()
+    }
+
+    pub fn get_frame_mut<'a>(&'a mut self) -> Option<&'a mut Frame> {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(frame) = scope.get_frame_mut() { return Some(frame); }
+        }
+        self.context.global_scope_mut().get_frame_mut()
+    }
+
+    pub fn get_vararg<'a>(&'a self) -> Option<&'a TyInfo> {
+        self.get_frame().and_then(|f| f.vararg.as_ref())
     }
 
     pub fn get_vararg_mut<'a>(&'a mut self) -> Option<&'a mut TyInfo> {
-        for scope in self.scopes.iter_mut().rev() {
-            if let Some(vainfo) = scope.get_vararg_mut() { return vainfo; }
-        }
-        if let Some(vainfo) = self.context.global_scope_mut().get_vararg_mut() { return vainfo; }
-        None
+        self.get_frame_mut().and_then(|f| f.vararg.as_mut())
     }
 
     pub fn add_local_var(&mut self, name: &Name, info: TyInfo) {
