@@ -107,6 +107,8 @@ impl<'env> Checker<'env> {
 
         // the type can be indexed, try to find the resulting type out
         match *ety {
+            T::EmptyTable => return Err(format!("tried to index an empty table {:?}", ety)),
+
             T::SomeRecord(ref fields) => {
                 if !kty.is_stringy() {
                     return Err(format!("tried to index {:?} with non-string {:?}", ety, kty));
@@ -469,7 +471,7 @@ impl<'env> Checker<'env> {
 
                 // if the table remains intact, it is an empty record
                 let tabty = match tab {
-                    Tab::Empty => T::SomeRecord(Cow::Owned(HashMap::new())),
+                    Tab::Empty => T::EmptyTable,
                     Tab::Record(fields) => T::SomeRecord(Cow::Owned(fields)),
                     Tab::Tuple(fields) => T::SomeTuple(Cow::Owned(fields)),
                     Tab::Array(t) => T::SomeArray(Cow::Owned(t)),

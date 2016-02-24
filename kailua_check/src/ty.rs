@@ -246,6 +246,7 @@ impl PartialEq for Strings {
 #[derive(Clone)]
 pub enum Tables {
     None,
+    Empty,
     Record(HashMap<Str, Ty>),
     Tuple(Vec<Ty>),
     Array(Ty),
@@ -294,6 +295,9 @@ impl Lattice for Tables {
         match (self, other) {
             (Tables::None, tab) => tab,
             (tab, Tables::None) => tab,
+
+            (Tables::Empty, tab) => tab,
+            (tab, Tables::Empty) => tab,
 
             (Tables::All, _) => Tables::All,
             (_, Tables::All) => Tables::All,
@@ -352,8 +356,13 @@ impl Lattice for Tables {
 
     fn intersect(self, other: Tables) -> Tables {
         fn intersect_tup_arr(fields: Vec<Ty>, value: Ty) -> Tables {
-            // XXX not sure what to do when some field resolves to _|_
-            Tables::Tuple(fields.into_iter().map(|t| t.intersect(value.clone())).collect())
+            let mut newfields = Vec::new();
+            for ty in fields {
+                let v = ty.intersect(value.clone());
+                if v.is_none() { return Tables::Empty; }
+                newfields.push(v);
+            }
+            Tables::Tuple(newfields)
         }
 
         fn intersect_rec_map(fields: HashMap<Str, Ty>, key: Ty, value: Ty) -> Tables {
@@ -373,7 +382,7 @@ impl Lattice for Tables {
                 merge(fields, value, |_| true)
             } else {
                 match key.strings {
-                    Strings::None => Tables::Record(HashMap::new()),
+                    Strings::None => Tables::Empty,
                     Strings::Some(ref set) => merge(fields, value, |k| set.contains(k)),
                     Strings::All => merge(fields, value, |_| true),
                 }
@@ -385,7 +394,8 @@ impl Lattice for Tables {
                 let mut newfields = Vec::new();
                 for (k, ty) in fields.into_iter().enumerate() {
                     if cond(k as i32) { 
-                        newfields.push(ty.intersect(value.clone()));
+                        let v = ty.intersect(value.clone());
+                        if !v.is_none() { newfields.push(v); }
                     } else {
                         newfields.push(Box::new(T::None));
                     }
@@ -398,9 +408,21 @@ impl Lattice for Tables {
                 merge(fields, value, |_| true)
             } else {
                 match key.numbers {
-                    Numbers::None => Tables::Tuple(Vec::new()),
+                    Numbers::None => Tables::Empty,
                     Numbers::SomeInt(ref set) => merge(fields, value, |k| set.contains(&k)),
                     Numbers::Int | Numbers::All => merge(fields, value, |_| true),
+                }
+            }
+        }
+
+        fn intersect_arr_map(elem: Ty, key: Ty, value: Ty) -> Tables {
+            let key = Union::from(*key);
+            if key.has_dynamic {
+                Tables::Array(elem.intersect(value))
+            } else {
+                match key.numbers {
+                    Numbers::None | Numbers::SomeInt(..) => Tables::Empty,
+                    Numbers::Int | Numbers::All => Tables::Array(elem.intersect(value)),
                 }
             }
         }
@@ -409,36 +431,44 @@ impl Lattice for Tables {
             (Tables::None, _) => Tables::None,
             (_, Tables::None) => Tables::None,
 
+            (Tables::Empty, _) => Tables::Empty,
+            (_, Tables::Empty) => Tables::Empty,
+
             (Tables::All, tab) => tab,
             (tab, Tables::All) => tab,
 
             (Tables::Record(mut fields1), Tables::Record(fields2)) => {
+                let mut fields = HashMap::new();
                 for (k, v2) in fields2 {
                     if let Some(v1) = fields1.remove(&k) {
-                        fields1.insert(k, v1.intersect(v2));
+                        let v = v1.intersect(v2);
+                        if !v.is_none() { fields.insert(k, v); }
                     }
                 }
-                Tables::Record(fields1)
+                Tables::Record(fields)
             },
 
-            (Tables::Record(_), Tables::Tuple(_)) => Tables::Record(HashMap::new()),
-            (Tables::Tuple(_), Tables::Record(_)) => Tables::Record(HashMap::new()),
+            (Tables::Record(_), Tables::Tuple(_)) => Tables::Empty,
+            (Tables::Tuple(_), Tables::Record(_)) => Tables::Empty,
 
-            (Tables::Record(_), Tables::Array(_)) => Tables::Record(HashMap::new()),
-            (Tables::Array(_), Tables::Record(_)) => Tables::Record(HashMap::new()),
+            (Tables::Record(_), Tables::Array(_)) => Tables::Empty,
+            (Tables::Array(_), Tables::Record(_)) => Tables::Empty,
 
             (Tables::Record(fields), Tables::Map(key, value)) => intersect_rec_map(fields, key, value),
             (Tables::Map(key, value), Tables::Record(fields)) => intersect_rec_map(fields, key, value),
 
             (Tables::Tuple(fields1), Tables::Tuple(fields2)) => {
-                let tys = fields1.into_iter().zip(fields2.into_iter());
-                Tables::Tuple(tys.map(|(lty, rty)| lty.intersect(rty)).collect())
+                let mut fields = Vec::new();
+                for (ty1, ty2) in fields1.into_iter().zip(fields2.into_iter()) {
+                    let ty = ty1.intersect(ty2);
+                    if ty.is_none() { return Tables::Empty; }
+                    fields.push(ty);
+                }
+                Tables::Tuple(fields)
             },
 
-            (Tables::Tuple(fields), Tables::Array(value)) =>
-                intersect_tup_arr(fields, value),
-            (Tables::Array(value), Tables::Tuple(fields)) =>
-                intersect_tup_arr(fields, value),
+            (Tables::Tuple(fields), Tables::Array(value)) => intersect_tup_arr(fields, value),
+            (Tables::Array(value), Tables::Tuple(fields)) => intersect_tup_arr(fields, value),
 
             (Tables::Tuple(fields), Tables::Map(key, value)) => intersect_tup_map(fields, key, value),
             (Tables::Map(key, value), Tables::Tuple(fields)) => intersect_tup_map(fields, key, value),
@@ -448,10 +478,8 @@ impl Lattice for Tables {
             (Tables::Map(key1, value1), Tables::Map(key2, value2)) =>
                 Tables::Map(key1.intersect(key2), value1.intersect(value2)),
 
-            (Tables::Array(value1), Tables::Map(key2, value2)) =>
-                Tables::Map(key2.intersect(Box::new(T::Integer)), value1.intersect(value2)),
-            (Tables::Map(key1, value1), Tables::Array(value2)) =>
-                Tables::Map(key1.intersect(Box::new(T::Integer)), value1.intersect(value2)),
+            (Tables::Array(value1), Tables::Map(key2, value2)) => intersect_arr_map(value1, key2, value2),
+            (Tables::Map(key1, value1), Tables::Array(value2)) => intersect_arr_map(value2, key1, value1),
         }
     }
 }
@@ -461,14 +489,19 @@ impl PartialEq for Tables {
         match (self, other) {
             (&Tables::None, &Tables::None) => true,
             (&Tables::All, &Tables::All) => true,
+            (&Tables::Empty, &Tables::Empty) => true,
 
             (&Tables::Array(ref a), &Tables::Array(ref b)) => *a == *b,
             (&Tables::Map(ref ak, ref av), &Tables::Map(ref bk, ref bv)) => *ak == *bk && *av == *bv,
 
             (&Tables::Tuple(ref a), &Tables::Tuple(ref b)) => *a == *b,
             (&Tables::Tuple(ref a), &Tables::Record(ref b)) => a.is_empty() && b.is_empty(),
+            (&Tables::Tuple(ref a), &Tables::Empty) => a.is_empty(),
             (&Tables::Record(ref a), &Tables::Tuple(ref b)) => a.is_empty() && b.is_empty(),
             (&Tables::Record(ref a), &Tables::Record(ref b)) => *a == *b,
+            (&Tables::Record(ref a), &Tables::Empty) => a.is_empty(),
+            (&Tables::Empty, &Tables::Tuple(ref b)) => b.is_empty(),
+            (&Tables::Empty, &Tables::Record(ref b)) => b.is_empty(),
 
             (_, _) => false,
         }
@@ -613,6 +646,7 @@ impl Union {
             T::SomeStrings(set) => { u.strings = Strings::Some(set.into_owned()); }
 
             T::Table              => { u.tables = Tables::All; }
+            T::EmptyTable         => { u.tables = Tables::Empty; }
             T::SomeRecord(fields) => { u.tables = Tables::Record(fields.into_owned()); }
             T::SomeTuple(fields)  => { u.tables = Tables::Tuple(fields.into_owned()); }
             T::SomeArray(t)       => { u.tables = Tables::Array(t.into_owned()); }
@@ -691,10 +725,11 @@ impl Union {
         }
         match self.tables {
             Tables::None => {},
-            Tables::Record(ref fields) =>
-                if !fields.is_empty() { try!(f(T::SomeRecord(Cow::Borrowed(fields)))); },
-            Tables::Tuple(ref fields) =>
-                if !fields.is_empty() { try!(f(T::SomeTuple(Cow::Borrowed(fields)))); },
+            Tables::Empty => try!(f(T::EmptyTable)),
+            Tables::Record(ref fields) if fields.is_empty() => try!(f(T::EmptyTable)),
+            Tables::Record(ref fields) => try!(f(T::SomeRecord(Cow::Borrowed(fields)))),
+            Tables::Tuple(ref fields) if fields.is_empty() => try!(f(T::EmptyTable)),
+            Tables::Tuple(ref fields) => try!(f(T::SomeTuple(Cow::Borrowed(fields)))),
             Tables::Array(ref t) => try!(f(T::SomeArray(Cow::Borrowed(t)))),
             Tables::Map(ref k, ref v) => try!(f(T::SomeMap(Cow::Borrowed(k), Cow::Borrowed(v)))),
             Tables::All => try!(f(T::Table)),
@@ -808,6 +843,7 @@ pub enum T<'a> {
     SomeString(Cow<'a, Str>),           // string in {...}
     SomeStrings(Cow<'a, HashSet<Str>>), // string in {...}
     Table,                              // table
+    EmptyTable,                         // {}
     SomeRecord(Cow<'a, HashMap<Str, Ty>>), // { a = t, b = u, ... }
     SomeTuple(Cow<'a, Vec<Ty>>),        // { t1, t2, t3, ... } XXX Cow<'a, [Ty]> overflows?
     SomeArray(Cow<'a, Ty>),             // { t } XXX conflicting syntax
@@ -850,8 +886,6 @@ impl<'a> T<'a> {
             T::None => true,
             T::SomeIntegers(ref set) => set.is_empty(),
             T::SomeStrings(ref set) => set.is_empty(),
-            T::SomeRecord(ref fields) => fields.is_empty(),
-            T::SomeTuple(ref fields) => fields.is_empty(),
             T::SomeFunction(ref funcs) => funcs.is_empty(),
             T::Union(ref u) => u.flags() == T_NONE,
             _ => false,
@@ -886,7 +920,8 @@ impl<'a> T<'a> {
     pub fn is_tabular(&self) -> bool {
         match *self {
             T::Dynamic | T::String | T::SomeString(..) | T::SomeStrings(..) |
-                T::Table | T::SomeRecord(..) | T::SomeTuple(..) | T::SomeArray(..) | T::SomeMap(..) => true,
+                T::Table | T::EmptyTable | T::SomeRecord(..) | T::SomeTuple(..) |
+                T::SomeArray(..) | T::SomeMap(..) => true,
             T::Union(ref u) => u.flags().is_tabular(),
             _ => false,
         }
@@ -902,17 +937,18 @@ impl<'a> T<'a> {
 
     pub fn into_send(self) -> T<'static> {
         match self {
-            T::Dynamic  => T::Dynamic,
-            T::None     => T::None,
-            T::Nil      => T::Nil,
-            T::Boolean  => T::Boolean,
-            T::True     => T::True,
-            T::False    => T::False,
-            T::Number   => T::Number,
-            T::Integer  => T::Integer,
-            T::String   => T::String,
-            T::Table    => T::Table,
-            T::Function => T::Function,
+            T::Dynamic    => T::Dynamic,
+            T::None       => T::None,
+            T::Nil        => T::Nil,
+            T::Boolean    => T::Boolean,
+            T::True       => T::True,
+            T::False      => T::False,
+            T::Number     => T::Number,
+            T::Integer    => T::Integer,
+            T::String     => T::String,
+            T::Table      => T::Table,
+            T::EmptyTable => T::EmptyTable,
+            T::Function   => T::Function,
 
             T::SomeInteger(v) => T::SomeInteger(v),
             T::SomeIntegers(set) => T::SomeIntegers(Cow::Owned(set.into_owned())),
@@ -945,12 +981,13 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (ty, T::None) => ty.into_send(),
 
             // A | A == A
-            (T::Nil,      T::Nil)      => T::Nil,
-            (T::Boolean,  T::Boolean)  => T::Boolean,
-            (T::Number,   T::Number)   => T::Number,
-            (T::String,   T::String)   => T::String,
-            (T::Table,    T::Table)    => T::Table,
-            (T::Function, T::Function) => T::Function,
+            (T::Nil,        T::Nil)        => T::Nil,
+            (T::Boolean,    T::Boolean)    => T::Boolean,
+            (T::Number,     T::Number)     => T::Number,
+            (T::String,     T::String)     => T::String,
+            (T::Table,      T::Table)      => T::Table,
+            (T::EmptyTable, T::EmptyTable) => T::EmptyTable,
+            (T::Function,   T::Function)   => T::Function,
 
             // for everything else, convert to the "common" format
             (lhs, rhs) => Union::from(lhs).union(Union::from(rhs)).simplify(),
@@ -959,20 +996,20 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
 
     fn intersect(self, other: T<'b>) -> T<'static> {
         match (self, other) {
-            // dynamic eclipses everything else
-            (T::Dynamic, _) => T::Dynamic,
-            (_, T::Dynamic) => T::Dynamic,
+            (T::Dynamic, ty) => ty.into_send(),
+            (ty, T::Dynamic) => ty.into_send(),
 
-            (T::None, ty) => ty.into_send(),
-            (ty, T::None) => ty.into_send(),
+            (T::None, _) => T::None,
+            (_, T::None) => T::None,
 
             // A & A == A
-            (T::Nil,      T::Nil)      => T::Nil,
-            (T::Boolean,  T::Boolean)  => T::Boolean,
-            (T::Number,   T::Number)   => T::Number,
-            (T::String,   T::String)   => T::String,
-            (T::Table,    T::Table)    => T::Table,
-            (T::Function, T::Function) => T::Function,
+            (T::Nil,        T::Nil)        => T::Nil,
+            (T::Boolean,    T::Boolean)    => T::Boolean,
+            (T::Number,     T::Number)     => T::Number,
+            (T::String,     T::String)     => T::String,
+            (T::Table,      T::Table)      => T::Table,
+            (T::EmptyTable, T::EmptyTable) => T::EmptyTable,
+            (T::Function,   T::Function)   => T::Function,
 
             // for everything else, convert to the "common" format
             (lhs, rhs) => Union::from(lhs).intersect(Union::from(rhs)).simplify(),
@@ -984,7 +1021,7 @@ impl<'a> fmt::Debug for T<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             T::Dynamic           => write!(f, "?"),
-            T::None              => write!(f, "bottom"),
+            T::None              => write!(f, "<bottom>"),
             T::Nil               => write!(f, "nil"),
             T::Boolean           => write!(f, "boolean"),
             T::True              => write!(f, "true"),
@@ -995,6 +1032,7 @@ impl<'a> fmt::Debug for T<'a> {
             T::String            => write!(f, "string"),
             T::SomeString(ref s) => write!(f, "{:?}", s),
             T::Table             => write!(f, "table"),
+            T::EmptyTable        => write!(f, "{{}}"),
             T::Function          => write!(f, "function"),
 
             T::SomeIntegers(ref set) => {
@@ -1068,7 +1106,7 @@ impl<'a, 'b> Lattice<Box<T<'b>>> for Box<T<'a>> {
 impl From<Kind> for Ty { fn from(x: Kind) -> Ty { Box::new(From::from(*x)) } }
 
 #[test]
-fn test_union() {
+fn test_lattice() {
     macro_rules! hash {
         ($($k:ident = $v:expr),*) =>
             (vec![$((s(stringify!($k)), $v)),*].into_iter().collect::<HashMap<_,_>>())
@@ -1087,70 +1125,114 @@ fn test_union() {
     fn ob<'a, T: Clone>(x: T) -> Cow<'a, Box<T>> { Cow::Owned(Box::new(x)) }
     fn os<'a>(x: &str) -> Cow<'a, Str> { Cow::Owned(s(x)) }
 
-    macro_rules! check { ($l:expr, $r:expr, $res:expr) => (assert_eq!($l.union($r), $res)) }
+    macro_rules! check {
+        ($l:expr, $r:expr; $u:expr, $i:expr) => ({
+            let left = $l;
+            let right = $r;
+            let union = $u;
+            let intersect = $i;
+            let actualunion = left.clone().union(right.clone());
+            if actualunion != union {
+                panic!("{:?} | {:?} = expected {:?}, actual {:?}", left, right, union, actualunion);
+            }
+            let actualintersect = left.clone().intersect(right.clone());
+            if actualintersect != intersect {
+                panic!("{:?} & {:?} = expected {:?}, actual {:?}", left, right, intersect, actualintersect);
+            }
+        })
+    }
 
     // dynamic vs. everything else
-    check!(T::Dynamic, T::Dynamic, T::Dynamic);
-    check!(T::Dynamic, T::Integer, T::Dynamic);
-    check!(T::SomeTuple(ovec![b(T::Integer), b(T::Boolean)]), T::Dynamic, T::Dynamic);
+    check!(T::Dynamic, T::Dynamic; T::Dynamic, T::Dynamic);
+    check!(T::Dynamic, T::Integer; T::Dynamic, T::Integer);
+    check!(T::SomeTuple(ovec![b(T::Integer), b(T::Boolean)]), T::Dynamic;
+           T::Dynamic, T::SomeTuple(ovec![b(T::Integer), b(T::Boolean)]));
 
     // integer literals
-    check!(T::Integer, T::Number, T::Number);
-    check!(T::Number, T::Integer, T::Number);
-    check!(T::SomeInteger(3), T::SomeInteger(3), T::SomeInteger(3));
-    check!(T::SomeInteger(3), T::Number, T::Number);
-    check!(T::Integer, T::SomeInteger(3), T::Integer);
-    check!(T::SomeInteger(3), T::SomeInteger(4), T::SomeIntegers(oset![3, 4]));
-    check!(T::SomeIntegers(oset![3, 4]), T::SomeInteger(3), T::SomeIntegers(oset![3, 4]));
-    check!(T::SomeInteger(5), T::SomeIntegers(oset![3, 4]), T::SomeIntegers(oset![3, 4, 5]));
-    check!(T::SomeIntegers(oset![3, 4]), T::SomeIntegers(oset![5, 4, 7]),
-           T::SomeIntegers(oset![3, 4, 5, 7]));
+    check!(T::Integer, T::Number; T::Number, T::Integer);
+    check!(T::Number, T::Integer; T::Number, T::Integer);
+    check!(T::Number, T::Number; T::Number, T::Number);
+    check!(T::Integer, T::Integer; T::Integer, T::Integer);
+    check!(T::SomeInteger(3), T::SomeInteger(3); T::SomeInteger(3), T::SomeInteger(3));
+    check!(T::SomeInteger(3), T::Number; T::Number, T::SomeInteger(3));
+    check!(T::Integer, T::SomeInteger(3); T::Integer, T::SomeInteger(3));
+    check!(T::SomeInteger(3), T::SomeInteger(4); T::SomeIntegers(oset![3, 4]), T::None);
+    check!(T::SomeIntegers(oset![3, 4]), T::SomeInteger(3);
+           T::SomeIntegers(oset![3, 4]), T::SomeInteger(3));
+    check!(T::SomeInteger(5), T::SomeIntegers(oset![3, 4]);
+           T::SomeIntegers(oset![3, 4, 5]), T::None);
+    check!(T::SomeIntegers(oset![3, 4]), T::SomeIntegers(oset![5, 4, 7]);
+           T::SomeIntegers(oset![3, 4, 5, 7]), T::SomeInteger(4));
+    check!(T::SomeIntegers(oset![3, 4, 5]), T::SomeIntegers(oset![2, 3, 4]);
+           T::SomeIntegers(oset![2, 3, 4, 5]), T::SomeIntegers(oset![3, 4]));
 
     // string literals
-    check!(T::String, T::SomeString(os("hello")), T::String);
-    check!(T::SomeString(os("hello")), T::String, T::String);
-    check!(T::SomeString(os("hello")), T::SomeString(os("hello")), T::SomeString(os("hello")));
-    check!(T::SomeString(os("hello")), T::SomeString(os("goodbye")),
-           T::SomeStrings(oset![s("hello"), s("goodbye")]));
-    check!(T::SomeString(os("hello")), T::SomeStrings(oset![s("goodbye")]),
-           T::SomeStrings(oset![s("hello"), s("goodbye")]));
-    check!(T::SomeStrings(oset![s("hello"), s("goodbye")]), T::SomeString(os("goodbye")),
-           T::SomeStrings(oset![s("hello"), s("goodbye")]));
-    check!(T::SomeStrings(oset![s("hello"), s("goodbye")]), T::SomeStrings(oset![s("what"), s("goodbye")]),
-           T::SomeStrings(oset![s("hello"), s("goodbye"), s("what")]));
+    check!(T::String, T::SomeString(os("hello")); T::String, T::SomeString(os("hello")));
+    check!(T::SomeString(os("hello")), T::String; T::String, T::SomeString(os("hello")));
+    check!(T::SomeString(os("hello")), T::SomeString(os("hello"));
+           T::SomeString(os("hello")), T::SomeString(os("hello")));
+    check!(T::SomeString(os("hello")), T::SomeString(os("goodbye"));
+           T::SomeStrings(oset![s("hello"), s("goodbye")]), T::None);
+    check!(T::SomeString(os("hello")), T::SomeStrings(oset![s("goodbye")]);
+           T::SomeStrings(oset![s("hello"), s("goodbye")]), T::None);
+    check!(T::SomeStrings(oset![s("hello"), s("goodbye")]), T::SomeString(os("goodbye"));
+           T::SomeStrings(oset![s("hello"), s("goodbye")]), T::SomeString(os("goodbye")));
+    check!(T::SomeStrings(oset![s("hello"), s("goodbye")]), T::SomeStrings(oset![s("what"), s("goodbye")]);
+           T::SomeStrings(oset![s("hello"), s("goodbye"), s("what")]), T::SomeString(os("goodbye")));
+    check!(T::SomeStrings(oset![s("a"), s("b"), s("c")]), T::SomeStrings(oset![s("b"), s("c"), s("d")]);
+           T::SomeStrings(oset![s("a"), s("b"), s("c"), s("d")]), T::SomeStrings(oset![s("b"), s("c")]));
 
     // tables
-    check!(T::Table, T::SomeArray(ob(T::Integer)), T::Table);
-    check!(T::SomeArray(ob(T::Integer)), T::SomeArray(ob(T::Integer)), T::SomeArray(ob(T::Integer)));
-    check!(T::SomeArray(ob(T::SomeInteger(3))), T::SomeArray(ob(T::SomeInteger(4))),
-           T::SomeArray(ob(T::SomeIntegers(oset![3, 4]))));
+    check!(T::Table, T::SomeArray(ob(T::Integer)); T::Table, T::SomeArray(ob(T::Integer)));
+    check!(T::SomeArray(ob(T::Integer)), T::SomeArray(ob(T::Integer));
+           T::SomeArray(ob(T::Integer)), T::SomeArray(ob(T::Integer)));
+    check!(T::SomeArray(ob(T::SomeInteger(3))), T::SomeArray(ob(T::SomeInteger(4)));
+           T::SomeArray(ob(T::SomeIntegers(oset![3, 4]))), T::SomeArray(ob(T::None)));
+    check!(T::SomeTuple(ovec![b(T::Integer), b(T::String)]),
+           T::SomeTuple(ovec![b(T::Number), b(T::Dynamic), b(T::Boolean)]);
+           T::SomeTuple(ovec![b(T::Number), b(T::Dynamic), b(T::Boolean.union(T::Nil))]),
+           T::SomeTuple(ovec![b(T::Integer), b(T::String)]));
+    check!(T::SomeTuple(ovec![b(T::Integer), b(T::String)]),
+           T::SomeTuple(ovec![b(T::Number), b(T::Boolean), b(T::Dynamic)]);
+           T::SomeTuple(ovec![b(T::Number), b(T::String.union(T::Boolean)), b(T::Dynamic)]),
+           T::EmptyTable); // boolean & string = _|_, so no way to reconcile
     check!(T::SomeRecord(ohash![foo=b(T::Integer), bar=b(T::String)]), 
-           T::SomeRecord(ohash![quux=b(T::Boolean)]),
-           T::SomeRecord(ohash![foo=b(T::Integer), bar=b(T::String), quux=b(T::Boolean)]));
+           T::SomeRecord(ohash![quux=b(T::Boolean)]);
+           T::SomeRecord(ohash![foo=b(T::Integer), bar=b(T::String), quux=b(T::Boolean)]),
+           T::EmptyTable);
     check!(T::SomeRecord(ohash![foo=b(T::SomeInteger(3)), bar=b(T::String)]), 
-           T::SomeRecord(ohash![foo=b(T::SomeInteger(4))]),
-           T::SomeRecord(ohash![foo=b(T::SomeIntegers(oset![3, 4])), bar=b(T::String)]));
+           T::SomeRecord(ohash![foo=b(T::SomeInteger(4))]);
+           T::SomeRecord(ohash![foo=b(T::SomeIntegers(oset![3, 4])), bar=b(T::String)]),
+           T::EmptyTable);
+    check!(T::SomeRecord(ohash![foo=b(T::Integer), bar=b(T::Number), quux=b(T::SomeArray(ob(T::Dynamic)))]), 
+           T::SomeRecord(ohash![foo=b(T::Number), bar=b(T::String), quux=b(T::SomeArray(ob(T::Boolean)))]);
+           T::SomeRecord(ohash![foo=b(T::Number), bar=b(T::Number.union(T::String)),
+                                quux=b(T::SomeArray(ob(T::Dynamic)))]),
+           T::SomeRecord(ohash![foo=b(T::Integer), quux=b(T::SomeArray(ob(T::Boolean)))]));
     check!(T::SomeRecord(ohash![foo=b(T::SomeInteger(3)), bar=b(T::Number)]), 
-           T::SomeMap(ob(T::String), ob(T::Integer)),
-           T::SomeMap(ob(T::String), ob(T::Number)));
+           T::SomeMap(ob(T::String), ob(T::Integer));
+           T::SomeMap(ob(T::String), ob(T::Number)),
+           T::SomeRecord(ohash![foo=b(T::SomeInteger(3)), bar=b(T::Integer)]));
     check!(T::SomeMap(ob(T::SomeString(os("wat"))), ob(T::Integer)),
-           T::SomeMap(ob(T::String), ob(T::SomeInteger(42))),
-           T::SomeMap(ob(T::String), ob(T::Integer)));
-    check!(T::SomeArray(ob(T::Number)), T::SomeMap(ob(T::Dynamic), ob(T::Integer)),
-           T::SomeMap(ob(T::Dynamic), ob(T::Number)));
-    check!(T::SomeRecord(ohash![]), T::SomeArray(ob(T::Integer)),
-           T::SomeMap(ob(T::Integer), ob(T::Integer))); // a superset of T::SomeArray(ob(T::Integer))
+           T::SomeMap(ob(T::String), ob(T::SomeInteger(42)));
+           T::SomeMap(ob(T::String), ob(T::Integer)),
+           T::SomeMap(ob(T::SomeString(os("wat"))), ob(T::SomeInteger(42))));
+    check!(T::SomeArray(ob(T::Number)), T::SomeMap(ob(T::Dynamic), ob(T::Integer));
+           T::SomeMap(ob(T::Dynamic), ob(T::Number)), T::SomeArray(ob(T::Integer)));
+    check!(T::SomeRecord(ohash![]), T::SomeArray(ob(T::Integer));
+           T::SomeMap(ob(T::Integer), ob(T::Integer)), // a superset of T::SomeArray(ob(T::Integer))
+           T::EmptyTable);
 
     // general unions
-    check!(T::True, T::False, T::Boolean);
-    check!(T::SomeInteger(3).union(T::Nil), T::SomeInteger(4).union(T::Nil),
-           T::SomeIntegers(oset![3, 4]).union(T::Nil));
-    check!(T::SomeIntegers(oset![3, 5]).union(T::Nil), T::SomeInteger(4).union(T::String),
-           T::String.union(T::SomeIntegers(oset![3, 4, 5])).union(T::Nil));
-    check!(T::SomeInteger(3).union(T::String), T::SomeString(os("wat")).union(T::SomeInteger(4)),
-           T::SomeIntegers(oset![3, 4]).union(T::String));
-    check!(T::SomeArray(ob(T::Integer)), T::SomeTuple(ovec![b(T::String)]),
-           T::SomeMap(ob(T::Integer), ob(T::Integer.union(T::String))));
+    check!(T::True, T::False; T::Boolean, T::None);
+    check!(T::SomeInteger(3).union(T::Nil), T::SomeInteger(4).union(T::Nil);
+           T::SomeIntegers(oset![3, 4]).union(T::Nil), T::Nil);
+    check!(T::SomeIntegers(oset![3, 5]).union(T::Nil), T::SomeInteger(4).union(T::String);
+           T::String.union(T::SomeIntegers(oset![3, 4, 5])).union(T::Nil), T::None);
+    check!(T::SomeInteger(3).union(T::String), T::SomeString(os("wat")).union(T::SomeInteger(4));
+           T::SomeIntegers(oset![3, 4]).union(T::String), T::SomeString(os("wat")));
+    check!(T::SomeArray(ob(T::Integer)), T::SomeTuple(ovec![b(T::String)]);
+           T::SomeMap(ob(T::Integer), ob(T::Integer.union(T::String))), T::EmptyTable);
     //assert_eq!(T::SomeMap(ob(T::String), ob(T::Integer)),
     //           T::SomeMap(ob(T::String), ob(T::Integer.union(T::Nil))));
 }
