@@ -2,10 +2,12 @@ extern crate kailua_syntax;
 #[macro_use] extern crate bitflags;
 extern crate vec_map;
 
+pub use diag::{Error, CheckResult};
 pub use ty::{Ty, T, Builtin};
-pub use env::{TyInfo, Context, CheckResult};
+pub use env::{TyInfo, Context};
 pub use check::{Options, Checker};
 
+mod diag;
 mod ty;
 mod env;
 mod check;

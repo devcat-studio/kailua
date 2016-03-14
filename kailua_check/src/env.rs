@@ -1,14 +1,12 @@
 use std::fmt;
+use std::mem;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use vec_map::VecMap;
 
 use kailua_syntax::Name;
-use ty::{Builtin, Ty, T, Union, TVar, Seq};
-
-pub type Error = String;
-
-pub type CheckResult<T> = Result<T, Error>;
+use diag::CheckResult;
+use ty::{Builtin, Ty, T, Union, TVar, Seq, Lattice, TVarContext};
 
 #[derive(Clone, PartialEq)]
 pub struct TyInfo {
@@ -76,28 +74,169 @@ impl Scope {
     }
 }
 
-#[derive(Clone, PartialEq)]
-pub struct TVarBounds {
-    pub min: Option<Union>,
-    pub max: Option<Union>,
+struct Bound {
+    parent: Cell<u32>,
+    rank: u8,
+    bound: T<'static>, // should be T::None when idx != parent
 }
 
-impl TVarBounds {
-    pub fn new() -> TVarBounds {
-        TVarBounds { min: None, max: None }
+impl Bound {
+    fn new(parent: u32) -> Bound {
+        Bound { parent: Cell::new(parent), rank: 0, bound: T::None }
+    }
+}
+
+// a set of constraints that can be organized as a tree
+struct Constraints {
+    op: &'static str,
+    bounds: VecMap<Box<Bound>>,
+}
+
+// is this bound trivial so that one can always overwrite?
+fn is_bound_trivial(t: &T) -> bool {
+    // TODO special casing ? is not enough, should resolve b.bound's inner ?s as well
+    match *t { T::None | T::Dynamic => true, _ => false }
+}
+
+impl Constraints {
+    fn new(op: &'static str) -> Constraints {
+        Constraints { op: op, bounds: VecMap::new() }
+    }
+
+    fn find(&self, tvar: TVar) -> TVar {
+        if let Some(b) = self.bounds.get(&(tvar.0 as usize)) {
+            let mut parent = b.parent.get();
+            if parent != tvar.0 { // path compression
+                parent = self.find(TVar(parent)).0;
+                b.parent.set(parent);
+            }
+            TVar(parent)
+        } else {
+            tvar
+        }
+    }
+
+    fn union(&mut self, lhs: TVar, rhs: TVar) -> TVar {
+        use std::cmp::Ordering;
+
+        let lhs = self.find(lhs).0;
+        let rhs = self.find(rhs).0;
+        if lhs == rhs { return TVar(rhs); }
+
+        let lrank = self.bounds.get(&(lhs as usize)).map(|b| b.rank);
+        let rrank = self.bounds.get(&(rhs as usize)).map(|b| b.rank);
+        if lrank.is_none() && rrank.is_none() {
+            // special casing, in order to reduce memory allocation
+            self.bounds.insert(rhs as usize,
+                               Box::new(Bound { rank: 1, ..Bound::new(lhs) }));
+            return TVar(lhs);
+        }
+
+        if lrank.is_none() {
+            self.bounds.insert(lhs as usize, Box::new(Bound::new(lhs)));
+        }
+        if rrank.is_none() {
+            self.bounds.insert(rhs as usize, Box::new(Bound::new(rhs)));
+        }
+
+        match lrank.unwrap_or(0).cmp(&rrank.unwrap_or(0)) {
+            Ordering::Less => {
+                let lb = self.bounds.get_mut(&(lhs as usize)).unwrap();
+                lb.parent.set(rhs);
+                TVar(rhs)
+            }
+            Ordering::Greater => {
+                let rb = self.bounds.get_mut(&(rhs as usize)).unwrap();
+                rb.parent.set(lhs);
+                TVar(lhs)
+            }
+            Ordering::Equal => {
+                let rb = self.bounds.get_mut(&(rhs as usize)).unwrap();
+                rb.parent.set(lhs);
+                rb.rank += 1;
+                TVar(lhs)
+            }
+        }
+    }
+
+    fn is(&self, lhs: TVar, rhs: TVar) -> bool {
+        lhs == rhs || self.find(lhs) == self.find(rhs)
+    }
+
+    fn add_bound(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
+        let lhs_ = self.find(lhs);
+        let b = self.bounds.entry(lhs_.0 as usize).or_insert_with(|| Box::new(Bound::new(lhs_.0)));
+        if is_bound_trivial(&b.bound) {
+            b.bound = rhs.clone().into_send();
+        } else if b.bound != *rhs {
+            // TODO check if this restriction has a real world implication
+            return Err(format!("variable {:?} cannot have multiple bounds \
+                                (original {} {:?}, later {} {:?})",
+                               lhs, self.op, b.bound, self.op, *rhs));
+        }
+        Ok(())
+    }
+
+    fn add_relation(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()> {
+        if lhs == rhs { return Ok(()); }
+
+        let lhs_ = self.find(lhs);
+        let rhs_ = self.find(rhs);
+        if lhs_ == rhs_ { return Ok(()); }
+
+        let take_bound = |bounds: &mut VecMap<Box<Bound>>, tvar: TVar| {
+            if let Some(b) = bounds.get_mut(&(tvar.0 as usize)) {
+                mem::replace(&mut b.bound, T::None)
+            } else {
+                T::None
+            }
+        };
+
+        // take the bounds from each representative variable.
+        let lhsbound = take_bound(&mut self.bounds, lhs_);
+        let rhsbound = take_bound(&mut self.bounds, rhs_);
+
+        let bound = match (is_bound_trivial(&lhsbound), is_bound_trivial(&rhsbound)) {
+            (false, _) => rhsbound,
+            (true, false) => lhsbound,
+            (true, true) =>
+                if lhsbound == rhsbound {
+                    lhsbound
+                } else {
+                    return Err(format!("variables {:?}/{:?} cannot have multiple bounds \
+                                        (left {} {:?}, right {} {:?})",
+                                       lhs, rhs, self.op, lhsbound, self.op, rhsbound));
+                },
+        };
+
+        // update the shared bound to the merged representative
+        let new = self.union(lhs_, rhs_);
+        if !is_bound_trivial(&bound) {
+            // the merged entry should have non-zero rank, so unwrap() is fine
+            self.bounds.get_mut(&(new.0 as usize)).unwrap().bound = bound;
+        }
+
+        Ok(())
     }
 }
 
 pub struct Context {
     global_scope: Scope,
     next_tvar: Cell<TVar>,
-    tvar_bounds: VecMap<RefCell<TVarBounds>>,
+    tvar_sub: Constraints,
+    tvar_sup: Constraints,
+    tvar_eq: Constraints,
 }
 
 impl Context {
     pub fn new() -> Context {
-        Context { global_scope: Scope::new(), next_tvar: Cell::new(TVar(0)),
-                  tvar_bounds: VecMap::new() }
+        Context {
+            global_scope: Scope::new(),
+            next_tvar: Cell::new(TVar(0)),
+            tvar_sub: Constraints::new("<:"),
+            tvar_sup: Constraints::new(":>"),
+            tvar_eq: Constraints::new("="),
+        }
     }
 
     pub fn global_scope(&self) -> &Scope {
@@ -107,47 +246,44 @@ impl Context {
     pub fn global_scope_mut(&mut self) -> &mut Scope {
         &mut self.global_scope
     }
+}
 
-    pub fn gen_tvar(&self) -> TVar {
+impl TVarContext for Context {
+    fn last_tvar(&self) -> Option<TVar> {
+        let tvar = self.next_tvar.get();
+        if tvar == TVar(0) { None } else { Some(TVar(tvar.0 - 1)) }
+    }
+
+    fn gen_tvar(&mut self) -> TVar {
         let tvar = self.next_tvar.get();
         self.next_tvar.set(TVar(tvar.0 + 1));
         tvar
     }
 
-    /*
-    pub fn assert_tvar_sub(&mut self, lhs: TVar, rhs: TVar) -> bool {
-        if lhs == rhs { return true; }
-
-        let ltv = lhs.0 as usize;
-        let rtv = rhs.0 as usize;
-
-        if !self.tvar_bounds.has_key(ltv) {
-            self.tvar_bounds.insert(ltv, TVarBounds::new());
-        }
-        if !self.tvar_bounds.has_key(rtv) {
-            self.tvar_bounds.insert(rtv, TVarBounds::new());
-        }
-
-        let lbounds = self.tvar_bounds.get(ltv).unwrap();
-        let rbounds = self.tvar_bounds.get(rtv).unwrap();
-
-        // lbounds.min <: lhs <: lbounds.max
-        // rbounds.min <: rhs <: rbounds.max
-
-        //       rbounds.max
-        //            |
-        //       rbounds.min
-        //         /
-        // lbounds.max
-        //     |
-        // lbounds.min
-
-        lbounds.borrow_mut().min
+    fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
+        self.tvar_sub.add_bound(lhs, rhs)
     }
 
-    pub fn assert_tvar_eq(&mut self, lhs: TVar, rhs: TVar) -> bool {
+    fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
+        self.tvar_sup.add_bound(lhs, rhs)
     }
-    */
+
+    fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
+        self.tvar_eq.add_bound(lhs, rhs)
+    }
+
+    fn assert_tvar_sub_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()> {
+        if !self.tvar_eq.is(lhs, rhs) {
+            try!(self.tvar_sub.add_relation(lhs, rhs));
+            try!(self.tvar_sup.add_relation(rhs, lhs));
+        }
+        Ok(())
+    }
+
+    fn assert_tvar_eq_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()> {
+        // do not update tvar_sub & tvar_sup, 
+        self.tvar_eq.add_relation(lhs, rhs)
+    }
 }
 
 pub struct Env<'ctx> {
