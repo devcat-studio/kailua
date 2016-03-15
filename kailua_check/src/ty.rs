@@ -7,11 +7,6 @@ use std::collections::{HashSet, HashMap};
 use kailua_syntax::{K, Kind, Str};
 use diag::CheckResult;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Builtin {
-    Require,        // (fixed string) -> table & sideeffect
-}
-
 fn error_not_bottom<T: fmt::Debug>(t: T) -> CheckResult<()> {
     Err(format!("impossible constraint requested: {:?} is bottom", t))
 }
@@ -119,7 +114,7 @@ impl TVarContext for () {
 }
 
 // it is generally hard to determine if a <: b \/ c (i.e. a <: b OR a <: c)
-// and a /\ b <: c (i.e. a <: c OR b <: C) in the presence of
+// and a /\ b <: c (i.e. a <: c OR b <: c) in the presence of
 // immediate variable instantiation; it requires the costly backtracking.
 //
 // since we don't need the full union and intersection types
@@ -168,6 +163,16 @@ impl Lattice for TVar {
 pub struct Seq<T> {
     pub head: Vec<T>,
     pub tail: Option<T>,
+}
+
+impl<T> Seq<T> {
+    pub fn new() -> Seq<T> {
+        Seq { head: Vec::new(), tail: None }
+    }
+
+    pub fn from(t: T) -> Seq<T> {
+        Seq { head: vec![t], tail: None }
+    }
 }
 
 impl<T: Lattice + fmt::Debug> Seq<T> {
@@ -1149,12 +1154,6 @@ pub enum Functions {
     All,
 }
 
-impl Functions {
-    pub fn from(func: Function) -> Functions {
-        Functions::Simple(func)
-    }
-}
-
 impl Lattice for Functions {
     type Output = Option<Functions>;
 
@@ -1366,6 +1365,7 @@ impl Union {
         if let Some(ref str) = self.strings { try!(f(T::Strings(Cow::Borrowed(str)))) }
         if let Some(ref tab) = self.tables { try!(f(T::Tables(Cow::Borrowed(tab)))) }
         if let Some(ref func) = self.functions { try!(f(T::Functions(Cow::Borrowed(func)))) }
+        if let Some(tvar) = self.tvar { try!(f(T::TVar(tvar))) }
         Ok(())
     }
 
@@ -1384,18 +1384,6 @@ impl Union {
             }
         };
         single.unwrap_or_else(|| T::Union(Cow::Owned(self)))
-    }
-
-    pub fn accept(&self, rhs: &Union) -> bool {
-        let flags = self.flags();
-        let rhsflags = rhs.flags();
-        if flags & rhsflags != rhsflags { return false; }
-
-        // not covered by flags
-        if rhs.numbers.assert_sub(&self.numbers, &mut ()).is_err() { return false; }
-        if rhs.strings.assert_sub(&self.strings, &mut ()).is_err() { return false; }
-
-        true
     }
 }
 
@@ -1547,14 +1535,15 @@ pub enum T<'a> {
 }
 
 impl<'a> T<'a> {
-    pub fn number()      -> T<'a> { T::Numbers(Cow::Owned(Numbers::All)) }
-    pub fn integer()     -> T<'a> { T::Numbers(Cow::Owned(Numbers::Int)) }
-    pub fn int(v: i32)   -> T<'a> { T::Numbers(Cow::Owned(Numbers::One(v))) }
-    pub fn string()      -> T<'a> { T::Strings(Cow::Owned(Strings::All)) }
-    pub fn str(s: Str)   -> T<'a> { T::Strings(Cow::Owned(Strings::One(s))) }
-    pub fn table()       -> T<'a> { T::Tables(Cow::Owned(Tables::All)) }
-    pub fn empty_table() -> T<'a> { T::Tables(Cow::Owned(Tables::Empty)) }
-    pub fn function()    -> T<'a> { T::Functions(Cow::Owned(Functions::All)) }
+    pub fn number()          -> T<'a> { T::Numbers(Cow::Owned(Numbers::All)) }
+    pub fn integer()         -> T<'a> { T::Numbers(Cow::Owned(Numbers::Int)) }
+    pub fn int(v: i32)       -> T<'a> { T::Numbers(Cow::Owned(Numbers::One(v))) }
+    pub fn string()          -> T<'a> { T::Strings(Cow::Owned(Strings::All)) }
+    pub fn str(s: Str)       -> T<'a> { T::Strings(Cow::Owned(Strings::One(s))) }
+    pub fn table()           -> T<'a> { T::Tables(Cow::Owned(Tables::All)) }
+    pub fn empty_table()     -> T<'a> { T::Tables(Cow::Owned(Tables::Empty)) }
+    pub fn function()        -> T<'a> { T::Functions(Cow::Owned(Functions::All)) }
+    pub fn func(f: Function) -> T<'a> { T::Functions(Cow::Owned(Functions::Simple(f))) }
 
     pub fn ints<I: IntoIterator<Item=i32>>(i: I) -> T<'a> {
         T::Numbers(Cow::Owned(Numbers::Some(i.into_iter().collect())))
@@ -1698,6 +1687,27 @@ impl<'a> T<'a> {
             T::Union(ref u) => u.tvar,
             _ => None,
         }
+    }
+
+    // XXX should be in S instead
+    pub fn accept(&self, rhs: &T) -> bool {
+        let flags = self.flags();
+        let rhsflags = rhs.flags();
+        if flags & rhsflags != rhsflags { return false; }
+
+        // not covered by flags
+        match (rhs.has_numbers(), self.has_numbers()) {
+            (Some(r), Some(l)) => { if r.assert_sub(l, &mut ()).is_err() { return false; } }
+            (None, Some(_)) => return false,
+            (_, None) => {}
+        }
+        match (rhs.has_strings(), self.has_strings()) {
+            (Some(r), Some(l)) => { if r.assert_sub(l, &mut ()).is_err() { return false; } }
+            (None, Some(_)) => return false,
+            (_, None) => {}
+        }
+
+        true
     }
 
     pub fn into_send(self) -> T<'static> {
@@ -1885,6 +1895,8 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
     }
 
     fn assert_sub(&self, other: &T<'b>, ctx: &mut TVarContext) -> CheckResult<()> {
+        println!("asserting a constraint {:?} <: {:?}", *self, *other);
+
         let ok = match (self, other) {
             (&T::Dynamic, _) => true,
             (_, &T::Dynamic) => true,
@@ -1904,19 +1916,40 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::Tables(ref a),    &T::Tables(ref b))    => return a.assert_sub(b, ctx),
             (&T::Functions(ref a), &T::Functions(ref b)) => return a.assert_sub(b, ctx),
 
-            (&T::TVar(a), &T::TVar(b)) => return a.assert_sub(&b, ctx),
-            (a, &T::TVar(b)) => return ctx.assert_tvar_sup(b, a),
-            (&T::TVar(a), b) => return ctx.assert_tvar_sub(a, b),
-
             (&T::Union(ref a), &T::Union(ref b)) => return a.assert_sub(b, ctx),
             (&T::Union(ref a), b) => {
                 // a1 \/ a2 <: b === a1 <: b AND a2 <: b
                 return a.visit(|i| i.assert_sub(b, ctx));
             },
-            (a, &T::Union(ref b)) => {
-                // a <: b1 \/ b2 === a <: b1 OR a <: b2
-                false // XXX
+
+            // a <: b1 \/ b2 === a <: b1 OR a <: b2
+            (&T::Nil,     &T::Union(ref b)) => b.has_nil,
+            (&T::Boolean, &T::Union(ref b)) => b.has_true && b.has_false,
+            (&T::True,    &T::Union(ref b)) => b.has_true,
+            (&T::False,   &T::Union(ref b)) => b.has_false,
+
+            (&T::Numbers(ref a), &T::Union(ref b)) => {
+                if let Some(ref num) = b.numbers { return a.assert_sub(num, ctx); }
+                false
             },
+            (&T::Strings(ref a), &T::Union(ref b)) => {
+                if let Some(ref str) = b.strings { return a.assert_sub(str, ctx); }
+                false
+            },
+            (&T::Tables(ref a), &T::Union(ref b)) => {
+                if let Some(ref tab) = b.tables { return a.assert_sub(tab, ctx); }
+                false
+            },
+            (&T::Functions(ref a), &T::Union(ref b)) => {
+                if let Some(ref func) = b.functions { return a.assert_sub(func, ctx); }
+                false
+            },
+            // XXX a <: T \/ b === a <: T OR a <: b
+            (&T::TVar(a), &T::Union(ref b)) if b.tvar.is_some() => false,
+
+            (&T::TVar(a), &T::TVar(b)) => return a.assert_sub(&b, ctx),
+            (a, &T::TVar(b)) => return ctx.assert_tvar_sup(b, a),
+            (&T::TVar(a), b) => return ctx.assert_tvar_sub(a, b),
 
             (_, _) => false,
         };
@@ -1925,6 +1958,8 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
     }
 
     fn assert_eq(&self, other: &T<'b>, ctx: &mut TVarContext) -> CheckResult<()> {
+        println!("asserting a constraint {:?} = {:?}", *self, *other);
+
         let ok = match (self, other) {
             (&T::Dynamic, _) => true,
             (_, &T::Dynamic) => true,

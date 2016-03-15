@@ -6,21 +6,22 @@ use vec_map::VecMap;
 
 use kailua_syntax::Name;
 use diag::CheckResult;
-use ty::{Builtin, Ty, T, Union, TVar, Seq, Lattice, TVarContext};
+use ty::{Ty, T, Union, TVar, Seq, Lattice, TVarContext};
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Builtin {
+    Require,        // (fixed string) -> table & sideeffect
+}
 
 #[derive(Clone, PartialEq)]
 pub struct TyInfo {
-    pub ty: Union,
+    pub ty: T<'static>,
     pub builtin: Option<Builtin>,
 }
 
 impl TyInfo {
-    pub fn new(ty: Union) -> TyInfo {
-        TyInfo { ty: ty, builtin: None }
-    }
-
     pub fn from<'a>(ty: T<'a>) -> TyInfo {
-        TyInfo::new(Union::from(ty))
+        TyInfo { ty: ty.into_send(), builtin: None }
     }
 }
 
@@ -163,6 +164,11 @@ impl Constraints {
         lhs == rhs || self.find(lhs) == self.find(rhs)
     }
 
+    fn get_bound<'a>(&'a self, lhs: TVar) -> Option<&'a Bound> {
+        let lhs = self.find(lhs);
+        self.bounds.get(&(lhs.0 as usize)).map(|b| &**b)
+    }
+
     fn add_bound(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
         let lhs_ = self.find(lhs);
         let b = self.bounds.entry(lhs_.0 as usize).or_insert_with(|| Box::new(Bound::new(lhs_.0)));
@@ -223,9 +229,9 @@ impl Constraints {
 pub struct Context {
     global_scope: Scope,
     next_tvar: Cell<TVar>,
-    tvar_sub: Constraints,
-    tvar_sup: Constraints,
-    tvar_eq: Constraints,
+    tvar_sub: Constraints, // upper bound
+    tvar_sup: Constraints, // lower bound
+    tvar_eq: Constraints, // tight bound
 }
 
 impl Context {
@@ -261,18 +267,37 @@ impl TVarContext for Context {
     }
 
     fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
-        self.tvar_sub.add_bound(lhs, rhs)
+        println!("adding a constraint {:?} <: {:?}", lhs, *rhs);
+        try!(self.tvar_sub.add_bound(lhs, rhs));
+        if let Some(eb) = self.tvar_eq.get_bound(lhs).map(|b| b.bound.clone()) {
+            try!(eb.assert_eq(rhs, self));
+        }
+        Ok(())
     }
 
     fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
-        self.tvar_sup.add_bound(lhs, rhs)
+        println!("adding a constraint {:?} :> {:?}", lhs, *rhs);
+        try!(self.tvar_sup.add_bound(lhs, rhs));
+        if let Some(eb) = self.tvar_eq.get_bound(lhs).map(|b| b.bound.clone()) {
+            try!(rhs.assert_eq(&eb, self));
+        }
+        Ok(())
     }
 
     fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
-        self.tvar_eq.add_bound(lhs, rhs)
+        println!("adding a constraint {:?} = {:?}", lhs, *rhs);
+        try!(self.tvar_eq.add_bound(lhs, rhs));
+        if let Some(ub) = self.tvar_sub.get_bound(lhs).map(|b| b.bound.clone()) {
+            try!(rhs.assert_sub(&ub, self));
+        }
+        if let Some(lb) = self.tvar_sup.get_bound(lhs).map(|b| b.bound.clone()) {
+            try!(lb.assert_sub(rhs, self));
+        }
+        Ok(())
     }
 
     fn assert_tvar_sub_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()> {
+        println!("adding a constraint {:?} <: {:?}", lhs, rhs);
         if !self.tvar_eq.is(lhs, rhs) {
             try!(self.tvar_sub.add_relation(lhs, rhs));
             try!(self.tvar_sup.add_relation(rhs, lhs));
@@ -281,6 +306,7 @@ impl TVarContext for Context {
     }
 
     fn assert_tvar_eq_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()> {
+        println!("adding a constraint {:?} = {:?}", lhs, rhs);
         // do not update tvar_sub & tvar_sup, 
         self.tvar_eq.add_relation(lhs, rhs)
     }

@@ -5,9 +5,9 @@ use std::borrow::Cow;
 
 use kailua_syntax::{Name, Str, Var, Params, E, Exp, UnOp, BinOp, FuncScope, SelfParam, S, Stmt, Block};
 use diag::CheckResult;
-use ty::{Builtin, Ty, T, Union, Lattice, Numbers, Strings, Tables, Functions};
+use ty::{Ty, T, Seq, Union, Lattice, TVarContext, Numbers, Strings, Tables, Function, Functions};
 use ty::flags::*;
-use env::{TyInfo, Env, Frame, Scope, Context};
+use env::{Builtin, TyInfo, Env, Frame, Scope, Context};
 
 pub trait Options {
     fn require_block(&mut self, path: &[u8]) -> CheckResult<Block> {
@@ -51,57 +51,130 @@ impl<'env> Checker<'env> {
 
     pub fn check_un_op(&mut self, op: UnOp, info: &TyInfo) -> CheckResult<TyInfo> {
         let ty = &info.ty;
-        let flags = ty.flags();
+
+        macro_rules! check_op {
+            ($sub:expr) => {
+                if let Err(e) = $sub {
+                    return Err(format!("tried to apply {} operator to {:?}: {}",
+                                       op.symbol(), ty, e));
+                }
+            }
+        }
 
         match op {
-            UnOp::Neg if flags == T_INTEGER =>
-                Ok(TyInfo::from(T::integer())),
+            UnOp::Neg => {
+                check_op!(ty.assert_sub(&T::number(), self.context()));
 
-            UnOp::Neg if flags.is_numeric() =>
-                Ok(TyInfo::from(T::number())),
+                // it is possible to be more accurate here.
+                // e.g. if ty = `v1 \/ integer` and it is known that `v1 <: integer`,
+                // then `ty <: integer` and we can safely return an integer.
+                // we don't do that though, since probing for <: risks the instantiation.
+                if ty.has_tvar().is_none() && ty.flags() == T_INTEGER {
+                    Ok(TyInfo::from(T::integer()))
+                } else {
+                    Ok(TyInfo::from(T::number()))
+                }
+            }
 
-            UnOp::Not =>
-                Ok(TyInfo::from(T::Boolean)),
+            UnOp::Not => {
+                Ok(TyInfo::from(T::Boolean))
+            }
 
-            UnOp::Len if flags.is_tabular() =>
-                Ok(TyInfo::from(T::integer())),
-
-            _ => Err(format!("tried to apply {} operator to {:?}", op.symbol(), ty))
+            UnOp::Len => {
+                check_op!(ty.assert_sub(&T::table(), self.context()));
+                Ok(TyInfo::from(T::integer()))
+            }
         }
     }
 
     pub fn check_bin_op(&mut self, lhs: &TyInfo, op: BinOp, rhs: &TyInfo) -> CheckResult<TyInfo> {
         let lty = &lhs.ty;
         let rty = &rhs.ty;
-        let lflags = lty.flags();
-        let rflags = rty.flags();
+
+        macro_rules! check_op {
+            ($sub:expr) => {
+                if let Err(e) = $sub {
+                    return Err(format!("tried to apply {} operator to {:?} and {:?}: {}",
+                                       op.symbol(), lty, rty, e));
+                }
+            }
+        }
 
         match op {
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Mod
-                    if lflags == T_INTEGER && rflags == T_INTEGER =>
-                Ok(TyInfo::from(T::integer())),
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Mod => {
+                // technically speaking they coerce strings to numbers,
+                // but that's probably not what you want
+                check_op!(lty.assert_sub(&T::number(), self.context()));
+                check_op!(rty.assert_sub(&T::number(), self.context()));
 
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Mod
-                    if lflags.is_numeric() && rflags.is_numeric() =>
-                Ok(TyInfo::from(T::number())),
+                // see UnOp::Neg comment for the limitation
+                if lty.has_tvar().is_none() && lty.flags() == T_INTEGER &&
+                   rty.has_tvar().is_none() && rty.flags() == T_INTEGER {
+                    Ok(TyInfo::from(T::integer()))
+                } else {
+                    Ok(TyInfo::from(T::number()))
+                }
+            }
 
-            BinOp::Cat if lflags.is_stringy() && rflags.is_stringy() =>
-                Ok(TyInfo::from(T::string())),
+            BinOp::Div | BinOp::Pow => {
+                check_op!(lty.assert_sub(&T::number(), self.context()));
+                check_op!(rty.assert_sub(&T::number(), self.context()));
+                Ok(TyInfo::from(T::number()))
+            }
 
-            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
-                    if lflags.is_stringy() && rflags.is_stringy() && lflags & rflags != T_NONE =>
-                Ok(TyInfo::from(T::Boolean)),
+            BinOp::Cat => {
+                let stringy = T::number() | T::string();
+                check_op!(lty.assert_sub(&stringy, self.context()));
+                check_op!(rty.assert_sub(&stringy, self.context()));
+                Ok(TyInfo::from(T::string()))
+            }
 
-            BinOp::Eq | BinOp::Ne =>
-                Ok(TyInfo::from(T::Boolean)),
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                // this is a hard bit, since both operands should be either numbers or strings
+                // but not both (as comparing number against string simply chokes).
+                // due to the presence of union types, we cannot represent this constraint
+                // with subtyping; equality does not work either, as there are large non-trivial
+                // subsets of numbers and strings. for now we try to detect if operands are
+                // definitely numbers or strings, and bail out when it is not possible.
 
-            BinOp::And | BinOp::Or if lflags & !(T_NIL | T_FALSE) == T_NONE =>
-                Ok(TyInfo::new(rty.clone())),
+                // filter any non-strings and non-numbers
+                // avoid using assert_sub here, it is not accurate enough
+                if !lty.is_stringy() || !rty.is_stringy() {
+                    return Err(format!("tried to apply {} operator to {:?} and {:?}",
+                                       op.symbol(), lty, rty));
+                }
 
-            BinOp::And | BinOp::Or =>
-                Ok(TyInfo::new(lty.clone().union(rty.clone(), self.context()))),
+                let lnum = lty.has_numbers().is_some();
+                let lstr = lty.has_strings().is_some();
+                let rnum = rty.has_numbers().is_some();
+                let rstr = rty.has_strings().is_some();
+                if (lnum && lstr) || (rnum && rstr) {
+                    Err(format!("operands {:?} and {:?} to operator {} should be \
+                                 numbers or strings but not both", lty, rty, op.symbol()))
+                } else if (lnum && rstr) || (lstr && rnum) {
+                    Err(format!("operands {:?} and {:?} to operator {} should be \
+                                 both numbers or both strings", lty, rty, op.symbol()))
+                } else if lnum || rnum { // operands are definitely numbers
+                    check_op!(lty.assert_sub(&T::number(), self.context()));
+                    check_op!(rty.assert_sub(&T::number(), self.context()));
+                    Ok(TyInfo::from(T::Boolean))
+                } else if lstr || rstr { // operands are definitely strings
+                    check_op!(lty.assert_sub(&T::string(), self.context()));
+                    check_op!(rty.assert_sub(&T::string(), self.context()));
+                    Ok(TyInfo::from(T::Boolean))
+                } else { // XXX
+                    Err(format!("cannot deduce if operands {:?} and {:?} to operator {} are \
+                                 either numbers or strings", lty, rty, op.symbol()))
+                }
+            }
 
-            _ => Err(format!("tried to apply {} operator to {:?} and {:?}", op.symbol(), lty, rty))
+            BinOp::Eq | BinOp::Ne => { // works for any types
+                Ok(TyInfo::from(T::Boolean))
+            }
+
+            BinOp::And | BinOp::Or => {
+                Ok(TyInfo::from(lty.clone().union(rty.clone(), self.context())))
+            }
         }
     }
 
@@ -271,13 +344,15 @@ impl<'env> Checker<'env> {
             }
 
             S::FuncDecl(scope, ref name, ref params, ref block) => {
-                let info = TyInfo::from(T::Dynamic);
+                // `name` itself is available to the inner scope
+                let funcv = self.context().gen_tvar();
+                let info = TyInfo::from(T::TVar(funcv));
                 match scope {
                     FuncScope::Local => self.env.add_local_var(name, info),
                     FuncScope::Global => try!(self.env.assign_to_var(name, info)),
                 }
-                // `name` itself is available to the inner scope
-                try!(self.visit_func_body(None, params, block));
+                let functy = try!(self.visit_func_body(None, params, block));
+                try!(T::TVar(funcv).assert_eq(&functy.ty, self.context()));
             }
 
             S::MethodDecl(ref names, selfparam, ref params, ref block) => {
@@ -328,7 +403,7 @@ impl<'env> Checker<'env> {
                 } else {
                     None
                 };
-                let info = TyInfo { ty: Union::from(T::from(kind)), builtin: builtin };
+                let info = TyInfo { ty: T::from(kind), builtin: builtin };
                 try!(self.env.assume_var(name, info));
             }
         }
@@ -336,23 +411,30 @@ impl<'env> Checker<'env> {
     }
 
     fn visit_func_body(&mut self, selfinfo: Option<TyInfo>, params: &Params,
-                       block: &[Stmt]) -> CheckResult<()> {
+                       block: &[Stmt]) -> CheckResult<TyInfo> {
         let vainfo;
         if params.variadic {
             vainfo = Some(TyInfo::from(T::Dynamic));
         } else {
             vainfo = None;
         }
-        let frame = Frame { vararg: vainfo, returns: Box::new(T::Dynamic) };
+        let retv = self.context().gen_tvar();
+        let frame = Frame { vararg: vainfo, returns: Box::new(T::TVar(retv)) };
 
         let mut scope = self.scoped(Scope::new_function(frame));
         if let Some(selfinfo) = selfinfo {
             scope.env.add_local_var(&Name::from(&b"self"[..]), selfinfo);
         }
+        let mut args = Seq::new();
         for param in &params.args {
-            scope.env.add_local_var(param, TyInfo::from(T::Dynamic));
+            let argv = scope.context().gen_tvar();
+            scope.env.add_local_var(param, TyInfo::from(T::TVar(argv)));
+            args.head.push(Box::new(T::TVar(argv)));
         }
-        scope.visit_block(block)
+        try!(scope.visit_block(block));
+
+        let returns = Seq::from(Box::new(T::TVar(retv))); // XXX multiple returns
+        Ok(TyInfo::from(T::func(Function { args: args, returns: returns })))
     }
 
     fn visit_var(&mut self, var: &Var) -> CheckResult<Option<TyInfo>> {
@@ -367,8 +449,8 @@ impl<'env> Checker<'env> {
             },
 
             Var::Index(ref e, ref key) => {
-                let ty = try!(self.visit_exp(e)).ty.simplify();
-                let kty = try!(self.visit_exp(key)).ty.simplify();
+                let ty = try!(self.visit_exp(e)).ty;
+                let kty = try!(self.visit_exp(key)).ty;
                 self.check_index(&ty, &kty)
             },
         }
@@ -404,8 +486,7 @@ impl<'env> Checker<'env> {
             },
 
             E::Func(ref params, ref block) => {
-                try!(self.visit_func_body(None, params, block));
-                Ok(TyInfo::from(T::function()))
+                Ok(try!(self.visit_func_body(None, params, block)))
             },
             E::Table(ref fields) => {
                 let mut tab = Tables::Empty;
@@ -413,11 +494,11 @@ impl<'env> Checker<'env> {
                 for &(ref key, ref value) in fields {
                     let kty;
                     if let Some(ref key) = *key {
-                        kty = Some(try!(self.visit_exp(key)).ty.simplify());
+                        kty = Some(try!(self.visit_exp(key)).ty);
                     } else {
                         kty = None;
                     }
-                    let vty = try!(self.visit_exp(value)).ty.simplify();
+                    let vty = try!(self.visit_exp(value)).ty;
 
                     // update the table type according to new field
                     tab = tab.insert(kty, vty, self.context());
@@ -429,12 +510,19 @@ impl<'env> Checker<'env> {
 
             E::FuncCall(ref func, ref args) => {
                 let funcinfo = try!(self.visit_exp(func));
-                if !funcinfo.ty.flags().is_callable() {
-                    return Err(format!("tried to call a non-function type {:?}", funcinfo.ty));
-                }
 
+                let mut argtys = Seq::new();
                 for arg in args {
-                    try!(self.visit_exp(arg));
+                    let argty = try!(self.visit_exp(arg)).ty;
+                    argtys.head.push(Box::new(argty));
+                }
+                let retv = self.context().gen_tvar();
+                let rettys = Seq::from(Box::new(T::TVar(retv)));
+                let functy = T::func(Function { args: argtys, returns: rettys });
+
+                if let Err(e) = funcinfo.ty.assert_sub(&functy, self.context()) {
+                    return Err(format!("tried to call a non-function type {:?}: {}",
+                                       funcinfo.ty, e));
                 }
 
                 match funcinfo.builtin {
@@ -450,10 +538,10 @@ impl<'env> Checker<'env> {
                                                     opts: self.opts };
                             try!(sub.visit_block(&block));
                         }
-                        Ok(TyInfo::from(T::Dynamic))
+                        Ok(TyInfo::from(T::Dynamic)) // XXX
                     },
 
-                    _ => Ok(TyInfo::from(T::Dynamic)),
+                    _ => Ok(TyInfo::from(T::TVar(retv))),
                 }
             },
 
@@ -470,8 +558,8 @@ impl<'env> Checker<'env> {
             },
 
             E::Index(ref e, ref key) => {
-                let ty = try!(self.visit_exp(e)).ty.simplify();
-                let kty = try!(self.visit_exp(key)).ty.simplify();
+                let ty = try!(self.visit_exp(e)).ty;
+                let kty = try!(self.visit_exp(key)).ty;
                 if let Some(vinfo) = try!(self.check_index(&ty, &kty)) {
                     Ok(vinfo)
                 } else {

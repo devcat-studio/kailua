@@ -3,8 +3,8 @@ extern crate kailua_syntax;
 extern crate vec_map;
 
 pub use diag::{Error, CheckResult};
-pub use ty::{Ty, T, Builtin};
-pub use env::{TyInfo, Context};
+pub use ty::{Ty, T};
+pub use env::{Builtin, TyInfo, Context};
 pub use check::{Options, Checker};
 
 mod diag;
@@ -123,4 +123,8 @@ fn test_check() {
                 --# assume b: string");
     assert_err!("local a = { x = 3, y = 'foo' }
                  local b = a.z");
+    assert_ok!("function p(a) return a + 3 end
+                local x = p(4.5)");
+    assert_err!("function p(a) return a + 3 end
+                 local x = p('what')");
 }
