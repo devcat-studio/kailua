@@ -106,9 +106,13 @@ impl<'env> Checker<'env> {
                 check_op!(lty.assert_sub(&T::number(), self.context()));
                 check_op!(rty.assert_sub(&T::number(), self.context()));
 
-                // see UnOp::Neg comment for the limitation
-                if lty.has_tvar().is_none() && lty.flags() == T_INTEGER &&
-                   rty.has_tvar().is_none() && rty.flags() == T_INTEGER {
+                // ? + integer = integer, ? + number = ? + ? = number, number + integer = number
+                // see UnOp::Neg comment for the rationale
+                let lflags = lty.flags();
+                let rflags = rty.flags();
+                if lty.has_tvar().is_none() && lflags.is_integral() &&
+                   rty.has_tvar().is_none() && rflags.is_integral() &&
+                   !(lflags.is_dynamic() && rflags.is_dynamic()) {
                     Ok(TyInfo::from(T::integer()))
                 } else {
                     Ok(TyInfo::from(T::number()))

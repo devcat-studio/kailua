@@ -106,6 +106,32 @@ fn test_check() {
                  --# assume y: integer
                  --# assume z: integer
                  z = x / y");
+    assert_ok!("local p
+                --# assume p: integer
+                p = 3 + 4");
+    assert_err!("local p
+                 --# assume p: integer
+                 p = 3.1 + 4");
+    assert_ok!("local p, q
+                --# assume p: ?
+                --# assume q: integer
+                q = p + 3");
+    assert_err!("local p, q
+                 --# assume p: ?
+                 --# assume q: integer
+                 q = p + 3.5");
+    assert_ok!("local p, q
+                --# assume p: ?
+                --# assume q: number
+                q = p + 3.5");
+    assert_ok!("local p, q
+                --# assume p: ?
+                --# assume q: number
+                q = p + p");
+    assert_err!("local p, q
+                 --# assume p: ?
+                 --# assume q: integer
+                 q = p + p");
     assert_ok!("function a(...)
                   return ...
                 end");

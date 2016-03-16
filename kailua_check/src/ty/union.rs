@@ -6,7 +6,7 @@ use super::{T, TVarContext, Lattice, Flags, Numbers, Strings, Tables, Functions,
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 
-// "true" types. constructed out of `T` "simple" types.
+// expanded value types for unions
 #[derive(Clone, PartialEq)]
 pub struct Union {
     pub has_dynamic: bool, // XXX
