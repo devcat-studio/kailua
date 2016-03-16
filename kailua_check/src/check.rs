@@ -1,11 +1,10 @@
 use std::i32;
 use std::ops::{Deref, DerefMut};
-use std::collections::HashMap;
 use std::borrow::Cow;
 
-use kailua_syntax::{Name, Str, Var, Params, E, Exp, UnOp, BinOp, FuncScope, SelfParam, S, Stmt, Block};
+use kailua_syntax::{Name, Var, Params, E, UnOp, BinOp, FuncScope, SelfParam, S, Stmt, Block};
 use diag::CheckResult;
-use ty::{Ty, T, Seq, Union, Lattice, TVarContext, Numbers, Strings, Tables, Function, Functions};
+use ty::{T, Seq, Lattice, TVarContext, Numbers, Strings, Tables, Function};
 use ty::flags::*;
 use env::{Builtin, TyInfo, Env, Frame, Scope, Context};
 

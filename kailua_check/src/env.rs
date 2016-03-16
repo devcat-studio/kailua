@@ -6,7 +6,7 @@ use vec_map::VecMap;
 
 use kailua_syntax::Name;
 use diag::CheckResult;
-use ty::{Ty, T, Union, TVar, Seq, Lattice, TVarContext};
+use ty::{Ty, T, TVar, Lattice, TVarContext};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Builtin {
@@ -270,7 +270,10 @@ impl TVarContext for Context {
         println!("adding a constraint {:?} <: {:?}", lhs, *rhs);
         try!(self.tvar_sub.add_bound(lhs, rhs));
         if let Some(eb) = self.tvar_eq.get_bound(lhs).map(|b| b.bound.clone()) {
-            try!(eb.assert_eq(rhs, self));
+            try!(eb.assert_sub(rhs, self));
+        }
+        if let Some(lb) = self.tvar_sup.get_bound(lhs).map(|b| b.bound.clone()) {
+            try!(lb.assert_sub(rhs, self));
         }
         Ok(())
     }
@@ -279,7 +282,10 @@ impl TVarContext for Context {
         println!("adding a constraint {:?} :> {:?}", lhs, *rhs);
         try!(self.tvar_sup.add_bound(lhs, rhs));
         if let Some(eb) = self.tvar_eq.get_bound(lhs).map(|b| b.bound.clone()) {
-            try!(rhs.assert_eq(&eb, self));
+            try!(rhs.assert_sub(&eb, self));
+        }
+        if let Some(ub) = self.tvar_sub.get_bound(lhs).map(|b| b.bound.clone()) {
+            try!(rhs.assert_sub(&ub, self));
         }
         Ok(())
     }
@@ -437,6 +443,68 @@ impl<'ctx> Env<'ctx> {
         println!("(force) adding a global variable {:?} as {:?}", *name, info);
         self.context.global_scope_mut().put(name.to_owned(), info);
         Ok(())
+    }
+}
+
+#[test]
+fn test_context() {
+    let mut ctx = Context::new();
+
+    { // idempotency of bounds
+        let v1 = ctx.gen_tvar();
+        assert_eq!(ctx.assert_tvar_sub(v1, &T::integer()), Ok(()));
+        assert_eq!(ctx.assert_tvar_sub(v1, &T::integer()), Ok(()));
+        assert!(ctx.assert_tvar_sub(v1, &T::string()).is_err());
+    }
+
+    { // empty bounds (lb & ub = bottom)
+        let v1 = ctx.gen_tvar();
+        assert_eq!(ctx.assert_tvar_sub(v1, &T::integer()), Ok(()));
+        assert!(ctx.assert_tvar_sup(v1, &T::string()).is_err());
+
+        let v2 = ctx.gen_tvar();
+        assert_eq!(ctx.assert_tvar_sup(v2, &T::integer()), Ok(()));
+        assert!(ctx.assert_tvar_sub(v2, &T::string()).is_err());
+    }
+
+    { // empty bounds (lb & ub != bottom)
+        let v1 = ctx.gen_tvar();
+        assert_eq!(ctx.assert_tvar_sub(v1, &T::ints(vec![3, 4, 5])), Ok(()));
+        assert!(ctx.assert_tvar_sup(v1, &T::ints(vec![1, 2, 3])).is_err());
+
+        let v2 = ctx.gen_tvar();
+        assert_eq!(ctx.assert_tvar_sup(v2, &T::ints(vec![3, 4, 5])), Ok(()));
+        assert!(ctx.assert_tvar_sub(v2, &T::ints(vec![1, 2, 3])).is_err());
+    }
+
+    { // implicitly disjoint bounds
+        let v1 = ctx.gen_tvar();
+        let v2 = ctx.gen_tvar();
+        assert_eq!(ctx.assert_tvar_sub_tvar(v1, v2), Ok(()));
+        assert_eq!(ctx.assert_tvar_sub(v2, &T::string()), Ok(()));
+        assert!(ctx.assert_tvar_sub(v1, &T::integer()).is_err());
+
+        let v3 = ctx.gen_tvar();
+        let v4 = ctx.gen_tvar();
+        assert_eq!(ctx.assert_tvar_sub_tvar(v3, v4), Ok(()));
+        assert_eq!(ctx.assert_tvar_sup(v3, &T::string()), Ok(()));
+        assert!(ctx.assert_tvar_sup(v4, &T::integer()).is_err());
+    }
+
+    { // equality propagation
+        let v1 = ctx.gen_tvar();
+        assert_eq!(ctx.assert_tvar_eq(v1, &T::integer()), Ok(()));
+        assert_eq!(ctx.assert_tvar_sub(v1, &T::number()), Ok(()));
+        assert!(ctx.assert_tvar_sup(v1, &T::string()).is_err());
+
+        let v2 = ctx.gen_tvar();
+        assert_eq!(ctx.assert_tvar_sub(v2, &T::number()), Ok(()));
+        assert_eq!(ctx.assert_tvar_eq(v2, &T::integer()), Ok(()));
+        assert!(ctx.assert_tvar_sup(v2, &T::string()).is_err());
+
+        let v3 = ctx.gen_tvar();
+        assert_eq!(ctx.assert_tvar_sub(v3, &T::number()), Ok(()));
+        assert!(ctx.assert_tvar_eq(v3, &T::string()).is_err());
     }
 }
 
