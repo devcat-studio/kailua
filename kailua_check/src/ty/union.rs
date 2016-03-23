@@ -2,7 +2,7 @@ use std::fmt;
 use std::borrow::Cow;
 
 use diag::CheckResult;
-use super::{T, TVarContext, Lattice, Flags, Numbers, Strings, Tables, Functions, TVar};
+use super::{T, TypeContext, Lattice, Flags, Numbers, Strings, Tables, Functions, TVar};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 
@@ -112,7 +112,7 @@ impl Lattice for Union {
         self
     }
 
-    fn union(mut self, other: Union, ctx: &mut TVarContext) -> Union {
+    fn union(mut self, other: Union, ctx: &mut TypeContext) -> Union {
         self.has_dynamic |= other.has_dynamic;
         self.has_nil     |= other.has_nil;
         self.has_true    |= other.has_true;
@@ -131,7 +131,7 @@ impl Lattice for Union {
         self
     }
 
-    fn intersect(mut self, other: Union, ctx: &mut TVarContext) -> Union {
+    fn intersect(mut self, other: Union, ctx: &mut TypeContext) -> Union {
         self.has_dynamic &= other.has_dynamic;
         self.has_nil     &= other.has_nil;
         self.has_true    &= other.has_true;
@@ -150,7 +150,7 @@ impl Lattice for Union {
         self
     }
 
-    fn assert_sub(&self, other: &Self, ctx: &mut TVarContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         // exit early if either side is dynamic
         if self.has_dynamic || other.has_dynamic { return Ok(()); }
 
@@ -183,7 +183,7 @@ impl Lattice for Union {
         }
     }
 
-    fn assert_eq(&self, other: &Self, ctx: &mut TVarContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         // exit early if either side is dynamic
         if self.has_dynamic || other.has_dynamic { return Ok(()); }
 

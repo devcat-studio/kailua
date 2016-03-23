@@ -1,7 +1,7 @@
 use std::fmt;
 
 use diag::CheckResult;
-use super::{Ty, Seq, TVarContext, Lattice};
+use super::{Ty, Seq, TypeContext, Lattice};
 use super::{error_not_sub, error_not_eq};
 
 #[derive(Clone, PartialEq)]
@@ -11,13 +11,13 @@ pub struct Function {
 }
 
 impl Function {
-    fn assert_sub(&self, other: &Self, ctx: &mut TVarContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         try!(other.args.assert_sub(&self.args, ctx)); // contravariant
         try!(self.returns.assert_sub(&other.returns, ctx)); // covariant
         Ok(())
     }
 
-    fn assert_eq(&self, other: &Self, ctx: &mut TVarContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         try!(self.args.assert_eq(&other.args, ctx));
         try!(self.returns.assert_eq(&other.returns, ctx));
         Ok(())
@@ -58,7 +58,7 @@ impl Lattice for Functions {
         }
     }
 
-    fn union(self, other: Functions, _: &mut TVarContext) -> Option<Functions> {
+    fn union(self, other: Functions, _: &mut TypeContext) -> Option<Functions> {
         match (self, other) {
             (Functions::All, _) => Some(Functions::All),
             (_, Functions::All) => Some(Functions::All),
@@ -71,7 +71,7 @@ impl Lattice for Functions {
         }
     }
 
-    fn intersect(self, other: Functions, _: &mut TVarContext) -> Option<Functions> {
+    fn intersect(self, other: Functions, _: &mut TypeContext) -> Option<Functions> {
         match (self, other) {
             (Functions::All, funcs) => Some(funcs),
             (funcs, Functions::All) => Some(funcs),
@@ -98,7 +98,7 @@ impl Lattice for Functions {
         }
     }
 
-    fn assert_sub(&self, other: &Self, ctx: &mut TVarContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Functions::All, _) => false,
             (_, &Functions::All) => true,
@@ -125,7 +125,7 @@ impl Lattice for Functions {
         if ok { Ok(()) } else { error_not_sub(self, other) }
     }
 
-    fn assert_eq(&self, other: &Self, ctx: &mut TVarContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         match (self, other) {
             (&Functions::All, &Functions::All) => Ok(()),
             (&Functions::Simple(ref a), &Functions::Simple(ref b)) => a.assert_eq(b, ctx),

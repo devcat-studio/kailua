@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use kailua_syntax::{Name, Var, Params, E, UnOp, BinOp, FuncScope, SelfParam, S, Stmt, Block};
 use diag::CheckResult;
-use ty::{T, Seq, Lattice, TVarContext, Numbers, Strings, Tables, Function};
+use ty::{T, Seq, Lattice, TypeContext, Numbers, Strings, Tables, Function};
 use ty::flags::*;
 use env::{Builtin, TyInfo, Env, Frame, Scope, Context};
 

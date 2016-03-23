@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use kailua_syntax::{K, Kind, Str};
 use diag::CheckResult;
-use super::{TVarContext, Lattice, Flags};
+use super::{TypeContext, Lattice, Flags};
 use super::{Numbers, Strings, Tables, Function, Functions, Union, TVar};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
@@ -271,7 +271,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
         }
     }
 
-    fn union(self, other: T<'b>, ctx: &mut TVarContext) -> T<'static> {
+    fn union(self, other: T<'b>, ctx: &mut TypeContext) -> T<'static> {
         match (self, other) {
             // dynamic eclipses everything else
             (T::Dynamic, _) => T::Dynamic,
@@ -329,7 +329,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
         }
     }
 
-    fn intersect(self, other: T<'b>, ctx: &mut TVarContext) -> T<'static> {
+    fn intersect(self, other: T<'b>, ctx: &mut TypeContext) -> T<'static> {
         match (self, other) {
             (T::Dynamic, ty) => ty.into_send(),
             (ty, T::Dynamic) => ty.into_send(),
@@ -386,7 +386,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
         }
     }
 
-    fn assert_sub(&self, other: &T<'b>, ctx: &mut TVarContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &T<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
         println!("asserting a constraint {:?} <: {:?}", *self, *other);
 
         let ok = match (self, other) {
@@ -449,7 +449,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
         if ok { Ok(()) } else { error_not_sub(self, other) }
     }
 
-    fn assert_eq(&self, other: &T<'b>, ctx: &mut TVarContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &T<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
         println!("asserting a constraint {:?} = {:?}", *self, *other);
 
         let ok = match (self, other) {
@@ -550,22 +550,201 @@ impl<'a, 'b> Lattice<Box<T<'b>>> for Box<T<'a>> {
         Box::new((*self).normalize())
     }
 
-    fn union(self, other: Box<T<'b>>, ctx: &mut TVarContext) -> Ty {
+    fn union(self, other: Box<T<'b>>, ctx: &mut TypeContext) -> Ty {
         Box::new((*self).union(*other, ctx))
     }
 
-    fn intersect(self, other: Box<T<'b>>, ctx: &mut TVarContext) -> Ty {
+    fn intersect(self, other: Box<T<'b>>, ctx: &mut TypeContext) -> Ty {
         Box::new((*self).intersect(*other, ctx))
     }
 
-    fn assert_sub(&self, other: &Box<T<'b>>, ctx: &mut TVarContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Box<T<'b>>, ctx: &mut TypeContext) -> CheckResult<()> {
         (**self).assert_sub(&**other, ctx)
     }
 
-    fn assert_eq(&self, other: &Box<T<'b>>, ctx: &mut TVarContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Box<T<'b>>, ctx: &mut TypeContext) -> CheckResult<()> {
         (**self).assert_eq(&**other, ctx)
     }
 }
 
 impl From<Kind> for Ty { fn from(x: Kind) -> Ty { Box::new(From::from(*x)) } }
+
+#[cfg(test)] 
+mod tests {
+    use kailua_syntax::Str;
+    use ty::{Lattice, TypeContext};
+    use super::*;
+
+    macro_rules! hash {
+        ($($k:ident = $v:expr),*) => (vec![$((s(stringify!($k)), $v)),*])
+    }
+
+    fn b<T>(x: T) -> Box<T> { Box::new(x) }
+    fn s(x: &str) -> Str { Str::from(x.as_bytes().to_owned()) }
+
+    #[test]
+    fn test_lattice() {
+        macro_rules! check {
+            ($l:expr, $r:expr; $u:expr, $i:expr) => ({
+                let left = $l;
+                let right = $r;
+                let union = $u;
+                let intersect = $i;
+                let actualunion = left.clone().union(right.clone(), &mut ());
+                if actualunion != union {
+                    panic!("{:?} | {:?} = expected {:?}, actual {:?}",
+                           left, right, union, actualunion);
+                }
+                let actualintersect = left.clone().intersect(right.clone(), &mut ());
+                if actualintersect != intersect {
+                    panic!("{:?} & {:?} = expected {:?}, actual {:?}",
+                           left, right, intersect, actualintersect);
+                }
+            })
+        }
+
+        // dynamic vs. everything else
+        check!(T::Dynamic, T::Dynamic; T::Dynamic, T::Dynamic);
+        check!(T::Dynamic, T::integer(); T::Dynamic, T::integer());
+        check!(T::tuple(vec![b(T::integer()), b(T::Boolean)]), T::Dynamic;
+               T::Dynamic, T::tuple(vec![b(T::integer()), b(T::Boolean)]));
+
+        // integer literals
+        check!(T::integer(), T::number(); T::number(), T::integer());
+        check!(T::number(), T::integer(); T::number(), T::integer());
+        check!(T::number(), T::number(); T::number(), T::number());
+        check!(T::integer(), T::integer(); T::integer(), T::integer());
+        check!(T::int(3), T::int(3); T::int(3), T::int(3));
+        check!(T::int(3), T::number(); T::number(), T::int(3));
+        check!(T::integer(), T::int(3); T::integer(), T::int(3));
+        check!(T::int(3), T::int(4); T::ints(vec![3, 4]), T::None);
+        check!(T::ints(vec![3, 4]), T::int(3);
+               T::ints(vec![3, 4]), T::int(3));
+        check!(T::int(5), T::ints(vec![3, 4]);
+               T::ints(vec![3, 4, 5]), T::None);
+        check!(T::ints(vec![3, 4]), T::ints(vec![5, 4, 7]);
+               T::ints(vec![3, 4, 5, 7]), T::int(4));
+        check!(T::ints(vec![3, 4, 5]), T::ints(vec![2, 3, 4]);
+               T::ints(vec![2, 3, 4, 5]), T::ints(vec![3, 4]));
+
+        // string literals
+        check!(T::string(), T::str(s("hello")); T::string(), T::str(s("hello")));
+        check!(T::str(s("hello")), T::string(); T::string(), T::str(s("hello")));
+        check!(T::str(s("hello")), T::str(s("hello"));
+               T::str(s("hello")), T::str(s("hello")));
+        check!(T::str(s("hello")), T::str(s("goodbye"));
+               T::strs(vec![s("hello"), s("goodbye")]), T::None);
+        check!(T::str(s("hello")), T::strs(vec![s("goodbye")]);
+               T::strs(vec![s("hello"), s("goodbye")]), T::None);
+        check!(T::strs(vec![s("hello"), s("goodbye")]), T::str(s("goodbye"));
+               T::strs(vec![s("hello"), s("goodbye")]), T::str(s("goodbye")));
+        check!(T::strs(vec![s("hello"), s("goodbye")]),
+               T::strs(vec![s("what"), s("goodbye")]);
+               T::strs(vec![s("hello"), s("goodbye"), s("what")]),
+               T::str(s("goodbye")));
+        check!(T::strs(vec![s("a"), s("b"), s("c")]),
+               T::strs(vec![s("b"), s("c"), s("d")]);
+               T::strs(vec![s("a"), s("b"), s("c"), s("d")]),
+               T::strs(vec![s("b"), s("c")]));
+
+        // tables
+        check!(T::table(), T::array(b(T::integer())); T::table(), T::array(b(T::integer())));
+        check!(T::array(b(T::integer())), T::array(b(T::integer()));
+               T::array(b(T::integer())), T::array(b(T::integer())));
+        check!(T::array(b(T::int(3))), T::array(b(T::int(4)));
+               T::array(b(T::ints(vec![3, 4]))), T::array(b(T::None)));
+        check!(T::tuple(vec![b(T::integer()), b(T::string())]),
+               T::tuple(vec![b(T::number()), b(T::Dynamic), b(T::Boolean)]);
+               T::tuple(vec![b(T::number()), b(T::Dynamic), b(T::Boolean | T::Nil)]),
+               T::tuple(vec![b(T::integer()), b(T::string())]));
+        check!(T::tuple(vec![b(T::integer()), b(T::string())]),
+               T::tuple(vec![b(T::number()), b(T::Boolean), b(T::Dynamic)]);
+               T::tuple(vec![b(T::number()), b(T::string() | T::Boolean), b(T::Dynamic)]),
+               T::empty_table()); // boolean & string = _|_, so no way to reconcile
+        check!(T::record(hash![foo=b(T::integer()), bar=b(T::string())]),
+               T::record(hash![quux=b(T::Boolean)]);
+               T::record(hash![foo=b(T::integer()), bar=b(T::string()), quux=b(T::Boolean)]),
+               T::empty_table());
+        check!(T::record(hash![foo=b(T::int(3)), bar=b(T::string())]),
+               T::record(hash![foo=b(T::int(4))]);
+               T::record(hash![foo=b(T::ints(vec![3, 4])), bar=b(T::string())]),
+               T::empty_table());
+        check!(T::record(hash![foo=b(T::integer()), bar=b(T::number()),
+                                    quux=b(T::array(b(T::Dynamic)))]),
+               T::record(hash![foo=b(T::number()), bar=b(T::string()),
+                                    quux=b(T::array(b(T::Boolean)))]);
+               T::record(hash![foo=b(T::number()), bar=b(T::number() | T::string()),
+                                    quux=b(T::array(b(T::Dynamic)))]),
+               T::record(hash![foo=b(T::integer()),
+                                    quux=b(T::array(b(T::Boolean)))]));
+        check!(T::record(hash![foo=b(T::int(3)), bar=b(T::number())]),
+               T::map(b(T::string()), b(T::integer()));
+               T::map(b(T::string()), b(T::number())),
+               T::record(hash![foo=b(T::int(3)), bar=b(T::integer())]));
+        check!(T::map(b(T::str(s("wat"))), b(T::integer())),
+               T::map(b(T::string()), b(T::int(42)));
+               T::map(b(T::string()), b(T::integer())),
+               T::map(b(T::str(s("wat"))), b(T::int(42))));
+        check!(T::array(b(T::number())), T::map(b(T::Dynamic), b(T::integer()));
+               T::map(b(T::Dynamic), b(T::number())), T::array(b(T::integer())));
+        check!(T::empty_table(), T::array(b(T::integer()));
+               T::array(b(T::integer())), T::empty_table());
+
+        // general unions
+        check!(T::True, T::False; T::Boolean, T::None);
+        check!(T::int(3) | T::Nil, T::int(4) | T::Nil;
+               T::ints(vec![3, 4]) | T::Nil, T::Nil);
+        check!(T::ints(vec![3, 5]) | T::Nil, T::int(4) | T::string();
+               T::string() | T::ints(vec![3, 4, 5]) | T::Nil, T::None);
+        check!(T::int(3) | T::string(), T::str(s("wat")) | T::int(4);
+               T::ints(vec![3, 4]) | T::string(), T::str(s("wat")));
+        check!(T::array(b(T::integer())), T::tuple(vec![b(T::string())]);
+               T::map(b(T::integer()), b(T::integer() | T::string())), T::empty_table());
+        //assert_eq!(T::map(b(T::string()), b(T::integer())),
+        //           T::map(b(T::string()), b(T::integer() | T::Nil)));
+    }
+
+    #[test]
+    fn test_sub() {
+        use env::Context;
+
+        let mut ctx = Context::new();
+
+        {
+            let v1 = ctx.gen_tvar();
+            // v1 <: integer
+            assert_eq!(T::TVar(v1).assert_sub(&T::integer(), &mut ctx), Ok(()));
+            // v1 <: integer
+            assert_eq!(T::TVar(v1).assert_sub(&T::integer(), &mut ctx), Ok(()));
+            // v1 <: integer AND v1 <: string (!)
+            assert!(T::TVar(v1).assert_sub(&T::string(), &mut ctx).is_err());
+        }
+
+        {
+            let v1 = ctx.gen_tvar();
+            let v2 = ctx.gen_tvar();
+            // v1 <: v2
+            assert_eq!(T::TVar(v1).assert_sub(&T::TVar(v2), &mut ctx), Ok(()));
+            // v1 <: v2 <: string
+            assert_eq!(T::TVar(v2).assert_sub(&T::string(), &mut ctx), Ok(()));
+            // v1 <: v2 <: string AND v1 <: integer (!)
+            assert!(T::TVar(v1).assert_sub(&T::integer(), &mut ctx).is_err());
+        }
+
+        {
+            let v1 = ctx.gen_tvar();
+            let v2 = ctx.gen_tvar();
+            let t1 = T::record(hash![a=b(T::integer()), b=b(T::TVar(v1))]);
+            let t2 = T::record(hash![a=b(T::TVar(v2)), b=b(T::string()), c=b(T::Boolean)]);
+            // {a=integer, b=v1} <: {a=v2, b=string, c=boolean}
+            assert_eq!(t1.assert_sub(&t2, &mut ctx), Ok(()));
+            // ... AND v1 <: string
+            assert_eq!(T::TVar(v1).assert_sub(&T::string(), &mut ctx), Ok(()));
+            // ... AND v1 <: string AND v2 :> integer
+            assert_eq!(T::integer().assert_sub(&T::TVar(v2), &mut ctx), Ok(()));
+            // {a=integer, b=v1} = {a=v2, b=string, c=boolean} (!)
+            assert!(t1.assert_eq(&t2, &mut ctx).is_err());
+        }
+    }
+}
 

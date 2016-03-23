@@ -3,7 +3,7 @@ use std::collections::HashSet;
 
 use kailua_syntax::Str;
 use diag::CheckResult;
-use super::{TVarContext, Lattice};
+use super::{TypeContext, Lattice};
 use super::{error_not_sub, error_not_eq};
 
 #[derive(Clone)]
@@ -28,7 +28,7 @@ impl Lattice for Numbers {
         }
     }
 
-    fn union(self, other: Numbers, _: &mut TVarContext) -> Option<Numbers> {
+    fn union(self, other: Numbers, _: &mut TypeContext) -> Option<Numbers> {
         match (self, other) {
             (Numbers::All, _) => Some(Numbers::All),
             (_, Numbers::All) => Some(Numbers::All),
@@ -61,7 +61,7 @@ impl Lattice for Numbers {
         }
     }
 
-    fn intersect(self, other: Numbers, _: &mut TVarContext) -> Option<Numbers> {
+    fn intersect(self, other: Numbers, _: &mut TypeContext) -> Option<Numbers> {
         match (self, other) {
             (Numbers::One(a), Numbers::One(b)) =>
                 if a == b { Some(Numbers::One(a)) } else { None },
@@ -87,7 +87,7 @@ impl Lattice for Numbers {
         }
     }
 
-    fn assert_sub(&self, other: &Self, _: &mut TVarContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Self, _: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Numbers::One(a), &Numbers::One(b)) => a == b,
             (&Numbers::One(a), &Numbers::Some(ref b)) => b.contains(&a),
@@ -109,7 +109,7 @@ impl Lattice for Numbers {
         if ok { Ok(()) } else { error_not_sub(self, other) }
     }
 
-    fn assert_eq(&self, other: &Self, _ctx: &mut TVarContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Self, _ctx: &mut TypeContext) -> CheckResult<()> {
         if *self == *other { Ok(()) } else { error_not_eq(self, other) }
     }
 }
@@ -155,7 +155,7 @@ pub enum Strings {
 }
 
 impl Strings {
-    pub fn assert_sup_str(&self, other: &Str, _: &mut TVarContext) -> CheckResult<()> {
+    pub fn assert_sup_str(&self, other: &Str, _: &mut TypeContext) -> CheckResult<()> {
         let ok = match *self {
             Strings::One(ref s) => *s == *other,
             Strings::Some(ref set) => set.contains(other),
@@ -180,7 +180,7 @@ impl Lattice for Strings {
         }
     }
 
-    fn union(self, other: Strings, _: &mut TVarContext) -> Option<Strings> {
+    fn union(self, other: Strings, _: &mut TypeContext) -> Option<Strings> {
         match (self, other) {
             (Strings::All, _) => Some(Strings::All),
             (_, Strings::All) => Some(Strings::All),
@@ -210,7 +210,7 @@ impl Lattice for Strings {
         }
     }
 
-    fn intersect(self, other: Strings, _: &mut TVarContext) -> Option<Strings> {
+    fn intersect(self, other: Strings, _: &mut TypeContext) -> Option<Strings> {
         match (self, other) {
             (Strings::One(a), Strings::One(b)) =>
                 if a == b { Some(Strings::One(a)) } else { None },
@@ -233,7 +233,7 @@ impl Lattice for Strings {
         }
     }
 
-    fn assert_sub(&self, other: &Self, _: &mut TVarContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Self, _: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Strings::One(ref a), &Strings::One(ref b)) => *a == *b,
             (&Strings::One(ref a), &Strings::Some(ref b)) => b.contains(a),
@@ -252,7 +252,7 @@ impl Lattice for Strings {
         if ok { Ok(()) } else { error_not_sub(self, other) }
     }
 
-    fn assert_eq(&self, other: &Self, _ctx: &mut TVarContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Self, _ctx: &mut TypeContext) -> CheckResult<()> {
         if *self == *other { Ok(()) } else { error_not_eq(self, other) }
     }
 }

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use kailua_syntax::Str;
 use diag::CheckResult;
-use super::{T, Ty, Union, TVarContext, Lattice, Numbers, Strings};
+use super::{T, Ty, Union, TypeContext, Lattice, Numbers, Strings};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 
@@ -19,7 +19,7 @@ pub enum Tables {
 }
 
 impl Tables {
-    pub fn lift_to_map(self, ctx: &mut TVarContext) -> Tables {
+    pub fn lift_to_map(self, ctx: &mut TypeContext) -> Tables {
         match self {
             Tables::Empty => Tables::Empty,
             Tables::Record(fields) => {
@@ -39,7 +39,7 @@ impl Tables {
     }
 
     pub fn insert(self, key: Option<T<'static>>, value: T<'static>,
-                  ctx: &mut TVarContext) -> Tables {
+                  ctx: &mut TypeContext) -> Tables {
         // a single string key is special
         if let Some(ref key) = key {
             if key.flags() == T_STRING {
@@ -125,9 +125,9 @@ impl Lattice for Tables {
         }
     }
 
-    fn union(self, other: Tables, ctx: &mut TVarContext) -> Option<Tables> {
+    fn union(self, other: Tables, ctx: &mut TypeContext) -> Option<Tables> {
         fn union_rec_tup(rec: HashMap<Str, Ty>, mut tup: Vec<Ty>,
-                         ctx: &mut TVarContext) -> Tables {
+                         ctx: &mut TypeContext) -> Tables {
             let mut uty = tup.pop().unwrap();
             for ty in tup {
                 uty = uty.union(ty, ctx);
@@ -139,7 +139,7 @@ impl Lattice for Tables {
         }
 
         fn union_rec_map(fields: HashMap<Str, Ty>, key: Ty, value: Ty,
-                         ctx: &mut TVarContext) -> Tables {
+                         ctx: &mut TypeContext) -> Tables {
             let mut uty = value;
             for (_, ty) in fields {
                 uty = uty.union(ty, ctx);
@@ -147,7 +147,7 @@ impl Lattice for Tables {
             Tables::Map(key.union(Box::new(T::string()), ctx), uty)
         }
 
-        fn union_tup_map(fields: Vec<Ty>, key: Ty, value: Ty, ctx: &mut TVarContext) -> Tables {
+        fn union_tup_map(fields: Vec<Ty>, key: Ty, value: Ty, ctx: &mut TypeContext) -> Tables {
             let mut uty = value;
             for ty in fields {
                 uty = uty.union(ty, ctx);
@@ -223,9 +223,9 @@ impl Lattice for Tables {
         Some(tab)
     }
 
-    fn intersect(self, other: Tables, ctx: &mut TVarContext) -> Option<Tables> {
+    fn intersect(self, other: Tables, ctx: &mut TypeContext) -> Option<Tables> {
         fn intersect_tup_arr(fields: Vec<Ty>, value: Ty,
-                             ctx: &mut TVarContext) -> Tables {
+                             ctx: &mut TypeContext) -> Tables {
             let mut newfields = Vec::new();
             for ty in fields {
                 let v = ty.intersect(value.clone(), ctx);
@@ -236,9 +236,9 @@ impl Lattice for Tables {
         }
 
         fn intersect_rec_map(fields: HashMap<Str, Ty>, key: Ty, value: Ty,
-                             ctx: &mut TVarContext) -> Tables {
+                             ctx: &mut TypeContext) -> Tables {
             fn merge<F: Fn(&Str) -> bool>(fields: HashMap<Str, Ty>, value: Ty,
-                                          ctx: &mut TVarContext, cond: F) -> Tables {
+                                          ctx: &mut TypeContext, cond: F) -> Tables {
                 let mut newfields = HashMap::new();
                 for (k, ty) in fields {
                     if cond(&k) { 
@@ -263,9 +263,9 @@ impl Lattice for Tables {
         }
 
         fn intersect_tup_map(fields: Vec<Ty>, key: Ty, value: Ty,
-                             ctx: &mut TVarContext) -> Tables {
+                             ctx: &mut TypeContext) -> Tables {
             fn merge<F: Fn(i32) -> bool>(fields: Vec<Ty>, value: Ty,
-                                         ctx: &mut TVarContext, cond: F) -> Tables {
+                                         ctx: &mut TypeContext, cond: F) -> Tables {
                 let mut newfields = Vec::new();
                 for (k, ty) in fields.into_iter().enumerate() {
                     if cond(k as i32) { 
@@ -292,7 +292,7 @@ impl Lattice for Tables {
         }
 
         fn intersect_arr_map(elem: Ty, key: Ty, value: Ty,
-                             ctx: &mut TVarContext) -> Tables {
+                             ctx: &mut TypeContext) -> Tables {
             let key = Union::from(*key);
             if key.has_dynamic {
                 Tables::Array(elem.intersect(value, ctx))
@@ -369,7 +369,7 @@ impl Lattice for Tables {
         Some(tab)
     }
 
-    fn assert_sub(&self, other: &Self, ctx: &mut TVarContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Tables::Empty, _) => true,
             (_, &Tables::Empty) => false,
@@ -451,7 +451,7 @@ impl Lattice for Tables {
         if ok { Ok(()) } else { error_not_sub(self, other) }
     }
 
-    fn assert_eq(&self, other: &Self, ctx: &mut TVarContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Tables::All, &Tables::All) => true,
             (&Tables::Empty, &Tables::Empty) => true,
