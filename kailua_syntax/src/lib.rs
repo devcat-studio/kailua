@@ -2,7 +2,7 @@
 #[macro_use] extern crate newtype_derive;
 
 pub use lex::Error;
-pub use ast::{Name, Str, Var, Params, E, Exp, UnOp, BinOp, FuncScope, SelfParam, S, Stmt, Block};
+pub use ast::{Name, Str, Var, Params, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam, St, Stmt, Block};
 pub use ast::{K, Kind};
 
 mod lex;

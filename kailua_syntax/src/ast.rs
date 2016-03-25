@@ -93,7 +93,7 @@ impl fmt::Debug for Params {
 }
 
 #[derive(Clone, PartialEq)]
-pub enum E {
+pub enum Ex {
     // literals
     Nil,
     False,
@@ -113,20 +113,20 @@ pub enum E {
     Bin(Exp, BinOp, Exp),
 }
 
-impl fmt::Debug for E {
+impl fmt::Debug for Ex {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            E::Nil => write!(f, "nil"),
-            E::False => write!(f, "false"),
-            E::True => write!(f, "true"),
-            E::Num(v) => write!(f, "{:?}", v),
-            E::Str(ref s) => write!(f, "{:?}", *s),
-            E::Varargs => write!(f, "..."),
-            E::Func(ref p, ref b) => write!(f, "Func({:?}, {:?})", *p, *b),
-            E::Table(ref fs) => write!(f, "Table({:?})", *fs),
+            Ex::Nil => write!(f, "nil"),
+            Ex::False => write!(f, "false"),
+            Ex::True => write!(f, "true"),
+            Ex::Num(v) => write!(f, "{:?}", v),
+            Ex::Str(ref s) => write!(f, "{:?}", *s),
+            Ex::Varargs => write!(f, "..."),
+            Ex::Func(ref p, ref b) => write!(f, "Func({:?}, {:?})", *p, *b),
+            Ex::Table(ref fs) => write!(f, "Table({:?})", *fs),
 
-            E::Var(ref n) => write!(f, "{:?}", *n),
-            E::FuncCall(ref e, ref args) => {
+            Ex::Var(ref n) => write!(f, "{:?}", *n),
+            Ex::FuncCall(ref e, ref args) => {
                 try!(write!(f, "{:?}(", *e));
                 let mut first = true;
                 for arg in args {
@@ -135,7 +135,7 @@ impl fmt::Debug for E {
                 }
                 write!(f, ")")
             },
-            E::MethodCall(ref e, ref n, ref args) => {
+            Ex::MethodCall(ref e, ref n, ref args) => {
                 try!(write!(f, "{:?}:{:?}(", *e, *n));
                 let mut first = true;
                 for arg in args {
@@ -144,18 +144,18 @@ impl fmt::Debug for E {
                 }
                 write!(f, ")")
             },
-            E::Index(ref e, ref i) => write!(f, "{:?}[{:?}]", *e, *i),
-            E::Un(op, ref e) => write!(f, "({} {:?})", op.symbol(), *e),
-            E::Bin(ref l, op, ref r) => write!(f, "({:?} {} {:?})", *l, op.symbol(), *r),
+            Ex::Index(ref e, ref i) => write!(f, "{:?}[{:?}]", *e, *i),
+            Ex::Un(op, ref e) => write!(f, "({} {:?})", op.symbol(), *e),
+            Ex::Bin(ref l, op, ref r) => write!(f, "({:?} {} {:?})", *l, op.symbol(), *r),
         }
     }
 }
 
-impl From<f64> for E { fn from(v: f64) -> E { E::Num(v) } }
-impl From<Str> for E { fn from(s: Str) -> E { E::Str(s) } }
-impl From<Name> for E { fn from(n: Name) -> E { E::Var(n.into()) } }
+impl From<f64> for Ex { fn from(v: f64) -> Ex { Ex::Num(v) } }
+impl From<Str> for Ex { fn from(s: Str) -> Ex { Ex::Str(s) } }
+impl From<Name> for Ex { fn from(n: Name) -> Ex { Ex::Var(n.into()) } }
 
-pub type Exp = Box<E>;
+pub type Exp = Box<Ex>;
 
 impl From<f64> for Exp { fn from(x: f64) -> Exp { Box::new(From::from(x)) } }
 impl From<Str> for Exp { fn from(x: Str) -> Exp { Box::new(From::from(x)) } }
@@ -241,7 +241,7 @@ impl fmt::Debug for SelfParam {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum S {
+pub enum St {
     Void(Exp), // technically not every Exp is valid here, but for simplicity.
     Assign(Vec<Var>, Vec<Exp>),
     Do(Block),
@@ -260,10 +260,10 @@ pub enum S {
     KailuaAssume(Name, Kind, Option<Str>),
 }
 
-impl From<Exp> for S { fn from(e: Exp) -> S { S::Void(e) } }
-impl From<Block> for S { fn from(block: Block) -> S { S::Do(block) } }
+impl From<Exp> for St { fn from(e: Exp) -> St { St::Void(e) } }
+impl From<Block> for St { fn from(block: Block) -> St { St::Do(block) } }
 
-pub type Stmt = Box<S>;
+pub type Stmt = Box<St>;
 
 impl From<Exp> for Stmt { fn from(x: Exp) -> Stmt { Box::new(From::from(x)) } }
 impl From<Block> for Stmt { fn from(x: Block) -> Stmt { Box::new(From::from(x)) } }

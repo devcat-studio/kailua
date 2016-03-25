@@ -2,7 +2,7 @@ use std::i32;
 use std::ops::{Deref, DerefMut};
 use std::borrow::Cow;
 
-use kailua_syntax::{Name, Var, Params, E, UnOp, BinOp, FuncScope, SelfParam, S, Stmt, Block};
+use kailua_syntax::{Name, Var, Params, Ex, UnOp, BinOp, FuncScope, SelfParam, St, Stmt, Block};
 use diag::CheckResult;
 use ty::{T, Seq, Lattice, TypeContext, Numbers, Strings, Tables, Function};
 use ty::flags::*;
@@ -268,13 +268,13 @@ impl<'env> Checker<'env> {
         Ok(())
     }
 
-    fn visit_stmt(&mut self, stmt: &S) -> CheckResult<()> {
+    fn visit_stmt(&mut self, stmt: &St) -> CheckResult<()> {
         match *stmt {
-            S::Void(ref exp) => {
+            St::Void(ref exp) => {
                 try!(self.visit_exp(exp));
             }
 
-            S::Assign(ref vars, ref exps) => {
+            St::Assign(ref vars, ref exps) => {
                 for var in vars {
                     try!(self.visit_var(var));
                 }
@@ -298,21 +298,21 @@ impl<'env> Checker<'env> {
                 }
             }
 
-            S::Do(ref block) => {
+            St::Do(ref block) => {
                 try!(self.visit_block(block));
             }
 
-            S::While(ref cond, ref block) => {
+            St::While(ref cond, ref block) => {
                 try!(self.visit_exp(cond));
                 try!(self.visit_block(block));
             }
 
-            S::Repeat(ref block, ref cond) => {
+            St::Repeat(ref block, ref cond) => {
                 try!(self.visit_block(block));
                 try!(self.visit_exp(cond));
             }
 
-            S::If(ref conds, ref lastblock) => {
+            St::If(ref conds, ref lastblock) => {
                 for &(ref cond, ref block) in conds {
                     try!(self.visit_exp(cond));
                     try!(self.visit_block(block));
@@ -322,7 +322,7 @@ impl<'env> Checker<'env> {
                 }
             }
 
-            S::For(ref name, ref start, ref end, ref step, ref block) => {
+            St::For(ref name, ref start, ref end, ref step, ref block) => {
                 try!(self.visit_exp(start));
                 try!(self.visit_exp(end));
                 if let &Some(ref step) = step {
@@ -334,7 +334,7 @@ impl<'env> Checker<'env> {
                 try!(scope.visit_block(block));
             }
 
-            S::ForIn(ref names, ref exps, ref block) => {
+            St::ForIn(ref names, ref exps, ref block) => {
                 for exp in exps {
                     try!(self.visit_exp(exp));
                 }
@@ -346,7 +346,7 @@ impl<'env> Checker<'env> {
                 try!(scope.visit_block(block));
             }
 
-            S::FuncDecl(scope, ref name, ref params, ref block) => {
+            St::FuncDecl(scope, ref name, ref params, ref block) => {
                 // `name` itself is available to the inner scope
                 let funcv = self.context().gen_tvar();
                 let info = TyInfo::from(T::TVar(funcv));
@@ -358,7 +358,7 @@ impl<'env> Checker<'env> {
                 try!(T::TVar(funcv).assert_eq(&functy.ty, self.context()));
             }
 
-            S::MethodDecl(ref names, selfparam, ref params, ref block) => {
+            St::MethodDecl(ref names, selfparam, ref params, ref block) => {
                 // TODO verify names
                 let selfinfo = match selfparam {
                     SelfParam::Yes => Some(TyInfo::from(T::Dynamic)),
@@ -367,7 +367,7 @@ impl<'env> Checker<'env> {
                 try!(self.visit_func_body(selfinfo, params, block));
             }
 
-            S::Local(ref names, ref exps) => {
+            St::Local(ref names, ref exps) => {
                 for (i, exp) in exps.iter().enumerate() {
                     let info = try!(self.visit_exp(exp));
                     if i < names.len() {
@@ -384,16 +384,16 @@ impl<'env> Checker<'env> {
                 }
             }
 
-            S::Return(ref exps) => {
+            St::Return(ref exps) => {
                 // XXX should unify with the current function
                 for exp in exps {
                     try!(self.visit_exp(exp));
                 }
             }
 
-            S::Break => {}
+            St::Break => {}
 
-            S::KailuaAssume(ref name, ref kind, ref builtin) => {
+            St::KailuaAssume(ref name, ref kind, ref builtin) => {
                 let builtin = if let Some(ref builtin) = *builtin {
                     match &***builtin {
                         b"require" => Some(Builtin::Require),
@@ -459,28 +459,28 @@ impl<'env> Checker<'env> {
         }
     }
 
-    fn visit_exp(&mut self, exp: &E) -> CheckResult<TyInfo> {
+    fn visit_exp(&mut self, exp: &Ex) -> CheckResult<TyInfo> {
         match *exp {
-            E::Nil => Ok(TyInfo::from(T::Nil)),
-            E::False => Ok(TyInfo::from(T::False)),
-            E::True => Ok(TyInfo::from(T::True)),
-            E::Num(v) if v.floor() == v =>
+            Ex::Nil => Ok(TyInfo::from(T::Nil)),
+            Ex::False => Ok(TyInfo::from(T::False)),
+            Ex::True => Ok(TyInfo::from(T::True)),
+            Ex::Num(v) if v.floor() == v =>
                 if i32::MIN as f64 <= v && v <= i32::MAX as f64 {
                     Ok(TyInfo::from(T::int(v as i32)))
                 } else {
                     Ok(TyInfo::from(T::integer()))
                 },
-            E::Num(_) => Ok(TyInfo::from(T::number())),
-            E::Str(ref s) => Ok(TyInfo::from(T::str(s.to_owned()))),
+            Ex::Num(_) => Ok(TyInfo::from(T::number())),
+            Ex::Str(ref s) => Ok(TyInfo::from(T::str(s.to_owned()))),
 
-            E::Varargs => {
+            Ex::Varargs => {
                 if let Some(info) = self.env.get_vararg() {
                     Ok(info.to_owned())
                 } else {
                     Err("vararg not declared in the innermost func".into())
                 }
             },
-            E::Var(ref name) => {
+            Ex::Var(ref name) => {
                 if let Some(info) = self.env.get_var(name) {
                     Ok(info.to_owned())
                 } else {
@@ -488,10 +488,10 @@ impl<'env> Checker<'env> {
                 }
             },
 
-            E::Func(ref params, ref block) => {
+            Ex::Func(ref params, ref block) => {
                 Ok(try!(self.visit_func_body(None, params, block)))
             },
-            E::Table(ref fields) => {
+            Ex::Table(ref fields) => {
                 let mut tab = Tables::Empty;
 
                 for &(ref key, ref value) in fields {
@@ -511,7 +511,7 @@ impl<'env> Checker<'env> {
                 Ok(TyInfo::from(T::Tables(Cow::Owned(tab))))
             },
 
-            E::FuncCall(ref func, ref args) => {
+            Ex::FuncCall(ref func, ref args) => {
                 let funcinfo = try!(self.visit_exp(func));
 
                 let mut argtys = Seq::new();
@@ -531,7 +531,7 @@ impl<'env> Checker<'env> {
                 match funcinfo.builtin {
                     // require("foo")
                     Some(Builtin::Require) if args.len() >= 1 => {
-                        if let E::Str(ref path) = *args[0] {
+                        if let Ex::Str(ref path) = *args[0] {
                             let block = match self.opts.require_block(path) {
                                 Ok(block) => block,
                                 Err(e) => return Err(format!("failed to require {:?}: {}",
@@ -548,7 +548,7 @@ impl<'env> Checker<'env> {
                 }
             },
 
-            E::MethodCall(ref e, ref _method, ref args) => {
+            Ex::MethodCall(ref e, ref _method, ref args) => {
                 let info = try!(self.visit_exp(e));
                 if !info.ty.flags().is_tabular() {
                     return Err(format!("tried to index a non-table type {:?}", info.ty));
@@ -560,7 +560,7 @@ impl<'env> Checker<'env> {
                 Ok(TyInfo::from(T::Dynamic))
             },
 
-            E::Index(ref e, ref key) => {
+            Ex::Index(ref e, ref key) => {
                 let ty = try!(self.visit_exp(e)).ty;
                 let kty = try!(self.visit_exp(key)).ty;
                 if let Some(vinfo) = try!(self.check_index(&ty, &kty)) {
@@ -570,12 +570,12 @@ impl<'env> Checker<'env> {
                 }
             },
 
-            E::Un(op, ref e) => {
+            Ex::Un(op, ref e) => {
                 let info = try!(self.visit_exp(e));
                 self.check_un_op(op, &info)
             },
 
-            E::Bin(ref l, op, ref r) => {
+            Ex::Bin(ref l, op, ref r) => {
                 let lhs = try!(self.visit_exp(l));
                 let rhs = try!(self.visit_exp(r));
                 self.check_bin_op(&lhs, op, &rhs)
