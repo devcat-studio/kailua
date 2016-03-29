@@ -6,6 +6,8 @@ pub use self::tables::Tables;
 pub use self::functions::{Function, Functions};
 pub use self::union::Union;
 pub use self::value::{T, Ty};
+pub use self::slot::{S, Slot};
+pub use self::builtin::Builtin;
 
 mod literals;
 mod tables;
@@ -13,6 +15,7 @@ mod functions;
 mod union;
 mod value;
 mod slot;
+mod builtin;
 
 fn error_not_bottom<T: fmt::Debug>(t: T) -> CheckResult<()> {
     Err(format!("impossible constraint requested: {:?} is bottom", t))
@@ -129,6 +132,30 @@ impl<T: Lattice<Output=Option<T>> + fmt::Debug> Lattice for Option<T> {
             (&None, &Some(ref b)) => error_not_bottom(b),
             (&None, &None) => Ok(())
         }
+    }
+}
+
+impl<Left: Lattice<Right, Output=Output>, Right, Output> Lattice<Box<Right>> for Box<Left> {
+    type Output = Box<Output>;
+
+    fn normalize(self) -> Box<Output> {
+        Box::new((*self).normalize())
+    }
+
+    fn union(self, other: Box<Right>, ctx: &mut TypeContext) -> Box<Output> {
+        Box::new((*self).union(*other, ctx))
+    }
+
+    fn intersect(self, other: Box<Right>, ctx: &mut TypeContext) -> Box<Output> {
+        Box::new((*self).intersect(*other, ctx))
+    }
+
+    fn assert_sub(&self, other: &Box<Right>, ctx: &mut TypeContext) -> CheckResult<()> {
+        (**self).assert_sub(&**other, ctx)
+    }
+
+    fn assert_eq(&self, other: &Box<Right>, ctx: &mut TypeContext) -> CheckResult<()> {
+        (**self).assert_eq(&**other, ctx)
     }
 }
 

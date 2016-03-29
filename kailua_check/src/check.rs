@@ -4,9 +4,9 @@ use std::borrow::Cow;
 
 use kailua_syntax::{Name, Var, Params, Ex, UnOp, BinOp, FuncScope, SelfParam, St, Stmt, Block};
 use diag::CheckResult;
-use ty::{T, Seq, Lattice, TypeContext, Numbers, Strings, Tables, Function};
+use ty::{T, Seq, Lattice, TypeContext, Numbers, Strings, Tables, Function, Builtin};
 use ty::flags::*;
-use env::{Builtin, TyInfo, Env, Frame, Scope, Context};
+use env::{TyInfo, Env, Frame, Scope, Context};
 
 pub trait Options {
     fn require_block(&mut self, path: &[u8]) -> CheckResult<Block> {
@@ -406,8 +406,12 @@ impl<'env> Checker<'env> {
                 } else {
                     None
                 };
-                let info = TyInfo { ty: T::from(kind), builtin: builtin };
-                try!(self.env.assume_var(name, info));
+                let ty = if let Some(builtin) = builtin {
+                    T::Builtin(builtin, Box::new(T::from(kind)))
+                } else {
+                    T::from(kind)
+                };
+                try!(self.env.assume_var(name, TyInfo::from(ty)));
             }
         }
         Ok(())
@@ -528,7 +532,7 @@ impl<'env> Checker<'env> {
                                        funcinfo.ty, e));
                 }
 
-                match funcinfo.builtin {
+                match funcinfo.ty.builtin() {
                     // require("foo")
                     Some(Builtin::Require) if args.len() >= 1 => {
                         if let Ex::Str(ref path) = *args[0] {

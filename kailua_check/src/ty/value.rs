@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use kailua_syntax::{K, Kind, Str};
 use diag::CheckResult;
 use super::{TypeContext, Lattice, Flags};
-use super::{Numbers, Strings, Tables, Function, Functions, Union, TVar};
+use super::{Numbers, Strings, Tables, Function, Functions, Union, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 
@@ -23,6 +23,7 @@ pub enum T<'a> {
     Tables(Cow<'a, Tables>),            // table, ...
     Functions(Cow<'a, Functions>),      // function, ...
     TVar(TVar),                         // type variable
+    Builtin(Builtin, Box<T<'a>>),       // builtin types (cannot be nested)
     Union(Cow<'a, Union>),              // union types A | B | ...
 }
 
@@ -100,6 +101,7 @@ impl<'a> T<'a> {
             T::Functions(..) => T_FUNCTION,
 
             T::TVar(..) => T_NONE,
+            T::Builtin(_, ref t) => t.flags(),
             T::Union(ref u) => u.flags(),
         }
     }
@@ -113,6 +115,7 @@ impl<'a> T<'a> {
                 if let &Strings::Some(ref set) = &**str { set.is_empty() } else { false },
             T::Functions(ref func) =>
                 if let &Functions::Multi(ref fs) = &**func { fs.is_empty() } else { false },
+            T::Builtin(_, ref t) => t.flags() == T_NONE,
             T::Union(ref u) => u.flags() == T_NONE,
             _ => false,
         }
@@ -128,6 +131,7 @@ impl<'a> T<'a> {
     pub fn has_true(&self) -> bool {
         match *self {
             T::Boolean | T::True => true,
+            T::Builtin(_, ref t) => t.has_true(),
             T::Union(ref u) => u.has_true,
             _ => false,
         }
@@ -136,6 +140,7 @@ impl<'a> T<'a> {
     pub fn has_false(&self) -> bool {
         match *self {
             T::Boolean | T::False => true,
+            T::Builtin(_, ref t) => t.has_false(),
             T::Union(ref u) => u.has_false,
             _ => false,
         }
@@ -144,6 +149,7 @@ impl<'a> T<'a> {
     pub fn has_numbers(&self) -> Option<&Numbers> {
         match *self {
             T::Numbers(ref num) => Some(num),
+            T::Builtin(_, ref t) => t.has_numbers(),
             T::Union(ref u) => u.numbers.as_ref(),
             _ => None,
         }
@@ -152,6 +158,7 @@ impl<'a> T<'a> {
     pub fn has_strings(&self) -> Option<&Strings> {
         match *self {
             T::Strings(ref str) => Some(str),
+            T::Builtin(_, ref t) => t.has_strings(),
             T::Union(ref u) => u.strings.as_ref(),
             _ => None,
         }
@@ -160,6 +167,7 @@ impl<'a> T<'a> {
     pub fn has_tables(&self) -> Option<&Tables> {
         match *self {
             T::Tables(ref tab) => Some(tab),
+            T::Builtin(_, ref t) => t.has_tables(),
             T::Union(ref u) => u.tables.as_ref(),
             _ => None,
         }
@@ -168,6 +176,7 @@ impl<'a> T<'a> {
     pub fn has_functions(&self) -> Option<&Functions> {
         match *self {
             T::Functions(ref func) => Some(func),
+            T::Builtin(_, ref t) => t.has_functions(),
             T::Union(ref u) => u.functions.as_ref(),
             _ => None,
         }
@@ -176,9 +185,22 @@ impl<'a> T<'a> {
     pub fn has_tvar(&self) -> Option<TVar> {
         match *self {
             T::TVar(tv) => Some(tv),
+            T::Builtin(_, ref t) => t.has_tvar(),
             T::Union(ref u) => u.tvar,
             _ => None,
         }
+    }
+
+    pub fn builtin(&self) -> Option<Builtin> {
+        match *self { T::Builtin(b, _) => Some(b), _ => None }
+    }
+
+    pub fn as_base(&self) -> &T<'a> {
+        match self { &T::Builtin(_, ref t) => &*t, t => t }
+    }
+
+    pub fn into_base(self) -> T<'a> {
+        match self { T::Builtin(_, t) => *t, t => t }
     }
 
     // XXX should be in S instead
@@ -217,6 +239,7 @@ impl<'a> T<'a> {
             T::Functions(func) => T::Functions(Cow::Owned(func.into_owned())),
             T::TVar(tv)        => T::TVar(tv),
 
+            T::Builtin(b, t) => T::Builtin(b, Box::new(t.into_send())),
             T::Union(u) => T::Union(Cow::Owned(u.into_owned())),
         }
     }
@@ -267,12 +290,23 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             }
 
             T::TVar(tv) => T::TVar(tv),
+            T::Builtin(b, t) => T::Builtin(b, t.normalize()),
             T::Union(u) => T::Union(Cow::Owned(u.into_owned())),
         }
     }
 
     fn union(self, other: T<'b>, ctx: &mut TypeContext) -> T<'static> {
         match (self, other) {
+            // built-in types are destructured first unless they point to the same builtin
+            (T::Builtin(lb, lhs), T::Builtin(rb, rhs)) =>
+                if lb == rb {
+                    T::Builtin(lb, lhs.union(rhs, ctx))
+                } else {
+                    (*lhs).union(*rhs, ctx)
+                },
+            (T::Builtin(_, lhs), rhs) => (*lhs).union(rhs, ctx),
+            (lhs, T::Builtin(_, rhs)) => lhs.union(*rhs, ctx),
+
             // dynamic eclipses everything else
             (T::Dynamic, _) => T::Dynamic,
             (_, T::Dynamic) => T::Dynamic,
@@ -325,12 +359,22 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
 
             (T::TVar(a), T::TVar(b)) => T::TVar(a.union(b, ctx)),
 
-            (a, b) => Union::from(a).union(Union::from(b), ctx).simplify(),
+            (a, b) => Union::from(&a).union(Union::from(&b), ctx).simplify(),
         }
     }
 
     fn intersect(self, other: T<'b>, ctx: &mut TypeContext) -> T<'static> {
         match (self, other) {
+            // built-in types are destructured first unless they point to the same builtin
+            (T::Builtin(lb, lhs), T::Builtin(rb, rhs)) =>
+                if lb == rb {
+                    T::Builtin(lb, lhs.intersect(rhs, ctx))
+                } else {
+                    (*lhs).intersect(*rhs, ctx)
+                },
+            (T::Builtin(_, lhs), rhs) => (*lhs).intersect(rhs, ctx),
+            (lhs, T::Builtin(_, rhs)) => lhs.intersect(*rhs, ctx),
+
             (T::Dynamic, ty) => ty.into_send(),
             (ty, T::Dynamic) => ty.into_send(),
 
@@ -380,8 +424,8 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
 
             (T::TVar(a), T::TVar(b)) => T::TVar(a.intersect(b, ctx)),
 
-            (a, T::Union(b)) => Union::from(a).intersect(b.into_owned(), ctx).simplify(),
-            (T::Union(a), b) => a.into_owned().intersect(Union::from(b), ctx).simplify(),
+            (a, T::Union(b)) => Union::from(&a).intersect(b.into_owned(), ctx).simplify(),
+            (T::Union(a), b) => a.into_owned().intersect(Union::from(&b), ctx).simplify(),
             (_, _) => T::None,
         }
     }
@@ -390,6 +434,11 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
         println!("asserting a constraint {:?} <: {:?}", *self, *other);
 
         let ok = match (self, other) {
+            // built-in types are destructured first
+            (&T::Builtin(_, ref lhs), &T::Builtin(_, ref rhs)) => return lhs.assert_sub(rhs, ctx),
+            (&T::Builtin(_, ref lhs), rhs) => return (**lhs).assert_sub(rhs, ctx),
+            (lhs, &T::Builtin(_, ref rhs)) => return lhs.assert_sub(&**rhs, ctx),
+
             (&T::Dynamic, _) => true,
             (_, &T::Dynamic) => true,
 
@@ -437,7 +486,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
                 false
             },
             // XXX a <: T \/ b === a <: T OR a <: b
-            (&T::TVar(a), &T::Union(ref b)) if b.tvar.is_some() => false,
+            (&T::TVar(_a), &T::Union(ref b)) if b.tvar.is_some() => false,
 
             (&T::TVar(a), &T::TVar(b)) => return a.assert_sub(&b, ctx),
             (a, &T::TVar(b)) => return ctx.assert_tvar_sup(b, a),
@@ -453,6 +502,11 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
         println!("asserting a constraint {:?} = {:?}", *self, *other);
 
         let ok = match (self, other) {
+            // built-in types are destructured first
+            (&T::Builtin(_, ref lhs), &T::Builtin(_, ref rhs)) => return lhs.assert_eq(rhs, ctx),
+            (&T::Builtin(_, ref lhs), rhs) => return (**lhs).assert_eq(rhs, ctx),
+            (lhs, &T::Builtin(_, ref rhs)) => return lhs.assert_eq(&**rhs, ctx),
+
             (&T::Dynamic, _) => true,
             (_, &T::Dynamic) => true,
 
@@ -474,8 +528,8 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::TVar(a), b) => return ctx.assert_tvar_eq(a, b),
 
             (&T::Union(ref a), &T::Union(ref b)) => return a.assert_eq(b, ctx),
-            (&T::Union(ref a), b) => unimplemented!(), // XXX for now
-            (a, &T::Union(ref b)) => unimplemented!(), // XXX for now
+            (&T::Union(ref _a), _b) => unimplemented!(), // XXX for now
+            (_a, &T::Union(ref _b)) => unimplemented!(), // XXX for now
 
             (_, _) => false,
         };
@@ -510,6 +564,7 @@ impl<'a, 'b> PartialEq<T<'b>> for T<'a> {
             (&T::Tables(ref a),    &T::Tables(ref b))    => *a == *b,
             (&T::Functions(ref a), &T::Functions(ref b)) => *a == *b,
             (&T::TVar(a),          &T::TVar(b))          => a == b,
+            (&T::Builtin(ba, _),   &T::Builtin(bb, _))   => ba == bb,
             (&T::Union(ref a),     &T::Union(ref b))     => a == b,
 
             (_, _) => false,
@@ -532,40 +587,17 @@ impl<'a> fmt::Debug for T<'a> {
             T::Tables(ref tab)     => fmt::Debug::fmt(tab, f),
             T::Functions(ref func) => fmt::Debug::fmt(func, f),
             T::TVar(tv)            => write!(f, "<#{}>", tv.0),
+            T::Builtin(b, ref t)   => write!(f, "{:?} (= {})", *t, b.name()),
             T::Union(ref u)        => fmt::Debug::fmt(u, f),
         }
     }
 }
 
-impl<'a> From<T<'a>> for Union { fn from(x: T<'a>) -> Union { Union::from(x) } }
+impl<'a> From<T<'a>> for Union { fn from(x: T<'a>) -> Union { Union::from(&x) } }
 
 impl<'a> From<K> for T<'a> { fn from(x: K) -> T<'a> { T::from(&x) } }
 
 pub type Ty = Box<T<'static>>;
-
-impl<'a, 'b> Lattice<Box<T<'b>>> for Box<T<'a>> {
-    type Output = Ty;
-
-    fn normalize(self) -> Ty {
-        Box::new((*self).normalize())
-    }
-
-    fn union(self, other: Box<T<'b>>, ctx: &mut TypeContext) -> Ty {
-        Box::new((*self).union(*other, ctx))
-    }
-
-    fn intersect(self, other: Box<T<'b>>, ctx: &mut TypeContext) -> Ty {
-        Box::new((*self).intersect(*other, ctx))
-    }
-
-    fn assert_sub(&self, other: &Box<T<'b>>, ctx: &mut TypeContext) -> CheckResult<()> {
-        (**self).assert_sub(&**other, ctx)
-    }
-
-    fn assert_eq(&self, other: &Box<T<'b>>, ctx: &mut TypeContext) -> CheckResult<()> {
-        (**self).assert_eq(&**other, ctx)
-    }
-}
 
 impl From<Kind> for Ty { fn from(x: Kind) -> Ty { Box::new(From::from(*x)) } }
 

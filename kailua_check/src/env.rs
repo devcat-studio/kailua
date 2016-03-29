@@ -1,7 +1,7 @@
 use std::fmt;
 use std::mem;
 use std::ops;
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::collections::HashMap;
 use vec_map::VecMap;
 
@@ -9,30 +9,20 @@ use kailua_syntax::Name;
 use diag::CheckResult;
 use ty::{Ty, T, TVar, Mark, Lattice, TypeContext};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Builtin {
-    Require,        // (fixed string) -> table & sideeffect
-}
-
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub struct TyInfo {
     pub ty: T<'static>,
-    pub builtin: Option<Builtin>,
 }
 
 impl TyInfo {
     pub fn from<'a>(ty: T<'a>) -> TyInfo {
-        TyInfo { ty: ty.into_send(), builtin: None }
+        TyInfo { ty: ty.into_send() }
     }
 }
 
 impl fmt::Debug for TyInfo {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "{:?}", self.ty));
-        if let Some(ref builtin) = self.builtin {
-            try!(write!(f, " (= {:?})", *builtin));
-        }
-        Ok(())
+        write!(f, "{:?}", self.ty)
     }
 }
 

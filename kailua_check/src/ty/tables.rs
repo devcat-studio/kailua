@@ -249,7 +249,7 @@ impl Lattice for Tables {
                 Tables::Record(newfields)
             }
 
-            let key = Union::from(*key);
+            let key = Union::from(&*key);
             if key.has_dynamic {
                 merge(fields, value, ctx, |_| true)
             } else {
@@ -278,7 +278,7 @@ impl Lattice for Tables {
                 Tables::Tuple(newfields)
             };
 
-            let key = Union::from(*key);
+            let key = Union::from(&*key);
             if key.has_dynamic {
                 merge(fields, value, ctx, |_| true)
             } else {
@@ -293,7 +293,7 @@ impl Lattice for Tables {
 
         fn intersect_arr_map(elem: Ty, key: Ty, value: Ty,
                              ctx: &mut TypeContext) -> Tables {
-            let key = Union::from(*key);
+            let key = Union::from(&*key);
             if key.has_dynamic {
                 Tables::Array(elem.intersect(value, ctx))
             } else {

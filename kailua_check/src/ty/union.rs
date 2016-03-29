@@ -21,27 +21,28 @@ pub struct Union {
 }
 
 impl Union {
-    pub fn from<'a>(ty: T<'a>) -> Union {
+    pub fn from<'a>(ty: &T<'a>) -> Union {
         let mut u = Union {
             has_dynamic: false, has_nil: false, has_true: false, has_false: false,
             numbers: None, strings: None, tables: None, functions: None, tvar: None,
         };
 
-        match ty {
-            T::Dynamic => { u.has_dynamic = true; }
-            T::None    => {}
-            T::Nil     => { u.has_nil = true; }
-            T::Boolean => { u.has_true = true; u.has_false = true; }
-            T::True    => { u.has_true = true; }
-            T::False   => { u.has_false = true; }
+        match ty.as_base() {
+            &T::Dynamic => { u.has_dynamic = true; }
+            &T::None    => {}
+            &T::Nil     => { u.has_nil = true; }
+            &T::Boolean => { u.has_true = true; u.has_false = true; }
+            &T::True    => { u.has_true = true; }
+            &T::False   => { u.has_false = true; }
 
-            T::Numbers(num)    => { u.numbers = Some(num.into_owned()); }
-            T::Strings(str)    => { u.strings = Some(str.into_owned()); }
-            T::Tables(tab)     => { u.tables = Some(tab.into_owned()); }
-            T::Functions(func) => { u.functions = Some(func.into_owned()); }
-            T::TVar(tv)        => { u.tvar = Some(tv); }
+            &T::Numbers(ref num)    => { u.numbers = Some(num.clone().into_owned()); }
+            &T::Strings(ref str)    => { u.strings = Some(str.clone().into_owned()); }
+            &T::Tables(ref tab)     => { u.tables = Some(tab.clone().into_owned()); }
+            &T::Functions(ref func) => { u.functions = Some(func.clone().into_owned()); }
+            &T::TVar(tv)            => { u.tvar = Some(tv); }
 
-            T::Union(u) => return u.into_owned() // ignore `u` above
+            &T::Builtin(..) => unreachable!(),
+            &T::Union(ref u) => return u.clone().into_owned(), // ignore `u` above
         }
 
         u
