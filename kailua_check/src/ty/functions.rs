@@ -58,43 +58,16 @@ impl Lattice for Functions {
         }
     }
 
-    fn union(self, other: Functions, _: &mut TypeContext) -> Option<Functions> {
+    fn union(&self, other: &Functions, _: &mut TypeContext) -> Option<Functions> {
         match (self, other) {
-            (Functions::All, _) => Some(Functions::All),
-            (_, Functions::All) => Some(Functions::All),
+            (&Functions::All, _) => Some(Functions::All),
+            (_, &Functions::All) => Some(Functions::All),
 
-            (Functions::Simple(a), Functions::Simple(b)) =>
-                if a == b { Some(Functions::Simple(a)) } else { Some(Functions::All) },
-            (Functions::Multi(a), Functions::Multi(b)) =>
-                if a == b { Some(Functions::Multi(a)) } else { Some(Functions::All) },
+            (&Functions::Simple(ref a), &Functions::Simple(ref b)) =>
+                if a == b { Some(Functions::Simple(a.clone())) } else { Some(Functions::All) },
+            (&Functions::Multi(ref a), &Functions::Multi(ref b)) =>
+                if a == b { Some(Functions::Multi(a.clone())) } else { Some(Functions::All) },
             (_, _) => Some(Functions::All),
-        }
-    }
-
-    fn intersect(self, other: Functions, _: &mut TypeContext) -> Option<Functions> {
-        match (self, other) {
-            (Functions::All, funcs) => Some(funcs),
-            (funcs, Functions::All) => Some(funcs),
-
-            (Functions::Simple(a), Functions::Simple(b)) =>
-                if a == b {
-                    Some(Functions::Simple(a))
-                } else {
-                    Some(Functions::Multi(vec![a, b]))
-                },
-
-            (Functions::Simple(a), Functions::Multi(mut b)) => {
-                if !b.contains(&a) { b.push(a); }
-                Some(Functions::Multi(b))
-            },
-            (Functions::Multi(mut a), Functions::Simple(b)) => {
-                if !a.contains(&b) { a.push(b); }
-                Some(Functions::Multi(a))
-            },
-            (Functions::Multi(mut a), Functions::Multi(b)) => {
-                if a != b { a.extend(b.into_iter()); }
-                Some(Functions::Multi(a))
-            },
         }
     }
 

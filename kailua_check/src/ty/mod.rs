@@ -44,6 +44,8 @@ impl fmt::Debug for TVar {
 pub struct Mark(pub u32);
 
 impl Mark {
+    pub fn any() -> Mark { Mark(0xffffffff) }
+
     pub fn assert_true(&self, ctx: &mut TypeContext) -> CheckResult<()> {
         ctx.assert_mark_true(*self)
     }
@@ -63,7 +65,11 @@ impl Mark {
 
 impl fmt::Debug for Mark {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "<mark #{}>", self.0)
+        if *self == Mark::any() {
+            write!(f, "<mark #?>")
+        } else {
+            write!(f, "<mark #{}>", self.0)
+        }
     }
 }
 
@@ -88,32 +94,24 @@ pub trait TypeContext {
 pub trait Lattice<Other = Self> {
     type Output;
     fn normalize(self) -> Self::Output;
-    fn union(self, other: Other, ctx: &mut TypeContext) -> Self::Output;
-    fn intersect(self, other: Other, ctx: &mut TypeContext) -> Self::Output;
+    fn union(&self, other: &Other, ctx: &mut TypeContext) -> Self::Output;
     fn assert_sub(&self, other: &Other, ctx: &mut TypeContext) -> CheckResult<()>;
     fn assert_eq(&self, other: &Other, ctx: &mut TypeContext) -> CheckResult<()>;
 }
 
-impl<T: Lattice<Output=Option<T>> + fmt::Debug> Lattice for Option<T> {
+impl<T: Lattice<Output=Option<T>> + fmt::Debug + Clone> Lattice for Option<T> {
     type Output = Option<T>;
 
     fn normalize(self) -> Option<T> {
         self.and_then(Lattice::normalize)
     }
 
-    fn union(self, other: Option<T>, ctx: &mut TypeContext) -> Option<T> {
+    fn union(&self, other: &Option<T>, ctx: &mut TypeContext) -> Option<T> {
         match (self, other) {
-            (Some(a), Some(b)) => a.union(b, ctx),
-            (Some(a), None) => Some(a),
-            (None, Some(b)) => Some(b),
-            (None, None) => None,
-        }
-    }
-
-    fn intersect(self, other: Option<T>, ctx: &mut TypeContext) -> Option<T> {
-        match (self, other) {
-            (Some(a), Some(b)) => a.intersect(b, ctx),
-            (_, _) => None,
+            (&Some(ref a), &Some(ref b)) => a.union(b, ctx),
+            (&Some(ref a), &None) => Some(a.clone()),
+            (&None, &Some(ref b)) => Some(b.clone()),
+            (&None, &None) => None,
         }
     }
 
@@ -142,12 +140,8 @@ impl<Left: Lattice<Right, Output=Output>, Right, Output> Lattice<Box<Right>> for
         Box::new((*self).normalize())
     }
 
-    fn union(self, other: Box<Right>, ctx: &mut TypeContext) -> Box<Output> {
-        Box::new((*self).union(*other, ctx))
-    }
-
-    fn intersect(self, other: Box<Right>, ctx: &mut TypeContext) -> Box<Output> {
-        Box::new((*self).intersect(*other, ctx))
+    fn union(&self, other: &Box<Right>, ctx: &mut TypeContext) -> Box<Output> {
+        Box::new((**self).union(&**other, ctx))
     }
 
     fn assert_sub(&self, other: &Box<Right>, ctx: &mut TypeContext) -> CheckResult<()> {
@@ -227,18 +221,11 @@ impl Lattice for TVar {
 
     fn normalize(self) -> Self { self }
 
-    fn union(self, other: Self, ctx: &mut TypeContext) -> Self {
+    fn union(&self, other: &Self, ctx: &mut TypeContext) -> Self {
         let u = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub_tvar(self, u), Ok(()));
-        assert_eq!(ctx.assert_tvar_sub_tvar(other, u), Ok(()));
+        assert_eq!(ctx.assert_tvar_sub_tvar(*self, u), Ok(()));
+        assert_eq!(ctx.assert_tvar_sub_tvar(*other, u), Ok(()));
         u
-    }
-
-    fn intersect(self, other: Self, ctx: &mut TypeContext) -> Self {
-        let i = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub_tvar(i, self), Ok(()));
-        assert_eq!(ctx.assert_tvar_sub_tvar(i, other), Ok(()));
-        i
     }
 
     fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {

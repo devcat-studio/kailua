@@ -1,4 +1,3 @@
-use std::fmt;
 use std::mem;
 use std::ops;
 use std::cell::Cell;
@@ -7,24 +6,9 @@ use vec_map::VecMap;
 
 use kailua_syntax::Name;
 use diag::CheckResult;
-use ty::{Ty, T, TVar, Mark, Lattice, TypeContext};
+use ty::{Ty, T, Slot, S, TVar, Mark, Lattice, TypeContext};
 
-#[derive(Clone)]
-pub struct TyInfo {
-    pub ty: T<'static>,
-}
-
-impl TyInfo {
-    pub fn from<'a>(ty: T<'a>) -> TyInfo {
-        TyInfo { ty: ty.into_send() }
-    }
-}
-
-impl fmt::Debug for TyInfo {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self.ty)
-    }
-}
+pub type TyInfo = Slot;
 
 pub struct Frame {
     pub vararg: Option<TyInfo>,
@@ -807,24 +791,29 @@ impl<'ctx> Env<'ctx> {
     }
 
     pub fn add_local_var(&mut self, name: &Name, info: TyInfo) {
-        println!("adding a local variable {:?} as {:?}", *name, info);
-        self.current_scope_mut().put(name.to_owned(), info);
+        let newinfo = Slot::new(S::VarOrCurrently(T::Nil, self.context().gen_mark()));
+        newinfo.accept(&info, self.context()).unwrap();
+
+        println!("adding a local variable {:?} as {:?}", *name, newinfo);
+        self.current_scope_mut().put(name.to_owned(), newinfo);
     }
 
     pub fn assign_to_var(&mut self, name: &Name, info: TyInfo) -> CheckResult<()> {
-        if let Some(previnfo) = self.get_local_var_mut(name) {
-            if !previnfo.ty.accept(&info.ty) {
-                return Err(format!("cannot assign {:?} to the variable {:?} with type {:?}",
-                                   info.ty, name, previnfo.ty));
+        if let Some(previnfo) = self.get_local_var_mut(name).map(|info| info.clone()) {
+            println!("assigning {:?} to a local variable {:?} with type {:?}",
+                     info, *name, previnfo);
+            if let Err(e) = previnfo.accept(&info, self.context()) {
+                return Err(format!("cannot assign {:?} to the variable {:?} with type {:?}: {}",
+                                   info, name, previnfo, e));
             } else {
-                println!("assigning {:?} to a local variable {:?} with type {:?}",
-                         info, *name, *previnfo);
                 return Ok(());
             }
         }
 
         println!("adding a global variable {:?} as {:?}", *name, info);
-        self.context.global_scope_mut().put(name.to_owned(), info);
+        let newinfo = Slot::new(S::VarOrCurrently(T::Nil, self.context().gen_mark()));
+        newinfo.accept(&info, self.context()).unwrap();
+        self.context.global_scope_mut().put(name.to_owned(), newinfo);
         Ok(())
     }
 

@@ -1,20 +1,21 @@
 use std::fmt;
+use std::cmp;
 use std::borrow::ToOwned;
 use std::collections::HashMap;
 
 use kailua_syntax::Str;
 use diag::CheckResult;
-use super::{T, Ty, Union, TypeContext, Lattice, Numbers, Strings};
+use super::{T, Ty, Slot, TypeContext, Lattice, Strings};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 
 #[derive(Clone)]
 pub enum Tables {
     Empty,
-    Record(HashMap<Str, Ty>),
-    Tuple(Vec<Ty>),
-    Array(Ty),
-    Map(Ty, Ty),
+    Record(HashMap<Str, Box<Slot>>),
+    Tuple(Vec<Box<Slot>>),
+    Array(Box<Slot>),
+    Map(Ty, Box<Slot>),
     All,
 }
 
@@ -23,13 +24,13 @@ impl Tables {
         match self {
             Tables::Empty => Tables::Empty,
             Tables::Record(fields) => {
-                let mut value = T::None;
-                for (_, ty) in fields { value = value.union(*ty, ctx); }
+                let mut value = Slot::just(T::None);
+                for (_, ty) in fields { value = value.union(&*ty, ctx); }
                 Tables::Map(Box::new(T::string()), Box::new(value))
             },
             Tables::Tuple(fields) => {
-                let mut value = T::None;
-                for ty in fields { value = value.union(*ty, ctx); }
+                let mut value = Slot::just(T::None);
+                for ty in fields { value = value.union(&*ty, ctx); }
                 Tables::Map(Box::new(T::integer()), Box::new(value))
             },
             Tables::Array(value) => Tables::Map(Box::new(T::integer()), value),
@@ -47,12 +48,12 @@ impl Tables {
                     match self {
                         Tables::Empty => {
                             let mut fields = HashMap::new();
-                            fields.insert(s.to_owned(), Box::new(value));
+                            fields.insert(s.to_owned(), Box::new(Slot::just(value)));
                             return Tables::Record(fields);
                         }
                         Tables::Record(mut fields) => {
                             // should override a duplicate field if any
-                            fields.insert(s.to_owned(), Box::new(value));
+                            fields.insert(s.to_owned(), Box::new(Slot::just(value)));
                             return Tables::Record(fields);
                         }
                         _ => {}
@@ -64,21 +65,22 @@ impl Tables {
         // otherwise do not try to make a record
         match (key, self) {
             // XXX tuple?
-            (None, Tables::Empty) => Tables::Array(Box::new(value)),
+            (None, Tables::Empty) => Tables::Array(Box::new(Slot::just(value))),
             (None, Tables::Array(t)) =>
-                Tables::Array(Box::new(value.union(*t, ctx))),
+                Tables::Array(Box::new(Slot::just(value).union(&*t, ctx))),
             (None, Tables::Tuple(mut fields)) => {
-                fields.push(Box::new(value));
+                fields.push(Box::new(Slot::just(value)));
                 Tables::Tuple(fields)
             },
 
-            (Some(key), Tables::Empty) => Tables::Map(Box::new(key), Box::new(value)),
+            (Some(key), Tables::Empty) =>
+                Tables::Map(Box::new(key), Box::new(Slot::just(value))),
 
             // fall back to the map when in doubt
             (key, tab) => match tab.lift_to_map(ctx) {
                 Tables::Map(key_, value_) => {
-                    let key = key.unwrap_or(T::integer()).union(*key_, ctx);
-                    let value = value.union(*value_, ctx);
+                    let key = key.unwrap_or(T::integer()).union(&*key_, ctx);
+                    let value = Slot::just(value).union(&*value_, ctx);
                     Tables::Map(Box::new(key), Box::new(value))
                 },
                 tab => tab,
@@ -95,11 +97,12 @@ impl Lattice for Tables {
             Tables::Record(fields) => {
                 if fields.is_empty() { return Some(Tables::Empty); }
 
-                let norm_kv = |(k, v): (Str, Ty)| {
+                let norm_kv = |(k, v): (Str, Box<Slot>)| {
                     let v = v.normalize();
-                    if v.is_none() { None } else { Some((k, v)) }
+                    let flags = v.borrow().unlift().flags();
+                    if flags == T_NONE { None } else { Some((k, v)) }
                 };
-                let fields: HashMap<Str, Ty> = fields.into_iter().filter_map(norm_kv).collect();
+                let fields: HashMap<_, _> = fields.into_iter().filter_map(norm_kv).collect();
                 if fields.is_empty() {
                     Some(Tables::Empty)
                 } else {
@@ -110,9 +113,10 @@ impl Lattice for Tables {
             Tables::Tuple(fields) => {
                 if fields.is_empty() { return Some(Tables::Empty); }
 
-                let norm = |v: Ty| {
+                let norm = |v: Box<Slot>| {
                     let v = v.normalize();
-                    if v.is_none() { None } else { Some(v) }
+                    let flags = v.borrow().unlift().flags();
+                    if flags == T_NONE { None } else { Some(v) }
                 };
                 if let Some(fields) = fields.into_iter().map(norm).collect() {
                     Some(Tables::Tuple(fields))
@@ -125,245 +129,77 @@ impl Lattice for Tables {
         }
     }
 
-    fn union(self, other: Tables, ctx: &mut TypeContext) -> Option<Tables> {
-        fn union_rec_tup(rec: HashMap<Str, Ty>, mut tup: Vec<Ty>,
-                         ctx: &mut TypeContext) -> Tables {
-            let mut uty = tup.pop().unwrap();
-            for ty in tup {
-                uty = uty.union(ty, ctx);
-            }
-            for (_, ty) in rec {
-                uty = uty.union(ty, ctx);
-            }
-            Tables::Map(Box::new(T::integer().union(T::string(), ctx)), uty)
-        }
-
-        fn union_rec_map(fields: HashMap<Str, Ty>, key: Ty, value: Ty,
-                         ctx: &mut TypeContext) -> Tables {
-            let mut uty = value;
-            for (_, ty) in fields {
-                uty = uty.union(ty, ctx);
-            }
-            Tables::Map(key.union(Box::new(T::string()), ctx), uty)
-        }
-
-        fn union_tup_map(fields: Vec<Ty>, key: Ty, value: Ty, ctx: &mut TypeContext) -> Tables {
-            let mut uty = value;
-            for ty in fields {
-                uty = uty.union(ty, ctx);
-            }
-            Tables::Map(key.union(Box::new(T::integer()), ctx), uty)
-        }
-
+    fn union(&self, other: &Tables, ctx: &mut TypeContext) -> Option<Tables> {
         let tab = match (self, other) {
-            (Tables::Empty, tab) => tab,
-            (tab, Tables::Empty) => tab,
+            (&Tables::All, _) => Tables::All,
+            (_, &Tables::All) => Tables::All,
 
-            (Tables::All, _) => Tables::All,
-            (_, Tables::All) => Tables::All,
-
-            (Tables::Record(mut fields1), Tables::Record(fields2)) => {
-                for (k, v2) in fields2 {
-                    if let Some(v1) = fields1.remove(&k) {
-                        fields1.insert(k, v1.union(v2, ctx));
-                    } else {
-                        fields1.insert(k, v2);
-                    }
-                }
-                Tables::Record(fields1)
-            },
-
-            (Tables::Record(fields1), Tables::Tuple(fields2)) =>
-                union_rec_tup(fields1, fields2, ctx),
-            (Tables::Tuple(fields1), Tables::Record(fields2)) =>
-                union_rec_tup(fields2, fields1, ctx),
-
-            (Tables::Record(fields), Tables::Array(value)) =>
-                union_rec_map(fields, Box::new(T::integer()), value, ctx),
-            (Tables::Array(value), Tables::Record(fields)) =>
-                union_rec_map(fields, Box::new(T::integer()), value, ctx),
-
-            (Tables::Record(fields), Tables::Map(key, value)) =>
-                union_rec_map(fields, key, value, ctx),
-            (Tables::Map(key, value), Tables::Record(fields)) =>
-                union_rec_map(fields, key, value, ctx),
-
-            (Tables::Tuple(mut fields1), Tables::Tuple(mut fields2)) => {
-                if fields1.len() < fields2.len() {
-                    fields1.resize(fields2.len(), Box::new(T::Nil));
-                } else if fields1.len() > fields2.len() {
-                    fields2.resize(fields1.len(), Box::new(T::Nil));
-                }
-                let tys = fields1.into_iter().zip(fields2.into_iter());
-                Tables::Tuple(tys.map(|(lty, rty)| lty.union(rty, ctx)).collect())
-            },
-
-            (Tables::Tuple(fields), Tables::Array(value)) =>
-                union_tup_map(fields, Box::new(T::integer()), value, ctx),
-            (Tables::Array(value), Tables::Tuple(fields)) =>
-                union_tup_map(fields, Box::new(T::integer()), value, ctx),
-
-            (Tables::Tuple(fields), Tables::Map(key, value)) =>
-                union_tup_map(fields, key, value, ctx),
-            (Tables::Map(key, value), Tables::Tuple(fields)) =>
-                union_tup_map(fields, key, value, ctx),
-
-            (Tables::Array(value1), Tables::Array(value2)) =>
-                Tables::Array(value1.union(value2, ctx)),
-
-            (Tables::Map(key1, value1), Tables::Map(key2, value2)) =>
-                Tables::Map(key1.union(key2, ctx), value1.union(value2, ctx)),
-
-            (Tables::Array(value1), Tables::Map(key2, value2)) =>
-                Tables::Map(key2.union(Box::new(T::integer()), ctx), value1.union(value2, ctx)),
-            (Tables::Map(key1, value1), Tables::Array(value2)) =>
-                Tables::Map(key1.union(Box::new(T::integer()), ctx), value1.union(value2, ctx)),
-        };
-
-        Some(tab)
-    }
-
-    fn intersect(self, other: Tables, ctx: &mut TypeContext) -> Option<Tables> {
-        fn intersect_tup_arr(fields: Vec<Ty>, value: Ty,
-                             ctx: &mut TypeContext) -> Tables {
-            let mut newfields = Vec::new();
-            for ty in fields {
-                let v = ty.intersect(value.clone(), ctx);
-                if v.is_none() { return Tables::Empty; }
-                newfields.push(v);
-            }
-            Tables::Tuple(newfields)
-        }
-
-        fn intersect_rec_map(fields: HashMap<Str, Ty>, key: Ty, value: Ty,
-                             ctx: &mut TypeContext) -> Tables {
-            fn merge<F: Fn(&Str) -> bool>(fields: HashMap<Str, Ty>, value: Ty,
-                                          ctx: &mut TypeContext, cond: F) -> Tables {
-                let mut newfields = HashMap::new();
-                for (k, ty) in fields {
-                    if cond(&k) { 
-                        let v = ty.intersect(value.clone(), ctx);
-                        if !v.is_none() { newfields.insert(k, v); }
-                    }
-                }
-                Tables::Record(newfields)
-            }
-
-            let key = Union::from(&*key);
-            if key.has_dynamic {
-                merge(fields, value, ctx, |_| true)
-            } else {
-                match key.strings {
-                    None => Tables::Empty,
-                    Some(Strings::One(ref s)) => merge(fields, value, ctx, |k| *s == *k),
-                    Some(Strings::Some(ref set)) => merge(fields, value, ctx, |k| set.contains(k)),
-                    Some(Strings::All) => merge(fields, value, ctx, |_| true),
-                }
-            }
-        }
-
-        fn intersect_tup_map(fields: Vec<Ty>, key: Ty, value: Ty,
-                             ctx: &mut TypeContext) -> Tables {
-            fn merge<F: Fn(i32) -> bool>(fields: Vec<Ty>, value: Ty,
-                                         ctx: &mut TypeContext, cond: F) -> Tables {
-                let mut newfields = Vec::new();
-                for (k, ty) in fields.into_iter().enumerate() {
-                    if cond(k as i32) { 
-                        let v = ty.intersect(value.clone(), ctx);
-                        if !v.is_none() { newfields.push(v); }
-                    } else {
-                        newfields.push(Box::new(T::None));
-                    }
-                }
-                Tables::Tuple(newfields)
-            };
-
-            let key = Union::from(&*key);
-            if key.has_dynamic {
-                merge(fields, value, ctx, |_| true)
-            } else {
-                match key.numbers {
-                    None => Tables::Empty,
-                    Some(Numbers::One(v)) => merge(fields, value, ctx, |k| k == v),
-                    Some(Numbers::Some(ref set)) => merge(fields, value, ctx, |k| set.contains(&k)),
-                    Some(Numbers::Int) | Some(Numbers::All) => merge(fields, value, ctx, |_| true),
-                }
-            }
-        }
-
-        fn intersect_arr_map(elem: Ty, key: Ty, value: Ty,
-                             ctx: &mut TypeContext) -> Tables {
-            let key = Union::from(&*key);
-            if key.has_dynamic {
-                Tables::Array(elem.intersect(value, ctx))
-            } else {
-                match key.numbers {
-                    None | Some(Numbers::One(..)) | Some(Numbers::Some(..)) => Tables::Empty,
-                    Some(Numbers::Int) | Some(Numbers::All) =>
-                        Tables::Array(elem.intersect(value, ctx)),
-                }
-            }
-        }
-
-        let tab = match (self, other) {
-            (Tables::Empty, _) => Tables::Empty,
-            (_, Tables::Empty) => Tables::Empty,
-
-            (Tables::All, tab) => tab,
-            (tab, Tables::All) => tab,
-
-            (Tables::Record(mut fields1), Tables::Record(fields2)) => {
+            (&Tables::Record(ref fields1), &Tables::Record(ref fields2)) => {
+                let mut fields1 = fields1.clone();
                 let mut fields = HashMap::new();
                 for (k, v2) in fields2 {
+                    let k = k.clone();
                     if let Some(v1) = fields1.remove(&k) {
-                        let v = v1.intersect(v2, ctx);
-                        if !v.is_none() { fields.insert(k, v); }
+                        fields.insert(k, v1.union(v2, ctx));
+                    } else {
+                        fields.insert(k, Box::new(Slot::just(T::Nil).union(&v2, ctx)));
                     }
+                }
+                for (k, v1) in fields1 {
+                    fields.insert(k.clone(), Box::new(Slot::just(T::Nil).union(&v1, ctx)));
                 }
                 Tables::Record(fields)
             },
 
-            (Tables::Record(_), Tables::Tuple(_)) => Tables::Empty,
-            (Tables::Tuple(_), Tables::Record(_)) => Tables::Empty,
+            (&Tables::Record(ref fields), &Tables::Empty) |
+            (&Tables::Empty, &Tables::Record(ref fields)) => {
+                let add_nil = |(k,s): (&Str,&Box<Slot>)|
+                    (k.clone(), Box::new(Slot::just(T::Nil).union(s, ctx)));
+                Tables::Record(fields.iter().map(add_nil).collect())
+            },
 
-            (Tables::Record(_), Tables::Array(_)) => Tables::Empty,
-            (Tables::Array(_), Tables::Record(_)) => Tables::Empty,
-
-            (Tables::Record(fields), Tables::Map(key, value)) =>
-                intersect_rec_map(fields, key, value, ctx),
-            (Tables::Map(key, value), Tables::Record(fields)) =>
-                intersect_rec_map(fields, key, value, ctx),
-
-            (Tables::Tuple(fields1), Tables::Tuple(fields2)) => {
-                let mut fields = Vec::new();
-                for (ty1, ty2) in fields1.into_iter().zip(fields2.into_iter()) {
-                    let ty = ty1.intersect(ty2, ctx);
-                    if ty.is_none() { return Some(Tables::Empty); }
-                    fields.push(ty);
+            (&Tables::Tuple(ref fields1), &Tables::Tuple(ref fields2)) => {
+                let mut fields = Vec::with_capacity(cmp::max(fields1.len(), fields2.len()));
+                for (lty, rty) in fields1.iter().zip(fields2.iter()) {
+                    fields.push(lty.union(rty, ctx));
                 }
+                let excess = if fields1.len() < fields2.len() {
+                    &fields2[fields1.len()..]
+                } else if fields1.len() > fields2.len() {
+                    &fields1[fields2.len()..]
+                } else {
+                    &[][..]
+                };
+                fields.extend(excess.iter().map(|ty| Box::new(Slot::just(T::Nil).union(&ty, ctx))));
                 Tables::Tuple(fields)
             },
 
-            (Tables::Tuple(fields), Tables::Array(value)) =>
-                intersect_tup_arr(fields, value, ctx),
-            (Tables::Array(value), Tables::Tuple(fields)) =>
-                intersect_tup_arr(fields, value, ctx),
+            (&Tables::Tuple(ref fields), &Tables::Empty) |
+            (&Tables::Empty, &Tables::Tuple(ref fields)) => {
+                let add_nil = |s: &Box<Slot>| Box::new(Slot::just(T::Nil).union(s, ctx));
+                Tables::Tuple(fields.iter().map(add_nil).collect())
+            },
 
-            (Tables::Tuple(fields), Tables::Map(key, value)) =>
-                intersect_tup_map(fields, key, value, ctx),
-            (Tables::Map(key, value), Tables::Tuple(fields)) =>
-                intersect_tup_map(fields, key, value, ctx),
+            // records and tuples are considered disjoint to
+            // other table types (including each other)
+            (&Tables::Record(..), _) | (&Tables::Tuple(..), _) => Tables::All,
+            (_, &Tables::Record(..)) | (_, &Tables::Tuple(..)) => Tables::All,
 
-            (Tables::Array(value1), Tables::Array(value2)) =>
-                Tables::Array(value1.intersect(value2, ctx)),
+            (&Tables::Empty, tab) => tab.clone(),
+            (tab, &Tables::Empty) => tab.clone(),
 
-            (Tables::Map(key1, value1), Tables::Map(key2, value2)) =>
-                Tables::Map(key1.intersect(key2, ctx), value1.intersect(value2, ctx)),
+            (&Tables::Array(ref value1), &Tables::Array(ref value2)) =>
+                Tables::Array(value1.union(value2, ctx)),
 
-            (Tables::Array(value1), Tables::Map(key2, value2)) =>
-                intersect_arr_map(value1, key2, value2, ctx),
-            (Tables::Map(key1, value1), Tables::Array(value2)) =>
-                intersect_arr_map(value2, key1, value1, ctx),
+            (&Tables::Map(ref key1, ref value1), &Tables::Map(ref key2, ref value2)) =>
+                Tables::Map(key1.union(key2, ctx), value1.union(value2, ctx)),
+
+            (&Tables::Array(ref value1), &Tables::Map(ref key2, ref value2)) =>
+                Tables::Map(Box::new((**key2).union(&T::integer(), ctx)),
+                            value1.union(value2, ctx)),
+            (&Tables::Map(ref key1, ref value1), &Tables::Array(ref value2)) =>
+                Tables::Map(Box::new((**key1).union(&T::integer(), ctx)),
+                            value1.union(value2, ctx)),
         };
 
         Some(tab)
@@ -379,33 +215,14 @@ impl Lattice for Tables {
 
             (&Tables::Record(ref a), &Tables::Record(ref b)) => {
                 for (k, av) in a {
-                    let none = T::None;
-                    let bv = b.get(k).map_or(&none, |t| &*t);
-                    try!((**av).assert_sub(bv, ctx));
+                    if let Some(ref bv) = b.get(k) {
+                        try!((**av).assert_sub(bv, ctx));
+                    } else {
+                        return error_not_sub(self, other);
+                    }
                 }
                 true
             },
-
-            (&Tables::Record(..), &Tables::Tuple(..)) => false,
-            (&Tables::Tuple(..), &Tables::Record(..)) => false,
-
-            (&Tables::Record(..), &Tables::Array(..)) => false,
-            (&Tables::Array(..), &Tables::Record(..)) => false,
-
-            (&Tables::Record(ref fields), &Tables::Map(ref key, ref value)) => {
-                let mut ok = true;
-                for (k, ty) in fields {
-                    if let Some(str) = key.has_strings() {
-                        try!(str.assert_sup_str(k, ctx));
-                    } else {
-                        ok = false;
-                        break;
-                    }
-                    try!(ty.assert_sub(value, ctx));
-                }
-                ok
-            },
-            (&Tables::Map(..), &Tables::Record(..)) => false,
 
             (&Tables::Tuple(ref fields1), &Tables::Tuple(ref fields2)) => {
                 for (ty1, ty2) in fields1.iter().zip(fields2.iter()) {
@@ -414,20 +231,10 @@ impl Lattice for Tables {
                 fields1.len() <= fields2.len()
             },
 
-            (&Tables::Tuple(ref fields), &Tables::Array(ref value)) => {
-                for ty in fields { try!(ty.assert_sub(value, ctx)); }
-                true
-            },
-            (&Tables::Array(..), &Tables::Tuple(..)) => false,
-
-            (&Tables::Tuple(ref fields), &Tables::Map(ref key, ref value)) => {
-                for (i, ty) in fields.iter().enumerate() {
-                    try!(T::int(i as i32).assert_sub(key, ctx));
-                    try!(ty.assert_sub(value, ctx));
-                }
-                true
-            },
-            (&Tables::Map(..), &Tables::Tuple(..)) => false,
+            // records and tuples are considered disjoint to
+            // other table types (including each other)
+            (&Tables::Record(..), _) | (&Tables::Tuple(..), _) => false,
+            (_, &Tables::Record(..)) | (_, &Tables::Tuple(..)) => false,
 
             (&Tables::Array(ref value1), &Tables::Array(ref value2)) => {
                 try!(value1.assert_sub(value2, ctx));

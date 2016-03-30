@@ -3,7 +3,7 @@ use std::i32;
 
 use lex::{Tok, Punct, Keyword};
 use ast::{Name, Str, Var, Params, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam, St, Stmt, Block};
-use ast::{K, Kind};
+use ast::{M, K, Kind};
 
 pub struct Parser<T> {
     iter: iter::Fuse<T>,
@@ -728,41 +728,50 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
 
     // Kailua-specific syntaxes
 
-    fn try_parse_kailua_atomic_kind(&mut self) -> ParseResult<Option<Kind>> {
-        let mut kind;
+    fn parse_kailua_mut(&mut self) -> ParseResult<M> {
         match self.read() {
+            Tok::Keyword(Keyword::Var) => Ok(M::Var),
+            Tok::Keyword(Keyword::Const) => Ok(M::Const),
+            tok => {
+                self.unread(tok);
+                return Ok(M::None);
+            }
+        }
+    }
+
+    fn try_parse_kailua_atomic_kind(&mut self) -> ParseResult<Option<Kind>> {
+        let mut kind = match self.read() {
             Tok::Punct(Punct::Ques) => {
-                kind = Box::new(K::Dynamic);
+                Box::new(K::Dynamic)
             }
             Tok::Punct(Punct::LParen) => {
-                kind = try!(self.parse_kailua_kind());
+                let kind = try!(self.parse_kailua_kind());
                 try!(self.expect(Punct::RParen));
+                kind
             }
-            Tok::Name(name) => {
-                kind = match &name[..] {
-                    b"nil"      => Box::new(K::Nil),
-                    b"boolean"  => Box::new(K::Boolean),
-                    b"true"     => Box::new(K::BooleanLit(true)),
-                    b"false"    => Box::new(K::BooleanLit(false)),
-                    b"number"   => Box::new(K::Number),
-                    b"integer"  => Box::new(K::Integer),
-                    b"string"   => Box::new(K::String),
-                    b"table"    => Box::new(K::Table),
-                    b"function" => Box::new(K::Function),
-                    _ => return Err("unknown type name"),
-                }
+            Tok::Keyword(Keyword::Nil)      => Box::new(K::Nil),
+            Tok::Keyword(Keyword::Boolean)  => Box::new(K::Boolean),
+            Tok::Keyword(Keyword::True)     => Box::new(K::BooleanLit(true)),
+            Tok::Keyword(Keyword::False)    => Box::new(K::BooleanLit(false)),
+            Tok::Keyword(Keyword::Number)   => Box::new(K::Number),
+            Tok::Keyword(Keyword::Integer)  => Box::new(K::Integer),
+            Tok::Keyword(Keyword::String)   => Box::new(K::String),
+            Tok::Keyword(Keyword::Table)    => Box::new(K::Table),
+            Tok::Keyword(Keyword::Function) => Box::new(K::Function),
+            Tok::Name(_name) => {
+                return Err("unknown type name"); // for now
             }
             Tok::Num(v) if i32::MIN as f64 <= v && v <= i32::MAX as f64 && v.floor() == v => {
-                kind = Box::new(K::IntegerLit(v as i32));
+                Box::new(K::IntegerLit(v as i32))
             }
             Tok::Str(ref s) => {
-                kind = Box::new(K::StringLit(s.to_owned().into()));
+                Box::new(K::StringLit(s.to_owned().into()))
             }
             tok => {
                 self.unread(tok);
                 return Ok(None);
             }
-        }
+        };
 
         // a following `?` are equal to `| nil`
         if self.lookahead(Punct::Ques) {
@@ -841,6 +850,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                 self.read();
                 let name = try!(self.parse_name());
                 try!(self.expect(Punct::Colon));
+                let kindm = try!(self.parse_kailua_mut());
                 let kind = try!(self.parse_kailua_kind());
                 let builtin;
                 if self.lookahead(Punct::Eq) {
@@ -854,7 +864,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                     builtin = None;
                 }
                 try!(self.expect(Punct::Newline));
-                return Ok(Some(Some(Box::new(St::KailuaAssume(name, kind, builtin)))));
+                return Ok(Some(Some(Box::new(St::KailuaAssume(name, kindm, kind, builtin)))));
             }
 
             loop {

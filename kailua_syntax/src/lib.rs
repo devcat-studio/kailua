@@ -3,7 +3,7 @@
 
 pub use lex::Error;
 pub use ast::{Name, Str, Var, Params, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam, St, Stmt, Block};
-pub use ast::{K, Kind};
+pub use ast::{M, K, Kind};
 
 mod lex;
 mod ast;

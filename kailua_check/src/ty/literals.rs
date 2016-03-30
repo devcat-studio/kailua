@@ -28,27 +28,30 @@ impl Lattice for Numbers {
         }
     }
 
-    fn union(self, other: Numbers, _: &mut TypeContext) -> Option<Numbers> {
+    fn union(&self, other: &Numbers, _: &mut TypeContext) -> Option<Numbers> {
         match (self, other) {
-            (Numbers::All, _) => Some(Numbers::All),
-            (_, Numbers::All) => Some(Numbers::All),
+            (&Numbers::All, _) => Some(Numbers::All),
+            (_, &Numbers::All) => Some(Numbers::All),
 
-            (Numbers::Int, _) => Some(Numbers::Int),
-            (_, Numbers::Int) => Some(Numbers::Int),
+            (&Numbers::Int, _) => Some(Numbers::Int),
+            (_, &Numbers::Int) => Some(Numbers::Int),
 
-            (Numbers::Some(mut a), Numbers::Some(b)) => {
-                a.extend(b.into_iter());
-                Some(Numbers::Some(a))
+            (&Numbers::Some(ref a), &Numbers::Some(ref b)) => {
+                let mut ab = a.clone();
+                ab.extend(b.iter().cloned());
+                Some(Numbers::Some(ab))
             }
-            (Numbers::Some(mut a), Numbers::One(b)) => {
-                a.insert(b);
-                Some(Numbers::Some(a))
+            (&Numbers::Some(ref a), &Numbers::One(b)) => {
+                let mut ab = a.clone();
+                ab.insert(b);
+                Some(Numbers::Some(ab))
             }
-            (Numbers::One(a), Numbers::Some(mut b)) => {
-                b.insert(a);
-                Some(Numbers::Some(b))
+            (&Numbers::One(a), &Numbers::Some(ref b)) => {
+                let mut ab = b.clone();
+                ab.insert(a);
+                Some(Numbers::Some(ab))
             }
-            (Numbers::One(a), Numbers::One(b)) => {
+            (&Numbers::One(a), &Numbers::One(b)) => {
                 if a == b {
                     Some(Numbers::One(a))
                 } else {
@@ -58,32 +61,6 @@ impl Lattice for Numbers {
                     Some(Numbers::Some(ab))
                 }
             }
-        }
-    }
-
-    fn intersect(self, other: Numbers, _: &mut TypeContext) -> Option<Numbers> {
-        match (self, other) {
-            (Numbers::One(a), Numbers::One(b)) =>
-                if a == b { Some(Numbers::One(a)) } else { None },
-            (Numbers::One(a), Numbers::Some(b)) =>
-                if b.contains(&a) { Some(Numbers::One(a)) } else { None },
-            (Numbers::Some(a), Numbers::One(b)) =>
-                if a.contains(&b) { Some(Numbers::One(b)) } else { None },
-            (Numbers::Some(a), Numbers::Some(b)) => {
-                let set: HashSet<i32> = a.intersection(&b).cloned().collect();
-                if set.is_empty() { None } else { Some(Numbers::Some(set)) }
-            }
-
-            (Numbers::One(v), _) => Some(Numbers::One(v)),
-            (_, Numbers::One(v)) => Some(Numbers::One(v)),
-
-            (Numbers::Some(set), _) => Some(Numbers::Some(set)),
-            (_, Numbers::Some(set)) => Some(Numbers::Some(set)),
-
-            (Numbers::Int, _) => Some(Numbers::Int),
-            (_, Numbers::Int) => Some(Numbers::Int),
-
-            (Numbers::All, Numbers::All) => Some(Numbers::All),
         }
     }
 
@@ -154,18 +131,6 @@ pub enum Strings {
     All,
 }
 
-impl Strings {
-    pub fn assert_sup_str(&self, other: &Str, _: &mut TypeContext) -> CheckResult<()> {
-        let ok = match *self {
-            Strings::One(ref s) => *s == *other,
-            Strings::Some(ref set) => set.contains(other),
-            Strings::All => true,
-        };
-
-        if ok { Ok(()) } else { error_not_sub(self, other) }
-    }
-}
-
 impl Lattice for Strings {
     type Output = Option<Strings>;
 
@@ -180,56 +145,36 @@ impl Lattice for Strings {
         }
     }
 
-    fn union(self, other: Strings, _: &mut TypeContext) -> Option<Strings> {
+    fn union(&self, other: &Strings, _: &mut TypeContext) -> Option<Strings> {
         match (self, other) {
-            (Strings::All, _) => Some(Strings::All),
-            (_, Strings::All) => Some(Strings::All),
+            (&Strings::All, _) => Some(Strings::All),
+            (_, &Strings::All) => Some(Strings::All),
 
-            (Strings::Some(mut a), Strings::Some(b)) => {
-                a.extend(b.into_iter());
-                Some(Strings::Some(a))
+            (&Strings::Some(ref a), &Strings::Some(ref b)) => {
+                let mut ab = a.clone();
+                ab.extend(b.iter().cloned());
+                Some(Strings::Some(ab))
             }
-            (Strings::Some(mut a), Strings::One(b)) => {
-                a.insert(b);
-                Some(Strings::Some(a))
+            (&Strings::Some(ref a), &Strings::One(ref b)) => {
+                let mut ab = a.clone();
+                ab.insert(b.clone());
+                Some(Strings::Some(ab))
             }
-            (Strings::One(a), Strings::Some(mut b)) => {
-                b.insert(a);
-                Some(Strings::Some(b))
+            (&Strings::One(ref a), &Strings::Some(ref b)) => {
+                let mut ab = b.clone();
+                ab.insert(a.clone());
+                Some(Strings::Some(ab))
             }
-            (Strings::One(a), Strings::One(b)) => {
+            (&Strings::One(ref a), &Strings::One(ref b)) => {
                 if a == b {
-                    Some(Strings::One(a))
+                    Some(Strings::One(a.clone()))
                 } else {
                     let mut ab = HashSet::new();
-                    ab.insert(a);
-                    ab.insert(b);
+                    ab.insert(a.clone());
+                    ab.insert(b.clone());
                     Some(Strings::Some(ab))
                 }
             }
-        }
-    }
-
-    fn intersect(self, other: Strings, _: &mut TypeContext) -> Option<Strings> {
-        match (self, other) {
-            (Strings::One(a), Strings::One(b)) =>
-                if a == b { Some(Strings::One(a)) } else { None },
-            (Strings::One(a), Strings::Some(b)) =>
-                if b.contains(&a) { Some(Strings::One(a)) } else { None },
-            (Strings::Some(a), Strings::One(b)) =>
-                if a.contains(&b) { Some(Strings::One(b)) } else { None },
-            (Strings::Some(a), Strings::Some(b)) => {
-                let set: HashSet<Str> = a.intersection(&b).cloned().collect();
-                if set.is_empty() { None } else { Some(Strings::Some(set)) }
-            }
-
-            (Strings::One(v), _) => Some(Strings::One(v)),
-            (_, Strings::One(v)) => Some(Strings::One(v)),
-
-            (Strings::Some(set), _) => Some(Strings::Some(set)),
-            (_, Strings::Some(set)) => Some(Strings::Some(set)),
-
-            (Strings::All, Strings::All) => Some(Strings::All),
         }
     }
 

@@ -2,9 +2,9 @@ use std::i32;
 use std::ops::{Deref, DerefMut};
 use std::borrow::Cow;
 
-use kailua_syntax::{Name, Var, Params, Ex, UnOp, BinOp, FuncScope, SelfParam, St, Stmt, Block};
+use kailua_syntax::{Name, Var, Params, Ex, UnOp, BinOp, FuncScope, SelfParam, St, Stmt, Block, M};
 use diag::CheckResult;
-use ty::{T, Seq, Lattice, TypeContext, Numbers, Strings, Tables, Function, Builtin};
+use ty::{T, Seq, Lattice, TypeContext, Numbers, Strings, Tables, Function, S, Slot, Builtin};
 use ty::flags::*;
 use env::{TyInfo, Env, Frame, Scope, Context};
 
@@ -49,7 +49,8 @@ impl<'env> Checker<'env> {
     }
 
     pub fn check_un_op(&mut self, op: UnOp, info: &TyInfo) -> CheckResult<TyInfo> {
-        let ty = &info.ty;
+        let slot = info.borrow();
+        let ty = slot.unlift();
 
         macro_rules! check_op {
             ($sub:expr) => {
@@ -87,8 +88,10 @@ impl<'env> Checker<'env> {
     }
 
     pub fn check_bin_op(&mut self, lhs: &TyInfo, op: BinOp, rhs: &TyInfo) -> CheckResult<TyInfo> {
-        let lty = &lhs.ty;
-        let rty = &rhs.ty;
+        let lslot = lhs.borrow();
+        let rslot = rhs.borrow();
+        let lty = lslot.unlift();
+        let rty = rslot.unlift();
 
         macro_rules! check_op {
             ($sub:expr) => {
@@ -176,7 +179,7 @@ impl<'env> Checker<'env> {
             }
 
             BinOp::And | BinOp::Or => {
-                Ok(TyInfo::from(lty.clone().union(rty.clone(), self.context())))
+                Ok(TyInfo::from(lty.union(&rty, self.context())))
             }
         }
     }
@@ -200,7 +203,7 @@ impl<'env> Checker<'env> {
                 match kty.has_strings() {
                     Some(&Strings::One(ref s)) =>
                         if let Some(vty) = fields.get(s) {
-                            Ok(Some(TyInfo::from(*vty.clone())))
+                            Ok(Some((**vty).clone()))
                         } else {
                             Ok(None)
                         },
@@ -220,7 +223,7 @@ impl<'env> Checker<'env> {
                 match kty.has_numbers() {
                     Some(&Numbers::One(v)) =>
                         if 0 <= v && (v as usize) < fields.len() {
-                            Ok(Some(TyInfo::from(*fields[v as usize].clone())))
+                            Ok(Some((*fields[v as usize]).clone()))
                         } else {
                             Err(format!("{:?} has no index {:?}", ety, v))
                         },
@@ -236,7 +239,7 @@ impl<'env> Checker<'env> {
                     return Err(format!("tried to index {:?} with non-integer {:?}", ety, kty));
                 }
 
-                Ok(Some(TyInfo::from((**t).clone())))
+                Ok(Some((**t).clone()))
             }
 
             Some(&Tables::Map(ref k, ref v)) => {
@@ -245,7 +248,7 @@ impl<'env> Checker<'env> {
                 if *k == T::Dynamic {
                     Ok(Some(TyInfo::from(T::Dynamic)))
                 } else if k == kty { // XXX redundant
-                    Ok(Some(TyInfo::from((**v).clone())))
+                    Ok(Some((**v).clone()))
                 } else {
                     Err(format!("tried to index {:?} with {:?}", ety, kty))
                 }
@@ -355,7 +358,7 @@ impl<'env> Checker<'env> {
                     FuncScope::Global => try!(self.env.assign_to_var(name, info)),
                 }
                 let functy = try!(self.visit_func_body(None, params, block));
-                try!(T::TVar(funcv).assert_eq(&functy.ty, self.context()));
+                try!(T::TVar(funcv).assert_eq(functy.borrow().unlift(), self.context()));
             }
 
             St::MethodDecl(ref names, selfparam, ref params, ref block) => {
@@ -393,7 +396,7 @@ impl<'env> Checker<'env> {
 
             St::Break => {}
 
-            St::KailuaAssume(ref name, ref kind, ref builtin) => {
+            St::KailuaAssume(ref name, kindm, ref kind, ref builtin) => {
                 let builtin = if let Some(ref builtin) = *builtin {
                     match &***builtin {
                         b"require" => Some(Builtin::Require),
@@ -411,7 +414,12 @@ impl<'env> Checker<'env> {
                 } else {
                     T::from(kind)
                 };
-                try!(self.env.assume_var(name, TyInfo::from(ty)));
+                let sty = match kindm {
+                    M::None => S::VarOrCurrently(ty, self.context().gen_mark()),
+                    M::Var => S::Var(ty),
+                    M::Const => S::Const(ty),
+                };
+                try!(self.env.assume_var(name, Slot::new(sty)));
             }
         }
         Ok(())
@@ -456,9 +464,11 @@ impl<'env> Checker<'env> {
             },
 
             Var::Index(ref e, ref key) => {
-                let ty = try!(self.visit_exp(e)).ty;
-                let kty = try!(self.visit_exp(key)).ty;
-                self.check_index(&ty, &kty)
+                let ty = try!(self.visit_exp(e));
+                let kty = try!(self.visit_exp(key));
+                let ty = ty.borrow();
+                let kty = kty.borrow();
+                self.check_index(ty.unlift(), kty.unlift())
             },
         }
     }
@@ -501,11 +511,13 @@ impl<'env> Checker<'env> {
                 for &(ref key, ref value) in fields {
                     let kty;
                     if let Some(ref key) = *key {
-                        kty = Some(try!(self.visit_exp(key)).ty);
+                        let key = try!(self.visit_exp(key));;
+                        kty = Some(key.borrow().unlift().clone());
                     } else {
                         kty = None;
                     }
-                    let vty = try!(self.visit_exp(value)).ty;
+                    let vty = try!(self.visit_exp(value));
+                    let vty = vty.borrow().unlift().clone();
 
                     // update the table type according to new field
                     tab = tab.insert(kty, vty, self.context());
@@ -517,22 +529,24 @@ impl<'env> Checker<'env> {
 
             Ex::FuncCall(ref func, ref args) => {
                 let funcinfo = try!(self.visit_exp(func));
+                let funcinfo = funcinfo.borrow();
+                let funcinfo = funcinfo.unlift();
 
                 let mut argtys = Seq::new();
                 for arg in args {
-                    let argty = try!(self.visit_exp(arg)).ty;
-                    argtys.head.push(Box::new(argty));
+                    let argty = try!(self.visit_exp(arg));
+                    argtys.head.push(Box::new(argty.borrow().unlift().clone().into_send()));
                 }
                 let retv = self.context().gen_tvar();
                 let rettys = Seq::from(Box::new(T::TVar(retv)));
                 let functy = T::func(Function { args: argtys, returns: rettys });
 
-                if let Err(e) = funcinfo.ty.assert_sub(&functy, self.context()) {
+                if let Err(e) = funcinfo.assert_sub(&functy, self.context()) {
                     return Err(format!("tried to call a non-function type {:?}: {}",
-                                       funcinfo.ty, e));
+                                       funcinfo, e));
                 }
 
-                match funcinfo.ty.builtin() {
+                match funcinfo.builtin() {
                     // require("foo")
                     Some(Builtin::Require) if args.len() >= 1 => {
                         if let Ex::Str(ref path) = *args[0] {
@@ -554,8 +568,8 @@ impl<'env> Checker<'env> {
 
             Ex::MethodCall(ref e, ref _method, ref args) => {
                 let info = try!(self.visit_exp(e));
-                if !info.ty.flags().is_tabular() {
-                    return Err(format!("tried to index a non-table type {:?}", info.ty));
+                if !info.borrow().unlift().is_tabular() {
+                    return Err(format!("tried to index a non-table type {:?}", info));
                 }
 
                 for arg in args {
@@ -565,9 +579,11 @@ impl<'env> Checker<'env> {
             },
 
             Ex::Index(ref e, ref key) => {
-                let ty = try!(self.visit_exp(e)).ty;
-                let kty = try!(self.visit_exp(key)).ty;
-                if let Some(vinfo) = try!(self.check_index(&ty, &kty)) {
+                let ty = try!(self.visit_exp(e));
+                let kty = try!(self.visit_exp(key));
+                let ty = ty.borrow();
+                let kty = kty.borrow();
+                if let Some(vinfo) = try!(self.check_index(ty.unlift(), kty.unlift())) {
                     Ok(vinfo)
                 } else {
                     Err(format!("cannot index {:?} with {:?}", ty, kty))

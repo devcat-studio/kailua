@@ -64,8 +64,8 @@ fn test_check() {
     //            f = 'hello?'");
     assert_ok!("local f = function() end
                 f = function() return 54 end");
-    assert_err!("local f = function() end
-                 f = {54, 49}");
+    assert_ok!("local f = function() end
+                f = {54, 49}");
     assert_ok!("local f = function() end
                 --# assume f: table
                 local p = f.index");
@@ -80,58 +80,57 @@ fn test_check() {
     assert_err!("--# assume p: string | boolean
                  local q = p .. 3");
     assert_ok!("local x
-                --# assume x: 3
-                x = 3");
-    assert_ok!("local x
-                --# assume x: 3 | 4
+                --# assume x: var 3
                 x = 3");
     assert_err!("local x
-                 --# assume x: 4 | 5
+                 --# assume x: var 3 | 4
                  x = 3");
-    assert_ok!("local x, y
-                --# assume x: 3 | 4
-                --# assume y: integer
-                x = 3
-                y = x");
+    assert_err!("local x
+                 --# assume x: var 4 | 5
+                 x = 3");
     assert_ok!("local x, y, z
-                --# assume x: integer
-                --# assume y: integer
-                --# assume z: integer
+                --# assume x: var integer
+                --# assume y: var integer
+                --# assume z: var integer
                 z = x + y
                 z = x - y
                 z = x * y
                 z = x % y");
     assert_err!("local x, y, z
-                 --# assume x: integer
-                 --# assume y: integer
-                 --# assume z: integer
+                 --# assume x: var integer
+                 --# assume y: var integer
+                 --# assume z: var integer
                  z = x / y");
     assert_ok!("local p
-                --# assume p: integer
+                --# assume p: var integer
                 p = 3 + 4");
     assert_err!("local p
-                 --# assume p: integer
+                 --# assume p: var integer
                  p = 3.1 + 4");
     assert_ok!("local p, q
                 --# assume p: ?
-                --# assume q: integer
+                --# assume q: var integer
                 q = p + 3");
     assert_err!("local p, q
                  --# assume p: ?
-                 --# assume q: integer
+                 --# assume q: var integer
                  q = p + 3.5");
     assert_ok!("local p, q
                 --# assume p: ?
-                --# assume q: number
+                --# assume q: var number
                 q = p + 3.5");
     assert_ok!("local p, q
                 --# assume p: ?
-                --# assume q: number
+                --# assume q: var number
                 q = p + p");
     assert_err!("local p, q
                  --# assume p: ?
-                 --# assume q: integer
+                 --# assume q: var integer
                  q = p + p");
+    assert_ok!("local a = true
+                a = 'string'
+                --# assume a: integer
+                a = a + 3.1");
     assert_ok!("function a(...)
                   return ...
                 end");

@@ -113,42 +113,26 @@ impl Lattice for Union {
         self
     }
 
-    fn union(mut self, other: Union, ctx: &mut TypeContext) -> Union {
-        self.has_dynamic |= other.has_dynamic;
-        self.has_nil     |= other.has_nil;
-        self.has_true    |= other.has_true;
-        self.has_false   |= other.has_false;
+    fn union(&self, other: &Union, ctx: &mut TypeContext) -> Union {
+        let has_dynamic = self.has_dynamic | other.has_dynamic;
+        let has_nil     = self.has_nil     | other.has_nil;
+        let has_true    = self.has_true    | other.has_true;
+        let has_false   = self.has_false   | other.has_false;
 
-        self.numbers   = self.numbers.union(other.numbers, ctx);
-        self.strings   = self.strings.union(other.strings, ctx);
-        self.tables    = self.tables.union(other.tables, ctx);
-        self.functions = self.functions.union(other.functions, ctx);
+        let numbers   = self.numbers.union(&other.numbers, ctx);
+        let strings   = self.strings.union(&other.strings, ctx);
+        let tables    = self.tables.union(&other.tables, ctx);
+        let functions = self.functions.union(&other.functions, ctx);
 
-        self.tvar = match (self.tvar, other.tvar) {
-            (Some(a), Some(b)) => Some(a.union(b, ctx)),
+        let tvar = match (self.tvar, other.tvar) {
+            (Some(a), Some(b)) => Some(a.union(&b, ctx)),
             (a, b) => a.or(b),
         };
 
-        self
-    }
-
-    fn intersect(mut self, other: Union, ctx: &mut TypeContext) -> Union {
-        self.has_dynamic &= other.has_dynamic;
-        self.has_nil     &= other.has_nil;
-        self.has_true    &= other.has_true;
-        self.has_false   &= other.has_false;
-
-        self.numbers   = self.numbers.intersect(other.numbers, ctx);
-        self.strings   = self.strings.intersect(other.strings, ctx);
-        self.tables    = self.tables.intersect(other.tables, ctx);
-        self.functions = self.functions.intersect(other.functions, ctx);
-
-        self.tvar = match (self.tvar, other.tvar) {
-            (Some(a), Some(b)) => Some(a.intersect(b, ctx)),
-            (_, _) => None,
-        };
-
-        self
+        Union {
+            has_dynamic: has_dynamic, has_nil: has_nil, has_true: has_true, has_false: has_false,
+            numbers: numbers, strings: strings, tables: tables, functions: functions, tvar: tvar,
+        }
     }
 
     fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
