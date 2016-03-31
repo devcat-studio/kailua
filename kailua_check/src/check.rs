@@ -2,7 +2,8 @@ use std::i32;
 use std::ops::{Deref, DerefMut};
 use std::borrow::Cow;
 
-use kailua_syntax::{Name, Var, Params, Ex, UnOp, BinOp, FuncScope, SelfParam, St, Stmt, Block, M};
+use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, UnOp, BinOp, FuncScope, SelfParam};
+use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
 use ty::{T, Seq, Lattice, TypeContext, Numbers, Strings, Tables, Function, S, Slot, Builtin};
 use ty::flags::*;
@@ -278,13 +279,13 @@ impl<'env> Checker<'env> {
             }
 
             St::Assign(ref vars, ref exps) => {
-                for var in vars {
-                    try!(self.visit_var(var));
+                for varspec in vars {
+                    try!(self.visit_var_with_spec(varspec));
                 }
                 for (i, exp) in exps.iter().enumerate() {
                     let info = try!(self.visit_exp(exp));
                     if i < vars.len() {
-                        if let &Var::Name(ref name) = &vars[i] {
+                        if let Var::Name(ref name) = vars[i].base {
                             // XXX last exp should unpack
                             try!(self.env.assign_to_var(name, info));
                         }
@@ -292,7 +293,7 @@ impl<'env> Checker<'env> {
                 }
                 if vars.len() > exps.len() {
                     for var in &vars[exps.len()..] {
-                        if let &Var::Name(ref name) = var {
+                        if let Var::Name(ref name) = var.base {
                             let info = TyInfo::from(T::Dynamic);
                             // XXX last exp should unpack
                             try!(self.env.assign_to_var(name, info));
@@ -349,7 +350,7 @@ impl<'env> Checker<'env> {
                 try!(scope.visit_block(block));
             }
 
-            St::FuncDecl(scope, ref name, ref params, ref block) => {
+            St::FuncDecl(scope, ref name, ref sig, ref block) => {
                 // `name` itself is available to the inner scope
                 let funcv = self.context().gen_tvar();
                 let info = TyInfo::from(T::TVar(funcv));
@@ -357,17 +358,17 @@ impl<'env> Checker<'env> {
                     FuncScope::Local => self.env.add_local_var(name, info),
                     FuncScope::Global => try!(self.env.assign_to_var(name, info)),
                 }
-                let functy = try!(self.visit_func_body(None, params, block));
+                let functy = try!(self.visit_func_body(None, sig, block));
                 try!(T::TVar(funcv).assert_eq(functy.borrow().unlift(), self.context()));
             }
 
-            St::MethodDecl(ref names, selfparam, ref params, ref block) => {
+            St::MethodDecl(ref names, selfparam, ref sig, ref block) => {
                 // TODO verify names
                 let selfinfo = match selfparam {
                     SelfParam::Yes => Some(TyInfo::from(T::Dynamic)),
                     SelfParam::No => None,
                 };
-                try!(self.visit_func_body(selfinfo, params, block));
+                try!(self.visit_func_body(selfinfo, sig, block));
             }
 
             St::Local(ref names, ref exps) => {
@@ -375,14 +376,16 @@ impl<'env> Checker<'env> {
                     let info = try!(self.visit_exp(exp));
                     if i < names.len() {
                         // XXX last exp should unpack
-                        self.env.add_local_var(&names[i], info);
+                        // TODO fully process namespec
+                        self.env.add_local_var(&names[i].base, info);
                     }
                 }
                 if names.len() > exps.len() {
-                    for name in &names[exps.len()..] {
+                    for namespec in &names[exps.len()..] {
                         let info = TyInfo::from(T::Nil);
                         // XXX last exp should unpack
-                        self.env.add_local_var(name, info);
+                        // TODO fully process namespec
+                        self.env.add_local_var(&namespec.base, info);
                     }
                 }
             }
@@ -425,10 +428,10 @@ impl<'env> Checker<'env> {
         Ok(())
     }
 
-    fn visit_func_body(&mut self, selfinfo: Option<TyInfo>, params: &Params,
+    fn visit_func_body(&mut self, selfinfo: Option<TyInfo>, sig: &Sig,
                        block: &[Stmt]) -> CheckResult<TyInfo> {
         let vainfo;
-        if params.variadic {
+        if sig.variadic {
             vainfo = Some(TyInfo::from(T::Dynamic));
         } else {
             vainfo = None;
@@ -441,9 +444,10 @@ impl<'env> Checker<'env> {
             scope.env.add_local_var(&Name::from(&b"self"[..]), selfinfo);
         }
         let mut args = Seq::new();
-        for param in &params.args {
+        for param in &sig.args {
             let argv = scope.context().gen_tvar();
-            scope.env.add_local_var(param, TyInfo::from(T::TVar(argv)));
+            // TODO fully process param
+            scope.env.add_local_var(&param.base, TyInfo::from(T::TVar(argv)));
             args.head.push(Box::new(T::TVar(argv)));
         }
         try!(scope.visit_block(block));
@@ -452,8 +456,9 @@ impl<'env> Checker<'env> {
         Ok(TyInfo::from(T::func(Function { args: args, returns: returns })))
     }
 
-    fn visit_var(&mut self, var: &Var) -> CheckResult<Option<TyInfo>> {
-        match *var {
+    fn visit_var_with_spec(&mut self, varspec: &TypeSpec<Var>) -> CheckResult<Option<TyInfo>> {
+        // TODO fully process varspec
+        match varspec.base {
             Var::Name(ref name) => {
                 // may refer to the global variable yet to be defined!
                 if let Some(info) = self.env.get_var(name) {
@@ -502,8 +507,8 @@ impl<'env> Checker<'env> {
                 }
             },
 
-            Ex::Func(ref params, ref block) => {
-                Ok(try!(self.visit_func_body(None, params, block)))
+            Ex::Func(ref sig, ref block) => {
+                Ok(try!(self.visit_func_body(None, sig, block)))
             },
             Ex::Table(ref fields) => {
                 let mut tab = Tables::Empty;

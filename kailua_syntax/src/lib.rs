@@ -2,8 +2,8 @@
 #[macro_use] extern crate newtype_derive;
 
 pub use lex::Error;
-pub use ast::{Name, Str, Var, Params, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam, St, Stmt, Block};
-pub use ast::{M, K, Kind};
+pub use ast::{Name, Str, Var, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam};
+pub use ast::{St, Stmt, Block, M, K, Kind};
 
 mod lex;
 mod ast;
@@ -27,6 +27,14 @@ fn test_parse() {
     assert_eq!(test("function r(p) --[[...]] end"), "[FuncDecl(Global, `r`, [`p`], [])]");
     assert_eq!(test("local function r(p,...)\n\nend"), "[FuncDecl(Local, `r`, [`p`, ...], [])]");
     assert_eq!(test("local a, b"), "[Local([`a`, `b`], [])]");
+    assert_eq!(test("local a --: integer\n, b --: var ?"),
+               "[Local([`a`: _ Integer, `b`: Var Dynamic], [])]");
+    assert_eq!(test("local a, --: const table\nb"),
+               "[Local([`a`: Const Table, `b`], [])]");
+    assert_eq!(test("local function r(p --: integer\n)\n\nend"),
+               "[FuncDecl(Local, `r`, [`p`: _ Integer], [])]");
+    assert_eq!(test("local function r(p, q) --: integer --> string\n\nend"),
+               "[FuncDecl(Local, `r`, [`p`, `q`: _ Integer] -> String, [])]");
     assert_eq!(test("f()"), "[Void(`f`())]");
     assert_eq!(test("f(3)"), "[Void(`f`(3))]");
     assert_eq!(test("f(3+4)"), "[Void(`f`((3 + 4)))]");

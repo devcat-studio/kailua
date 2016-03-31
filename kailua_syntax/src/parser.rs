@@ -2,8 +2,8 @@ use std::iter;
 use std::i32;
 
 use lex::{Tok, Punct, Keyword};
-use ast::{Name, Str, Var, Params, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam, St, Stmt, Block};
-use ast::{M, K, Kind};
+use ast::{Name, Str, Var, Sig, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam, St, Stmt, Block};
+use ast::{M, K, Kind, TypeSpec};
 
 pub struct Parser<T> {
     iter: iter::Fuse<T>,
@@ -180,7 +180,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                         Ok(Some(try!(self.parse_stmt_for_in(vec![name]))))
                     }
 
-                    // for NAME "," ... in ...
+                    // for NAME [SPEC] "," ... in ...
                     Tok::Punct(Punct::Comma) => {
                         let mut vars = vec![name.into()];
                         try!(self.scan_namelist(|name| vars.push(name.into())));
@@ -204,14 +204,14 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                     names.push(try!(self.parse_name()));
                     selfparam = SelfParam::Yes;
                 }
-                let (params, body) = try!(self.parse_func_body());
+                let (sig, body) = try!(self.parse_func_body());
                 if names.len() == 1 {
                     assert!(selfparam == SelfParam::No,
                             "ordinary function cannot have an implicit self");
                     let name = names.pop().unwrap();
-                    Ok(Some(Box::new(St::FuncDecl(FuncScope::Global, name, params, body))))
+                    Ok(Some(Box::new(St::FuncDecl(FuncScope::Global, name, sig, body))))
                 } else {
-                    Ok(Some(Box::new(St::MethodDecl(names, selfparam, params, body))))
+                    Ok(Some(Box::new(St::MethodDecl(names, selfparam, sig, body))))
                 }
             }
 
@@ -220,8 +220,8 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                     // local function ...
                     Tok::Keyword(Keyword::Function) => {
                         let name = try!(self.parse_name());
-                        let (params, body) = try!(self.parse_func_body());
-                        Ok(Some(Box::new(St::FuncDecl(FuncScope::Local, name, params, body))))
+                        let (sig, body) = try!(self.parse_func_body());
+                        Ok(Some(Box::new(St::FuncDecl(FuncScope::Local, name, sig, body))))
                     }
 
                     // local NAME ...
@@ -230,14 +230,14 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
 
                         let mut names = Vec::new();
                         let mut exps = Vec::new();
-                        try!(self.scan_namelist(|name| names.push(name)));
+                        try!(self.scan_namelist_with_spec(|namespec| names.push(namespec)));
                         if self.lookahead(Punct::Eq) {
-                            try!(self.try_parse_kailua_type_spec());
+                            try!(self.try_parse_kailua_type_spec()); // XXX
                             self.read();
-                            try!(self.try_parse_kailua_type_spec());
+                            try!(self.try_parse_kailua_type_spec()); // XXX
                             try!(self.scan_explist(|exp| exps.push(exp)));
                         }
-                        try!(self.try_parse_kailua_type_spec());
+                        try!(self.try_parse_kailua_type_spec()); // XXX
                         Ok(Some(Box::new(St::Local(names, exps))))
                     }
 
@@ -267,19 +267,19 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                     match self.convert_prefix_exp_to_var(exp) {
                         // var {"," var} "=" explist
                         Ok(var) => {
-                            let mut lhs = vec![var];
-                            try!(self.try_parse_kailua_type_spec());
+                            let spec = try!(self.try_parse_kailua_type_spec());
+                            let mut lhs = vec![self.make_kailua_typespec(var, spec)];
                             if self.lookahead(Punct::Comma) {
                                 self.read();
-                                try!(self.scan_varlist(|var| lhs.push(var)));
+                                try!(self.scan_varlist_with_spec(|varspec| lhs.push(varspec)));
                             }
                             try!(self.expect(Punct::Eq));
-                            try!(self.try_parse_kailua_type_spec());
+                            try!(self.try_parse_kailua_type_spec()); // XXX
 
                             let mut rhs = Vec::new();
                             try!(self.scan_explist(|exp| rhs.push(exp)));
 
-                            try!(self.try_parse_kailua_type_spec());
+                            try!(self.try_parse_kailua_type_spec()); // XXX
 
                             return Ok(Some(Box::new(St::Assign(lhs, rhs))));
                         }
@@ -305,29 +305,33 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
         Ok(Box::new(St::ForIn(names, exps, block)))
     }
 
-    fn parse_func_body(&mut self) -> ParseResult<(Params, Block)> {
-        let mut params = Params { args: Vec::new(), variadic: false };
+    fn parse_func_body(&mut self) -> ParseResult<(Sig, Block)> {
+        let mut sig = Sig { args: Vec::new(), variadic: false, returns: None };
 
         try!(self.expect(Punct::LParen));
+        let mut name = None;
+        let mut spec = None;
         match self.read() {
             Tok::Punct(Punct::DotDotDot) => {
-                params.variadic = true;
-                try!(self.try_parse_kailua_type_spec());
+                sig.variadic = true;
+                try!(self.try_parse_kailua_type_spec()); // XXX
             }
-            Tok::Name(name) => {
-                params.args.push(name.into());
-                try!(self.try_parse_kailua_type_spec());
+            Tok::Name(name0) => {
+                name = Some(name0.into());
+                spec = try!(self.try_parse_kailua_type_spec());
                 while self.lookahead(Punct::Comma) {
                     self.read();
-                    try!(self.try_parse_kailua_type_spec());
+                    // try to read the type spec after a comma if there was no prior spec
+                    if spec.is_none() { spec = try!(self.try_parse_kailua_type_spec()); }
                     if self.lookahead(Punct::DotDotDot) {
                         self.read();
-                        try!(self.try_parse_kailua_type_spec());
-                        params.variadic = true;
+                        try!(self.try_parse_kailua_type_spec()); // XXX
+                        sig.variadic = true;
                         break;
                     } else {
-                        params.args.push(try!(self.parse_name()));
-                        try!(self.try_parse_kailua_type_spec());
+                        sig.args.push(self.make_kailua_typespec(name.take().unwrap(), spec.take()));
+                        name = Some(try!(self.parse_name()));
+                        spec = try!(self.try_parse_kailua_type_spec());
                     }
                 }
             }
@@ -337,13 +341,17 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
             _ => return Err("unexpected token after `function ... (`")
         }
         try!(self.expect(Punct::RParen));
-        if try!(self.try_parse_kailua_rettype_spec()).is_none() {
-            try!(self.try_parse_kailua_type_spec());
+        // the right parenthesis may be followed by the last type spec
+        if let Some(name) = name {
+            if spec.is_none() { spec = try!(self.try_parse_kailua_type_spec()); }
+            sig.args.push(self.make_kailua_typespec(name, spec));
         }
+        sig.returns = try!(self.try_parse_kailua_rettype_spec());
+
         let block = try!(self.parse_block());
         try!(self.expect(Keyword::End));
 
-        Ok((params, block))
+        Ok((sig, block))
     }
 
     fn parse_table(&mut self) -> ParseResult<Vec<(Option<Exp>, Exp)>> {
@@ -511,8 +519,8 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
             Tok::Punct(Punct::DotDotDot) => Ok(Some(Box::new(Ex::Varargs))),
 
             Tok::Keyword(Keyword::Function) => {
-                let (params, body) = try!(self.parse_func_body());
-                Ok(Some(Box::new(Ex::Func(params, body))))
+                let (sig, body) = try!(self.parse_func_body());
+                Ok(Some(Box::new(Ex::Func(sig, body))))
             }
 
             tok @ Tok::Punct(Punct::LBrace) => {
@@ -683,24 +691,44 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
         }
     }
 
-    fn scan_varlist<F>(&mut self, mut f: F) -> ParseResult<()> where F: FnMut(Var) {
-        f(try!(self.parse_var()));
+    fn scan_varlist_with_spec<F>(&mut self, mut f: F) -> ParseResult<()>
+            where F: FnMut(TypeSpec<Var>) {
+        let mut var = try!(self.parse_var());
+        let mut spec = try!(self.try_parse_kailua_type_spec());
         while self.lookahead(Punct::Comma) {
             self.read();
-            f(try!(self.parse_var()));
+            // try to read the type spec after a comma if there was no prior spec
+            if spec.is_none() { spec = try!(self.try_parse_kailua_type_spec()); }
+            f(self.make_kailua_typespec(var, spec));
+            var = try!(self.parse_var());
+            spec = try!(self.try_parse_kailua_type_spec());
         }
+        f(self.make_kailua_typespec(var, spec));
         Ok(())
     }
 
     fn scan_namelist<F>(&mut self, mut f: F) -> ParseResult<()> where F: FnMut(Name) {
         f(try!(self.parse_name()));
-        try!(self.try_parse_kailua_type_spec());
         while self.lookahead(Punct::Comma) {
             self.read();
-            try!(self.try_parse_kailua_type_spec());
             f(try!(self.parse_name()));
-            try!(self.try_parse_kailua_type_spec());
         }
+        Ok(())
+    }
+
+    fn scan_namelist_with_spec<F>(&mut self, mut f: F) -> ParseResult<()>
+            where F: FnMut(TypeSpec<Name>) {
+        let mut name = try!(self.parse_name());
+        let mut spec = try!(self.try_parse_kailua_type_spec());
+        while self.lookahead(Punct::Comma) {
+            self.read();
+            // try to read the type spec after a comma if there was no prior spec
+            if spec.is_none() { spec = try!(self.try_parse_kailua_type_spec()); }
+            f(self.make_kailua_typespec(name, spec));
+            name = try!(self.parse_name());
+            spec = try!(self.try_parse_kailua_type_spec());
+        }
+        f(self.make_kailua_typespec(name, spec));
         Ok(())
     }
 
@@ -728,7 +756,15 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
 
     // Kailua-specific syntaxes
 
-    fn parse_kailua_mut(&mut self) -> ParseResult<M> {
+    fn make_kailua_typespec<Base>(&self, base: Base, spec: Option<(M, Kind)>) -> TypeSpec<Base> {
+        if let Some((modf, kind)) = spec {
+            TypeSpec { base: base, modf: modf, kind: Some(kind) }
+        } else {
+            TypeSpec { base: base, modf: M::None, kind: None }
+        }
+    }
+
+    fn parse_kailua_mod(&mut self) -> ParseResult<M> {
         match self.read() {
             Tok::Keyword(Keyword::Var) => Ok(M::Var),
             Tok::Keyword(Keyword::Const) => Ok(M::Const),
@@ -808,33 +844,27 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
         }
     }
 
-    fn try_parse_kailua_type_spec(&mut self) -> ParseResult<Option<()>> {
+    fn try_parse_kailua_type_spec(&mut self) -> ParseResult<Option<(M, Kind)>> {
         if self.lookahead(Punct::DashDashColon) {
             self.read();
-            loop {
-                match self.read() {
-                    Tok::Error => return Err("token error"),
-                    Tok::Punct(Punct::Newline) => break,
-                    _ => {}
-                }
+            let modf = try!(self.parse_kailua_mod());
+            let kind = try!(self.parse_kailua_kind());
+            if !self.lookahead(Punct::DashDashGt) {
+                // allow for `--: last type --> return type` in the function decl
+                try!(self.expect(Punct::Newline));
             }
-            Ok(Some(()))
+            Ok(Some((modf, kind)))
         } else {
             Ok(None)
         }
     }
 
-    fn try_parse_kailua_rettype_spec(&mut self) -> ParseResult<Option<()>> {
+    fn try_parse_kailua_rettype_spec(&mut self) -> ParseResult<Option<Kind>> {
         if self.lookahead(Punct::DashDashGt) {
             self.read();
-            loop {
-                match self.read() {
-                    Tok::Error => return Err("token error"),
-                    Tok::Punct(Punct::Newline) => break,
-                    _ => {}
-                }
-            }
-            Ok(Some(()))
+            let kind = try!(self.parse_kailua_kind());
+            try!(self.expect(Punct::Newline));
+            Ok(Some(kind))
         } else {
             Ok(None)
         }
@@ -844,13 +874,13 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
         if self.lookahead(Punct::DashDashHash) {
             self.read();
 
-            // assume NAME ":" KIND
-            // assume NAME ":" KIND "=" STR (for builtin spec)
+            // assume NAME ":" MODF KIND
+            // assume NAME ":" MODF KIND "=" STR (for builtin spec)
             if self.lookahead(Keyword::Assume) {
                 self.read();
                 let name = try!(self.parse_name());
                 try!(self.expect(Punct::Colon));
-                let kindm = try!(self.parse_kailua_mut());
+                let modf = try!(self.parse_kailua_mod());
                 let kind = try!(self.parse_kailua_kind());
                 let builtin;
                 if self.lookahead(Punct::Eq) {
@@ -864,7 +894,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                     builtin = None;
                 }
                 try!(self.expect(Punct::Newline));
-                return Ok(Some(Some(Box::new(St::KailuaAssume(name, kindm, kind, builtin)))));
+                return Ok(Some(Some(Box::new(St::KailuaAssume(name, modf, kind, builtin)))));
             }
 
             loop {

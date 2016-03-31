@@ -69,26 +69,48 @@ impl From<Name> for Var {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct Params {
-    pub args: Vec<Name>,
-    pub variadic: bool,
+pub struct TypeSpec<T> {
+    pub base: T,
+    pub modf: M,
+    pub kind: Option<Kind>,
 }
 
-impl fmt::Debug for Params {
+impl<T: fmt::Debug> fmt::Debug for TypeSpec<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        try!(write!(f, "{:?}", self.base));
+        match (self.modf, &self.kind) {
+            (M::None, &None) => Ok(()),
+            (modf, &None) => write!(f, ": {:?}", modf),
+            (modf, &Some(ref kind)) => write!(f, ": {:?} {:?}", modf, kind),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct Sig {
+    pub args: Vec<TypeSpec<Name>>,
+    pub variadic: bool,
+    pub returns: Option<Kind>,
+}
+
+impl fmt::Debug for Sig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.variadic {
             try!(write!(f, "["));
             let mut first = true;
-            for name in &self.args {
+            for namespec in &self.args {
                 if first { first = false; } else { try!(write!(f, ", ")); }
-                try!(write!(f, "{:?}", name));
+                try!(write!(f, "{:?}", *namespec));
             }
             if !first { try!(write!(f, ", ")); }
             try!(write!(f, "...]"));
-            Ok(())
         } else {
-            fmt::Debug::fmt(&self.args, f)
+            try!(fmt::Debug::fmt(&self.args, f));
         }
+        if let Some(ref kind) = self.returns {
+            try!(write!(f, " -> {:?}", *kind));
+        }
+        Ok(())
     }
 }
 
@@ -101,7 +123,7 @@ pub enum Ex {
     Num(f64),
     Str(Str),
     Varargs,
-    Func(Params, Block),
+    Func(Sig, Block),
     Table(Vec<(Option<Exp>, Exp)>),
 
     // expressions
@@ -243,16 +265,16 @@ impl fmt::Debug for SelfParam {
 #[derive(Clone, Debug, PartialEq)]
 pub enum St {
     Void(Exp), // technically not every Exp is valid here, but for simplicity.
-    Assign(Vec<Var>, Vec<Exp>),
+    Assign(Vec<TypeSpec<Var>>, Vec<Exp>),
     Do(Block),
     While(Exp, Block),
     Repeat(Block, Exp),
     If(Vec<(Exp, Block)>, Option<Block>),
     For(Name, Exp, Exp, Option<Exp>, Block),
     ForIn(Vec<Name>, Vec<Exp>, Block),
-    FuncDecl(FuncScope, Name, Params, Block),
-    MethodDecl(Vec<Name>, SelfParam, Params, Block),
-    Local(Vec<Name>, Vec<Exp>),
+    FuncDecl(FuncScope, Name, Sig, Block),
+    MethodDecl(Vec<Name>, SelfParam, Sig, Block),
+    Local(Vec<TypeSpec<Name>>, Vec<Exp>),
     Return(Vec<Exp>),
     Break,
 
@@ -270,11 +292,21 @@ impl From<Block> for Stmt { fn from(x: Block) -> Stmt { Box::new(From::from(x)) 
 
 pub type Block = Vec<Stmt>;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum M {
     None,
     Var,
     Const,
+}
+
+impl fmt::Debug for M {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            M::None => write!(f, "_"),
+            M::Var => write!(f, "Var"),
+            M::Const => write!(f, "Const"),
+        }
+    }
 }
 
 // not "type" to avoid a conflict (and it's not really a type but a spec that leads to a type)
