@@ -804,38 +804,46 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
         Ok((variadic, kinds))
     }
 
+    fn parse_kailua_funckind(&mut self) -> ParseResult<FuncKind> {
+        try!(self.expect(Punct::LParen));
+        let (variadic, args) = try!(self.parse_kailua_kindlist());
+        try!(self.expect(Punct::RParen));
+        let returns = if self.lookahead(Punct::DashGt) {
+            // "(" ... ")" "->" ...
+            self.read();
+            try!(self.parse_kailua_kind_seq())
+        } else {
+            // "(" ... ")"
+            Vec::new()
+        };
+        Ok(FuncKind { args: args, variadic: variadic, returns: returns })
+    }
+
     fn try_parse_kailua_atomic_kind_seq(&mut self) -> ParseResult<Option<Vec<Kind>>> {
         let mut kind = match self.read() {
-            Tok::Punct(Punct::Ques) => {
-                Box::new(K::Dynamic)
+            Tok::Keyword(Keyword::Function) => {
+                // either a "function" type or a list of function signatures
+                if self.lookahead(Punct::LParen) {
+                    // function "(" ... ")" ["->" ...] {"&" "(" ... ")" ["->" ...]}
+                    let mut funcs = vec![try!(self.parse_kailua_funckind())];
+                    while self.lookahead(Punct::Amp) {
+                        self.read();
+                        funcs.push(try!(self.parse_kailua_funckind()));
+                    }
+                    // cannot be followed by postfix operators
+                    return Ok(Some(vec![Box::new(K::Func(funcs))]));
+                } else {
+                    Box::new(K::Function)
+                }
             }
 
-            // if the parenthesized kind is not a sequence, it can be followed by postfix operators
-            // otherwise it immediately returns the sequence
             Tok::Punct(Punct::LParen) => {
                 let (variadic, mut args) = try!(self.parse_kailua_kindlist());
                 try!(self.expect(Punct::RParen));
-                if self.lookahead(Punct::DashGt) {
-                    // "(" ... ")" "->" ...
-                    self.read();
-                    let returns = try!(self.parse_kailua_kind_seq());
-                    let mut funcs = vec![FuncKind { args: args, variadic: variadic,
-                                                    returns: returns }];
-                    while self.lookahead(Punct::Amp) {
-                        // "(" ... ")" "->" ... "&" ...
-                        self.read();
-                        try!(self.expect(Punct::LParen));
-                        let (variadic, args) = try!(self.parse_kailua_kindlist());
-                        try!(self.expect(Punct::RParen));
-                        try!(self.expect(Punct::DashGt));
-                        let returns = try!(self.parse_kailua_kind_seq());
-                        funcs.push(FuncKind { args: args, variadic: variadic,
-                                              returns: returns });
-                    }
-                    return Ok(Some(vec![Box::new(K::Func(funcs))]));
-                } else if variadic {
+                if variadic {
                     return Err("variadic argument can only be used as a function argument");
                 } else if args.len() != 1 {
+                    // cannot be followed by postfix operators - XXX really?
                     return Ok(Some(args));
                 } else {
                     args.pop().unwrap()
@@ -878,6 +886,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                 }
             }
 
+            Tok::Punct(Punct::Ques)         => Box::new(K::Dynamic),
             Tok::Keyword(Keyword::Nil)      => Box::new(K::Nil),
             Tok::Keyword(Keyword::Boolean)  => Box::new(K::Boolean),
             Tok::Keyword(Keyword::True)     => Box::new(K::BooleanLit(true)),
@@ -886,7 +895,6 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
             Tok::Keyword(Keyword::Integer)  => Box::new(K::Integer),
             Tok::Keyword(Keyword::String)   => Box::new(K::String),
             Tok::Keyword(Keyword::Table)    => Box::new(K::Table),
-            Tok::Keyword(Keyword::Function) => Box::new(K::Function),
 
             Tok::Name(_name) => {
                 return Err("unknown type name"); // for now

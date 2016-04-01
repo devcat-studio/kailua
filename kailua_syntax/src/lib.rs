@@ -62,17 +62,19 @@ fn test_parse() {
     assert_eq!(test("local x --: {b=var string, a=integer, c=const {d=const {}}}"),
                "[Local([`x`: _ Record([\"b\": Var String, \"a\": _ Integer, \
                                        \"c\": Const Record([\"d\": Const Record([])])])], [])]");
-    assert_eq!(test("local x --: ()->()"), "[Local([`x`: _ Func([() -> ()])], [])]");
-    assert_eq!(test("local x --: ()->()&(integer,...)->string?"),
+    assert_eq!(test("local x --: function()"), "[Local([`x`: _ Func([() -> ()])], [])]");
+    assert_eq!(test("local x --: function()->()"), "[Local([`x`: _ Func([() -> ()])], [])]");
+    assert_eq!(test("local x --: function () & (integer,...)->string?"),
                "[Local([`x`: _ Func([() -> (), (Integer, ...) -> Union([String, Nil])])], [])]");
-    assert_eq!(test("local x --: (...)->() | string?"),
+    assert_eq!(test("local x --: function (...) | string?"),
                "[Local([`x`: _ Union([Func([(...) -> ()]), Union([String, Nil])])], [])]");
     assert_eq!(test("local x --: (integer, string)"), "parse error");
     assert_eq!(test("local x --: (integer)"), "[Local([`x`: _ Integer], [])]");
     assert_eq!(test("local x --: (integer)?"), "[Local([`x`: _ Union([Integer, Nil])], [])]");
     // TODO can we ignore --: inside tables etc?
-    assert_eq!(test("local x --: {a = const () -> (), b = var string, \
-                                  c = const (string) -> integer & (string, integer) -> number}?"),
+    assert_eq!(test("local x --: {a = const function (), b = var string, \
+                                  c = const function (string) -> integer & \
+                                                     (string, integer) -> number}?"),
                "[Local([`x`: _ Union([Record([\"a\": Const Func([() -> ()]), \
                                               \"b\": Var String, \
                                               \"c\": Const Func([(String) -> Integer, \
