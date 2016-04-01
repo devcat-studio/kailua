@@ -23,6 +23,9 @@ fn test_parse() {
         }
     }
 
+    assert_eq!(test(""), "[]");
+    assert_eq!(test("\n"), "[]");
+    assert_eq!(test("\n\n"), "[]");
     assert_eq!(test("do break; end; break"), "[Do([Break]), Break]");
     assert_eq!(test("function r(p) --[[...]] end"), "[FuncDecl(Global, `r`, [`p`], [])]");
     assert_eq!(test("local function r(p,...)\n\nend"), "[FuncDecl(Local, `r`, [`p`, ...], [])]");
@@ -56,5 +59,24 @@ fn test_parse() {
     assert_eq!(test("--# --foo\ndo end"), "[Do([])]");
     assert_eq!(test("--# --[[foo]]\ndo end"), "[Do([])]");
     assert_eq!(test("--# --[[foo\n--# --foo]]\ndo end"), "parse error");
+    assert_eq!(test("local x --: {b=var string, a=integer, c=const {d=const {}}}"),
+               "[Local([`x`: _ Record([\"b\": Var String, \"a\": _ Integer, \
+                                       \"c\": Const Record([\"d\": Const Record([])])])], [])]");
+    assert_eq!(test("local x --: ()->()"), "[Local([`x`: _ Func([() -> ()])], [])]");
+    assert_eq!(test("local x --: ()->()&(integer,...)->string?"),
+               "[Local([`x`: _ Func([() -> (), (Integer, ...) -> Union([String, Nil])])], [])]");
+    assert_eq!(test("local x --: (...)->() | string?"),
+               "[Local([`x`: _ Union([Func([(...) -> ()]), Union([String, Nil])])], [])]");
+    assert_eq!(test("local x --: (integer, string)"), "parse error");
+    assert_eq!(test("local x --: (integer)"), "[Local([`x`: _ Integer], [])]");
+    assert_eq!(test("local x --: (integer)?"), "[Local([`x`: _ Union([Integer, Nil])], [])]");
+    // TODO can we ignore --: inside tables etc?
+    assert_eq!(test("local x --: {a = const () -> (), b = var string, \
+                                  c = const (string) -> integer & (string, integer) -> number}?"),
+               "[Local([`x`: _ Union([Record([\"a\": Const Func([() -> ()]), \
+                                              \"b\": Var String, \
+                                              \"c\": Const Func([(String) -> Integer, \
+                                                                 (String, Integer) -> Number])\
+                                             ]), Nil])], [])]");
 }
 

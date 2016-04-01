@@ -309,8 +309,43 @@ impl fmt::Debug for M {
     }
 }
 
+#[derive(Clone, PartialEq)]
+pub struct FuncKind {
+    pub args: Vec<Kind>,
+    pub variadic: bool,
+    pub returns: Vec<Kind>,
+}
+
+impl fmt::Debug for FuncKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        try!(write!(f, "("));
+        let mut first = true;
+        for kind in &self.args {
+            if first { first = false; } else { try!(write!(f, ", ")); }
+            try!(write!(f, "{:?}", *kind));
+        }
+        if self.variadic {
+            if !first { try!(write!(f, ", ")); }
+            try!(write!(f, "..."));
+        }
+        try!(write!(f, ") -> "));
+        if self.returns.len() == 1 {
+            try!(write!(f, "{:?}", self.returns[0]));
+        } else {
+            try!(write!(f, "("));
+            let mut first = true;
+            for kind in &self.returns {
+                if first { first = false; } else { try!(write!(f, ", ")); }
+                try!(write!(f, "{:?}", *kind));
+            }
+            try!(write!(f, ")"));
+        }
+        Ok(())
+    }
+}
+
 // not "type" to avoid a conflict (and it's not really a type but a spec that leads to a type)
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum K {
     Dynamic,
     Nil,
@@ -322,8 +357,62 @@ pub enum K {
     String,
     StringLit(Str),
     Table,
+    Record(Vec<(Str, M, Kind)>),
     Function,
+    Func(Vec<FuncKind>),
     Union(Vec<Kind>),
+}
+
+impl fmt::Debug for K {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            K::Dynamic           => write!(f, "Dynamic"),
+            K::Nil               => write!(f, "Nil"),
+            K::Boolean           => write!(f, "Boolean"),
+            K::BooleanLit(true)  => write!(f, "True"),
+            K::BooleanLit(false) => write!(f, "False"),
+            K::Number            => write!(f, "Number"),
+            K::Integer           => write!(f, "Integer"),
+            K::IntegerLit(v)     => write!(f, "Integer({})", v),
+            K::String            => write!(f, "String"),
+            K::StringLit(ref s)  => write!(f, "String({:?})", *s),
+            K::Table             => write!(f, "Table"),
+            K::Function          => write!(f, "Function"),
+
+            K::Record(ref fields) => {
+                try!(write!(f, "Record(["));
+                let mut first = true;
+                for &(ref name, modf, ref kind) in fields {
+                    if first { first = false; } else { try!(write!(f, ", ")); }
+                    try!(write!(f, "{:?}: {:?} {:?}", *name, modf, *kind));
+                }
+                try!(write!(f, "])"));
+                Ok(())
+            },
+
+            K::Func(ref funcs) => {
+                try!(write!(f, "Func(["));
+                let mut first = true;
+                for func in funcs {
+                    if first { first = false; } else { try!(write!(f, ", ")); }
+                    try!(write!(f, "{:?}", *func));
+                }
+                try!(write!(f, "])"));
+                Ok(())
+            },
+
+            K::Union(ref kinds) => {
+                try!(write!(f, "Union(["));
+                let mut first = true;
+                for kind in kinds {
+                    if first { first = false; } else { try!(write!(f, ", ")); }
+                    try!(write!(f, "{:?}", *kind));
+                }
+                try!(write!(f, "])"));
+                Ok(())
+            },
+        }
+    }
 }
 
 pub type Kind = Box<K>;

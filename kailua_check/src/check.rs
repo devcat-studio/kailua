@@ -273,6 +273,7 @@ impl<'env> Checker<'env> {
     }
 
     fn visit_stmt(&mut self, stmt: &St) -> CheckResult<()> {
+        println!("visiting stmt {:?}", *stmt);
         match *stmt {
             St::Void(ref exp) => {
                 try!(self.visit_exp(exp));

@@ -47,6 +47,7 @@ pub enum Punct {
     DashDashGt,
     Ques,
     Pipe,
+    Amp,
     DashGt,
     Newline,
 }
@@ -447,6 +448,7 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
                 },
                 Some(b'?') if self.meta => return tok!(Ques),
                 Some(b'|') if self.meta => return tok!(Pipe),
+                Some(b'&') if self.meta => return tok!(Amp),
 
                 Some(_) => return Err("unexpected character"),
                 None => {

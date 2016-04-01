@@ -1,10 +1,11 @@
 use std::fmt;
 use std::ops;
 use std::borrow::Cow;
+use std::collections::HashMap;
 
-use kailua_syntax::{K, Kind, Str};
+use kailua_syntax::{K, Kind, Str, M};
 use diag::CheckResult;
-use super::{S, Slot, TypeContext, Lattice, Flags};
+use super::{S, Slot, TypeContext, Lattice, Flags, Seq};
 use super::{Numbers, Strings, Tables, Function, Functions, Union, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
@@ -74,6 +75,37 @@ impl<'a> T<'a> {
             K::StringLit(ref s)  => T::Strings(Cow::Owned(Strings::One(s.to_owned()))),
             K::Table             => T::Tables(Cow::Owned(Tables::All)),
             K::Function          => T::Functions(Cow::Owned(Functions::All)),
+
+            K::Record(ref fields) => {
+                let mut recfields = HashMap::new();
+                for &(ref name, modf, ref kind) in fields {
+                    let ty = T::from(kind);
+                    let sty = match modf {
+                        M::None => S::Just(ty), // XXX
+                        M::Var => S::Var(ty),
+                        M::Const => S::Const(ty),
+                    };
+                    recfields.insert(name.clone(), Box::new(Slot::new(sty)));
+                }
+                T::Tables(Cow::Owned(Tables::Record(recfields)))
+            }
+
+            K::Func(ref funcs) => {
+                let mut ftys = Vec::new();
+                for func in funcs {
+                    let args = func.args.iter().map(|k| Box::new(T::from(k))).collect();
+                    let argstail = if func.variadic { Some(Box::new(T::Dynamic)) } else { None };
+                    let returns = func.returns.iter().map(|k| Box::new(T::from(k))).collect();
+                    let fty = Function { args: Seq { head: args, tail: argstail },
+                                         returns: Seq { head: returns, tail: None } };
+                    ftys.push(fty);
+                }
+                if ftys.len() == 1 {
+                    T::Functions(Cow::Owned(Functions::Simple(ftys.pop().unwrap())))
+                } else {
+                    T::Functions(Cow::Owned(Functions::Multi(ftys)))
+                }
+            }
 
             K::Union(ref kinds) => {
                 assert!(!kinds.is_empty());

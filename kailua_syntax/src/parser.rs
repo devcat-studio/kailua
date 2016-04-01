@@ -1,9 +1,10 @@
 use std::iter;
 use std::i32;
+use std::collections::HashSet;
 
 use lex::{Tok, Punct, Keyword};
 use ast::{Name, Str, Var, Sig, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam, St, Stmt, Block};
-use ast::{M, K, Kind, TypeSpec};
+use ast::{M, K, Kind, FuncKind, TypeSpec};
 
 pub struct Parser<T> {
     iter: iter::Fuse<T>,
@@ -775,16 +776,108 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
         }
     }
 
-    fn try_parse_kailua_atomic_kind(&mut self) -> ParseResult<Option<Kind>> {
+    // may contain ellipsis, the caller is expected to error on unwanted cases
+    fn parse_kailua_kindlist(&mut self) -> ParseResult<(bool /*variadic*/, Vec<Kind>)> {
+        let mut variadic = false;
+        let mut kinds = Vec::new();
+        if self.lookahead(Punct::DotDotDot) { // "..."
+            self.read();
+            variadic = true;
+        } else { // KIND {"," KIND} ["," "..."] or empty
+            // try to read the first KIND
+            let kind = match try!(self.try_parse_kailua_kind()) {
+                Some(kind) => kind,
+                None => return Ok((variadic, kinds)),
+            };
+            kinds.push(kind);
+            while self.lookahead(Punct::Comma) {
+                self.read();
+                if self.lookahead(Punct::DotDotDot) {
+                    self.read();
+                    variadic = true;
+                    break;
+                }
+                let kind = try!(self.parse_kailua_kind());
+                kinds.push(kind);
+            }
+        }
+        Ok((variadic, kinds))
+    }
+
+    fn try_parse_kailua_atomic_kind_seq(&mut self) -> ParseResult<Option<Vec<Kind>>> {
         let mut kind = match self.read() {
             Tok::Punct(Punct::Ques) => {
                 Box::new(K::Dynamic)
             }
+
+            // if the parenthesized kind is not a sequence, it can be followed by postfix operators
+            // otherwise it immediately returns the sequence
             Tok::Punct(Punct::LParen) => {
-                let kind = try!(self.parse_kailua_kind());
+                let (variadic, mut args) = try!(self.parse_kailua_kindlist());
                 try!(self.expect(Punct::RParen));
-                kind
+                if self.lookahead(Punct::DashGt) {
+                    // "(" ... ")" "->" ...
+                    self.read();
+                    let returns = try!(self.parse_kailua_kind_seq());
+                    let mut funcs = vec![FuncKind { args: args, variadic: variadic,
+                                                    returns: returns }];
+                    while self.lookahead(Punct::Amp) {
+                        // "(" ... ")" "->" ... "&" ...
+                        self.read();
+                        try!(self.expect(Punct::LParen));
+                        let (variadic, args) = try!(self.parse_kailua_kindlist());
+                        try!(self.expect(Punct::RParen));
+                        try!(self.expect(Punct::DashGt));
+                        let returns = try!(self.parse_kailua_kind_seq());
+                        funcs.push(FuncKind { args: args, variadic: variadic,
+                                              returns: returns });
+                    }
+                    return Ok(Some(vec![Box::new(K::Func(funcs))]));
+                } else if variadic {
+                    return Err("variadic argument can only be used as a function argument");
+                } else if args.len() != 1 {
+                    return Ok(Some(args));
+                } else {
+                    args.pop().unwrap()
+                }
             }
+
+            Tok::Punct(Punct::LBrace) => {
+                match self.read() {
+                    // "{" NAME ...
+                    Tok::Name(name) => {
+                        let name: Str = name.into();
+                        try!(self.expect(Punct::Eq));
+                        let modf = try!(self.parse_kailua_mod());
+                        let kind = try!(self.parse_kailua_kind());
+                        let mut seen = HashSet::new();
+                        let mut fields = Vec::new();
+                        seen.insert(name.clone());
+                        fields.push((name, modf, kind));
+                        while self.lookahead(Punct::Comma) {
+                            self.read();
+                            let name = Str::from(try!(self.parse_name()));
+                            if !seen.insert(name.clone()) {
+                                return Err("duplicate record field in the type spec");
+                            }
+                            try!(self.expect(Punct::Eq));
+                            let modf = try!(self.parse_kailua_mod());
+                            let kind = try!(self.parse_kailua_kind());
+                            fields.push((name, modf, kind));
+                        }
+                        try!(self.expect(Punct::RBrace));
+                        Box::new(K::Record(fields))
+                    }
+
+                    // "{" "}" ...
+                    Tok::Punct(Punct::RBrace) => {
+                        Box::new(K::Record(Vec::new()))
+                    }
+
+                    _ => return Err("invalid table type"),
+                }
+            }
+
             Tok::Keyword(Keyword::Nil)      => Box::new(K::Nil),
             Tok::Keyword(Keyword::Boolean)  => Box::new(K::Boolean),
             Tok::Keyword(Keyword::True)     => Box::new(K::BooleanLit(true)),
@@ -794,15 +887,19 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
             Tok::Keyword(Keyword::String)   => Box::new(K::String),
             Tok::Keyword(Keyword::Table)    => Box::new(K::Table),
             Tok::Keyword(Keyword::Function) => Box::new(K::Function),
+
             Tok::Name(_name) => {
                 return Err("unknown type name"); // for now
             }
+
             Tok::Num(v) if i32::MIN as f64 <= v && v <= i32::MAX as f64 && v.floor() == v => {
                 Box::new(K::IntegerLit(v as i32))
             }
+
             Tok::Str(ref s) => {
                 Box::new(K::StringLit(s.to_owned().into()))
             }
+
             tok => {
                 self.unread(tok);
                 return Ok(None);
@@ -814,25 +911,49 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
             self.read();
             kind = Box::new(K::Union(vec![kind, Box::new(K::Nil)]));
         }
-        Ok(Some(kind))
+        Ok(Some(vec![kind]))
     }
 
-    fn try_parse_kailua_kind(&mut self) -> ParseResult<Option<Kind>> {
-        if let Some(kind) = try!(self.try_parse_kailua_atomic_kind()) {
-            let mut kind = kind;
+    fn try_parse_kailua_kind_seq(&mut self) -> ParseResult<Option<Vec<Kind>>> {
+        if let Some(mut kindseq) = try!(self.try_parse_kailua_atomic_kind_seq()) {
+            if kindseq.len() != 1 { return Ok(Some(kindseq)); }
+            let mut kind = kindseq.pop().unwrap();
             if self.lookahead(Punct::Pipe) { // A | B | ...
                 let mut kinds = vec![kind];
                 while self.lookahead(Punct::Pipe) {
                     self.read();
-                    let kind2 = try!(try!(self.try_parse_kailua_atomic_kind())
-                                     .ok_or("expected type"));
-                    kinds.push(kind2);
+                    let mut kindseq2 = try!(try!(self.try_parse_kailua_atomic_kind_seq())
+                                            .ok_or("expected type"));
+                    if kindseq2.len() != 1 {
+                        return Err("a sequence of types cannot be inside a union");
+                    }
+                    kinds.push(kindseq2.pop().unwrap());
                 }
                 kind = Box::new(K::Union(kinds));
             }
-            Ok(Some(kind))
+            Ok(Some(vec![kind]))
         } else {
             Ok(None)
+        }
+    }
+
+    fn try_parse_kailua_kind(&mut self) -> ParseResult<Option<Kind>> {
+        if let Some(mut kindseq) = try!(self.try_parse_kailua_kind_seq()) {
+            if kindseq.len() == 1 {
+                Ok(Some(kindseq.pop().unwrap()))
+            } else {
+                Err("expected a single type, not type sequence")
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn parse_kailua_kind_seq(&mut self) -> ParseResult<Vec<Kind>> {
+        if let Some(kindseq) = try!(self.try_parse_kailua_kind_seq()) {
+            Ok(kindseq)
+        } else {
+            Err("expected a single type or type sequence")
         }
     }
 
@@ -840,7 +961,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
         if let Some(kind) = try!(self.try_parse_kailua_kind()) {
             Ok(kind)
         } else {
-            Err("expected type")
+            Err("expected a single type")
         }
     }
 

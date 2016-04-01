@@ -16,7 +16,7 @@ fn parse(path: &Path) -> Result<kailua_syntax::Block, String> {
 
     // strip any BOM
     let mut offset = 0;
-    if &buf[0..3] == b"\xef\xbb\xbf" {
+    if buf.len() >= 3 && &buf[0..3] == b"\xef\xbb\xbf" {
         offset = 3;
     }
 
@@ -63,35 +63,35 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
     }
 
     const BOOTSTRAP_CODE: &'static str = r#"
-        --# assume require: ? = "require"
-        --# assume package: ?
-        --# assume assert: ?
-        --# assume type: ?
-        --# assume tonumber: ?
-        --# assume tostring: ?
-        --# assume pairs: ?
-        --# assume ipairs: ?
-        --# assume pcall: ?
-        --# assume xpcall: ?
-        --# assume error: ?
-        --# assume getmetatable: ?
-        --# assume setmetatable: ?
-        --# assume rawget: ?
-        --# assume rawset: ?
-        --# assume select: ?
-        --# assume print: ?
-        --# assume loadstring: ?
-        --# assume pack: ?
-        --# assume unpack: ?
-        --# assume next: ?
-        --# assume _G: ? = "globals" -- not yet supported
+        --# assume `require`: ? = "require"
+        --# assume `package`: ?
+        --# assume `assert`: ?
+        --# assume `type`: ?
+        --# assume `tonumber`: ?
+        --# assume `tostring`: ?
+        --# assume `pairs`: ?
+        --# assume `ipairs`: ?
+        --# assume `pcall`: ?
+        --# assume `xpcall`: ?
+        --# assume `error`: ?
+        --# assume `getmetatable`: ?
+        --# assume `setmetatable`: ?
+        --# assume `rawget`: ?
+        --# assume `rawset`: ?
+        --# assume `select`: ?
+        --# assume `print`: ?
+        --# assume `loadstring`: ?
+        --# assume `pack`: ?
+        --# assume `unpack`: ?
+        --# assume `next`: ?
+        --# assume `_G`: ? = "globals" -- not yet supported
 
-        --# assume string: ?
-        --# assume math: ?
-        --# assume table: ?
-        --# assume io: ?
-        --# assume os: ?
-        --# assume debug: ?
+        --# assume `string`: ?
+        --# assume `math`: ?
+        --# assume `table`: ?
+        --# assume `io`: ?
+        --# assume `os`: ?
+        --# assume `debug`: ?
     "#;
 
     let chunk = try!(parse(&mainpath));

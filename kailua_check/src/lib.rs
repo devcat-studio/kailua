@@ -15,6 +15,8 @@ mod check;
 #[test]
 fn test_check() {
     fn check(s: &str) -> CheckResult<()> {
+        println!("");
+        println!("checking `{}`", s);
         let parsed = kailua_syntax::parse_chunk(s.as_bytes());
         let chunk = try!(parsed.map_err(|s| format!("parse error: {}", s)));
 
@@ -152,4 +154,18 @@ fn test_check() {
                 local x = p(4.5)");
     assert_err!("function p(a) return a + 3 end
                  local x = p('what')");
+    assert_ok!("local a = 'string'
+                a = 42
+                function p() return a end
+                local b = p() + 54");
+    assert_ok!("local a = 'string'
+                a = 42
+                function p() return a end
+                a = p() * 54");
+    /* XXX do not yet work
+    assert_err!("local a = 'string'
+                 a = 42
+                 function p() return a end
+                 a = true"); // a is now fixed to Var
+    */
 }
