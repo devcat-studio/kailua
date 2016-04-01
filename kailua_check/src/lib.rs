@@ -62,8 +62,8 @@ fn test_check() {
     assert_err!("local p = ({a = 4}).b");
     assert_ok!("local p = ({}):hello()"); // XXX
     assert_err!("local p = (function() end)[3]"); // XXX
-    //assert_ok!("local f
-    //            f = 'hello?'");
+    assert_ok!("local f
+                f = 'hello?'");
     assert_ok!("local f = function() end
                 f = function() return 54 end");
     assert_ok!("local f = function() end
@@ -71,14 +71,18 @@ fn test_check() {
     assert_ok!("local f = function() end
                 --# assume f: table
                 local p = f.index");
-    assert_err!("local p = 'hello' or 4
-                 local q = p + 3");
-    assert_ok!("local p = 'hello' or 4
-                local q = p .. 3"); // since either one can be concatnated
+    assert_ok!("local a = ('string' and 53) + 42");
+    assert_err!("local a = (53 and 'string') + 42");
+    assert_err!("local a = (nil and 'string') + 42");
+    assert_err!("local a = (nil and 53) + 42");
+    assert_ok!("local a = (53 or 'string') + 42");
+    assert_ok!("local a = (53 or nil) + 42");
+    assert_err!("local a = (nil or 'string') + 42");
+    assert_ok!("local a = (nil or 53) + 42");
     assert_ok!("--# assume p: string | number
                 local q = p .. 3");
-    assert_err!("local p = 'hello' or true
-                 local q = p .. 3");
+    assert_err!("--# assume p: string | number
+                 local q = p + 3");
     assert_err!("--# assume p: string | boolean
                  local q = p .. 3");
     assert_ok!("local x
@@ -133,6 +137,17 @@ fn test_check() {
                 a = 'string'
                 --# assume a: integer
                 a = a + 3.1");
+    assert_ok!("local a = 3 + #{1, 2, 3}");
+    assert_ok!("local a = 3 + #'heck'");
+    assert_err!("local a = 3 + #4");
+    assert_ok!("--# assume a: var integer
+                for i = 1, 9 do a = i end");
+    assert_ok!("--# assume a: var integer
+                for i = 1, 9, 2 do a = i end");
+    assert_err!("--# assume a: var integer
+                 for i = 1.1, 9 do a = i end");
+    assert_err!("--# assume a: var integer
+                 for i = 1, 9, 2.1 do a = i end");
     assert_ok!("function a(...)
                   return ...
                 end");
@@ -150,7 +165,14 @@ fn test_check() {
                 --# assume b: string");
     assert_err!("local a = { x = 3, y = 'foo' }
                  local b = a.z");
-    assert_ok!("function p(a) return a + 3 end
+    assert_ok!("local a = {}
+                a[1] = 1
+                a[2] = 2
+                a[3] = 3");
+    // XXX can't propagate the number constraints upwards!
+    assert_ok!("function p(a) --: number
+                    return a + 3
+                end
                 local x = p(4.5)");
     assert_err!("function p(a) return a + 3 end
                  local x = p('what')");
@@ -168,4 +190,13 @@ fn test_check() {
                  function p() return a end
                  a = true"); // a is now fixed to Var
     */
+    // TODO the return type can be inferred
+    assert_ok!("function p(x) --: string --> string
+                    return x
+                end
+                local a = p('foo') .. 'bar'");
+    assert_err!("function p(x) --: string --> string
+                     return x
+                 end
+                 local a = p('foo') + 3");
 }

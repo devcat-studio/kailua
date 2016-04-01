@@ -166,6 +166,8 @@ impl<'a> T<'a> {
     pub fn is_stringy(&self)  -> bool { self.flags().is_stringy() }
     pub fn is_tabular(&self)  -> bool { self.flags().is_tabular() }
     pub fn is_callable(&self) -> bool { self.flags().is_callable() }
+    pub fn is_truthy(&self)   -> bool { self.flags().is_truthy() }
+    pub fn is_falsy(&self)    -> bool { self.flags().is_falsy() }
 
     // XXX for now
     pub fn is_referential(&self) -> bool { self.flags().is_tabular() }

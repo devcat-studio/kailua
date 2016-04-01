@@ -339,6 +339,9 @@ bitflags! {
         // "default" types that metatables are set or can be set
         // XXX shouldn't this be customizable?
         const T_CALLABLE   = T_DYNAMIC.bits | T_FUNCTION.bits,
+        const T_TRUTHY     = T_TRUE.bits | T_NONINTEGER.bits | T_INTEGER.bits | T_NUMBER.bits |
+                             T_STRING.bits | T_TABLE.bits | T_FUNCTION.bits,
+        const T_FALSY      = T_NIL.bits | T_FALSE.bits,
     }
 }
 
@@ -369,11 +372,19 @@ impl Flags {
         (*self & T_DYNAMIC != T_NONE) || ((*self & T_CALLABLE != T_NONE) &&
                                           (*self & !T_CALLABLE == T_NONE))
     }
+
+    pub fn is_truthy(&self) -> bool {
+        (*self & T_TRUTHY != T_NONE) && (*self & !T_TRUTHY == T_NONE)
+    }
+
+    pub fn is_falsy(&self) -> bool {
+        (*self & T_FALSY != T_NONE) && (*self & !T_FALSY == T_NONE)
+    }
 }
 
 pub mod flags {
     pub use super::{T_NONE, T_DYNAMIC, T_NIL, T_TRUE, T_FALSE, T_BOOLEAN,
                     T_NONINTEGER, T_INTEGER, T_NUMBER, T_STRING, T_TABLE, T_FUNCTION,
-                    T_INTEGRAL, T_NUMERIC, T_STRINGY, T_TABULAR, T_CALLABLE};
+                    T_INTEGRAL, T_NUMERIC, T_STRINGY, T_TABULAR, T_CALLABLE, T_TRUTHY, T_FALSY};
 }
 

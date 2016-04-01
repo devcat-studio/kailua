@@ -28,11 +28,10 @@ impl fmt::Debug for Function {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         try!(write!(f, "{:?}", self.args));
         match (self.returns.head.len(), self.returns.tail.is_some()) {
-            (0, false) => {}
-            (1, false) => try!(write!(f, " -> {:?}", self.returns.head[0])),
-            (_, _) => try!(write!(f, " -> {:?}", self.returns)),
+            (0, false) => write!(f, " -> ()"),
+            (1, false) => write!(f, " -> {:?}", self.returns.head[0]),
+            (_, _) => write!(f, " -> {:?}", self.returns),
         }
-        Ok(())
     }
 }
 

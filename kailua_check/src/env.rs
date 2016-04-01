@@ -6,7 +6,8 @@ use vec_map::VecMap;
 
 use kailua_syntax::Name;
 use diag::CheckResult;
-use ty::{Ty, T, Slot, S, TVar, Mark, Lattice, TypeContext};
+use ty::{Ty, T, Slot, S, TVar, Mark, Lattice, TypeContext, Flags};
+use ty::flags::*;
 
 pub type TyInfo = Slot;
 
@@ -173,18 +174,17 @@ impl Constraints {
         self.bounds.get(&lhs).map(|b| &**b)
     }
 
-    fn add_bound(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
+    // Some(bound) indicates that the bound already exists and is not consistent to rhs
+    fn add_bound<'a>(&'a mut self, lhs: TVar, rhs: &T) -> Option<&'a T> {
         let lhs_ = self.bounds.find(lhs.0 as usize);
         let b = self.bounds.entry(lhs_).or_insert_with(|| Partition::create(lhs_, 0));
         if is_bound_trivial(&b.bound) {
             b.bound = Some(Box::new(rhs.clone().into_send()));
-        } else if b.bound.as_ref().map(|t| &**t) != Some(rhs) {
-            // TODO check if this restriction has a real world implication
-            return Err(format!("variable {:?} cannot have multiple bounds \
-                                (original {} {:?}, later {} {:?})",
-                               lhs, self.op, b.bound, self.op, *rhs));
+        } else {
+            let lhsbound = &**b.bound.as_ref().unwrap();
+            if lhsbound != rhs { return Some(lhsbound); }
         }
-        Ok(())
+        None
     }
 
     fn add_relation(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()> {
@@ -207,8 +207,8 @@ impl Constraints {
         let rhsbound = take_bound(&mut self.bounds, rhs_);
 
         let bound = match (is_bound_trivial(&lhsbound), is_bound_trivial(&rhsbound)) {
-            (false, _) => rhsbound,
-            (true, false) => lhsbound,
+            (false, _) => lhsbound,
+            (true, false) => rhsbound,
             (true, true) =>
                 if lhsbound == rhsbound {
                     lhsbound
@@ -372,6 +372,20 @@ impl Context {
     pub fn global_scope_mut(&mut self) -> &mut Scope {
         &mut self.global_scope
     }
+
+    pub fn get_tvar_bounds(&self, tvar: TVar) -> (Flags /*lb*/, Flags /*ub*/) {
+        if let Some(b) = self.tvar_eq.get_bound(tvar).and_then(|b| b.bound.as_ref()) {
+            let flags = b.flags();
+            (flags, flags)
+        } else {
+            let lb = self.tvar_sup.get_bound(tvar).and_then(|b| b.bound.as_ref())
+                                                  .map_or(T_NONE, |b| b.flags());
+            let ub = self.tvar_sub.get_bound(tvar).and_then(|b| b.bound.as_ref())
+                                                  .map_or(!T_NONE, |b| b.flags());
+            assert_eq!(lb & !ub, T_NONE);
+            (lb, ub)
+        }
+    }
 }
 
 impl TypeContext for Context {
@@ -388,36 +402,60 @@ impl TypeContext for Context {
 
     fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
         println!("adding a constraint {:?} <: {:?}", lhs, *rhs);
-        try!(self.tvar_sub.add_bound(lhs, rhs));
         if let Some(eb) = self.tvar_eq.get_bound(lhs).and_then(|b| b.bound.clone()) {
             try!((*eb).assert_sub(rhs, self));
-        }
-        if let Some(lb) = self.tvar_sup.get_bound(lhs).and_then(|b| b.bound.clone()) {
-            try!((*lb).assert_sub(rhs, self));
+        } else {
+            if let Some(ub) = self.tvar_sub.add_bound(lhs, rhs).map(|b| b.clone().into_send()) {
+                // the original bound is not consistent, bound <: rhs still has to hold
+                if let Err(e) = ub.assert_sub(rhs, self) {
+                    return Err(format!("variable {:?} cannot have multiple possibly disjoint \
+                                        bounds (original <: {:?}, later <: {:?}): {}",
+                                       lhs, ub, *rhs, e));
+                }
+            }
+            if let Some(lb) = self.tvar_sup.get_bound(lhs).and_then(|b| b.bound.clone()) {
+                try!((*lb).assert_sub(rhs, self));
+            }
         }
         Ok(())
     }
 
     fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
         println!("adding a constraint {:?} :> {:?}", lhs, *rhs);
-        try!(self.tvar_sup.add_bound(lhs, rhs));
         if let Some(eb) = self.tvar_eq.get_bound(lhs).and_then(|b| b.bound.clone()) {
             try!(rhs.assert_sub(&eb, self));
-        }
-        if let Some(ub) = self.tvar_sub.get_bound(lhs).and_then(|b| b.bound.clone()) {
-            try!(rhs.assert_sub(&ub, self));
+        } else {
+            if let Some(lb) = self.tvar_sup.add_bound(lhs, rhs).map(|b| b.clone().into_send()) {
+                // the original bound is not consistent, bound :> rhs still has to hold
+                if let Err(e) = rhs.assert_sub(&lb, self) {
+                    return Err(format!("variable {:?} cannot have multiple possibly disjoint \
+                                        bounds (original :> {:?}, later :> {:?}): {}",
+                                       lhs, lb, *rhs, e));
+                }
+            }
+            if let Some(ub) = self.tvar_sub.get_bound(lhs).and_then(|b| b.bound.clone()) {
+                try!(rhs.assert_sub(&ub, self));
+            }
         }
         Ok(())
     }
 
     fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
         println!("adding a constraint {:?} = {:?}", lhs, *rhs);
-        try!(self.tvar_eq.add_bound(lhs, rhs));
-        if let Some(ub) = self.tvar_sub.get_bound(lhs).and_then(|b| b.bound.clone()) {
-            try!(rhs.assert_sub(&ub, self));
-        }
-        if let Some(lb) = self.tvar_sup.get_bound(lhs).and_then(|b| b.bound.clone()) {
-            try!((*lb).assert_sub(rhs, self));
+        if let Some(eb) = self.tvar_eq.add_bound(lhs, rhs).map(|b| b.clone().into_send()) {
+            // the original bound is not consistent, bound = rhs still has to hold
+            if let Err(e) = eb.assert_eq(rhs, self) {
+                return Err(format!("variable {:?} cannot have multiple possibly disjoint \
+                                    bounds (original = {:?}, later = {:?}): {}",
+                                   lhs, eb, *rhs, e));
+            }
+        } else {
+            if let Some(ub) = self.tvar_sub.get_bound(lhs).and_then(|b| b.bound.clone()) {
+                try!(rhs.assert_sub(&ub, self));
+            }
+            if let Some(lb) = self.tvar_sup.get_bound(lhs).and_then(|b| b.bound.clone()) {
+                try!((*lb).assert_sub(rhs, self));
+            }
         }
         Ok(())
     }
@@ -433,7 +471,7 @@ impl TypeContext for Context {
 
     fn assert_tvar_eq_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()> {
         println!("adding a constraint {:?} = {:?}", lhs, rhs);
-        // do not update tvar_sub & tvar_sup, 
+        // do not update tvar_sub & tvar_sup, tvar_eq will be consulted first
         self.tvar_eq.add_relation(lhs, rhs)
     }
 
@@ -790,17 +828,22 @@ impl<'ctx> Env<'ctx> {
         self.get_frame_mut().and_then(|f| f.vararg.as_mut())
     }
 
-    pub fn add_local_var(&mut self, name: &Name, info: TyInfo) {
-        let newinfo = Slot::new(S::VarOrCurrently(T::Nil, self.context().gen_mark()));
-        newinfo.accept(&info, self.context()).unwrap();
+    // adapt is used when the info didn't come from the type specification
+    // and should be considered identical to the assignment
+    pub fn add_local_var(&mut self, name: &Name, mut info: TyInfo, adapt: bool) {
+        if adapt {
+            let newinfo = Slot::new(S::VarOrCurrently(T::Nil, self.context().gen_mark()));
+            newinfo.accept(&info, self.context()).unwrap();
+            info = newinfo;
+        }
 
-        println!("adding a local variable {:?} as {:?}", *name, newinfo);
-        self.current_scope_mut().put(name.to_owned(), newinfo);
+        println!("adding a local variable {:?} as {:?}", *name, info);
+        self.current_scope_mut().put(name.to_owned(), info);
     }
 
     pub fn assign_to_var(&mut self, name: &Name, info: TyInfo) -> CheckResult<()> {
-        if let Some(previnfo) = self.get_local_var_mut(name).map(|info| info.clone()) {
-            println!("assigning {:?} to a local variable {:?} with type {:?}",
+        if let Some(previnfo) = self.get_var_mut(name).map(|info| info.clone()) {
+            println!("assigning {:?} to a variable {:?} with type {:?}",
                      info, *name, previnfo);
             if let Err(e) = previnfo.accept(&info, self.context()) {
                 return Err(format!("cannot assign {:?} to the variable {:?} with type {:?}: {}",
@@ -827,6 +870,10 @@ impl<'ctx> Env<'ctx> {
         println!("(force) adding a global variable {:?} as {:?}", *name, info);
         self.context.global_scope_mut().put(name.to_owned(), info);
         Ok(())
+    }
+
+    pub fn get_tvar_bounds(&self, tvar: TVar) -> (Flags /*lb*/, Flags /*ub*/) {
+        self.context.get_tvar_bounds(tvar)
     }
 }
 

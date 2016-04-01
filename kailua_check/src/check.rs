@@ -5,7 +5,8 @@ use std::borrow::Cow;
 use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, UnOp, BinOp, FuncScope, SelfParam};
 use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
-use ty::{T, Seq, Lattice, TypeContext, Numbers, Strings, Tables, Function, S, Slot, Builtin};
+use ty::{T, Seq, Lattice, TypeContext, Numbers, Strings, Tables, Function, S, Slot};
+use ty::{Builtin, Flags};
 use ty::flags::*;
 use env::{TyInfo, Env, Frame, Scope, Context};
 
@@ -42,6 +43,12 @@ impl<'env> Checker<'env> {
 
     fn context(&mut self) -> &mut Context {
         self.env.context()
+    }
+
+    fn get_type_bounds(&self, ty: &T) -> (Flags, Flags) {
+        let flags = ty.flags();
+        let (lb, ub) = ty.has_tvar().map_or((T_NONE, T_NONE), |v| self.env.get_tvar_bounds(v));
+        (flags | lb, flags | ub)
     }
 
     fn scoped<'chk>(&'chk mut self, scope: Scope) -> ScopedChecker<'chk, 'env> {
@@ -82,7 +89,7 @@ impl<'env> Checker<'env> {
             }
 
             UnOp::Len => {
-                check_op!(ty.assert_sub(&T::table(), self.context()));
+                check_op!(ty.assert_sub(&(T::table() | T::string()), self.context()));
                 Ok(TyInfo::from(T::integer()))
             }
         }
@@ -105,20 +112,21 @@ impl<'env> Checker<'env> {
 
         match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Mod => {
-                // technically speaking they coerce strings to numbers,
-                // but that's probably not what you want
-                check_op!(lty.assert_sub(&T::number(), self.context()));
-                check_op!(rty.assert_sub(&T::number(), self.context()));
-
                 // ? + integer = integer, ? + number = ? + ? = number, number + integer = number
                 // see UnOp::Neg comment for the rationale
-                let lflags = lty.flags();
-                let rflags = rty.flags();
-                if lty.has_tvar().is_none() && lflags.is_integral() &&
-                   rty.has_tvar().is_none() && rflags.is_integral() &&
+                let lflags = self.get_type_bounds(lty).1;
+                let rflags = self.get_type_bounds(rty).1;
+                if lflags.is_integral() && rflags.is_integral() &&
                    !(lflags.is_dynamic() && rflags.is_dynamic()) {
+                    // we are definitely sure that it will be an integer
+                    check_op!(lty.assert_sub(&T::integer(), self.context()));
+                    check_op!(rty.assert_sub(&T::integer(), self.context()));
                     Ok(TyInfo::from(T::integer()))
                 } else {
+                    // technically speaking they coerce strings to numbers,
+                    // but that's probably not what you want
+                    check_op!(lty.assert_sub(&T::number(), self.context()));
+                    check_op!(rty.assert_sub(&T::number(), self.context()));
                     Ok(TyInfo::from(T::number()))
                 }
             }
@@ -179,21 +187,65 @@ impl<'env> Checker<'env> {
                 Ok(TyInfo::from(T::Boolean))
             }
 
-            BinOp::And | BinOp::Or => {
+            BinOp::And => {
+                if lty.has_tvar().is_none() {
+                    // True and T => T
+                    if lty.is_truthy() { return Ok(TyInfo::from(rty.clone())); }
+                    // False and T => False
+                    if lty.is_falsy() { return Ok(TyInfo::from(lty.clone())); }
+                }
+                // unsure, both can be possible
+                Ok(TyInfo::from(lty.union(&rty, self.context())))
+            }
+
+            BinOp::Or => {
+                if lty.has_tvar().is_none() {
+                    // True or T => True
+                    if lty.is_truthy() { return Ok(TyInfo::from(lty.clone())); }
+                    // False and T => T
+                    if lty.is_falsy() { return Ok(TyInfo::from(rty.clone())); }
+                }
+                // unsure, both can be possible
                 Ok(TyInfo::from(lty.union(&rty, self.context())))
             }
         }
     }
 
-    fn check_index(&mut self, ety: &T, kty: &T) -> CheckResult<Option<TyInfo>> {
-        if !ety.is_tabular() {
+    // XXX consider moving to ty::slot
+    fn check_index(&mut self, ety0: &TyInfo, kty0: &TyInfo) -> CheckResult<Option<TyInfo>> {
+        let ety = ety0.borrow().unlift().clone();
+        let kty = kty0.borrow().unlift().clone();
+
+        if !self.get_type_bounds(&ety).1.is_tabular() {
             return Err(format!("tried to index the non-table {:?}", ety));
         }
 
         // the type can be indexed, try to find the resulting type out
+        // TODO complete the adaptation process
         match ety.has_tables() {
-            Some(&Tables::Empty) =>
-                return Err(format!("tried to index an empty table {:?}", ety)),
+            Some(&Tables::Empty) => {
+                macro_rules! check {
+                    ($sub:expr) => {
+                        if let Err(e) = $sub {
+                            return Err(format!("tried to index an empty table {:?}: {}", ety, e));
+                        }
+                    }
+                }
+
+                // try to adapt the table
+                if kty.is_integral() {
+                    // this is probably an array.
+                    // generate a new type variable (as we don't know the value type yet)
+                    // and try to adapt to an array of that variable.
+                    let vvar = self.context().gen_tvar();
+                    check!(ety0.accept(&TyInfo::from(T::array(S::Just(T::TVar(vvar)))),
+                                       self.context()));
+                    check!(kty.assert_sub(&T::integer(), self.context()));
+                    Ok(Some(TyInfo::from(T::TVar(vvar))))
+                } else {
+                    return Err(format!("tried to index an empty table {:?}", ety));
+                }
+            }
 
             Some(&Tables::Record(ref fields)) => {
                 if !kty.is_stringy() {
@@ -248,7 +300,7 @@ impl<'env> Checker<'env> {
                 // XXX subtyping
                 if *k == T::Dynamic {
                     Ok(Some(TyInfo::from(T::Dynamic)))
-                } else if k == kty { // XXX redundant
+                } else if *k == kty { // XXX redundant
                     Ok(Some((**v).clone()))
                 } else {
                     Err(format!("tried to index {:?} with {:?}", ety, kty))
@@ -328,14 +380,42 @@ impl<'env> Checker<'env> {
             }
 
             St::For(ref name, ref start, ref end, ref step, ref block) => {
-                try!(self.visit_exp(start));
-                try!(self.visit_exp(end));
-                if let &Some(ref step) = step {
-                    try!(self.visit_exp(step));
+                let start = try!(self.visit_exp(start));
+                let end = try!(self.visit_exp(end));
+                let step = if let &Some(ref step) = step {
+                    try!(self.visit_exp(step))
+                } else {
+                    Slot::just(T::integer()) // to simplify the matter
+                };
+
+                let startslot = start.borrow();
+                let endslot = end.borrow();
+                let stepslot = step.borrow();
+
+                let startty = startslot.unlift();
+                let endty = endslot.unlift();
+                let stepty = stepslot.unlift();
+
+                // the similar logic is also present in check_bin_op
+                let startflags = self.get_type_bounds(startty).1;
+                let endflags = self.get_type_bounds(endty).1;
+                let stepflags = self.get_type_bounds(stepty).1;
+                let indty;
+                if startflags.is_integral() && endflags.is_integral() && stepflags.is_integral() &&
+                   !(startflags.is_dynamic() && endflags.is_dynamic() && stepflags.is_dynamic()) {
+                    try!(startty.assert_sub(&T::integer(), self.context()));
+                    try!(endty.assert_sub(&T::integer(), self.context()));
+                    try!(stepty.assert_sub(&T::integer(), self.context()));
+                    indty = T::integer();
+                } else {
+                    try!(startty.assert_sub(&T::number(), self.context()));
+                    try!(endty.assert_sub(&T::number(), self.context()));
+                    try!(stepty.assert_sub(&T::number(), self.context()));
+                    indty = T::number();
                 }
 
                 let mut scope = self.scoped(Scope::new());
-                scope.env.add_local_var(name, TyInfo::from(T::number()));
+                scope.env.add_local_var(name, TyInfo::from(indty), true);
                 try!(scope.visit_block(block));
             }
 
@@ -346,7 +426,7 @@ impl<'env> Checker<'env> {
 
                 let mut scope = self.scoped(Scope::new());
                 for name in names {
-                    scope.env.add_local_var(name, TyInfo::from(T::Dynamic));
+                    scope.env.add_local_var(name, TyInfo::from(T::Dynamic), true);
                 }
                 try!(scope.visit_block(block));
             }
@@ -356,7 +436,7 @@ impl<'env> Checker<'env> {
                 let funcv = self.context().gen_tvar();
                 let info = TyInfo::from(T::TVar(funcv));
                 match scope {
-                    FuncScope::Local => self.env.add_local_var(name, info),
+                    FuncScope::Local => self.env.add_local_var(name, info, true),
                     FuncScope::Global => try!(self.env.assign_to_var(name, info)),
                 }
                 let functy = try!(self.visit_func_body(None, sig, block));
@@ -378,7 +458,7 @@ impl<'env> Checker<'env> {
                     if i < names.len() {
                         // XXX last exp should unpack
                         // TODO fully process namespec
-                        self.env.add_local_var(&names[i].base, info);
+                        self.env.add_local_var(&names[i].base, info, true);
                     }
                 }
                 if names.len() > exps.len() {
@@ -386,7 +466,7 @@ impl<'env> Checker<'env> {
                         let info = TyInfo::from(T::Nil);
                         // XXX last exp should unpack
                         // TODO fully process namespec
-                        self.env.add_local_var(&namespec.base, info);
+                        self.env.add_local_var(&namespec.base, info, true);
                     }
                 }
             }
@@ -442,18 +522,35 @@ impl<'env> Checker<'env> {
 
         let mut scope = self.scoped(Scope::new_function(frame));
         if let Some(selfinfo) = selfinfo {
-            scope.env.add_local_var(&Name::from(&b"self"[..]), selfinfo);
+            scope.env.add_local_var(&Name::from(&b"self"[..]), selfinfo, true);
         }
+
         let mut args = Seq::new();
         for param in &sig.args {
-            let argv = scope.context().gen_tvar();
-            // TODO fully process param
-            scope.env.add_local_var(&param.base, TyInfo::from(T::TVar(argv)));
-            args.head.push(Box::new(T::TVar(argv)));
+            let ty;
+            let sty;
+            if let Some(ref kind) = param.kind {
+                ty = T::from(kind);
+                sty = match param.modf {
+                    M::None | M::Var => Slot::new(S::Var(ty.clone())),
+                    M::Const => Slot::new(S::Const(ty.clone())),
+                };
+            } else {
+                let argv = scope.context().gen_tvar();
+                ty = T::TVar(argv);
+                sty = Slot::new(S::Var(T::TVar(argv)));
+            }
+            scope.env.add_local_var(&param.base, sty, false);
+            args.head.push(Box::new(ty));
         }
-        try!(scope.visit_block(block));
 
         let returns = Seq::from(Box::new(T::TVar(retv))); // XXX multiple returns
+        if let Some(ref retkind) = sig.returns {
+            T::TVar(retv).assert_sub(&T::from(retkind), scope.context()).unwrap();
+        }
+
+        try!(scope.visit_block(block));
+
         Ok(TyInfo::from(T::func(Function { args: args, returns: returns })))
     }
 
@@ -472,14 +569,13 @@ impl<'env> Checker<'env> {
             Var::Index(ref e, ref key) => {
                 let ty = try!(self.visit_exp(e));
                 let kty = try!(self.visit_exp(key));
-                let ty = ty.borrow();
-                let kty = kty.borrow();
-                self.check_index(ty.unlift(), kty.unlift())
+                self.check_index(&ty, &kty)
             },
         }
     }
 
     fn visit_exp(&mut self, exp: &Ex) -> CheckResult<TyInfo> {
+        println!("visiting exp {:?}", *exp);
         match *exp {
             Ex::Nil => Ok(TyInfo::from(T::Nil)),
             Ex::False => Ok(TyInfo::from(T::False)),
@@ -548,8 +644,7 @@ impl<'env> Checker<'env> {
                 let functy = T::func(Function { args: argtys, returns: rettys });
 
                 if let Err(e) = funcinfo.assert_sub(&functy, self.context()) {
-                    return Err(format!("tried to call a non-function type {:?}: {}",
-                                       funcinfo, e));
+                    return Err(format!("failed to call {:?}: {}", funcinfo, e));
                 }
 
                 match funcinfo.builtin() {
@@ -587,9 +682,7 @@ impl<'env> Checker<'env> {
             Ex::Index(ref e, ref key) => {
                 let ty = try!(self.visit_exp(e));
                 let kty = try!(self.visit_exp(key));
-                let ty = ty.borrow();
-                let kty = kty.borrow();
-                if let Some(vinfo) = try!(self.check_index(ty.unlift(), kty.unlift())) {
+                if let Some(vinfo) = try!(self.check_index(&ty, &kty)) {
                     Ok(vinfo)
                 } else {
                     Err(format!("cannot index {:?} with {:?}", ty, kty))
