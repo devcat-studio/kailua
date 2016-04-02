@@ -8,7 +8,14 @@ use ast::{M, K, Kind, FuncKind, TypeSpec};
 
 pub struct Parser<T> {
     iter: iter::Fuse<T>,
+
+    // the lookahead stream (in this order)
+    elided_newline: bool,
     lookahead: Option<Tok>,
+    lookahead2: Option<Tok>,
+    // ...follows self.iter.next()
+
+    ignore_after_newline: Option<Punct>,
 }
 
 pub type Error = ::lex::Error;
@@ -34,17 +41,54 @@ impl Expectable for EOF {
     fn check_token(&self, tok: &Tok) -> bool { tok == &Tok::EOF }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct ElidedTokens(bool);
+
 impl<T: Iterator<Item=Tok>> Parser<T> {
     pub fn new(iter: T) -> Parser<T> {
-        Parser { iter: iter.fuse(), lookahead: None }
+        Parser { iter: iter.fuse(), elided_newline: false, lookahead: None, lookahead2: None,
+                 ignore_after_newline: None }
     }
 
-    fn read(&mut self) -> Tok {
-        self.lookahead.take().or_else(|| self.iter.next()).unwrap_or(Tok::EOF)
+    fn read(&mut self) -> (ElidedTokens, Tok) {
+        let mut next = self.lookahead.take().or_else(|| self.lookahead2.take())
+                                            .or_else(|| self.iter.next());
+
+        let mut elided = self.elided_newline;
+        self.elided_newline = false;
+        if let Some(meta) = self.ignore_after_newline {
+            // lookahead2 is guaranteed to be empty, let's simplify the assumption
+            assert_eq!(self.lookahead, None);
+            self.lookahead = self.lookahead2.take();
+
+            while next == Some(Tok::Punct(Punct::Newline)) {
+                let next2 = self.lookahead.take().or_else(|| self.iter.next());
+                if next2 == Some(Tok::Punct(meta)) {
+                    // we can ignore them, but we may have another ignorable tokens there
+                    elided = true;
+                    assert_eq!(self.lookahead, None); // yeah, we are now sure
+                    next = self.iter.next();
+                } else {
+                    // return next, store next2 into the lookahead
+                    self.lookahead = next2;
+                    break;
+                }
+            }
+        } else {
+            // token elision should have been handled by self.end_meta_comment
+            assert_eq!(elided, false);
+        }
+
+        (ElidedTokens(elided), next.unwrap_or(Tok::EOF))
     }
 
-    fn unread(&mut self, tok: Tok) {
-        assert!(self.lookahead.is_none(), "only one lookahead token is supported");
+    fn unread(&mut self, (ElidedTokens(elided), tok): (ElidedTokens, Tok)) {
+        assert!(!self.elided_newline && (self.lookahead.is_none() || self.lookahead2.is_none()),
+                "at most two lookahead tokens are supported");
+        self.elided_newline = elided;
+        if let Some(tok) = self.lookahead.take() {
+            self.lookahead2 = Some(tok);
+        }
         self.lookahead = Some(tok);
     }
 
@@ -55,7 +99,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
     }
 
     fn expect<Tok: Expectable + ::std::fmt::Debug>(&mut self, tok: Tok) -> ParseResult<()> {
-        if !tok.check_token(&self.read()) { return Err("expect failed"); }
+        if !tok.check_token(&self.read().1) { return Err("expect failed"); }
         Ok(())
     }
 
@@ -63,9 +107,42 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
         tok.check_token(self.peek())
     }
 
+    fn may_expect<Tok: Expectable>(&mut self, tok: Tok) -> bool {
+        if self.lookahead(tok) {
+            self.read();
+            true
+        } else {
+            false
+        }
+    }
+
+    // does *not* consume the meta comment!
+    fn begin_meta_comment(&mut self, meta: Punct) {
+        self.ignore_after_newline = Some(meta);
+    }
+
+    // also consumes a newline
+    fn end_meta_comment(&mut self, meta: Punct) -> ParseResult<()> {
+        assert_eq!(self.ignore_after_newline, Some(meta));
+        self.ignore_after_newline = None;
+
+        // a newline token may have been elided. try to reconstruct if possible
+        if self.elided_newline {
+            // newline (implicitly consumed) - meta - original lookahead
+            assert_eq!(self.lookahead2, None);
+            self.lookahead2 = self.lookahead.take();
+            self.lookahead = Some(Tok::Punct(meta));
+            self.elided_newline = false;
+        } else {
+            try!(self.expect(Punct::Newline));
+        }
+
+        Ok(())
+    }
+
     fn try_parse_name(&mut self) -> ParseResult<Option<Name>> {
         let tok = self.read();
-        if let Tok::Name(name) = tok {
+        if let Tok::Name(name) = tok.1 {
             Ok(Some(name.into()))
         } else {
             self.unread(tok);
@@ -84,9 +161,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
     fn parse_block(&mut self) -> ParseResult<Block> {
         let mut stmts = Vec::new();
         while let Some(stmt) = try!(self.try_parse_stmt()) {
-            if self.lookahead(Punct::Semicolon) {
-                self.read();
-            }
+            self.may_expect(Punct::Semicolon);
 
             // if the statement is the final one, stop parsing
             let last = match &*stmt {
@@ -112,13 +187,13 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
         }
 
         match self.read() {
-            Tok::Keyword(Keyword::Do) => {
+            (_, Tok::Keyword(Keyword::Do)) => {
                 let block = try!(self.parse_block());
                 try!(self.expect(Keyword::End));
                 Ok(Some(Box::new(St::Do(block))))
             }
 
-            Tok::Keyword(Keyword::While) => {
+            (_, Tok::Keyword(Keyword::While)) => {
                 let cond = try!(self.parse_exp());
                 try!(self.expect(Keyword::Do));
                 let block = try!(self.parse_block());
@@ -126,27 +201,25 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                 Ok(Some(Box::new(St::While(cond, block))))
             }
 
-            Tok::Keyword(Keyword::Repeat) => {
+            (_, Tok::Keyword(Keyword::Repeat)) => {
                 let block = try!(self.parse_block());
                 try!(self.expect(Keyword::Until));
                 let cond = try!(self.parse_exp());
                 Ok(Some(Box::new(St::Repeat(block, cond))))
             }
 
-            Tok::Keyword(Keyword::If) => {
+            (_, Tok::Keyword(Keyword::If)) => {
                 let cond = try!(self.parse_exp());
                 try!(self.expect(Keyword::Then));
                 let block = try!(self.parse_block());
                 let mut blocks = vec![(cond, block)];
-                while self.lookahead(Keyword::Elseif) {
-                    self.read();
+                while self.may_expect(Keyword::Elseif) {
                     let cond = try!(self.parse_exp());
                     try!(self.expect(Keyword::Then));
                     let block = try!(self.parse_block());
                     blocks.push((cond, block));
                 }
-                let lastblock = if self.lookahead(Keyword::Else) {
-                    self.read();
+                let lastblock = if self.may_expect(Keyword::Else) {
                     Some(try!(self.parse_block()))
                 } else {
                     None
@@ -155,17 +228,16 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                 Ok(Some(Box::new(St::If(blocks, lastblock))))
             }
 
-            Tok::Keyword(Keyword::For) => {
+            (_, Tok::Keyword(Keyword::For)) => {
                 let name = try!(self.parse_name());
                 try!(self.try_parse_kailua_type_spec());
                 match self.read() {
                     // for NAME "=" ...
-                    Tok::Punct(Punct::Eq) => {
+                    (_, Tok::Punct(Punct::Eq)) => {
                         let start = try!(self.parse_exp());
                         try!(self.expect(Punct::Comma));
                         let end = try!(self.parse_exp());
-                        let step = if self.lookahead(Punct::Comma) {
-                            self.read();
+                        let step = if self.may_expect(Punct::Comma) {
                             Some(try!(self.parse_exp()))
                         } else {
                             None
@@ -177,12 +249,12 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                     }
 
                     // for NAME in ...
-                    Tok::Keyword(Keyword::In) => {
+                    (_, Tok::Keyword(Keyword::In)) => {
                         Ok(Some(try!(self.parse_stmt_for_in(vec![name]))))
                     }
 
                     // for NAME [SPEC] "," ... in ...
-                    Tok::Punct(Punct::Comma) => {
+                    (_, Tok::Punct(Punct::Comma)) => {
                         let mut vars = vec![name.into()];
                         try!(self.scan_namelist(|name| vars.push(name.into())));
                         try!(self.expect(Keyword::In));
@@ -193,15 +265,13 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                 }
             }
 
-            Tok::Keyword(Keyword::Function) => {
+            (_, Tok::Keyword(Keyword::Function)) => {
                 let mut names = vec![try!(self.parse_name())];
                 let mut selfparam = SelfParam::No;
-                while self.lookahead(Punct::Dot) {
-                    self.read();
+                while self.may_expect(Punct::Dot) {
                     names.push(try!(self.parse_name()));
                 }
-                if self.lookahead(Punct::Colon) {
-                    self.read();
+                if self.may_expect(Punct::Colon) {
                     names.push(try!(self.parse_name()));
                     selfparam = SelfParam::Yes;
                 }
@@ -216,25 +286,24 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                 }
             }
 
-            Tok::Keyword(Keyword::Local) => {
+            (_, Tok::Keyword(Keyword::Local)) => {
                 match self.read() {
                     // local function ...
-                    Tok::Keyword(Keyword::Function) => {
+                    (_, Tok::Keyword(Keyword::Function)) => {
                         let name = try!(self.parse_name());
                         let (sig, body) = try!(self.parse_func_body());
                         Ok(Some(Box::new(St::FuncDecl(FuncScope::Local, name, sig, body))))
                     }
 
                     // local NAME ...
-                    tok @ Tok::Name(_) => {
+                    tok @ (_, Tok::Name(_)) => {
                         self.unread(tok);
 
                         let mut names = Vec::new();
                         let mut exps = Vec::new();
                         try!(self.scan_namelist_with_spec(|namespec| names.push(namespec)));
-                        if self.lookahead(Punct::Eq) {
-                            try!(self.try_parse_kailua_type_spec()); // XXX
-                            self.read();
+                        try!(self.try_parse_kailua_type_spec()); // XXX
+                        if self.may_expect(Punct::Eq) {
                             try!(self.try_parse_kailua_type_spec()); // XXX
                             try!(self.scan_explist(|exp| exps.push(exp)));
                         }
@@ -246,13 +315,13 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                 }
             }
 
-            Tok::Keyword(Keyword::Return) => {
+            (_, Tok::Keyword(Keyword::Return)) => {
                 let mut exps = Vec::new();
                 try!(self.try_scan_explist(|exp| exps.push(exp)));
                 Ok(Some(Box::new(St::Return(exps))))
             }
 
-            Tok::Keyword(Keyword::Break) => {
+            (_, Tok::Keyword(Keyword::Break)) => {
                 Ok(Some(Box::new(St::Break)))
             }
 
@@ -270,8 +339,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                         Ok(var) => {
                             let spec = try!(self.try_parse_kailua_type_spec());
                             let mut lhs = vec![self.make_kailua_typespec(var, spec)];
-                            if self.lookahead(Punct::Comma) {
-                                self.read();
+                            if self.may_expect(Punct::Comma) {
                                 try!(self.scan_varlist_with_spec(|varspec| lhs.push(varspec)));
                             }
                             try!(self.expect(Punct::Eq));
@@ -313,19 +381,17 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
         let mut name = None;
         let mut spec = None;
         match self.read() {
-            Tok::Punct(Punct::DotDotDot) => {
+            (_, Tok::Punct(Punct::DotDotDot)) => {
                 sig.variadic = true;
                 try!(self.try_parse_kailua_type_spec()); // XXX
             }
-            Tok::Name(name0) => {
+            (_, Tok::Name(name0)) => {
                 name = Some(name0.into());
                 spec = try!(self.try_parse_kailua_type_spec());
-                while self.lookahead(Punct::Comma) {
-                    self.read();
+                while self.may_expect(Punct::Comma) {
                     // try to read the type spec after a comma if there was no prior spec
                     if spec.is_none() { spec = try!(self.try_parse_kailua_type_spec()); }
-                    if self.lookahead(Punct::DotDotDot) {
-                        self.read();
+                    if self.may_expect(Punct::DotDotDot) {
                         try!(self.try_parse_kailua_type_spec()); // XXX
                         sig.variadic = true;
                         break;
@@ -336,7 +402,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                     }
                 }
             }
-            tok @ Tok::Punct(Punct::RParen) => {
+            tok @ (_, Tok::Punct(Punct::RParen)) => {
                 self.unread(tok);
             }
             _ => return Err("unexpected token after `function ... (`")
@@ -363,9 +429,9 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
             let key;
             let value;
             match self.read() {
-                Tok::Punct(Punct::RBrace) => break,
+                (_, Tok::Punct(Punct::RBrace)) => break,
 
-                Tok::Punct(Punct::LBracket) => {
+                (_, Tok::Punct(Punct::LBracket)) => {
                     key = Some(try!(self.parse_exp()));
                     try!(self.expect(Punct::RBracket));
                     try!(self.expect(Punct::Eq));
@@ -404,8 +470,8 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
             fields.push((key, value));
 
             match self.read() {
-                Tok::Punct(Punct::Comma) | Tok::Punct(Punct::Semicolon) => {}
-                Tok::Punct(Punct::RBrace) => break,
+                (_, Tok::Punct(Punct::Comma)) | (_, Tok::Punct(Punct::Semicolon)) => {}
+                (_, Tok::Punct(Punct::RBrace)) => break,
                 _ => return Err("unexpected token in the table constructor")
             }
         }
@@ -415,16 +481,16 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
 
     fn try_parse_args(&mut self) -> ParseResult<Option<Vec<Exp>>> {
         match self.read() {
-            Tok::Punct(Punct::LParen) => {
+            (_, Tok::Punct(Punct::LParen)) => {
                 let mut args = Vec::new();
                 try!(self.try_scan_explist(|exp| args.push(exp)));
                 try!(self.expect(Punct::RParen));
                 Ok(Some(args))
             }
-            Tok::Str(s) => {
+            (_, Tok::Str(s)) => {
                 Ok(Some(vec![Str::from(s).into()]))
             }
-            tok @ Tok::Punct(Punct::LBrace) => {
+            tok @ (_, Tok::Punct(Punct::LBrace)) => {
                 self.unread(tok);
                 let exp = Box::new(Ex::Table(try!(self.parse_table())));
                 Ok(Some(vec![exp]))
@@ -440,11 +506,11 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
         // any prefixexp starts with name or parenthesized exp
         let mut exp;
         match self.read() {
-            Tok::Punct(Punct::LParen) => {
+            (_, Tok::Punct(Punct::LParen)) => {
                 exp = try!(self.parse_exp());
                 try!(self.expect(Punct::RParen));
             }
-            Tok::Name(name) => {
+            (_, Tok::Name(name)) => {
                 exp = Box::new(Ex::Var(name.into()));
             }
             tok => {
@@ -457,8 +523,8 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
         loop {
             match self.read() {
                 // prefixexp "." ...
-                Tok::Punct(Punct::Dot) => {
-                    if let Tok::Name(name) = self.read() {
+                (_, Tok::Punct(Punct::Dot)) => {
+                    if let Tok::Name(name) = self.read().1 {
                         exp = Box::new(Ex::Index(exp, Str::from(name).into()));
                     } else {
                         return Err("unexpected token after `<expression> .`");
@@ -466,14 +532,14 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                 }
 
                 // prefixexp "[" ...
-                Tok::Punct(Punct::LBracket) => {
+                (_, Tok::Punct(Punct::LBracket)) => {
                     let exp2 = try!(self.parse_exp());
                     try!(self.expect(Punct::RBracket));
                     exp = Box::new(Ex::Index(exp, exp2));
                 }
 
                 // prefixexp ":" ...
-                Tok::Punct(Punct::Colon) if !var_only => {
+                (_, Tok::Punct(Punct::Colon)) if !var_only => {
                     let name = try!(self.parse_name());
                     if let Some(args) = try!(self.try_parse_args()) {
                         exp = Box::new(Ex::MethodCall(exp, name, args));
@@ -512,19 +578,19 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
 
     fn try_parse_atomic_exp(&mut self) -> ParseResult<Option<Exp>> {
         match self.read() {
-            Tok::Keyword(Keyword::Nil) => Ok(Some(Box::new(Ex::Nil))),
-            Tok::Keyword(Keyword::False) => Ok(Some(Box::new(Ex::False))),
-            Tok::Keyword(Keyword::True) => Ok(Some(Box::new(Ex::True))),
-            Tok::Num(v) => Ok(Some(Box::new(Ex::Num(v)))),
-            Tok::Str(s) => Ok(Some(Box::new(Ex::Str(s.into())))),
-            Tok::Punct(Punct::DotDotDot) => Ok(Some(Box::new(Ex::Varargs))),
+            (_, Tok::Keyword(Keyword::Nil)) => Ok(Some(Box::new(Ex::Nil))),
+            (_, Tok::Keyword(Keyword::False)) => Ok(Some(Box::new(Ex::False))),
+            (_, Tok::Keyword(Keyword::True)) => Ok(Some(Box::new(Ex::True))),
+            (_, Tok::Num(v)) => Ok(Some(Box::new(Ex::Num(v)))),
+            (_, Tok::Str(s)) => Ok(Some(Box::new(Ex::Str(s.into())))),
+            (_, Tok::Punct(Punct::DotDotDot)) => Ok(Some(Box::new(Ex::Varargs))),
 
-            Tok::Keyword(Keyword::Function) => {
+            (_, Tok::Keyword(Keyword::Function)) => {
                 let (sig, body) = try!(self.parse_func_body());
                 Ok(Some(Box::new(Ex::Func(sig, body))))
             }
 
-            tok @ Tok::Punct(Punct::LBrace) => {
+            tok @ (_, Tok::Punct(Punct::LBrace)) => {
                 self.unread(tok);
                 Ok(Some(Box::new(Ex::Table(try!(self.parse_table())))))
             }
@@ -696,8 +762,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
             where F: FnMut(TypeSpec<Var>) {
         let mut var = try!(self.parse_var());
         let mut spec = try!(self.try_parse_kailua_type_spec());
-        while self.lookahead(Punct::Comma) {
-            self.read();
+        while self.may_expect(Punct::Comma) {
             // try to read the type spec after a comma if there was no prior spec
             if spec.is_none() { spec = try!(self.try_parse_kailua_type_spec()); }
             f(self.make_kailua_typespec(var, spec));
@@ -710,8 +775,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
 
     fn scan_namelist<F>(&mut self, mut f: F) -> ParseResult<()> where F: FnMut(Name) {
         f(try!(self.parse_name()));
-        while self.lookahead(Punct::Comma) {
-            self.read();
+        while self.may_expect(Punct::Comma) {
             f(try!(self.parse_name()));
         }
         Ok(())
@@ -721,8 +785,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
             where F: FnMut(TypeSpec<Name>) {
         let mut name = try!(self.parse_name());
         let mut spec = try!(self.try_parse_kailua_type_spec());
-        while self.lookahead(Punct::Comma) {
-            self.read();
+        while self.may_expect(Punct::Comma) {
             // try to read the type spec after a comma if there was no prior spec
             if spec.is_none() { spec = try!(self.try_parse_kailua_type_spec()); }
             f(self.make_kailua_typespec(name, spec));
@@ -735,8 +798,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
 
     fn scan_explist<F>(&mut self, mut f: F) -> ParseResult<()> where F: FnMut(Exp) {
         f(try!(self.parse_exp()));
-        while self.lookahead(Punct::Comma) {
-            self.read();
+        while self.may_expect(Punct::Comma) {
             f(try!(self.parse_exp()));
         }
         Ok(())
@@ -745,8 +807,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
     fn try_scan_explist<F>(&mut self, mut f: F) -> ParseResult<bool> where F: FnMut(Exp) {
         if let Some(exp) = try!(self.try_parse_exp()) {
             f(exp);
-            while self.lookahead(Punct::Comma) {
-                self.read();
+            while self.may_expect(Punct::Comma) {
                 f(try!(self.parse_exp()));
             }
             Ok(true)
@@ -767,8 +828,8 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
 
     fn parse_kailua_mod(&mut self) -> ParseResult<M> {
         match self.read() {
-            Tok::Keyword(Keyword::Var) => Ok(M::Var),
-            Tok::Keyword(Keyword::Const) => Ok(M::Const),
+            (_, Tok::Keyword(Keyword::Var)) => Ok(M::Var),
+            (_, Tok::Keyword(Keyword::Const)) => Ok(M::Const),
             tok => {
                 self.unread(tok);
                 return Ok(M::None);
@@ -780,8 +841,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
     fn parse_kailua_kindlist(&mut self) -> ParseResult<(bool /*variadic*/, Vec<Kind>)> {
         let mut variadic = false;
         let mut kinds = Vec::new();
-        if self.lookahead(Punct::DotDotDot) { // "..."
-            self.read();
+        if self.may_expect(Punct::DotDotDot) { // "..."
             variadic = true;
         } else { // KIND {"," KIND} ["," "..."] or empty
             // try to read the first KIND
@@ -790,10 +850,8 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                 None => return Ok((variadic, kinds)),
             };
             kinds.push(kind);
-            while self.lookahead(Punct::Comma) {
-                self.read();
-                if self.lookahead(Punct::DotDotDot) {
-                    self.read();
+            while self.may_expect(Punct::Comma) {
+                if self.may_expect(Punct::DotDotDot) {
                     variadic = true;
                     break;
                 }
@@ -808,9 +866,8 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
         try!(self.expect(Punct::LParen));
         let (variadic, args) = try!(self.parse_kailua_kindlist());
         try!(self.expect(Punct::RParen));
-        let returns = if self.lookahead(Punct::DashGt) {
+        let returns = if self.may_expect(Punct::DashGt) {
             // "(" ... ")" "->" ...
-            self.read();
             try!(self.parse_kailua_kind_seq())
         } else {
             // "(" ... ")"
@@ -821,13 +878,12 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
 
     fn try_parse_kailua_atomic_kind_seq(&mut self) -> ParseResult<Option<Vec<Kind>>> {
         let mut kind = match self.read() {
-            Tok::Keyword(Keyword::Function) => {
+            (_, Tok::Keyword(Keyword::Function)) => {
                 // either a "function" type or a list of function signatures
                 if self.lookahead(Punct::LParen) {
                     // function "(" ... ")" ["->" ...] {"&" "(" ... ")" ["->" ...]}
                     let mut funcs = vec![try!(self.parse_kailua_funckind())];
-                    while self.lookahead(Punct::Amp) {
-                        self.read();
+                    while self.may_expect(Punct::Amp) {
                         funcs.push(try!(self.parse_kailua_funckind()));
                     }
                     // cannot be followed by postfix operators
@@ -837,7 +893,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                 }
             }
 
-            Tok::Punct(Punct::LParen) => {
+            (_, Tok::Punct(Punct::LParen)) => {
                 let (variadic, mut args) = try!(self.parse_kailua_kindlist());
                 try!(self.expect(Punct::RParen));
                 if variadic {
@@ -850,20 +906,14 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                 }
             }
 
-            Tok::Punct(Punct::LBrace) => {
+            (_, Tok::Punct(Punct::LBrace)) => {
                 match self.read() {
                     // "{" NAME ...
-                    Tok::Name(name) => {
-                        let name: Str = name.into();
-                        try!(self.expect(Punct::Eq));
-                        let modf = try!(self.parse_kailua_mod());
-                        let kind = try!(self.parse_kailua_kind());
+                    tok @ (_, Tok::Name(_)) => {
+                        self.unread(tok);
                         let mut seen = HashSet::new();
                         let mut fields = Vec::new();
-                        seen.insert(name.clone());
-                        fields.push((name, modf, kind));
-                        while self.lookahead(Punct::Comma) {
-                            self.read();
+                        loop {
                             let name = Str::from(try!(self.parse_name()));
                             if !seen.insert(name.clone()) {
                                 return Err("duplicate record field in the type spec");
@@ -872,13 +922,20 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                             let modf = try!(self.parse_kailua_mod());
                             let kind = try!(self.parse_kailua_kind());
                             fields.push((name, modf, kind));
+                            // ";" - "," - ";" "}" - "," "}" - "}"
+                            match self.read() {
+                                (_, Tok::Punct(Punct::Comma)) => {}
+                                (_, Tok::Punct(Punct::Semicolon)) => {}
+                                (_, Tok::Punct(Punct::RBrace)) => break,
+                                _ => return Err("unexpected token in the table type spec"),
+                            }
+                            if self.may_expect(Punct::RBrace) { break; }
                         }
-                        try!(self.expect(Punct::RBrace));
                         Box::new(K::Record(fields))
                     }
 
                     // "{" "}" ...
-                    Tok::Punct(Punct::RBrace) => {
+                    (_, Tok::Punct(Punct::RBrace)) => {
                         Box::new(K::Record(Vec::new()))
                     }
 
@@ -886,25 +943,26 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                 }
             }
 
-            Tok::Punct(Punct::Ques)         => Box::new(K::Dynamic),
-            Tok::Keyword(Keyword::Nil)      => Box::new(K::Nil),
-            Tok::Keyword(Keyword::Boolean)  => Box::new(K::Boolean),
-            Tok::Keyword(Keyword::True)     => Box::new(K::BooleanLit(true)),
-            Tok::Keyword(Keyword::False)    => Box::new(K::BooleanLit(false)),
-            Tok::Keyword(Keyword::Number)   => Box::new(K::Number),
-            Tok::Keyword(Keyword::Integer)  => Box::new(K::Integer),
-            Tok::Keyword(Keyword::String)   => Box::new(K::String),
-            Tok::Keyword(Keyword::Table)    => Box::new(K::Table),
+            (_, Tok::Punct(Punct::Ques))         => Box::new(K::Dynamic),
+            (_, Tok::Keyword(Keyword::Nil))      => Box::new(K::Nil),
+            (_, Tok::Keyword(Keyword::Boolean))  => Box::new(K::Boolean),
+            (_, Tok::Keyword(Keyword::True))     => Box::new(K::BooleanLit(true)),
+            (_, Tok::Keyword(Keyword::False))    => Box::new(K::BooleanLit(false)),
+            (_, Tok::Keyword(Keyword::Number))   => Box::new(K::Number),
+            (_, Tok::Keyword(Keyword::Integer))  => Box::new(K::Integer),
+            (_, Tok::Keyword(Keyword::String))   => Box::new(K::String),
+            (_, Tok::Keyword(Keyword::Table))    => Box::new(K::Table),
 
-            Tok::Name(_name) => {
+            (_, Tok::Name(_name)) => {
                 return Err("unknown type name"); // for now
             }
 
-            Tok::Num(v) if i32::MIN as f64 <= v && v <= i32::MAX as f64 && v.floor() == v => {
+            (_, Tok::Num(v)) if i32::MIN as f64 <= v && v <= i32::MAX as f64 &&
+                                v.floor() == v => {
                 Box::new(K::IntegerLit(v as i32))
             }
 
-            Tok::Str(ref s) => {
+            (_, Tok::Str(ref s)) => {
                 Box::new(K::StringLit(s.to_owned().into()))
             }
 
@@ -915,8 +973,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
         };
 
         // a following `?` are equal to `| nil`
-        if self.lookahead(Punct::Ques) {
-            self.read();
+        if self.may_expect(Punct::Ques) {
             kind = Box::new(K::Union(vec![kind, Box::new(K::Nil)]));
         }
         Ok(Some(vec![kind]))
@@ -928,8 +985,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
             let mut kind = kindseq.pop().unwrap();
             if self.lookahead(Punct::Pipe) { // A | B | ...
                 let mut kinds = vec![kind];
-                while self.lookahead(Punct::Pipe) {
-                    self.read();
+                while self.may_expect(Punct::Pipe) {
                     let mut kindseq2 = try!(try!(self.try_parse_kailua_atomic_kind_seq())
                                             .ok_or("expected type"));
                     if kindseq2.len() != 1 {
@@ -974,13 +1030,22 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
     }
 
     fn try_parse_kailua_type_spec(&mut self) -> ParseResult<Option<(M, Kind)>> {
-        if self.lookahead(Punct::DashDashColon) {
-            self.read();
+        if self.may_expect(Punct::DashDashColon) {
+            // allow for `--: { a = foo,
+            //            --:   b = bar }`
+            self.begin_meta_comment(Punct::DashDashColon);
             let modf = try!(self.parse_kailua_mod());
             let kind = try!(self.parse_kailua_kind());
+            // allow for `--: last type --> return type` in the function decl
             if !self.lookahead(Punct::DashDashGt) {
-                // allow for `--: last type --> return type` in the function decl
-                try!(self.expect(Punct::Newline));
+                try!(self.end_meta_comment(Punct::DashDashColon));
+            } else {
+                assert_eq!(self.ignore_after_newline, Some(Punct::DashDashColon));
+                self.ignore_after_newline = None;
+                // it is possible to have `--: { a = foo,
+                //                         --:   b = bar }
+                //                         --: --> return_type`. seems harmless though.
+                self.elided_newline = false;
             }
             Ok(Some((modf, kind)))
         } else {
@@ -989,10 +1054,11 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
     }
 
     fn try_parse_kailua_rettype_spec(&mut self) -> ParseResult<Option<Kind>> {
-        if self.lookahead(Punct::DashDashGt) {
-            self.read();
+        if self.may_expect(Punct::DashDashGt) {
+            self.begin_meta_comment(Punct::DashDashGt);
             let kind = try!(self.parse_kailua_kind());
-            try!(self.expect(Punct::Newline));
+            try!(self.end_meta_comment(Punct::DashDashGt));
+
             Ok(Some(kind))
         } else {
             Ok(None)
@@ -1000,21 +1066,20 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
     }
 
     fn try_parse_kailua_spec(&mut self) -> ParseResult<Option<Option<Stmt>>> {
-        if self.lookahead(Punct::DashDashHash) {
-            self.read();
-
+        if self.may_expect(Punct::DashDashHash) {
             // assume NAME ":" MODF KIND
             // assume NAME ":" MODF KIND "=" STR (for builtin spec)
-            if self.lookahead(Keyword::Assume) {
-                self.read();
+            if self.may_expect(Keyword::Assume) {
+                // should be inside here, empty `--#` is valid
+                self.begin_meta_comment(Punct::DashDashHash);
                 let name = try!(self.parse_name());
                 try!(self.expect(Punct::Colon));
                 let modf = try!(self.parse_kailua_mod());
                 let kind = try!(self.parse_kailua_kind());
+
                 let builtin;
-                if self.lookahead(Punct::Eq) {
-                    self.read();
-                    if let Tok::Str(s) = self.read() {
+                if self.may_expect(Punct::Eq) {
+                    if let Tok::Str(s) = self.read().1 {
                         builtin = Some(s.into());
                     } else {
                         return Err("string expected after `assume NAME : KIND =`");
@@ -1022,14 +1087,15 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                 } else {
                     builtin = None;
                 }
-                try!(self.expect(Punct::Newline));
+
+                try!(self.end_meta_comment(Punct::DashDashHash));
                 return Ok(Some(Some(Box::new(St::KailuaAssume(name, modf, kind, builtin)))));
             }
 
             loop {
                 match self.read() {
-                    Tok::Error => return Err("token error"),
-                    Tok::Punct(Punct::Newline) => break,
+                    (_, Tok::Error) => return Err("token error"),
+                    (_, Tok::Punct(Punct::Newline)) => break,
                     _ => {}
                 }
             }

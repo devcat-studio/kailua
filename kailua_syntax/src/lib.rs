@@ -51,14 +51,27 @@ fn test_parse() {
                                  (Some(3.1), 400000), \
                                  (None, \"[[]]\")])))]");
     assert_eq!(test("f{a=a, a}"), "[Void(`f`(Table([(Some(\"a\"), `a`), (None, `a`)])))]");
+    assert_eq!(test("f{a=a; a;}"), "[Void(`f`(Table([(Some(\"a\"), `a`), (None, `a`)])))]");
     assert_eq!(test("--[a]\ndo end--]]"), "[Do([])]");
     assert_eq!(test("--[[a]\ndo end--]]"), "[]");
     assert_eq!(test("--#\ndo end"), "[Do([])]");
     assert_eq!(test("--#\n"), "[]");
     assert_eq!(test("--#"), "[]");
+    assert_eq!(test("--#\n--#"), "[]");
+    assert_eq!(test("--#\n\n--#"), "[]");
     assert_eq!(test("--# --foo\ndo end"), "[Do([])]");
     assert_eq!(test("--# --[[foo]]\ndo end"), "[Do([])]");
     assert_eq!(test("--# --[[foo\n--# --foo]]\ndo end"), "parse error");
+    assert_eq!(test("--# assume a: string"), "[KailuaAssume(`a`, _, String, None)]");
+    assert_eq!(test("--# assume a: string\n--#"), "[KailuaAssume(`a`, _, String, None)]");
+    assert_eq!(test("--# assume a:
+                     --#   string"), "[KailuaAssume(`a`, _, String, None)]");
+    assert_eq!(test("--# assume a:
+                     --# assume b: string"), "parse error");
+    assert_eq!(test("--# assume a: {x=string}
+                     --# assume b: {y=string}"),
+               "[KailuaAssume(`a`, _, Record([\"x\": _ String]), None), \
+                 KailuaAssume(`b`, _, Record([\"y\": _ String]), None)]");
     assert_eq!(test("local x --: {b=var string, a=integer, c=const {d=const {}}}"),
                "[Local([`x`: _ Record([\"b\": Var String, \"a\": _ Integer, \
                                        \"c\": Const Record([\"d\": Const Record([])])])], [])]");
@@ -71,10 +84,16 @@ fn test_parse() {
     assert_eq!(test("local x --: (integer, string)"), "parse error");
     assert_eq!(test("local x --: (integer)"), "[Local([`x`: _ Integer], [])]");
     assert_eq!(test("local x --: (integer)?"), "[Local([`x`: _ Union([Integer, Nil])], [])]");
-    // TODO can we ignore --: inside tables etc?
-    assert_eq!(test("local x --: {a = const function (), b = var string, \
-                                  c = const function (string) -> integer & \
-                                                     (string, integer) -> number}?"),
+    assert_eq!(test("local x --:
+                             --: (integer)?"), "[Local([`x`: _ Union([Integer, Nil])], [])]");
+    assert_eq!(test("local x --: (
+                             --:   integer
+                             --: )?"), "[Local([`x`: _ Union([Integer, Nil])], [])]");
+    assert_eq!(test("local x --: (
+                             --:   integer"), "parse error");
+    assert_eq!(test("local x --: {a = const function (), b = var string,
+                             --:  c = const function (string) -> integer &
+                             --:                     (string, integer) -> number}?"),
                "[Local([`x`: _ Union([Record([\"a\": Const Func([() -> ()]), \
                                               \"b\": Var String, \
                                               \"c\": Const Func([(String) -> Integer, \
