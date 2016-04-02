@@ -99,5 +99,41 @@ fn test_parse() {
                                               \"c\": Const Func([(String) -> Integer, \
                                                                  (String, Integer) -> Number])\
                                              ]), Nil])], [])]");
+    assert_eq!(test("--v ()
+                     function foo() end"),
+               "[FuncDecl(Global, `foo`, [], [])]");
+    assert_eq!(test("--v (a: integer)
+                     function foo() end"), "parse error");
+    assert_eq!(test("--v (a: integer)
+                     function foo(b) end"), "parse error");
+    assert_eq!(test("--v ()
+                     function foo(b) end"), "parse error");
+    assert_eq!(test("--v (a: integer, b: integer)
+                     function foo(b, a) end"), "parse error");
+    assert_eq!(test("--v (a: integer)
+                     local function foo(a) end"),
+               "[FuncDecl(Local, `foo`, [`a`: _ Integer], [])]");
+    assert_eq!(test("(--v (a: const integer,
+                      --v  ...)
+                      --v -> string
+                      function(a, ...) end)()"),
+               "[Void(Func([`a`: Const Integer, ...] -> String, [])())]");
+    assert_eq!(test("--v ()
+                     function foo() --> string
+                     end"), "parse error");
+    assert_eq!(test("--v ()
+                     function foo(a) --: integer --> string
+                     end"), "parse error");
+    assert_eq!(test("--v ()
+                     function foo(a, --: integer
+                                  b) --> string
+                     end"), "parse error");
+    assert_eq!(test("--v ()"), "parse error");
+    assert_eq!(test("--v ()
+                     local v = 42"), "parse error");
+    assert_eq!(test("--v ()
+                     --# assume x: integer"), "parse error");
+    assert_eq!(test("--v ()
+                     for i = 1, 3 do end"), "parse error");
 }
 

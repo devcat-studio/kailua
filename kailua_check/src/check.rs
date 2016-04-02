@@ -545,8 +545,9 @@ impl<'env> Checker<'env> {
         }
 
         let returns = Seq::from(Box::new(T::TVar(retv))); // XXX multiple returns
-        if let Some(ref retkind) = sig.returns {
-            T::TVar(retv).assert_sub(&T::from(retkind), scope.context()).unwrap();
+        assert!(sig.returns.len() <= 1, "multiple returns not supported yet");
+        if sig.returns.len() == 1 {
+            T::TVar(retv).assert_sub(&T::from(&sig.returns[0]), scope.context()).unwrap();
         }
 
         try!(scope.visit_block(block));
