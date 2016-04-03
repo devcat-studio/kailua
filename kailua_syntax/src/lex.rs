@@ -78,16 +78,11 @@ pub enum Keyword {
 
     // Kailua extensions
     Assume,
-    Boolean,
     Const,
     Global,
-    Integer,
     Module,
-    Number,
     Once,
     Open,
-    String,
-    Table,
     Var,
 }
 
@@ -116,18 +111,13 @@ impl Keyword {
             (_, b"until")    => Some(Keyword::Until),
             (_, b"while")    => Some(Keyword::While),
 
-            (true, b"assume")   => Some(Keyword::Assume),
-            (true, b"boolean")  => Some(Keyword::Boolean),
-            (true, b"const")    => Some(Keyword::Const),
-            (true, b"global")   => Some(Keyword::Global),
-            (true, b"integer")  => Some(Keyword::Integer),
-            (true, b"module")   => Some(Keyword::Module),
-            (true, b"number")   => Some(Keyword::Number),
-            (true, b"once")     => Some(Keyword::Once),
-            (true, b"open")     => Some(Keyword::Open),
-            (true, b"string")   => Some(Keyword::String),
-            (true, b"table")    => Some(Keyword::Table),
-            (true, b"var")      => Some(Keyword::Var),
+            (true, b"assume") => Some(Keyword::Assume),
+            (true, b"const")  => Some(Keyword::Const),
+            (true, b"global") => Some(Keyword::Global),
+            (true, b"module") => Some(Keyword::Module),
+            (true, b"once")   => Some(Keyword::Once),
+            (true, b"open")   => Some(Keyword::Open),
+            (true, b"var")    => Some(Keyword::Var),
 
             (_, _) => None,
         }

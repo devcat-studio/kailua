@@ -72,15 +72,21 @@ fn test_parse() {
                      --# assume b: {y=string}"),
                "[KailuaAssume(`a`, _, Record([\"x\": _ String]), None), \
                  KailuaAssume(`b`, _, Record([\"y\": _ String]), None)]");
+    assert_eq!(test("--# assume assume: ?"), "parse error");
+    assert_eq!(test("--# assume `assume`: ?"), "[KailuaAssume(`assume`, _, Dynamic, None)]");
+    assert_eq!(test("--# `assume` `assume`: ?"), "parse error");
     assert_eq!(test("local x --: {b=var string, a=integer, c=const {d=const {}}}"),
                "[Local([`x`: _ Record([\"b\": Var String, \"a\": _ Integer, \
                                        \"c\": Const Record([\"d\": Const Record([])])])], [])]");
+    assert_eq!(test("local x --: function"), "[Local([`x`: _ Function], [])]");
     assert_eq!(test("local x --: function()"), "[Local([`x`: _ Func([() -> ()])], [])]");
     assert_eq!(test("local x --: function()->()"), "[Local([`x`: _ Func([() -> ()])], [])]");
     assert_eq!(test("local x --: function () & (integer,...)->string?"),
                "[Local([`x`: _ Func([() -> (), (Integer, ...) -> Union([String, Nil])])], [])]");
     assert_eq!(test("local x --: function (...) | string?"),
                "[Local([`x`: _ Union([Func([(...) -> ()]), Union([String, Nil])])], [])]");
+    assert_eq!(test("local x --: `function`"), "[Local([`x`: _ Function], [])]");
+    assert_eq!(test("local x --: `function`()"), "parse error");
     assert_eq!(test("local x --: (integer, string)"), "parse error");
     assert_eq!(test("local x --: (integer)"), "[Local([`x`: _ Integer], [])]");
     assert_eq!(test("local x --: (integer)?"), "[Local([`x`: _ Union([Integer, Nil])], [])]");

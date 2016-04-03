@@ -1024,18 +1024,21 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                 }
             }
 
-            (_, Tok::Punct(Punct::Ques))         => Box::new(K::Dynamic),
-            (_, Tok::Keyword(Keyword::Nil))      => Box::new(K::Nil),
-            (_, Tok::Keyword(Keyword::Boolean))  => Box::new(K::Boolean),
-            (_, Tok::Keyword(Keyword::True))     => Box::new(K::BooleanLit(true)),
-            (_, Tok::Keyword(Keyword::False))    => Box::new(K::BooleanLit(false)),
-            (_, Tok::Keyword(Keyword::Number))   => Box::new(K::Number),
-            (_, Tok::Keyword(Keyword::Integer))  => Box::new(K::Integer),
-            (_, Tok::Keyword(Keyword::String))   => Box::new(K::String),
-            (_, Tok::Keyword(Keyword::Table))    => Box::new(K::Table),
+            (_, Tok::Punct(Punct::Ques))      => Box::new(K::Dynamic),
+            (_, Tok::Keyword(Keyword::Nil))   => Box::new(K::Nil),
+            (_, Tok::Keyword(Keyword::True))  => Box::new(K::BooleanLit(true)),
+            (_, Tok::Keyword(Keyword::False)) => Box::new(K::BooleanLit(false)),
 
-            (_, Tok::Name(_name)) => {
-                return Err("unknown type name"); // for now
+            (_, Tok::Name(name)) => {
+                match &*name {
+                    b"boolean"  => Box::new(K::Boolean),
+                    b"number"   => Box::new(K::Number),
+                    b"integer"  => Box::new(K::Integer),
+                    b"string"   => Box::new(K::String),
+                    b"table"    => Box::new(K::Table),
+                    b"function" => Box::new(K::Function), // allow for quoted `function` too
+                    _ => return Err("unknown type name"), // for now
+                }
             }
 
             (_, Tok::Num(v)) if i32::MIN as f64 <= v && v <= i32::MAX as f64 &&
@@ -1168,11 +1171,11 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
 
     fn try_parse_kailua_spec(&mut self) -> ParseResult<Option<Option<Stmt>>> {
         if self.may_expect(Punct::DashDashHash) {
+            self.begin_meta_comment(Punct::DashDashHash);
+
             // assume NAME ":" MODF KIND
             // assume NAME ":" MODF KIND "=" STR (for builtin spec)
             if self.may_expect(Keyword::Assume) {
-                // should be inside here, empty `--#` is valid
-                self.begin_meta_comment(Punct::DashDashHash);
                 let name = try!(self.parse_name());
                 try!(self.expect(Punct::Colon));
                 let modf = try!(self.parse_kailua_mod());
@@ -1193,13 +1196,8 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
                 return Ok(Some(Some(Box::new(St::KailuaAssume(name, modf, kind, builtin)))));
             }
 
-            loop {
-                match self.read() {
-                    (_, Tok::Error) => return Err("token error"),
-                    (_, Tok::Punct(Punct::Newline)) => break,
-                    _ => {}
-                }
-            }
+            // empty `--#` is valid
+            try!(self.end_meta_comment(Punct::DashDashHash));
             Ok(Some(None))
         } else {
             Ok(None)
