@@ -359,7 +359,11 @@ pub enum K {
     String,
     StringLit(Str),
     Table,
+    EmptyTable,
     Record(Vec<(Str, M, Kind)>),
+    Tuple(Vec<(M, Kind)>),
+    Array(M, Kind),
+    Map(Kind, M, Kind),
     Function,
     Func(Vec<FuncKind>),
     Union(Vec<Kind>),
@@ -368,18 +372,21 @@ pub enum K {
 impl fmt::Debug for K {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            K::Dynamic           => write!(f, "Dynamic"),
-            K::Nil               => write!(f, "Nil"),
-            K::Boolean           => write!(f, "Boolean"),
-            K::BooleanLit(true)  => write!(f, "True"),
-            K::BooleanLit(false) => write!(f, "False"),
-            K::Number            => write!(f, "Number"),
-            K::Integer           => write!(f, "Integer"),
-            K::IntegerLit(v)     => write!(f, "Integer({})", v),
-            K::String            => write!(f, "String"),
-            K::StringLit(ref s)  => write!(f, "String({:?})", *s),
-            K::Table             => write!(f, "Table"),
-            K::Function          => write!(f, "Function"),
+            K::Dynamic              => write!(f, "Dynamic"),
+            K::Nil                  => write!(f, "Nil"),
+            K::Boolean              => write!(f, "Boolean"),
+            K::BooleanLit(true)     => write!(f, "True"),
+            K::BooleanLit(false)    => write!(f, "False"),
+            K::Number               => write!(f, "Number"),
+            K::Integer              => write!(f, "Integer"),
+            K::IntegerLit(v)        => write!(f, "Integer({})", v),
+            K::String               => write!(f, "String"),
+            K::StringLit(ref s)     => write!(f, "String({:?})", *s),
+            K::Table                => write!(f, "Table"),
+            K::EmptyTable           => write!(f, "EmptyTable"),
+            K::Array(m, ref v)      => write!(f, "Array({:?} {:?})", m, *v),
+            K::Map(ref k, m, ref v) => write!(f, "Map({:?}, {:?} {:?})", *k, m, *v),
+            K::Function             => write!(f, "Function"),
 
             K::Record(ref fields) => {
                 try!(write!(f, "Record(["));
@@ -387,6 +394,17 @@ impl fmt::Debug for K {
                 for &(ref name, modf, ref kind) in fields {
                     if first { first = false; } else { try!(write!(f, ", ")); }
                     try!(write!(f, "{:?}: {:?} {:?}", *name, modf, *kind));
+                }
+                try!(write!(f, "])"));
+                Ok(())
+            },
+
+            K::Tuple(ref fields) => {
+                try!(write!(f, "Tuple(["));
+                let mut first = true;
+                for &(modf, ref kind) in fields {
+                    if first { first = false; } else { try!(write!(f, ", ")); }
+                    try!(write!(f, "{:?} {:?}", modf, *kind));
                 }
                 try!(write!(f, "])"));
                 Ok(())

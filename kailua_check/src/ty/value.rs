@@ -62,6 +62,16 @@ impl<'a> T<'a> {
     }
 
     pub fn from(kind: &K) -> T<'a> {
+        let slot_from_kind = |modf, kind| {
+            let ty = T::from(kind);
+            let sty = match modf {
+                M::None => S::Just(ty), // XXX
+                M::Var => S::Var(ty),
+                M::Const => S::Const(ty),
+            };
+            Slot::new(sty)
+        };
+
         match *kind {
             K::Dynamic           => T::Dynamic,
             K::Nil               => T::Nil,
@@ -74,21 +84,36 @@ impl<'a> T<'a> {
             K::String            => T::Strings(Cow::Owned(Strings::All)),
             K::StringLit(ref s)  => T::Strings(Cow::Owned(Strings::One(s.to_owned()))),
             K::Table             => T::Tables(Cow::Owned(Tables::All)),
+            K::EmptyTable        => T::Tables(Cow::Owned(Tables::Empty)),
             K::Function          => T::Functions(Cow::Owned(Functions::All)),
 
             K::Record(ref fields) => {
                 let mut recfields = HashMap::new();
                 for &(ref name, modf, ref kind) in fields {
-                    let ty = T::from(kind);
-                    let sty = match modf {
-                        M::None => S::Just(ty), // XXX
-                        M::Var => S::Var(ty),
-                        M::Const => S::Const(ty),
-                    };
-                    recfields.insert(name.clone(), Box::new(Slot::new(sty)));
+                    let slot = slot_from_kind(modf, kind);
+                    recfields.insert(name.clone(), Box::new(slot));
                 }
                 T::Tables(Cow::Owned(Tables::Record(recfields)))
             }
+
+            K::Tuple(ref fields) => {
+                let mut tupfields = Vec::new();
+                for &(modf, ref kind) in fields {
+                    let slot = slot_from_kind(modf, kind);
+                    tupfields.push(Box::new(slot));
+                }
+                T::Tables(Cow::Owned(Tables::Tuple(tupfields)))
+            },
+
+            K::Array(m, ref v) => {
+                let slot = slot_from_kind(m, v);
+                T::Tables(Cow::Owned(Tables::Array(Box::new(slot))))
+            },
+
+            K::Map(ref k, m, ref v) => {
+                let slot = slot_from_kind(m, v);
+                T::Tables(Cow::Owned(Tables::Map(Box::new(T::from(k)), Box::new(slot))))
+            },
 
             K::Func(ref funcs) => {
                 let mut ftys = Vec::new();

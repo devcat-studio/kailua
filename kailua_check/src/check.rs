@@ -1,4 +1,5 @@
 use std::i32;
+use std::cmp;
 use std::ops::{Deref, DerefMut};
 use std::borrow::Cow;
 
@@ -14,6 +15,18 @@ pub trait Options {
     fn require_block(&mut self, path: &[u8]) -> CheckResult<Block> {
         Err("not implemented".into())
     }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Exit {
+    None,   // keeps going
+    Break,  // exits the current loop
+    Return, // exits the current function
+    Stop,   // never executes further statements (infinite loop or error)
+}
+
+impl Exit {
+    fn or(self, other: Exit) -> Exit { cmp::min(self, other) }
 }
 
 struct ScopedChecker<'chk, 'env: 'chk>(&'chk mut Checker<'env>);
@@ -313,22 +326,29 @@ impl<'env> Checker<'env> {
     }
 
     pub fn visit(&mut self, chunk: &[Stmt]) -> CheckResult<()> {
-        self.visit_block(chunk)
-    }
-
-    fn visit_block(&mut self, block: &[Stmt]) -> CheckResult<()> {
-        let mut scope = self.scoped(Scope::new());
-        for stmt in block {
-            try!(scope.visit_stmt(stmt));
-        }
+        try!(self.visit_block(chunk));
         Ok(())
     }
 
-    fn visit_stmt(&mut self, stmt: &St) -> CheckResult<()> {
+    fn visit_block(&mut self, block: &[Stmt]) -> CheckResult<Exit> {
+        let mut scope = self.scoped(Scope::new());
+        let mut exit = Exit::None;
+        for stmt in block {
+            if exit != Exit::None {
+                // TODO warning
+                continue;
+            }
+            exit = try!(scope.visit_stmt(stmt));
+        }
+        Ok(exit)
+    }
+
+    fn visit_stmt(&mut self, stmt: &St) -> CheckResult<Exit> {
         println!("visiting stmt {:?}", *stmt);
         match *stmt {
             St::Void(ref exp) => {
                 try!(self.visit_exp(exp));
+                Ok(Exit::None)
             }
 
             St::Assign(ref vars, ref exps) => {
@@ -353,30 +373,75 @@ impl<'env> Checker<'env> {
                         }
                     }
                 }
+                Ok(Exit::None)
             }
 
-            St::Do(ref block) => {
-                try!(self.visit_block(block));
-            }
+            St::Do(ref block) => self.visit_block(block),
 
             St::While(ref cond, ref block) => {
-                try!(self.visit_exp(cond));
-                try!(self.visit_block(block));
+                let ty = try!(self.visit_exp(cond));
+                let slot = ty.borrow();
+                let ty = slot.unlift();
+                if ty.is_truthy() {
+                    // infinite loop
+                    let exit = try!(self.visit_block(block));
+                    if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::Stop) }
+                } else if ty.is_falsy() {
+                    // TODO warning
+                    Ok(Exit::None)
+                } else {
+                    try!(self.visit_block(block)); // TODO scope merger
+                    Ok(Exit::None)
+                }
             }
 
             St::Repeat(ref block, ref cond) => {
-                try!(self.visit_block(block));
-                try!(self.visit_exp(cond));
+                let exit = try!(self.visit_block(block)); // TODO scope merger
+                let ty = try!(self.visit_exp(cond));
+                if exit == Exit::None {
+                    let slot = ty.borrow();
+                    let ty = slot.unlift();
+                    if ty.is_truthy() {
+                        Ok(Exit::Stop)
+                    } else if ty.is_falsy() {
+                        Ok(exit)
+                    } else {
+                        Ok(Exit::None)
+                    }
+                } else {
+                    // TODO warning?
+                    if exit <= Exit::Break { Ok(Exit::None) } else { Ok(exit) }
+                }
             }
 
             St::If(ref conds, ref lastblock) => {
+                let mut exit = Exit::Stop;
+                let mut ignoreelse = false;
                 for &(ref cond, ref block) in conds {
-                    try!(self.visit_exp(cond));
-                    try!(self.visit_block(block));
+                    if ignoreelse {
+                        // TODO warning
+                        continue;
+                    }
+                    let ty = try!(self.visit_exp(cond));
+                    let slot = ty.borrow();
+                    let ty = slot.unlift();
+                    if ty.is_truthy() {
+                        ignoreelse = true;
+                        exit = exit.or(try!(self.visit_block(block)));
+                    } else if ty.is_falsy() {
+                        // TODO warning
+                    } else {
+                        exit = exit.or(try!(self.visit_block(block))); // TODO scope merger
+                    }
                 }
-                if let &Some(ref block) = lastblock {
-                    try!(self.visit_block(block));
+                if ignoreelse {
+                    // TODO warning
+                } else if let &Some(ref block) = lastblock {
+                    exit = exit.or(try!(self.visit_block(block))); // TODO scope merger
+                } else {
+                    exit = Exit::None;
                 }
+                Ok(exit)
             }
 
             St::For(ref name, ref start, ref end, ref step, ref block) => {
@@ -416,7 +481,8 @@ impl<'env> Checker<'env> {
 
                 let mut scope = self.scoped(Scope::new());
                 scope.env.add_local_var(name, TyInfo::from(indty), true);
-                try!(scope.visit_block(block));
+                let exit = try!(scope.visit_block(block));
+                if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
             }
 
             St::ForIn(ref names, ref exps, ref block) => {
@@ -428,7 +494,8 @@ impl<'env> Checker<'env> {
                 for name in names {
                     scope.env.add_local_var(name, TyInfo::from(T::Dynamic), true);
                 }
-                try!(scope.visit_block(block));
+                let exit = try!(scope.visit_block(block));
+                if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
             }
 
             St::FuncDecl(scope, ref name, ref sig, ref block) => {
@@ -441,6 +508,7 @@ impl<'env> Checker<'env> {
                 }
                 let functy = try!(self.visit_func_body(None, sig, block));
                 try!(T::TVar(funcv).assert_eq(functy.borrow().unlift(), self.context()));
+                Ok(Exit::None)
             }
 
             St::MethodDecl(ref names, selfparam, ref sig, ref block) => {
@@ -450,35 +518,57 @@ impl<'env> Checker<'env> {
                     SelfParam::No => None,
                 };
                 try!(self.visit_func_body(selfinfo, sig, block));
+                Ok(Exit::None)
             }
 
             St::Local(ref names, ref exps) => {
+                let add_local_var = |env: &mut Env, namespec: &TypeSpec<Name>, info: TyInfo| {
+                    if let Some(ref kind) = namespec.kind {
+                        let ty = T::from(kind);
+                        let newinfo = match namespec.modf {
+                            M::None => Slot::new(S::VarOrCurrently(ty, env.context().gen_mark())),
+                            M::Var => Slot::new(S::Var(ty)),
+                            M::Const => Slot::new(S::Const(ty)),
+                        };
+                        env.add_local_var(&namespec.base, newinfo, false);
+                        env.assign_to_var(&namespec.base, info)
+                    } else {
+                        env.add_local_var(&namespec.base, info, true);
+                        Ok(())
+                    }
+                };
+
                 for (i, exp) in exps.iter().enumerate() {
                     let info = try!(self.visit_exp(exp));
                     if i < names.len() {
                         // XXX last exp should unpack
-                        // TODO fully process namespec
-                        self.env.add_local_var(&names[i].base, info, true);
+                        try!(add_local_var(&mut self.env, &names[i], info));
                     }
                 }
                 if names.len() > exps.len() {
                     for namespec in &names[exps.len()..] {
-                        let info = TyInfo::from(T::Nil);
                         // XXX last exp should unpack
-                        // TODO fully process namespec
-                        self.env.add_local_var(&namespec.base, info, true);
+                        try!(add_local_var(&mut self.env, namespec, TyInfo::from(T::Nil)));
                     }
                 }
+                Ok(Exit::None)
             }
 
             St::Return(ref exps) => {
-                // XXX should unify with the current function
+                let mut tys = Vec::new();
                 for exp in exps {
-                    try!(self.visit_exp(exp));
+                    tys.push(try!(self.visit_exp(exp)));
                 }
+                if tys.len() == 1 { // XXX temporary
+                    let slot = tys[0].borrow();
+                    let ty = slot.unlift();
+                    let returns = self.env.get_frame().returns.clone(); // XXX redundant
+                    try!(ty.assert_sub(&returns, self.context()));
+                }
+                Ok(Exit::Return)
             }
 
-            St::Break => {}
+            St::Break => Ok(Exit::Break),
 
             St::KailuaAssume(ref name, kindm, ref kind, ref builtin) => {
                 let builtin = if let Some(ref builtin) = *builtin {
@@ -504,9 +594,9 @@ impl<'env> Checker<'env> {
                     M::Const => S::Const(ty),
                 };
                 try!(self.env.assume_var(name, Slot::new(sty)));
+                Ok(Exit::None)
             }
         }
-        Ok(())
     }
 
     fn visit_func_body(&mut self, selfinfo: Option<TyInfo>, sig: &Sig,

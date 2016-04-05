@@ -5,6 +5,7 @@ pub use lex::Error;
 pub use ast::{Name, Str, Var, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam};
 pub use ast::{St, Stmt, Block, M, K, Kind};
 
+//mod source;
 mod lex;
 mod ast;
 mod parser;
@@ -77,7 +78,7 @@ fn test_parse() {
     assert_eq!(test("--# `assume` `assume`: ?"), "parse error");
     assert_eq!(test("local x --: {b=var string, a=integer, c=const {d=const {}}}"),
                "[Local([`x`: _ Record([\"b\": Var String, \"a\": _ Integer, \
-                                       \"c\": Const Record([\"d\": Const Record([])])])], [])]");
+                                       \"c\": Const Record([\"d\": Const EmptyTable])])], [])]");
     assert_eq!(test("local x --: function"), "[Local([`x`: _ Function], [])]");
     assert_eq!(test("local x --: function()"), "[Local([`x`: _ Func([() -> ()])], [])]");
     assert_eq!(test("local x --: function()->()"), "[Local([`x`: _ Func([() -> ()])], [])]");
@@ -97,6 +98,7 @@ fn test_parse() {
                              --: )?"), "[Local([`x`: _ Union([Integer, Nil])], [])]");
     assert_eq!(test("local x --: (
                              --:   integer"), "parse error");
+    assert_eq!(test("local x --: {}"), "[Local([`x`: _ EmptyTable], [])]");
     assert_eq!(test("local x --: {a = const function (), b = var string,
                              --:  c = const function (string) -> integer &
                              --:                     (string, integer) -> number}?"),
@@ -105,6 +107,33 @@ fn test_parse() {
                                               \"c\": Const Func([(String) -> Integer, \
                                                                  (String, Integer) -> Number])\
                                              ]), Nil])], [])]");
+    assert_eq!(test("local x --: {const function (); var string;
+                             --:  const function (string) -> integer &
+                             --:                 (string, integer) -> number;
+                             --: }?"),
+               "[Local([`x`: _ Union([Tuple([Const Func([() -> ()]), \
+                                             Var String, \
+                                             Const Func([(String) -> Integer, \
+                                                         (String, Integer) -> Number])\
+                                            ]), Nil])], [])]");
+    assert_eq!(test("local x --: {?}"), "[Local([`x`: _ Array(_ Dynamic)], [])]");
+    assert_eq!(test("local x --: {?,}"), "[Local([`x`: _ Tuple([_ Dynamic])], [])]");
+    assert_eq!(test("local x --: {?,?}"), "[Local([`x`: _ Tuple([_ Dynamic, _ Dynamic])], [])]");
+    assert_eq!(test("local x --: {?;?;}"), "[Local([`x`: _ Tuple([_ Dynamic, _ Dynamic])], [])]");
+    assert_eq!(test("local x --: {var integer}"), "[Local([`x`: _ Array(Var Integer)], [])]");
+    assert_eq!(test("local x --: {[string] = const integer}"),
+               "[Local([`x`: _ Map(String, Const Integer)], [])]");
+    assert_eq!(test("local x --: {[string] = integer|boolean}"),
+               "[Local([`x`: _ Map(String, _ Union([Integer, Boolean]))], [])]");
+    assert_eq!(test("local x --: {[string|boolean] = integer|boolean}"),
+               "[Local([`x`: _ Map(Union([String, Boolean]), _ Union([Integer, Boolean]))], [])]");
+    assert_eq!(test("local x --: {[string?] = integer?}"),
+               "[Local([`x`: _ Map(Union([String, Nil]), _ Union([Integer, Nil]))], [])]");
+    assert_eq!(test("local x --: {[integer] = const {var {[string] = {integer, integer}?}}}"),
+               "[Local([`x`: _ Map(Integer, \
+                                   Const Array(Var Map(String, \
+                                                       _ Union([Tuple([_ Integer, _ Integer]), \
+                                                                Nil]))))], [])]");
     assert_eq!(test("--v ()
                      function foo() end"),
                "[FuncDecl(Global, `foo`, [], [])]");

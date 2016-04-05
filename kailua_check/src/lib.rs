@@ -38,6 +38,15 @@ fn test_check() {
     assert_err!("local c
                  if c then local p end
                  p()");
+    assert_err!("local c = true
+                 if c then local p end
+                 p()");
+    assert_err!("local c = false
+                 if c then local p end
+                 p()");
+    assert_err!("local c --: boolean
+                 if c then local p end
+                 p()");
     //assert_err!("local c, p
     //             if c then p = 4 end
     //             p()");
@@ -190,8 +199,11 @@ fn test_check() {
                  function p() return a end
                  a = true"); // a is now fixed to Var
     */
-    // TODO the return type can be inferred
     assert_ok!("function p(x) --: string --> string
+                    return x
+                end
+                local a = p('foo') .. 'bar'");
+    assert_ok!("function p(x) --: string
                     return x
                 end
                 local a = p('foo') .. 'bar'");
@@ -199,4 +211,26 @@ fn test_check() {
                      return x
                  end
                  local a = p('foo') + 3");
+    assert_ok!("local a --: {}
+                      = {} -- XXX parser bug
+                a[1] = 42
+                a[2] = 54");
+    assert_ok!("local a --: {}
+                      = {} -- XXX parser bug
+                a[1] = 42
+                a[2] = 54");
+    assert_err!("local a --: var {} -- cannot be changed!
+                       = {} -- XXX parser bug
+                 a[1] = 42
+                 a[2] = 54");
+    /* XXX adaptation not yet implemented
+    assert_ok!("local a --: {}
+                      = {} -- XXX parser bug
+                a[1] = 42
+                a.what = 54");
+    */
+    assert_err!("local a --: {number}
+                       = {} -- XXX parser bug
+                 a[1] = 42
+                 a.what = 54");
 }

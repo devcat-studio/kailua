@@ -989,38 +989,78 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
 
             (_, Tok::Punct(Punct::LBrace)) => {
                 match self.read() {
-                    // "{" NAME ...
-                    tok @ (_, Tok::Name(_)) => {
+                    // "{" "}"
+                    (_, Tok::Punct(Punct::RBrace)) => Box::new(K::EmptyTable),
+
+                    // "{" "[" KIND "]" "=" MODF KIND "}"
+                    (_, Tok::Punct(Punct::LBracket)) => {
+                        let key = try!(self.parse_kailua_kind());
+                        try!(self.expect(Punct::RBracket));
+                        try!(self.expect(Punct::Eq));
+                        let vmodf = try!(self.parse_kailua_mod());
+                        let value = try!(self.parse_kailua_kind());
+                        try!(self.expect(Punct::RBrace));
+                        Box::new(K::Map(key, vmodf, value))
+                    }
+
+                    // tuple, array or record -- distinguished by the secondary lookahead
+                    tok => {
+                        let is_record = if let (_, Tok::Name(_)) = tok {
+                            self.lookahead(Punct::Eq)
+                        } else {
+                            false
+                        };
                         self.unread(tok);
-                        let mut seen = HashSet::new();
-                        let mut fields = Vec::new();
-                        loop {
-                            let name = Str::from(try!(self.parse_name()));
-                            if !seen.insert(name.clone()) {
-                                return Err("duplicate record field in the type spec");
+
+                        if is_record {
+                            // "{" NAME "=" MODF KIND {"," NAME "=" MODF KIND} "}"
+                            let mut seen = HashSet::new();
+                            let mut fields = Vec::new();
+                            loop {
+                                let name = Str::from(try!(self.parse_name()));
+                                if !seen.insert(name.clone()) {
+                                    return Err("duplicate record field in the type spec");
+                                }
+                                try!(self.expect(Punct::Eq));
+                                let modf = try!(self.parse_kailua_mod());
+                                let kind = try!(self.parse_kailua_kind());
+                                fields.push((name, modf, kind));
+                                // ";" - "," - ";" "}" - "," "}" - "}"
+                                match self.read() {
+                                    (_, Tok::Punct(Punct::Comma)) => {}
+                                    (_, Tok::Punct(Punct::Semicolon)) => {}
+                                    (_, Tok::Punct(Punct::RBrace)) => break,
+                                    _ => return Err("unexpected token in the table type spec"),
+                                }
+                                if self.may_expect(Punct::RBrace) { break; }
                             }
-                            try!(self.expect(Punct::Eq));
-                            let modf = try!(self.parse_kailua_mod());
-                            let kind = try!(self.parse_kailua_kind());
-                            fields.push((name, modf, kind));
-                            // ";" - "," - ";" "}" - "," "}" - "}"
-                            match self.read() {
-                                (_, Tok::Punct(Punct::Comma)) => {}
-                                (_, Tok::Punct(Punct::Semicolon)) => {}
-                                (_, Tok::Punct(Punct::RBrace)) => break,
-                                _ => return Err("unexpected token in the table type spec"),
+                            Box::new(K::Record(fields))
+                        } else {
+                            // array - "{" MODF KIND "}"
+                            // tuple - "{" MODF KIND "," [MODF KIND {"," MODF KIND}] "}"
+                            let mut fields = Vec::new();
+                            let mut sep = false;
+                            loop {
+                                let modf = try!(self.parse_kailua_mod());
+                                let kind = try!(self.parse_kailua_kind());
+                                fields.push((modf, kind));
+                                // ";" - "," - ";" "}" - "," "}" - "}"
+                                match self.read() {
+                                    (_, Tok::Punct(Punct::Comma)) => sep = true,
+                                    (_, Tok::Punct(Punct::Semicolon)) => sep = true,
+                                    (_, Tok::Punct(Punct::RBrace)) => break,
+                                    _ => return Err("unexpected token in the table type spec"),
+                                }
+                                if self.may_expect(Punct::RBrace) { break; }
                             }
-                            if self.may_expect(Punct::RBrace) { break; }
+                            if fields.len() == 1 && !sep {
+                                let (modf, kind) = fields.pop().unwrap();
+                                Box::new(K::Array(modf, kind))
+                            } else {
+                                Box::new(K::Tuple(fields))
+                            }
                         }
-                        Box::new(K::Record(fields))
                     }
-
-                    // "{" "}" ...
-                    (_, Tok::Punct(Punct::RBrace)) => {
-                        Box::new(K::Record(Vec::new()))
-                    }
-
-                    _ => return Err("invalid table type"),
                 }
             }
 
@@ -1068,6 +1108,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
             if kindseq.len() != 1 { return Ok(Some(kindseq)); }
             let mut kind = kindseq.pop().unwrap();
             if self.lookahead(Punct::Pipe) { // A | B | ...
+                // TODO the current parser is massively ambiguous about pipes in atomic types
                 let mut kinds = vec![kind];
                 while self.may_expect(Punct::Pipe) {
                     let mut kindseq2 = try!(try!(self.try_parse_kailua_atomic_kind_seq())

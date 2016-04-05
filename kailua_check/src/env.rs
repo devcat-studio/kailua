@@ -354,15 +354,20 @@ pub struct Context {
 
 impl Context {
     pub fn new() -> Context {
-        Context {
+        let mut ctx = Context {
             global_scope: Scope::new(),
-            next_tvar: Cell::new(TVar(0)),
+            next_tvar: Cell::new(TVar(1)), // TVar(0) for the top-level return
             tvar_sub: Constraints::new("<:"),
             tvar_sup: Constraints::new(":>"),
             tvar_eq: Constraints::new("="),
             next_mark: Cell::new(Mark(0)),
             mark_infos: Partitions::new(),
-        }
+        };
+
+        // it is fine to return from the top-level, so we treat it as like a function frame
+        let global_frame = Frame { vararg: None, returns: Box::new(T::TVar(TVar(0))) };
+        ctx.global_scope.frame = Some(global_frame);
+        ctx
     }
 
     pub fn global_scope(&self) -> &Scope {
@@ -806,26 +811,26 @@ impl<'ctx> Env<'ctx> {
         None
     }
 
-    pub fn get_frame<'a>(&'a self) -> Option<&'a Frame> {
+    pub fn get_frame<'a>(&'a self) -> &'a Frame {
         for scope in self.scopes.iter().rev() {
-            if let Some(frame) = scope.get_frame() { return Some(frame); }
+            if let Some(frame) = scope.get_frame() { return frame; }
         }
-        self.context.global_scope().get_frame()
+        self.context.global_scope().get_frame().expect("global scope lacks a frame")
     }
 
-    pub fn get_frame_mut<'a>(&'a mut self) -> Option<&'a mut Frame> {
+    pub fn get_frame_mut<'a>(&'a mut self) -> &'a mut Frame {
         for scope in self.scopes.iter_mut().rev() {
-            if let Some(frame) = scope.get_frame_mut() { return Some(frame); }
+            if let Some(frame) = scope.get_frame_mut() { return frame; }
         }
-        self.context.global_scope_mut().get_frame_mut()
+        self.context.global_scope_mut().get_frame_mut().expect("global scope lacks a frame")
     }
 
     pub fn get_vararg<'a>(&'a self) -> Option<&'a TyInfo> {
-        self.get_frame().and_then(|f| f.vararg.as_ref())
+        self.get_frame().vararg.as_ref()
     }
 
     pub fn get_vararg_mut<'a>(&'a mut self) -> Option<&'a mut TyInfo> {
-        self.get_frame_mut().and_then(|f| f.vararg.as_mut())
+        self.get_frame_mut().vararg.as_mut()
     }
 
     // adapt is used when the info didn't come from the type specification
