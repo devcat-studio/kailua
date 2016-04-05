@@ -125,7 +125,10 @@ impl Lattice for Tables {
                 }
             },
 
-            tab => Some(tab),
+            Tables::Empty => Some(Tables::Empty),
+            Tables::Array(v) => Some(Tables::Array(v.normalize())),
+            Tables::Map(k, v) => Some(Tables::Map(k.normalize(), Box::new((*v).normalize()))),
+            Tables::All => Some(Tables::All),
         }
     }
 

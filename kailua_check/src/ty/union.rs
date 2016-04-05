@@ -9,7 +9,6 @@ use super::flags::*;
 // expanded value types for unions
 #[derive(Clone, PartialEq)]
 pub struct Union {
-    pub has_dynamic: bool, // XXX
     pub has_nil: bool,
     pub has_true: bool,
     pub has_false: bool,
@@ -23,12 +22,12 @@ pub struct Union {
 impl Union {
     pub fn from<'a>(ty: &T<'a>) -> Union {
         let mut u = Union {
-            has_dynamic: false, has_nil: false, has_true: false, has_false: false,
+            has_nil: false, has_true: false, has_false: false,
             numbers: None, strings: None, tables: None, functions: None, tvar: None,
         };
 
         match ty.as_base() {
-            &T::Dynamic => { u.has_dynamic = true; }
+            &T::Dynamic => panic!("Union::from called with T::Dynamic"),
             &T::None    => {}
             &T::Nil     => { u.has_nil = true; }
             &T::Boolean => { u.has_true = true; u.has_false = true; }
@@ -50,10 +49,9 @@ impl Union {
 
     pub fn flags(&self) -> Flags {
         let mut flags = T_NONE;
-        if self.has_dynamic  { flags = flags | T_DYNAMIC; }
-        if self.has_nil      { flags = flags | T_NIL; }
-        if self.has_true     { flags = flags | T_TRUE; }
-        if self.has_false    { flags = flags | T_FALSE; }
+        if self.has_nil   { flags = flags | T_NIL; }
+        if self.has_true  { flags = flags | T_TRUE; }
+        if self.has_false { flags = flags | T_FALSE; }
         match self.numbers {
             None => {}
             Some(Numbers::All) => { flags = flags | T_NUMBER; }
@@ -67,9 +65,6 @@ impl Union {
 
     pub fn visit<'a, E, F>(&'a self, mut f: F) -> Result<(), E>
             where F: FnMut(T<'a>) -> Result<(), E> {
-        // dynamic type eschews every other types
-        if self.has_dynamic { return f(T::Dynamic); }
-
         if self.has_nil { try!(f(T::Nil)); }
         if self.has_true {
             if self.has_false { try!(f(T::Boolean)); } else { try!(f(T::True)); }
@@ -114,10 +109,9 @@ impl Lattice for Union {
     }
 
     fn union(&self, other: &Union, ctx: &mut TypeContext) -> Union {
-        let has_dynamic = self.has_dynamic | other.has_dynamic;
-        let has_nil     = self.has_nil     | other.has_nil;
-        let has_true    = self.has_true    | other.has_true;
-        let has_false   = self.has_false   | other.has_false;
+        let has_nil   = self.has_nil   | other.has_nil;
+        let has_true  = self.has_true  | other.has_true;
+        let has_false = self.has_false | other.has_false;
 
         let numbers   = self.numbers.union(&other.numbers, ctx);
         let strings   = self.strings.union(&other.strings, ctx);
@@ -130,15 +124,12 @@ impl Lattice for Union {
         };
 
         Union {
-            has_dynamic: has_dynamic, has_nil: has_nil, has_true: has_true, has_false: has_false,
+            has_nil: has_nil, has_true: has_true, has_false: has_false,
             numbers: numbers, strings: strings, tables: tables, functions: functions, tvar: tvar,
         }
     }
 
     fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
-        // exit early if either side is dynamic
-        if self.has_dynamic || other.has_dynamic { return Ok(()); }
-
         if (self.has_nil && !other.has_nil) || (self.has_true && !other.has_true) ||
                                                (self.has_false && !other.has_false) {
             return error_not_sub(self, other);
@@ -169,9 +160,6 @@ impl Lattice for Union {
     }
 
     fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
-        // exit early if either side is dynamic
-        if self.has_dynamic || other.has_dynamic { return Ok(()); }
-
         match (self.tvar, self.flags(), other.tvar, other.flags()) {
             (Some(a), T_NONE, Some(b), T_NONE) =>
                 return ctx.assert_tvar_eq_tvar(a, b),
