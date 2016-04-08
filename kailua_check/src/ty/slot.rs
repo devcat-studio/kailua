@@ -36,7 +36,7 @@ impl<'a> S<'a> {
     // (there are some cases that this is impossible, e.g. array types)
     pub fn is_linear(&self) -> bool {
         match *self {
-            S::Any | S::Currently(..) | S::VarOrCurrently(..) => true,
+            S::Currently(..) | S::VarOrCurrently(..) => true,
             _ => false,
         }
     }

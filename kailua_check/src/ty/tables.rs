@@ -1,85 +1,124 @@
 use std::fmt;
-use std::cmp;
 use std::borrow::ToOwned;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use kailua_syntax::Str;
 use diag::CheckResult;
-use super::{T, Ty, Slot, TypeContext, Lattice, Strings};
+use super::{T, Ty, Slot, TypeContext, Lattice};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Key {
+    Int(i32),
+    Str(Str),
+}
+
+impl Key {
+    pub fn is_int(&self) -> bool { if let Key::Int(_) = *self { true } else { false } }
+    pub fn is_str(&self) -> bool { if let Key::Str(_) = *self { true } else { false } }
+
+    pub fn into_type(self) -> T<'static> {
+        match self {
+            Key::Int(v) => T::int(v),
+            Key::Str(s) => T::str(s),
+        }
+    }
+}
+
+impl From<i32> for Key { fn from(v: i32) -> Key { Key::Int(v) } }
+impl From<Str> for Key { fn from(s: Str) -> Key { Key::Str(s) } }
+impl<'a> From<&'a Str> for Key { fn from(s: &Str) -> Key { Key::Str(s.to_owned()) } }
+
+impl fmt::Debug for Key {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Key::Int(ref v) => fmt::Debug::fmt(v, f),
+            Key::Str(ref s) => fmt::Debug::fmt(s, f),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub enum Tables {
     Empty,
-    Record(HashMap<Str, Box<Slot>>),
-    Tuple(Vec<Box<Slot>>),
-    Array(Box<Slot>),
-    Map(Ty, Box<Slot>),
+    // tuples and records
+    Fields(BTreeMap<Key, Box<Slot>>),
+    // does not appear naturally (indistinguishable from Map from integers)
+    // determined only from the function usages, e.g. table.insert
+    Array(Box<Slot>), // shared (non-linear) slots only
+    Map(Ty, Box<Slot>), // shared (non-linear) slots only
     All,
+}
+
+fn lift_fields_to_map(fields: &BTreeMap<Key, Box<Slot>>, ctx: &mut TypeContext)
+                    -> (T<'static>, Slot) {
+    let mut hasint = false;
+    let mut hasstr = false;
+    let mut value = Slot::just(T::None);
+    for (key, ty) in fields {
+        if key.is_int() { hasint = true; } else { hasstr = true; }
+        value = value.union(&ty, ctx);
+    }
+    assert!(!value.is_linear(), "Slot::union should have destroyed Currently slots");
+    let key = match (hasint, hasstr) {
+        (false, false) => T::None,
+        (false, true) => T::string(),
+        (true, false) => T::integer(),
+        (true, true) => T::integer() | T::string(),
+    };
+    (key, value)
 }
 
 impl Tables {
     pub fn lift_to_map(self, ctx: &mut TypeContext) -> Tables {
         match self {
-            Tables::Empty => Tables::Empty,
-            Tables::Record(fields) => {
-                let mut value = Slot::just(T::None);
-                for (_, ty) in fields { value = value.union(&*ty, ctx); }
-                Tables::Map(Box::new(T::string()), Box::new(value))
-            },
-            Tables::Tuple(fields) => {
-                let mut value = Slot::just(T::None);
-                for ty in fields { value = value.union(&*ty, ctx); }
-                Tables::Map(Box::new(T::integer()), Box::new(value))
+            Tables::Fields(fields) => {
+                if fields.is_empty() { return Tables::Empty; }
+                let (key, value) = lift_fields_to_map(&fields, ctx);
+                Tables::Map(Box::new(key), Box::new(value))
             },
             Tables::Array(value) => Tables::Map(Box::new(T::integer()), value),
-            Tables::Map(key, value) => Tables::Map(key, value),
-            Tables::All => Tables::All,
+            tab => tab,
         }
     }
 
-    pub fn insert(self, key: Option<T<'static>>, value: T<'static>,
-                  ctx: &mut TypeContext) -> Tables {
-        // a single string key is special
-        if let Some(ref key) = key {
-            if key.flags() == T_STRING {
-                if let Some(&Strings::One(ref s)) = key.has_strings() {
-                    match self {
-                        Tables::Empty => {
-                            let mut fields = HashMap::new();
-                            fields.insert(s.to_owned(), Box::new(Slot::just(value)));
-                            return Tables::Record(fields);
-                        }
-                        Tables::Record(mut fields) => {
-                            // should override a duplicate field if any
-                            fields.insert(s.to_owned(), Box::new(Slot::just(value)));
-                            return Tables::Record(fields);
-                        }
-                        _ => {}
-                    }
-                }
+    // used by table constructors
+    // for missing keys the caller should count the number of prior missing keys and put
+    // appropriate literal types: `{a=1, 2, [2]=3, 4, b=5}` => `{a=1, [1]=2, [2]=3, [2]=4, b=5}`
+    pub fn insert(self, key: T<'static>, value: T<'static>, ctx: &mut TypeContext) -> Tables {
+        let litkey =
+            if let Some(key) = key.as_integer() {
+                Some(key.into())
+            } else if let Some(key) = key.as_string() {
+                Some(key.into())
+            } else {
+                None
+            };
+
+        match (litkey, self) {
+            (Some(litkey), Tables::Empty) => {
+                // promote Empty to Fields
+                let mut fields = BTreeMap::new();
+                fields.insert(litkey, Box::new(Slot::just(value)));
+                Tables::Fields(fields)
             }
-        }
 
-        // otherwise do not try to make a record
-        match (key, self) {
-            // XXX tuple?
-            (None, Tables::Empty) => Tables::Array(Box::new(Slot::just(value))),
-            (None, Tables::Array(t)) =>
-                Tables::Array(Box::new(Slot::just(value).union(&*t, ctx))),
-            (None, Tables::Tuple(mut fields)) => {
-                fields.push(Box::new(Slot::just(value)));
-                Tables::Tuple(fields)
-            },
+            (None, Tables::Empty) => {
+                // promote Empty to Map
+                Tables::Map(Box::new(key), Box::new(Slot::just(value)))
+            }
 
-            (Some(key), Tables::Empty) =>
-                Tables::Map(Box::new(key), Box::new(Slot::just(value))),
+            (Some(litkey), Tables::Fields(mut fields)) => {
+                // should override a duplicate field if any
+                fields.insert(litkey, Box::new(Slot::just(value)));
+                Tables::Fields(fields)
+            }
 
             // fall back to the map when in doubt
-            (key, tab) => match tab.lift_to_map(ctx) {
+            (_, tab) => match tab.lift_to_map(ctx) {
                 Tables::Map(key_, value_) => {
-                    let key = key.unwrap_or(T::integer()).union(&*key_, ctx);
+                    let key = key.union(&*key_, ctx);
                     let value = Slot::just(value).union(&*value_, ctx);
                     Tables::Map(Box::new(key), Box::new(value))
                 },
@@ -94,34 +133,19 @@ impl Lattice for Tables {
 
     fn normalize(self) -> Option<Tables> {
         match self {
-            Tables::Record(fields) => {
+            Tables::Fields(fields) => {
                 if fields.is_empty() { return Some(Tables::Empty); }
 
-                let norm_kv = |(k, v): (Str, Box<Slot>)| {
+                let norm_kv = |(k, v): (Key, Box<Slot>)| {
                     let v = v.normalize();
                     let flags = v.borrow().unlift().flags();
                     if flags == T_NONE { None } else { Some((k, v)) }
                 };
-                let fields: HashMap<_, _> = fields.into_iter().filter_map(norm_kv).collect();
+                let fields: BTreeMap<_, _> = fields.into_iter().filter_map(norm_kv).collect();
                 if fields.is_empty() {
                     Some(Tables::Empty)
                 } else {
-                    Some(Tables::Record(fields))
-                }
-            },
-
-            Tables::Tuple(fields) => {
-                if fields.is_empty() { return Some(Tables::Empty); }
-
-                let norm = |v: Box<Slot>| {
-                    let v = v.normalize();
-                    let flags = v.borrow().unlift().flags();
-                    if flags == T_NONE { None } else { Some(v) }
-                };
-                if let Some(fields) = fields.into_iter().map(norm).collect() {
-                    Some(Tables::Tuple(fields))
-                } else {
-                    Some(Tables::Empty)
+                    Some(Tables::Fields(fields))
                 }
             },
 
@@ -137,9 +161,9 @@ impl Lattice for Tables {
             (&Tables::All, _) => Tables::All,
             (_, &Tables::All) => Tables::All,
 
-            (&Tables::Record(ref fields1), &Tables::Record(ref fields2)) => {
+            (&Tables::Fields(ref fields1), &Tables::Fields(ref fields2)) => {
                 let mut fields1 = fields1.clone();
-                let mut fields = HashMap::new();
+                let mut fields = BTreeMap::new();
                 for (k, v2) in fields2 {
                     let k = k.clone();
                     if let Some(v1) = fields1.remove(&k) {
@@ -151,42 +175,29 @@ impl Lattice for Tables {
                 for (k, v1) in fields1 {
                     fields.insert(k.clone(), Box::new(Slot::just(T::Nil).union(&v1, ctx)));
                 }
-                Tables::Record(fields)
+                Tables::Fields(fields)
             },
 
-            (&Tables::Record(ref fields), &Tables::Empty) |
-            (&Tables::Empty, &Tables::Record(ref fields)) => {
-                let add_nil = |(k,s): (&Str,&Box<Slot>)|
+            (&Tables::Fields(ref fields), &Tables::Empty) |
+            (&Tables::Empty, &Tables::Fields(ref fields)) => {
+                let add_nil = |(k,s): (&Key, &Box<Slot>)|
                     (k.clone(), Box::new(Slot::just(T::Nil).union(s, ctx)));
-                Tables::Record(fields.iter().map(add_nil).collect())
+                Tables::Fields(fields.iter().map(add_nil).collect())
             },
 
-            (&Tables::Tuple(ref fields1), &Tables::Tuple(ref fields2)) => {
-                let mut fields = Vec::with_capacity(cmp::max(fields1.len(), fields2.len()));
-                for (lty, rty) in fields1.iter().zip(fields2.iter()) {
-                    fields.push(lty.union(rty, ctx));
-                }
-                let excess = if fields1.len() < fields2.len() {
-                    &fields2[fields1.len()..]
-                } else if fields1.len() > fields2.len() {
-                    &fields1[fields2.len()..]
-                } else {
-                    &[][..]
-                };
-                fields.extend(excess.iter().map(|ty| Box::new(Slot::just(T::Nil).union(&ty, ctx))));
-                Tables::Tuple(fields)
+            (&Tables::Fields(ref fields), &Tables::Array(ref value)) |
+            (&Tables::Array(ref value), &Tables::Fields(ref fields)) => {
+                let (fkey, fvalue) = lift_fields_to_map(fields, ctx);
+                Tables::Map(Box::new(fkey.union(&T::integer(), ctx)),
+                            Box::new(fvalue.union(value, ctx)))
             },
 
-            (&Tables::Tuple(ref fields), &Tables::Empty) |
-            (&Tables::Empty, &Tables::Tuple(ref fields)) => {
-                let add_nil = |s: &Box<Slot>| Box::new(Slot::just(T::Nil).union(s, ctx));
-                Tables::Tuple(fields.iter().map(add_nil).collect())
+            (&Tables::Fields(ref fields), &Tables::Map(ref key, ref value)) |
+            (&Tables::Map(ref key, ref value), &Tables::Fields(ref fields)) => {
+                let (fkey, fvalue) = lift_fields_to_map(fields, ctx);
+                Tables::Map(Box::new(fkey.union(key, ctx)),
+                            Box::new(fvalue.union(value, ctx)))
             },
-
-            // records and tuples are considered disjoint to
-            // other table types (including each other)
-            (&Tables::Record(..), _) | (&Tables::Tuple(..), _) => Tables::All,
-            (_, &Tables::Record(..)) | (_, &Tables::Tuple(..)) => Tables::All,
 
             (&Tables::Empty, tab) => tab.clone(),
             (tab, &Tables::Empty) => tab.clone(),
@@ -216,7 +227,7 @@ impl Lattice for Tables {
             (&Tables::All, _) => false,
             (_, &Tables::All) => true,
 
-            (&Tables::Record(ref a), &Tables::Record(ref b)) => {
+            (&Tables::Fields(ref a), &Tables::Fields(ref b)) => {
                 for (k, av) in a {
                     if let Some(ref bv) = b.get(k) {
                         try!((**av).assert_sub(bv, ctx));
@@ -227,17 +238,16 @@ impl Lattice for Tables {
                 true
             },
 
-            (&Tables::Tuple(ref fields1), &Tables::Tuple(ref fields2)) => {
-                for (ty1, ty2) in fields1.iter().zip(fields2.iter()) {
-                    try!(ty1.assert_sub(ty2, ctx));
+            (&Tables::Fields(ref fields), &Tables::Map(ref key, ref value)) => {
+                for (k, v) in fields {
+                    try!(k.clone().into_type().assert_sub(key, ctx));
+                    try!((**v).assert_sub(value, ctx));
                 }
-                fields1.len() <= fields2.len()
+                true
             },
 
-            // records and tuples are considered disjoint to
-            // other table types (including each other)
-            (&Tables::Record(..), _) | (&Tables::Tuple(..), _) => false,
-            (_, &Tables::Record(..)) | (_, &Tables::Tuple(..)) => false,
+            (&Tables::Fields(..), _) => false,
+            (_, &Tables::Fields(..)) => false,
 
             (&Tables::Array(ref value1), &Tables::Array(ref value2)) => {
                 try!(value1.assert_sub(value2, ctx));
@@ -271,17 +281,7 @@ impl Lattice for Tables {
                 try!(av.assert_eq(bv, ctx));
                 true
             }
-            (&Tables::Tuple(ref a), &Tables::Tuple(ref b)) => {
-                if a.len() == b.len() {
-                    for (i, j) in a.iter().zip(b.iter()) {
-                        try!(i.assert_eq(j, ctx));
-                    }
-                    true
-                } else {
-                    false
-                }
-            }
-            (&Tables::Record(ref a), &Tables::Record(ref b)) => {
+            (&Tables::Fields(ref a), &Tables::Fields(ref b)) => {
                 for (k, va) in a {
                     if let Some(vb) = b.get(k) {
                         try!(va.assert_eq(vb, ctx));
@@ -311,14 +311,9 @@ impl PartialEq for Tables {
             (&Tables::Map(ref ak, ref av), &Tables::Map(ref bk, ref bv)) =>
                 *ak == *bk && *av == *bv,
 
-            (&Tables::Tuple(ref a), &Tables::Tuple(ref b)) => *a == *b,
-            (&Tables::Tuple(ref a), &Tables::Record(ref b)) => a.is_empty() && b.is_empty(),
-            (&Tables::Tuple(ref a), &Tables::Empty) => a.is_empty(),
-            (&Tables::Record(ref a), &Tables::Tuple(ref b)) => a.is_empty() && b.is_empty(),
-            (&Tables::Record(ref a), &Tables::Record(ref b)) => *a == *b,
-            (&Tables::Record(ref a), &Tables::Empty) => a.is_empty(),
-            (&Tables::Empty, &Tables::Tuple(ref b)) => b.is_empty(),
-            (&Tables::Empty, &Tables::Record(ref b)) => b.is_empty(),
+            (&Tables::Fields(ref a), &Tables::Fields(ref b)) => *a == *b,
+            (&Tables::Fields(ref a), &Tables::Empty) => a.is_empty(),
+            (&Tables::Empty, &Tables::Fields(ref b)) => b.is_empty(),
 
             (_, _) => false,
         }
@@ -330,21 +325,25 @@ impl fmt::Debug for Tables {
         match *self {
             Tables::All => write!(f, "table"),
             Tables::Empty => write!(f, "{{}}"),
-            Tables::Record(ref fields) => {
+            Tables::Fields(ref fields) => {
                 try!(write!(f, "{{"));
                 let mut first = true;
-                for (name, t) in fields.iter() {
-                    if first { first = false; } else { try!(write!(f, ", ")); }
-                    try!(write!(f, "{:?} = {:?}", *name, *t));
-                }
-                write!(f, "}}")
-            }
-            Tables::Tuple(ref fields) => {
-                try!(write!(f, "{{"));
-                let mut first = true;
-                for t in fields.iter() {
+                // try consecutive initial integers first
+                let mut nextlen = 1;
+                while let Some(t) = fields.get(&Key::Int(nextlen)) {
                     if first { first = false; } else { try!(write!(f, ", ")); }
                     try!(write!(f, "{:?}", *t));
+                    if nextlen >= 0x10000 { break; } // too much
+                    nextlen += 1;
+                }
+                // print other keys
+                for (name, t) in fields.iter() {
+                    match *name {
+                        Key::Int(v) if 1 <= v && v < nextlen => break, // strip duplicates
+                        _ => {}
+                    }
+                    if first { first = false; } else { try!(write!(f, ", ")); }
+                    try!(write!(f, "{:?} = {:?}", *name, *t));
                 }
                 write!(f, "}}")
             }

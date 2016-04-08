@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, UnOp, BinOp, FuncScope, SelfParam};
 use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
-use ty::{T, Seq, Lattice, TypeContext, Numbers, Strings, Tables, Function, S, Slot};
+use ty::{T, Seq, Lattice, TypeContext, Tables, Function, S, Slot};
 use ty::{Builtin, Flags};
 use ty::flags::*;
 use env::{TyInfo, Env, Frame, Scope, Context};
@@ -260,43 +260,27 @@ impl<'env> Checker<'env> {
                 }
             }
 
-            Some(&Tables::Record(ref fields)) => {
-                if !kty.is_stringy() {
-                    return Err(format!("tried to index {:?} with non-string {:?}", ety, kty));
+            Some(&Tables::Fields(ref fields)) => {
+                if !kty.is_stringy() && !kty.is_integral() {
+                    return Err(format!("tried to index {:?} with \
+                                        non-string/integer {:?}", ety, kty));
                 }
 
-                // can `kty` be restricted to strings known in compile time?
-                match kty.has_strings() {
-                    Some(&Strings::One(ref s)) =>
-                        if let Some(vty) = fields.get(s) {
-                            Ok(Some((**vty).clone()))
-                        } else {
-                            Ok(None)
-                        },
-                    /*
-                    Some(&Strings::Some(_)) => ...
-                    */
-                    _ => Ok(Some(TyInfo::from(T::Dynamic))),
-                }
-            }
-
-            Some(&Tables::Tuple(ref fields)) => {
-                if !kty.is_integral() {
-                    return Err(format!("tried to index {:?} with non-integer {:?}", ety, kty));
-                }
-
-                // can `kty` be restricted to integers known in compile time?
-                match kty.has_numbers() {
-                    Some(&Numbers::One(v)) =>
-                        if 0 <= v && (v as usize) < fields.len() {
-                            Ok(Some((*fields[v as usize]).clone()))
-                        } else {
-                            Err(format!("{:?} has no index {:?}", ety, v))
-                        },
-                    /*
-                    Some(&Numbers::Some(_)) => ...
-                    */
-                    _ => Ok(Some(TyInfo::from(T::Dynamic))),
+                // can `kty` be restricted to strings or integers known in compile time?
+                if let Some(s) = kty.as_string() {
+                    if let Some(vty) = fields.get(&s.into()) {
+                        Ok(Some((**vty).clone()))
+                    } else {
+                        Ok(None)
+                    }
+                } else if let Some(v) = kty.as_integer() {
+                    if let Some(vty) = fields.get(&v.into()) {
+                        Ok(Some((**vty).clone()))
+                    } else {
+                        Ok(None)
+                    }
+                } else {
+                    Ok(Some(TyInfo::from(T::Dynamic)))
                 }
             }
 
@@ -701,14 +685,16 @@ impl<'env> Checker<'env> {
             Ex::Table(ref fields) => {
                 let mut tab = Tables::Empty;
 
+                let mut len = 0;
                 for &(ref key, ref value) in fields {
-                    let kty;
-                    if let Some(ref key) = *key {
-                        let key = try!(self.visit_exp(key));;
-                        kty = Some(key.borrow().unlift().clone());
+                    let kty = if let Some(ref key) = *key {
+                        let key = try!(self.visit_exp(key));
+                        let key = key.borrow();
+                        key.unlift().clone().into_send()
                     } else {
-                        kty = None;
-                    }
+                        len += 1;
+                        T::int(len)
+                    };
                     let vty = try!(self.visit_exp(value));
                     let vty = vty.borrow().unlift().clone();
 

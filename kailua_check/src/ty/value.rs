@@ -1,12 +1,12 @@
 use std::fmt;
 use std::ops;
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use kailua_syntax::{K, Kind, Str, M};
 use diag::CheckResult;
 use super::{S, Slot, TypeContext, Lattice, Flags, Seq};
-use super::{Numbers, Strings, Tables, Function, Functions, Union, TVar, Builtin};
+use super::{Numbers, Strings, Key, Tables, Function, Functions, Union, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 
@@ -46,12 +46,14 @@ impl<'a> T<'a> {
         T::Strings(Cow::Owned(Strings::Some(i.into_iter().collect())))
     }
     pub fn tuple<'b, I: IntoIterator<Item=S<'b>>>(i: I) -> T<'a> {
-        let i = i.into_iter().map(|v| Box::new(Slot::new(v.into_send()))).collect();
-        T::Tables(Cow::Owned(Tables::Tuple(i)))
+        let i = i.into_iter().enumerate();
+        let fields = i.map(|(i,v)| ((i as i32 + 1).into(), Box::new(Slot::new(v.into_send()))));
+        T::Tables(Cow::Owned(Tables::Fields(fields.collect())))
     }
     pub fn record<'b, I: IntoIterator<Item=(Str,S<'b>)>>(i: I) -> T<'a> {
-        let i = i.into_iter().map(|(k,v)| (k, Box::new(Slot::new(v.into_send())))).collect();
-        T::Tables(Cow::Owned(Tables::Record(i)))
+        let i = i.into_iter();
+        let fields = i.map(|(k,v)| (k.into(), Box::new(Slot::new(v.into_send()))));
+        T::Tables(Cow::Owned(Tables::Fields(fields.collect())))
     }
     pub fn array(v: S) -> T<'a> {
         T::Tables(Cow::Owned(Tables::Array(Box::new(Slot::new(v.into_send())))))
@@ -88,21 +90,22 @@ impl<'a> T<'a> {
             K::Function          => T::Functions(Cow::Owned(Functions::All)),
 
             K::Record(ref fields) => {
-                let mut recfields = HashMap::new();
+                let mut newfields = BTreeMap::new();
                 for &(ref name, modf, ref kind) in fields {
                     let slot = slot_from_kind(modf, kind);
-                    recfields.insert(name.clone(), Box::new(slot));
+                    newfields.insert(name.into(), Box::new(slot));
                 }
-                T::Tables(Cow::Owned(Tables::Record(recfields)))
+                T::Tables(Cow::Owned(Tables::Fields(newfields)))
             }
 
             K::Tuple(ref fields) => {
-                let mut tupfields = Vec::new();
-                for &(modf, ref kind) in fields {
+                let mut newfields = BTreeMap::new();
+                for (i, &(modf, ref kind)) in fields.iter().enumerate() {
+                    let key = Key::Int(i as i32 + 1);
                     let slot = slot_from_kind(modf, kind);
-                    tupfields.push(Box::new(slot));
+                    newfields.insert(key, Box::new(slot));
                 }
-                T::Tables(Cow::Owned(Tables::Tuple(tupfields)))
+                T::Tables(Cow::Owned(Tables::Fields(newfields)))
             },
 
             K::Array(m, ref v) => {
@@ -270,6 +273,38 @@ impl<'a> T<'a> {
 
     pub fn into_base(self) -> T<'a> {
         match self { T::Builtin(_, t) => *t, t => t }
+    }
+
+    pub fn as_string(&self) -> Option<&Str> {
+        // unlike flags, type variable should not be present
+        let strings = match *self {
+            T::Strings(ref str) => str.as_ref(),
+            T::Builtin(_, ref t) => return t.as_string(),
+            T::Union(ref u) if u.flags() == T_STRING && u.tvar.is_none() =>
+                u.strings.as_ref().unwrap(),
+            _ => return None,
+        };
+        match *strings {
+            Strings::One(ref s) => Some(s),
+            Strings::Some(ref set) if set.len() == 1 => Some(set.iter().next().unwrap()),
+            _ => None,
+        }
+    }
+
+    pub fn as_integer(&self) -> Option<i32> {
+        // unlike flags, type variable should not be present
+        let numbers = match *self {
+            T::Numbers(ref num) => num.as_ref(),
+            T::Builtin(_, ref t) => return t.as_integer(),
+            T::Union(ref u) if u.flags() == T_INTEGER && u.tvar.is_none() =>
+                u.numbers.as_ref().unwrap(),
+            _ => return None,
+        };
+        match *numbers {
+            Numbers::One(v) => Some(v),
+            Numbers::Some(ref set) if set.len() == 1 => Some(*set.iter().next().unwrap()),
+            _ => None,
+        }
     }
 
     pub fn into_send(self) -> T<'static> {
@@ -710,9 +745,9 @@ mod tests {
                                     quux=just(T::array(just(T::Dynamic)))]));
         check!(T::record(hash![foo=just(T::int(3)), bar=just(T::number())]),
                T::map(T::string(), just(T::integer()));
-               T::table()); // records, tuples and arrays/maps are considered distinct
+               T::map(T::string(), just(T::number())));
         check!(T::array(just(T::integer())), T::tuple(vec![just(T::string())]);
-               T::table()); // ditto
+               T::map(T::integer(), just(T::integer() | T::string())));
         check!(T::map(T::str(s("wat")), just(T::integer())),
                T::map(T::string(), just(T::int(42)));
                T::map(T::string(), just(T::integer())));
@@ -735,6 +770,11 @@ mod tests {
 
     #[test]
     fn test_sub() {
+        assert_eq!(T::record(hash![foo=just(T::int(3)), bar=just(T::integer())]).assert_sub(
+                       &T::map(T::str(s("foo")) | T::str(s("bar")), just(T::number())),
+                       &mut ()),
+                   Ok(()));
+
         let mut ctx = Context::new();
 
         {
