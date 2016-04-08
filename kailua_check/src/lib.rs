@@ -233,4 +233,18 @@ fn test_check() {
                        = {} -- XXX parser bug
                  a[1] = 42
                  a.what = 54");
+    /*
+    assert_ok!("local a --: {[number] = number}
+                      = {} -- XXX parser bug
+                a[1] = 42
+                a[3] = 54
+                a[1] = nil
+                local z = a[3] --: var integer?");
+    assert_err!("local a --: {[number] = number}
+                       = {} -- XXX parser bug
+                 a[1] = 42
+                 a[3] = 54
+                 a[1] = nil
+                 local z = a[3] --: var integer");
+    */
 }

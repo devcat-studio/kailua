@@ -71,6 +71,19 @@ impl<'a> S<'a> {
         }
     }
 
+    // used for value slots in array and mapping types
+    pub fn without_nil(self) -> S<'a> {
+        match self {
+            S::Any                  => S::Any,
+            S::Just(t)              => S::Just(t.without_nil()),
+            S::Const(t)             => S::Const(t.without_nil()),
+            S::Var(t)               => S::Var(t.without_nil()),
+            S::Currently(t)         => S::Currently(t.without_nil()),
+            S::VarOrConst(t, m)     => S::VarOrConst(t.without_nil(), m),
+            S::VarOrCurrently(t, m) => S::VarOrCurrently(t.without_nil(), m),
+        }
+    }
+
     pub fn into_send(self) -> S<'static> {
         match self {
             S::Any                  => S::Any,
@@ -308,6 +321,11 @@ impl Slot {
 
     pub fn borrow<'a>(&'a self) -> Ref<'a, S<'static>> { self.0.borrow() }
     pub fn borrow_mut<'a>(&'a mut self) -> RefMut<'a, S<'static>> { self.0.borrow_mut() }
+
+    pub fn without_nil(&self) -> Slot {
+        let s = self.0.borrow();
+        Slot::new(s.clone().into_send().without_nil())
+    }
 
     pub fn weaken(&self, ctx: &mut TypeContext) -> CheckResult<Slot> {
         let s = self.0.borrow();

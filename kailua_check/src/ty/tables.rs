@@ -1,10 +1,11 @@
 use std::fmt;
 use std::borrow::ToOwned;
 use std::collections::BTreeMap;
+use std::ops::Deref;
 
 use kailua_syntax::Str;
 use diag::CheckResult;
-use super::{T, Ty, Slot, TypeContext, Lattice};
+use super::{T, Ty, S, Slot, TypeContext, Lattice};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 
@@ -39,20 +40,79 @@ impl fmt::Debug for Key {
     }
 }
 
+// Array and Map values should NOT contain nil,
+// since there are always keys that do not map to the value of that type
+// and indexing always results in the value type plus nil.
+// in order to normalize this use case we (implicitly) add nils as soon as
+// it is assigned to Array and Map values.
+// internally the slot itself does not have nils.
+#[derive(Clone, PartialEq)]
+pub struct SlotWithNil { slot: Slot }
+
+impl SlotWithNil {
+    pub fn from_slot(s: Slot) -> SlotWithNil {
+        SlotWithNil { slot: s.without_nil() }
+    }
+
+    pub fn new<'a>(s: S<'a>) -> SlotWithNil {
+        SlotWithNil { slot: Slot::new(s.into_send().without_nil()) }
+    }
+
+    pub fn from<'a>(t: T<'a>) -> SlotWithNil {
+        SlotWithNil { slot: Slot::from(t.into_send().without_nil()) }
+    }
+}
+
+impl Deref for SlotWithNil {
+    type Target = Slot;
+    fn deref(&self) -> &Slot { &self.slot }
+}
+
+impl Lattice for SlotWithNil {
+    type Output = SlotWithNil;
+    fn normalize(self) -> SlotWithNil {
+        // normalization cannot introduce nils, hopefully
+        SlotWithNil { slot: self.slot.normalize() }
+    }
+    fn union(&self, other: &SlotWithNil, ctx: &mut TypeContext) -> SlotWithNil {
+        // union cannot introduce nils
+        SlotWithNil { slot: self.slot.union(&other.slot, ctx) }
+    }
+    fn assert_sub(&self, other: &SlotWithNil, ctx: &mut TypeContext) -> CheckResult<()> {
+        // since both self and other have been canonicalized
+        self.slot.assert_sub(&other.slot, ctx)
+    }
+    fn assert_eq(&self, other: &SlotWithNil, ctx: &mut TypeContext) -> CheckResult<()> {
+        // since both self and other have been canonicalized
+        self.slot.assert_eq(&other.slot, ctx)
+    }
+}
+
+impl fmt::Debug for SlotWithNil {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Debug::fmt(&self.slot, f) }
+}
+
 #[derive(Clone)]
 pub enum Tables {
     Empty,
+
     // tuples and records
     Fields(BTreeMap<Key, Box<Slot>>),
+
     // does not appear naturally (indistinguishable from Map from integers)
     // determined only from the function usages, e.g. table.insert
-    Array(Box<Slot>), // shared (non-linear) slots only
-    Map(Ty, Box<Slot>), // shared (non-linear) slots only
+    Array(Box<SlotWithNil>), // shared (non-linear) slots only
+
+    Map(Ty, Box<SlotWithNil>), // shared (non-linear) slots only
+
+    // ---
+
     All,
 }
 
+// note: implicitly removes nil as well
 fn lift_fields_to_map(fields: &BTreeMap<Key, Box<Slot>>, ctx: &mut TypeContext)
-                    -> (T<'static>, Slot) {
+                    -> (T<'static>, SlotWithNil) {
     let mut hasint = false;
     let mut hasstr = false;
     let mut value = Slot::just(T::None);
@@ -67,7 +127,7 @@ fn lift_fields_to_map(fields: &BTreeMap<Key, Box<Slot>>, ctx: &mut TypeContext)
         (true, false) => T::integer(),
         (true, true) => T::integer() | T::string(),
     };
-    (key, value)
+    (key, SlotWithNil::from_slot(value))
 }
 
 impl Tables {
@@ -106,7 +166,7 @@ impl Tables {
 
             (None, Tables::Empty) => {
                 // promote Empty to Map
-                Tables::Map(Box::new(key), Box::new(Slot::just(value)))
+                Tables::Map(Box::new(key), Box::new(SlotWithNil::from(value)))
             }
 
             (Some(litkey), Tables::Fields(mut fields)) => {
@@ -119,7 +179,7 @@ impl Tables {
             (_, tab) => match tab.lift_to_map(ctx) {
                 Tables::Map(key_, value_) => {
                     let key = key.union(&*key_, ctx);
-                    let value = Slot::just(value).union(&*value_, ctx);
+                    let value = SlotWithNil::from_slot(Slot::just(value).union(&*value_, ctx));
                     Tables::Map(Box::new(key), Box::new(value))
                 },
                 tab => tab,
@@ -150,7 +210,7 @@ impl Lattice for Tables {
             },
 
             Tables::Empty => Some(Tables::Empty),
-            Tables::Array(v) => Some(Tables::Array(v.normalize())),
+            Tables::Array(v) => Some(Tables::Array(Box::new((*v).normalize()))),
             Tables::Map(k, v) => Some(Tables::Map(k.normalize(), Box::new((*v).normalize()))),
             Tables::All => Some(Tables::All),
         }

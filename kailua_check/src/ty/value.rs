@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use kailua_syntax::{K, Kind, Str, M};
 use diag::CheckResult;
-use super::{S, Slot, TypeContext, Lattice, Flags, Seq};
+use super::{S, Slot, SlotWithNil, TypeContext, Lattice, Flags, Seq};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Union, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
@@ -56,11 +56,11 @@ impl<'a> T<'a> {
         T::Tables(Cow::Owned(Tables::Fields(fields.collect())))
     }
     pub fn array(v: S) -> T<'a> {
-        T::Tables(Cow::Owned(Tables::Array(Box::new(Slot::new(v.into_send())))))
+        T::Tables(Cow::Owned(Tables::Array(Box::new(SlotWithNil::new(v.into_send())))))
     }
     pub fn map(k: T, v: S) -> T<'a> {
         T::Tables(Cow::Owned(Tables::Map(Box::new(k.into_send()),
-                                         Box::new(Slot::new(v.into_send())))))
+                                         Box::new(SlotWithNil::new(v.into_send())))))
     }
 
     pub fn from(kind: &K) -> T<'a> {
@@ -109,12 +109,12 @@ impl<'a> T<'a> {
             },
 
             K::Array(m, ref v) => {
-                let slot = slot_from_kind(m, v);
+                let slot = SlotWithNil::from_slot(slot_from_kind(m, v));
                 T::Tables(Cow::Owned(Tables::Array(Box::new(slot))))
             },
 
             K::Map(ref k, m, ref v) => {
-                let slot = slot_from_kind(m, v);
+                let slot = SlotWithNil::from_slot(slot_from_kind(m, v));
                 T::Tables(Cow::Owned(Tables::Map(Box::new(T::from(k)), Box::new(slot))))
             },
 
@@ -188,6 +188,36 @@ impl<'a> T<'a> {
         }
     }
 
+    // used for value slots in array and mapping types
+    pub fn to_ref_without_nil<'b: 'a>(&'b self) -> T<'b> {
+        match *self {
+            T::Nil => T::None,
+            T::Union(ref u) if u.has_nil => {
+                let mut u = u.clone().into_owned();
+                u.has_nil = false;
+                u.simplify()
+            },
+            _ => self.to_ref(),
+        }
+    }
+
+    // used for value slots in array and mapping types
+    pub fn without_nil(self) -> T<'a> {
+        match self {
+            T::Nil => T::None,
+            T::Union(u) => {
+                if u.has_nil {
+                    let mut u = u.into_owned();
+                    u.has_nil = false;
+                    u.simplify()
+                } else {
+                    T::Union(u)
+                }
+            },
+            t => t,
+        }
+    }
+
     pub fn is_dynamic(&self)  -> bool { self.flags().is_dynamic() }
     pub fn is_integral(&self) -> bool { self.flags().is_integral() }
     pub fn is_numeric(&self)  -> bool { self.flags().is_numeric() }
@@ -199,6 +229,15 @@ impl<'a> T<'a> {
 
     // XXX for now
     pub fn is_referential(&self) -> bool { self.flags().is_tabular() }
+
+    pub fn has_nil(&self) -> bool {
+        match *self {
+            T::Nil => true,
+            T::Builtin(_, ref t) => t.has_nil(),
+            T::Union(ref u) => u.has_nil,
+            _ => false,
+        }
+    }
 
     pub fn has_true(&self) -> bool {
         match *self {
@@ -764,8 +803,8 @@ mod tests {
                T::string() | T::ints(vec![3, 4, 5]) | T::Nil);
         check!(T::int(3) | T::string(), T::str(s("wat")) | T::int(4);
                T::ints(vec![3, 4]) | T::string());
-        //assert_eq!(T::map(T::string(), just(T::integer())),
-        //           T::map(T::string(), just(T::integer() | T::Nil)));
+        assert_eq!(T::map(T::string(), just(T::integer())),
+                   T::map(T::string(), just(T::integer() | T::Nil)));
     }
 
     #[test]

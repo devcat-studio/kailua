@@ -2,7 +2,7 @@ use std::fmt;
 use diag::CheckResult;
 
 pub use self::literals::{Numbers, Strings};
-pub use self::tables::{Key, Tables};
+pub use self::tables::{Key, SlotWithNil, Tables};
 pub use self::functions::{Function, Functions};
 pub use self::union::Union;
 pub use self::value::{T, Ty};

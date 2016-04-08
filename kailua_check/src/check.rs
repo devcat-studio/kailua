@@ -289,7 +289,7 @@ impl<'env> Checker<'env> {
                     return Err(format!("tried to index {:?} with non-integer {:?}", ety, kty));
                 }
 
-                Ok(Some((**t).clone()))
+                Ok(Some((***t).clone()))
             }
 
             Some(&Tables::Map(ref k, ref v)) => {
@@ -298,7 +298,7 @@ impl<'env> Checker<'env> {
                 if *k == T::Dynamic {
                     Ok(Some(TyInfo::from(T::Dynamic)))
                 } else if *k == kty { // XXX redundant
-                    Ok(Some((**v).clone()))
+                    Ok(Some((***v).clone()))
                 } else {
                     Err(format!("tried to index {:?} with {:?}", ety, kty))
                 }
