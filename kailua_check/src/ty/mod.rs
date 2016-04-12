@@ -58,8 +58,11 @@ impl Mark {
     pub fn assert_imply(&self, other: Mark, ctx: &mut TypeContext) -> CheckResult<()> {
         ctx.assert_mark_imply(*self, other)
     }
-    pub fn assert_require(&self, base: &T, ty: &T, ctx: &mut TypeContext) -> CheckResult<()> {
-        ctx.assert_mark_require(*self, base, ty)
+    pub fn assert_require_eq(&self, base: &T, ty: &T, ctx: &mut TypeContext) -> CheckResult<()> {
+        ctx.assert_mark_require_eq(*self, base, ty)
+    }
+    pub fn assert_require_sup(&self, base: &T, ty: &T, ctx: &mut TypeContext) -> CheckResult<()> {
+        ctx.assert_mark_require_sup(*self, base, ty)
     }
 }
 
@@ -88,7 +91,8 @@ pub trait TypeContext {
     fn assert_mark_eq(&mut self, lhs: Mark, rhs: Mark) -> CheckResult<()>;
     fn assert_mark_imply(&mut self, lhs: Mark, rhs: Mark) -> CheckResult<()>;
     // base should be identical over the subsequent method calls for same mark
-    fn assert_mark_require(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()>;
+    fn assert_mark_require_eq(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()>;
+    fn assert_mark_require_sup(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()>;
 }
 
 pub trait Lattice<Other = Self> {
@@ -192,8 +196,12 @@ impl TypeContext for () {
     fn assert_mark_imply(&mut self, lhs: Mark, rhs: Mark) -> CheckResult<()> {
         panic!("assert_mark_imply({:?}, {:?}) is not supposed to be called here", lhs, rhs);
     }
-    fn assert_mark_require(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()> {
-        panic!("assert_mark_require({:?}, {:?}, {:?}) is not supposed to be called here",
+    fn assert_mark_require_eq(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()> {
+        panic!("assert_mark_require_eq({:?}, {:?}, {:?}) is not supposed to be called here",
+               mark, *base, *ty);
+    }
+    fn assert_mark_require_sup(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()> {
+        panic!("assert_mark_require_sup({:?}, {:?}, {:?}) is not supposed to be called here",
                mark, *base, *ty);
     }
 }

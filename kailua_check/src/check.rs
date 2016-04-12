@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, UnOp, BinOp, FuncScope, SelfParam};
 use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
-use ty::{T, Seq, Lattice, TypeContext, Tables, Function, S, Slot};
+use ty::{T, Seq, Lattice, TypeContext, Tables, Function, S, Slot, SlotWithNil};
 use ty::{Builtin, Flags};
 use ty::flags::*;
 use env::{TyInfo, Env, Frame, Scope, Context};
@@ -224,88 +224,133 @@ impl<'env> Checker<'env> {
         }
     }
 
-    // XXX consider moving to ty::slot
-    fn check_index(&mut self, ety0: &TyInfo, kty0: &TyInfo) -> CheckResult<Option<TyInfo>> {
+    fn check_index(&mut self, ety0: &TyInfo, kty0: &TyInfo,
+                   lval: bool) -> CheckResult<Option<TyInfo>> {
         let ety = ety0.borrow().unlift().clone();
         let kty = kty0.borrow().unlift().clone();
 
         if !self.get_type_bounds(&ety).1.is_tabular() {
             return Err(format!("tried to index the non-table {:?}", ety));
         }
+        if ety.has_tvar().is_some() {
+            return Err(format!("the type {:?} is tabular but not known enough to index", ety));
+        }
 
-        // the type can be indexed, try to find the resulting type out
-        // TODO complete the adaptation process
-        match ety.has_tables() {
-            Some(&Tables::Empty) => {
-                macro_rules! check {
-                    ($sub:expr) => {
-                        if let Err(e) = $sub {
-                            return Err(format!("tried to index an empty table {:?}: {}", ety, e));
-                        }
-                    }
+        macro_rules! check {
+            ($sub:expr) => {
+                if let Err(e) = $sub {
+                    return Err(format!("failed to index a table {:?}: {}", ety, e));
+                }
+            }
+        }
+
+        // if a new field is about to be created, generate a new type variable
+        // (as we don't know the value type yet)
+        // and try to adapt to a table containing that variable.
+        let new_slot = |context: &mut Context, linear: bool| {
+            let tvar = T::TVar(context.gen_tvar());
+            let slot = if linear {
+                S::VarOrCurrently(tvar, context.gen_mark())
+            } else {
+                S::Var(tvar)
+            };
+            TyInfo::new(slot)
+        };
+
+        // try fields first if the key is a string or integer determined in the compile time.
+        let litkey =
+            if let Some(key) = kty.as_integer() {
+                Some(key.into())
+            } else if let Some(key) = kty.as_string() {
+                Some(key.into())
+            } else {
+                None
+            };
+        if let Some(litkey) = litkey {
+            match (ety.has_tables(), lval) {
+                (Some(&Tables::Empty), true) => {
+                    let vslot = new_slot(self.context(), true);
+                    let fields = Some((litkey, vslot.clone())).into_iter().collect();
+                    let adapted = T::Tables(Cow::Owned(Tables::Fields(fields)));
+                    check!(ety0.accept(&TyInfo::from(adapted), self.context()));
+                    return Ok(Some(vslot));
                 }
 
-                // try to adapt the table
-                if kty.is_integral() {
-                    // this is probably an array.
-                    // generate a new type variable (as we don't know the value type yet)
-                    // and try to adapt to an array of that variable.
-                    let vvar = self.context().gen_tvar();
-                    check!(ety0.accept(&TyInfo::from(T::array(S::Just(T::TVar(vvar)))),
-                                       self.context()));
-                    check!(kty.assert_sub(&T::integer(), self.context()));
-                    Ok(Some(TyInfo::from(T::TVar(vvar))))
+                (Some(&Tables::Fields(ref fields)), true) => {
+                    let mut fields = fields.clone();
+                    let vslot = fields.entry(litkey)
+                                      .or_insert_with(|| new_slot(self.context(), true))
+                                      .clone();
+                    let adapted = T::Tables(Cow::Owned(Tables::Fields(fields)));
+                    check!(ety0.accept(&TyInfo::from(adapted), self.context()));
+                    return Ok(Some(vslot));
+                }
+
+                // while we cannot adapt the table, we can resolve the field
+                (Some(&Tables::Fields(ref fields)), false) => {
+                    return Ok(fields.get(&litkey).map(|s| (*s).clone()));
+                }
+
+                _ => {}
+            }
+        }
+
+        // try to adapt arrays and mappings otherwise.
+        // XXX this is severely limited right now, due to the difficulty of union with type vars
+        let intkey = self.get_type_bounds(&kty).1.is_integral();
+        match (ety.has_tables(), lval) {
+            // possible! this occurs when the ety was Dynamic.
+            (None, _) => Ok(Some(TyInfo::from(T::Dynamic))),
+
+            (Some(&Tables::Fields(..)), false) =>
+                Err(format!("cannot index {:?} with index {:?} that cannot be resolved \
+                             in compile time", ety, kty)),
+
+            (Some(&Tables::Empty), true) => {
+                let vslot = new_slot(self.context(), false);
+                let tab = if intkey {
+                    Tables::Array(SlotWithNil::from_slot(vslot.clone()))
                 } else {
-                    return Err(format!("tried to index an empty table {:?}", ety));
-                }
-            }
+                    Tables::Map(Box::new(kty.into_send()),
+                                SlotWithNil::from_slot(vslot.clone()))
+                };
+                let adapted = T::Tables(Cow::Owned(tab));
+                check!(ety0.accept(&TyInfo::from(adapted), self.context()));
+                Ok(Some(vslot))
+            },
 
-            Some(&Tables::Fields(ref fields)) => {
-                if !kty.is_stringy() && !kty.is_integral() {
-                    return Err(format!("tried to index {:?} with \
-                                        non-string/integer {:?}", ety, kty));
-                }
+            (Some(&Tables::Empty), false) => Ok(None),
 
-                // can `kty` be restricted to strings or integers known in compile time?
-                if let Some(s) = kty.as_string() {
-                    if let Some(vty) = fields.get(&s.into()) {
-                        Ok(Some((**vty).clone()))
-                    } else {
-                        Ok(None)
-                    }
-                } else if let Some(v) = kty.as_integer() {
-                    if let Some(vty) = fields.get(&v.into()) {
-                        Ok(Some((**vty).clone()))
-                    } else {
-                        Ok(None)
-                    }
+            (Some(&Tables::Array(ref value)), _) if intkey =>
+                Ok(Some((**value).clone())),
+
+            (Some(&Tables::Array(..)), false) =>
+                Err(format!("cannot index an array {:?} with a non-integral index {:?}", ety, kty)),
+
+            (Some(&Tables::Map(ref key, ref value)), false) => {
+                check!(kty.assert_sub(key, self.context()));
+                Ok(Some((**value).clone()))
+            },
+
+            (Some(&Tables::All), _) =>
+                Err(format!("cannot index {:?} without downcasting", ety)),
+
+            // Fields with no keys resolved in compile time, Array with non-integral keys, Map
+            (Some(tab), true) => {
+                // we cannot keep the specialized table type, lift and adapt to a mapping
+                let tab = tab.clone().lift_to_map(self.context());
+                let adapted = T::Tables(Cow::Owned(tab));
+                check!(ety0.accept(&TyInfo::from(adapted), self.context()));
+
+                // reborrow ety0 to check against the final mapping type
+                if let Some(&Tables::Map(ref key, ref value)) =
+                        ety0.borrow().unlift().has_tables() {
+                    check!(kty.assert_sub(key, self.context()));
+                    Ok(Some((**value).clone()))
                 } else {
-                    Ok(Some(TyInfo::from(T::Dynamic)))
+                    unreachable!()
                 }
             }
-
-            Some(&Tables::Array(ref t)) => {
-                if !kty.is_integral() {
-                    return Err(format!("tried to index {:?} with non-integer {:?}", ety, kty));
-                }
-
-                Ok(Some((***t).clone()))
-            }
-
-            Some(&Tables::Map(ref k, ref v)) => {
-                let k = &**k;
-                // XXX subtyping
-                if *k == T::Dynamic {
-                    Ok(Some(TyInfo::from(T::Dynamic)))
-                } else if *k == kty { // XXX redundant
-                    Ok(Some((***v).clone()))
-                } else {
-                    Err(format!("tried to index {:?} with {:?}", ety, kty))
-                }
-            }
-
-            // we don't know what ety is, but it should be partially possible to index it
-            _ => Ok(Some(TyInfo::from(T::Dynamic))),
         }
     }
 
@@ -644,7 +689,7 @@ impl<'env> Checker<'env> {
             Var::Index(ref e, ref key) => {
                 let ty = try!(self.visit_exp(e));
                 let kty = try!(self.visit_exp(key));
-                self.check_index(&ty, &kty)
+                self.check_index(&ty, &kty, true)
             },
         }
     }
@@ -759,7 +804,7 @@ impl<'env> Checker<'env> {
             Ex::Index(ref e, ref key) => {
                 let ty = try!(self.visit_exp(e));
                 let kty = try!(self.visit_exp(key));
-                if let Some(vinfo) = try!(self.check_index(&ty, &kty)) {
+                if let Some(vinfo) = try!(self.check_index(&ty, &kty, false)) {
                     Ok(vinfo)
                 } else {
                     Err(format!("cannot index {:?} with {:?}", ty, kty))

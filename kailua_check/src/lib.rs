@@ -78,8 +78,11 @@ fn test_check() {
     assert_ok!("local f = function() end
                 f = {54, 49}");
     assert_ok!("local f = function() end
-                --# assume f: table
+                --# assume f: {index = integer}
                 local p = f.index");
+    assert_err!("local f = function() end
+                 --# assume f: table
+                 local p = f.index");
     assert_ok!("local a = ('string' and 53) + 42");
     assert_err!("local a = (53 and 'string') + 42");
     assert_err!("local a = (nil and 'string') + 42");
@@ -97,9 +100,9 @@ fn test_check() {
     assert_ok!("local x
                 --# assume x: var 3
                 x = 3");
-    assert_err!("local x
-                 --# assume x: var 3 | 4
-                 x = 3");
+    assert_ok!("local x
+                --# assume x: var 3 | 4
+                x = 3");
     assert_err!("local x
                  --# assume x: var 4 | 5
                  x = 3");
@@ -173,7 +176,9 @@ fn test_check() {
                 local b = a.y
                 --# assume b: string");
     assert_err!("local a = { x = 3, y = 'foo' }
-                 local b = a.z");
+                 local b = a.z + 1"); // z should be nil
+    assert_err!("local a = { x = 3, y = 'foo' }
+                 local b = a.z .. 'bar'"); // ditto
     assert_ok!("local a = {}
                 a[1] = 1
                 a[2] = 2
@@ -223,28 +228,45 @@ fn test_check() {
                        = {} -- XXX parser bug
                  a[1] = 42
                  a[2] = 54");
-    /* XXX adaptation not yet implemented
+    assert_ok!("local a --: {}
+                      = {} -- XXX parser bug
+                a.what = 42");
     assert_ok!("local a --: {}
                       = {} -- XXX parser bug
                 a[1] = 42
                 a.what = 54");
-    */
-    assert_err!("local a --: {number}
+    assert_ok!("local a --: {number}
+                      = {} -- XXX parser bug
+                a[1] = 42
+                a.what = 54"); // {number} coerced to {[integer|string] = number} in the slot
+    assert_ok!("local a --: var {number}
+                      = {} -- XXX parser bug");
+    assert_err!("local a --: var {number}
                        = {} -- XXX parser bug
                  a[1] = 42
                  a.what = 54");
-    /*
-    assert_ok!("local a --: {[number] = number}
+    assert_ok!("local a --: var {[number] = number}
                       = {} -- XXX parser bug
                 a[1] = 42
                 a[3] = 54
                 a[1] = nil
-                local z = a[3] --: var integer?");
-    assert_err!("local a --: {[number] = number}
+                local z --: var number?
+                      = a[3] -- XXX parser bug");
+    assert_err!("local a --: var {[number] = number}
                        = {} -- XXX parser bug
                  a[1] = 42
                  a[3] = 54
                  a[1] = nil
-                 local z = a[3] --: var integer");
-    */
+                 local z --: var integer?
+                       = a[3] -- XXX parser bug");
+    assert_err!("local a --: var {[number] = number}
+                       = {} -- XXX parser bug
+                 a[1] = 42
+                 a[3] = 54
+                 a[1] = nil
+                 local z --: var integer
+                       = a[3] -- XXX parser bug");
+    assert_err!("local a --: const {[number] = number}
+                       = {} -- XXX parser bug
+                 a[1] = 42");
 }

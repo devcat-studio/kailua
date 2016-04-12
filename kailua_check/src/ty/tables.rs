@@ -97,13 +97,13 @@ pub enum Tables {
     Empty,
 
     // tuples and records
-    Fields(BTreeMap<Key, Box<Slot>>),
+    Fields(BTreeMap<Key, Slot>),
 
     // does not appear naturally (indistinguishable from Map from integers)
     // determined only from the function usages, e.g. table.insert
-    Array(Box<SlotWithNil>), // shared (non-linear) slots only
+    Array(SlotWithNil), // shared (non-linear) slots only
 
-    Map(Ty, Box<SlotWithNil>), // shared (non-linear) slots only
+    Map(Ty, SlotWithNil), // shared (non-linear) slots only
 
     // ---
 
@@ -111,7 +111,7 @@ pub enum Tables {
 }
 
 // note: implicitly removes nil as well
-fn lift_fields_to_map(fields: &BTreeMap<Key, Box<Slot>>, ctx: &mut TypeContext)
+fn lift_fields_to_map(fields: &BTreeMap<Key, Slot>, ctx: &mut TypeContext)
                     -> (T<'static>, SlotWithNil) {
     let mut hasint = false;
     let mut hasstr = false;
@@ -134,9 +134,8 @@ impl Tables {
     pub fn lift_to_map(self, ctx: &mut TypeContext) -> Tables {
         match self {
             Tables::Fields(fields) => {
-                if fields.is_empty() { return Tables::Empty; }
                 let (key, value) = lift_fields_to_map(&fields, ctx);
-                Tables::Map(Box::new(key), Box::new(value))
+                Tables::Map(Box::new(key), value)
             },
             Tables::Array(value) => Tables::Map(Box::new(T::integer()), value),
             tab => tab,
@@ -160,18 +159,18 @@ impl Tables {
             (Some(litkey), Tables::Empty) => {
                 // promote Empty to Fields
                 let mut fields = BTreeMap::new();
-                fields.insert(litkey, Box::new(Slot::just(value)));
+                fields.insert(litkey, Slot::just(value));
                 Tables::Fields(fields)
             }
 
             (None, Tables::Empty) => {
                 // promote Empty to Map
-                Tables::Map(Box::new(key), Box::new(SlotWithNil::from(value)))
+                Tables::Map(Box::new(key), SlotWithNil::from(value))
             }
 
             (Some(litkey), Tables::Fields(mut fields)) => {
                 // should override a duplicate field if any
-                fields.insert(litkey, Box::new(Slot::just(value)));
+                fields.insert(litkey, Slot::just(value));
                 Tables::Fields(fields)
             }
 
@@ -180,7 +179,7 @@ impl Tables {
                 Tables::Map(key_, value_) => {
                     let key = key.union(&*key_, ctx);
                     let value = SlotWithNil::from_slot(Slot::just(value).union(&*value_, ctx));
-                    Tables::Map(Box::new(key), Box::new(value))
+                    Tables::Map(Box::new(key), value)
                 },
                 tab => tab,
             }
@@ -196,7 +195,7 @@ impl Lattice for Tables {
             Tables::Fields(fields) => {
                 if fields.is_empty() { return Some(Tables::Empty); }
 
-                let norm_kv = |(k, v): (Key, Box<Slot>)| {
+                let norm_kv = |(k, v): (Key, Slot)| {
                     let v = v.normalize();
                     let flags = v.borrow().unlift().flags();
                     if flags == T_NONE { None } else { Some((k, v)) }
@@ -210,8 +209,8 @@ impl Lattice for Tables {
             },
 
             Tables::Empty => Some(Tables::Empty),
-            Tables::Array(v) => Some(Tables::Array(Box::new((*v).normalize()))),
-            Tables::Map(k, v) => Some(Tables::Map(k.normalize(), Box::new((*v).normalize()))),
+            Tables::Array(v) => Some(Tables::Array(v.normalize())),
+            Tables::Map(k, v) => Some(Tables::Map(k.normalize(), v.normalize())),
             Tables::All => Some(Tables::All),
         }
     }
@@ -229,34 +228,31 @@ impl Lattice for Tables {
                     if let Some(v1) = fields1.remove(&k) {
                         fields.insert(k, v1.union(v2, ctx));
                     } else {
-                        fields.insert(k, Box::new(Slot::just(T::Nil).union(&v2, ctx)));
+                        fields.insert(k, Slot::just(T::Nil).union(&v2, ctx));
                     }
                 }
                 for (k, v1) in fields1 {
-                    fields.insert(k.clone(), Box::new(Slot::just(T::Nil).union(&v1, ctx)));
+                    fields.insert(k.clone(), Slot::just(T::Nil).union(&v1, ctx));
                 }
                 Tables::Fields(fields)
             },
 
             (&Tables::Fields(ref fields), &Tables::Empty) |
             (&Tables::Empty, &Tables::Fields(ref fields)) => {
-                let add_nil = |(k,s): (&Key, &Box<Slot>)|
-                    (k.clone(), Box::new(Slot::just(T::Nil).union(s, ctx)));
+                let add_nil = |(k,s): (&Key, &Slot)| (k.clone(), Slot::just(T::Nil).union(s, ctx));
                 Tables::Fields(fields.iter().map(add_nil).collect())
             },
 
             (&Tables::Fields(ref fields), &Tables::Array(ref value)) |
             (&Tables::Array(ref value), &Tables::Fields(ref fields)) => {
                 let (fkey, fvalue) = lift_fields_to_map(fields, ctx);
-                Tables::Map(Box::new(fkey.union(&T::integer(), ctx)),
-                            Box::new(fvalue.union(value, ctx)))
+                Tables::Map(Box::new(fkey.union(&T::integer(), ctx)), fvalue.union(value, ctx))
             },
 
             (&Tables::Fields(ref fields), &Tables::Map(ref key, ref value)) |
             (&Tables::Map(ref key, ref value), &Tables::Fields(ref fields)) => {
                 let (fkey, fvalue) = lift_fields_to_map(fields, ctx);
-                Tables::Map(Box::new(fkey.union(key, ctx)),
-                            Box::new(fvalue.union(value, ctx)))
+                Tables::Map(Box::new(fkey.union(key, ctx)), fvalue.union(value, ctx))
             },
 
             (&Tables::Empty, tab) => tab.clone(),
@@ -290,7 +286,7 @@ impl Lattice for Tables {
             (&Tables::Fields(ref a), &Tables::Fields(ref b)) => {
                 for (k, av) in a {
                     if let Some(ref bv) = b.get(k) {
-                        try!((**av).assert_sub(bv, ctx));
+                        try!((*av).assert_sub(bv, ctx));
                     } else {
                         return error_not_sub(self, other);
                     }
@@ -301,7 +297,7 @@ impl Lattice for Tables {
             (&Tables::Fields(ref fields), &Tables::Map(ref key, ref value)) => {
                 for (k, v) in fields {
                     try!(k.clone().into_type().assert_sub(key, ctx));
-                    try!((**v).assert_sub(value, ctx));
+                    try!((*v).assert_sub(value, ctx));
                 }
                 true
             },
@@ -404,6 +400,10 @@ impl fmt::Debug for Tables {
                     }
                     if first { first = false; } else { try!(write!(f, ", ")); }
                     try!(write!(f, "{:?} = {:?}", *name, *t));
+                }
+                // put an additional comma if there is a single numeric field (i.e. `{var T,}`)
+                if nextlen == 2 && fields.len() == 1 {
+                    try!(write!(f, ","));
                 }
                 write!(f, "}}")
             }

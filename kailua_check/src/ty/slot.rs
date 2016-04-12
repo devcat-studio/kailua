@@ -133,7 +133,7 @@ impl<'a> S<'a> {
             (&mut S::Var(ref a), &mut S::Just(ref b)) |
             (&mut S::Just(ref a), &mut S::Var(ref b)) => {
                 let m = ctx.gen_mark();
-                assert_eq!(ctx.assert_mark_require(m, a, b), Ok(())); // can't fail
+                assert_eq!(ctx.assert_mark_require_eq(m, a, b), Ok(())); // can't fail
                 S::VarOrConst(a.union(b, ctx), m)
             }
 
@@ -166,12 +166,12 @@ impl<'a> S<'a> {
              $(; false, $fm:expr)*
              $(; eq, $em1:expr, $em2:expr)*
              $(; imply, $im1:expr, $im2:expr)*
-             $(; require, $rm:expr, $rt1:expr, $rt2:expr)*) => ({
+             $(; require_eq, $rm:expr, $rt1:expr, $rt2:expr)*) => ({
                 $(try!($tm.assert_true(ctx));)*
                 $(try!($fm.assert_false(ctx));)*
                 $(try!($em1.assert_eq($em2, ctx));)*
                 $(try!($im1.assert_imply($im2, ctx));)*
-                $(try!($rm.assert_require($rt1, $rt2, ctx));)*
+                $(try!($rm.assert_require_eq($rt1, $rt2, ctx));)*
             });
 
             ($a:ident <: $b:ident $($t:tt)*) => ({ try!($a.assert_sub($b, ctx)); m!($($t)*) });
@@ -202,9 +202,9 @@ impl<'a> S<'a> {
             (&S::Const(ref a), &S::VarOrConst(ref b, bm)) => m!(a <: b; false, bm),
             (&S::Var(ref a), &S::VarOrConst(ref b, bm)) => m!(a <: b; false, bm),
             (&S::VarOrConst(ref a, am), &S::VarOrConst(ref b, bm)) =>
-                m!(a <: b; imply, bm, am; require, bm, b, a),
+                m!(a <: b; imply, bm, am; require_eq, bm, b, a),
             (&S::VarOrCurrently(ref a, am), &S::VarOrConst(ref b, bm)) =>
-                m!(a <: b; true, am; require, bm, b, a),
+                m!(a <: b; true, am; require_eq, bm, b, a),
 
             (&S::Just(ref a), &S::VarOrCurrently(ref b, _)) => m!(a <: b),
             (&S::Var(ref a), &S::VarOrCurrently(ref b, bm)) => m!(a = b; true, bm),
@@ -359,9 +359,9 @@ impl Slot {
                 return Err(format!("impossible to assign {:?} to {:?}", rty, lty));
             }
 
-            // as long as the type is same, Var can be assigned
+            // as long as the type is in agreement, Var can be assigned
             (S::Var(s), t) => {
-                try!(s.assert_eq(t.unlift(), ctx));
+                try!(t.unlift().assert_sub(&s, ctx));
                 (S::Var(s), t)
             }
 
@@ -380,7 +380,7 @@ impl Slot {
             // assigning to VarOrConst asserts the mark and makes it Var
             (S::VarOrConst(s, m), t) => {
                 try!(m.assert_true(ctx));
-                try!(s.assert_eq(t.unlift(), ctx));
+                try!(t.unlift().assert_sub(&s, ctx));
                 (S::Var(s), t)
             }
 
@@ -393,7 +393,7 @@ impl Slot {
                 } else {
                     let t_ = t.unlift().clone();
                     let m = ctx.gen_mark(); // the prior mark had an incompatible base type
-                    try!(m.assert_require(&s, &t_, ctx));
+                    try!(m.assert_require_sup(&s, &t_, ctx));
                     (S::VarOrCurrently(t_, m), t)
                 }
             }

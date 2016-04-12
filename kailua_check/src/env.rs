@@ -230,24 +230,32 @@ impl Constraints {
     }
 }
 
+#[derive(Copy, Clone)]
+enum Rel { Eq, Sup }
+
 struct MarkDeps {
     // this mark implies the following mark
     follows: Option<Mark>,
     // the preceding mark implies this mark
     precedes: Option<Mark>,
-    // this mark requires all those types to be equal
+    // constraints over types for this mark to be true
     // the first type is considered the base type and should be associated to this mark forever
-    eq_types: Option<(T<'static>, Vec<T<'static>>)>,
+    constraints: Option<(T<'static>, Vec<(Rel, T<'static>)>)>,
 }
 
 impl MarkDeps {
     fn new() -> MarkDeps {
-        MarkDeps { follows: None, precedes: None, eq_types: None }
+        MarkDeps { follows: None, precedes: None, constraints: None }
     }
 
     fn assert_true(self, ctx: &mut TypeContext) -> CheckResult<()> {
-        if let Some((ref base, ref others)) = self.eq_types {
-            for other in others { try!(base.assert_eq(other, ctx)); }
+        if let Some((ref base, ref others)) = self.constraints {
+            for &(rel, ref other) in others {
+                match rel {
+                    Rel::Eq => try!(base.assert_eq(other, ctx)),
+                    Rel::Sup => try!(other.assert_sub(base, ctx)),
+                }
+            }
         }
         if let Some(follows) = self.follows {
             try!(ctx.assert_mark_true(follows));
@@ -264,7 +272,7 @@ impl MarkDeps {
 
     fn merge(self, other: MarkDeps, ctx: &mut TypeContext) -> CheckResult<MarkDeps> {
         // while technically possible, the base type should be equal for the simplicity.
-        let eq_types = match (self.eq_types, other.eq_types) {
+        let constraints = match (self.constraints, other.constraints) {
             (None, None) => None,
             (None, Some(r)) => Some(r),
             (Some(l), None) => Some(l),
@@ -284,7 +292,7 @@ impl MarkDeps {
 
         let follows = merge_marks(self.follows, other.follows);
         let precedes = merge_marks(self.precedes, other.precedes);
-        Ok(MarkDeps { follows: follows, precedes: precedes, eq_types: eq_types })
+        Ok(MarkDeps { follows: follows, precedes: precedes, constraints: constraints })
     }
 }
 
@@ -390,6 +398,44 @@ impl Context {
             assert_eq!(lb & !ub, T_NONE);
             (lb, ub)
         }
+    }
+
+    // used by assert_mark_require_{eq,sup}
+    fn assert_mark_require(&mut self, mark: Mark, base: &T, rel: Rel, ty: &T) -> CheckResult<()> {
+        let mark_ = self.mark_infos.find(mark.0 as usize);
+
+        let mut value = {
+            let info = self.mark_infos.entry(mark_).or_insert_with(|| Partition::create(mark_, 0));
+            mem::replace(&mut info.value, MarkValue::Invalid)
+        };
+
+        let ret = (|value: &mut MarkValue| {
+            match *value {
+                MarkValue::Invalid => panic!("self-recursive mark resolution"),
+                MarkValue::True => match rel {
+                    Rel::Eq => base.assert_eq(ty, self),
+                    Rel::Sup => ty.assert_sub(base, self),
+                },
+                MarkValue::False => Ok(()),
+                MarkValue::Unknown(ref mut deps) => {
+                    if deps.is_none() { *deps = Some(Box::new(MarkDeps::new())); }
+                    let deps = deps.as_mut().unwrap();
+
+                    // XXX probably we can test if `base (rel) ty` this early with a wrapped context
+                    if let Some(ref mut constraints) = deps.constraints {
+                        try!(base.assert_eq(&mut constraints.0, self));
+                        constraints.1.push((rel, ty.clone().into_send()));
+                    } else {
+                        deps.constraints = Some((base.clone().into_send(),
+                                                 vec![(rel, ty.clone().into_send())]));
+                    }
+                    Ok(())
+                }
+            }
+        })(&mut value);
+
+        self.mark_infos.get_mut(&mark_).unwrap().value = value;
+        ret
     }
 }
 
@@ -703,40 +749,14 @@ impl TypeContext for Context {
         Ok(())
     }
 
-    fn assert_mark_require(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()> {
+    fn assert_mark_require_eq(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()> {
         println!("asserting {:?} requires {:?} = {:?}", mark, *base, *ty);
+        self.assert_mark_require(mark, base, Rel::Eq, ty)
+    }
 
-        let mark_ = self.mark_infos.find(mark.0 as usize);
-
-        let mut value = {
-            let info = self.mark_infos.entry(mark_).or_insert_with(|| Partition::create(mark_, 0));
-            mem::replace(&mut info.value, MarkValue::Invalid)
-        };
-
-        let ret = (|value: &mut MarkValue| {
-            match *value {
-                MarkValue::Invalid => panic!("self-recursive mark resolution"),
-                MarkValue::True => base.assert_eq(ty, self),
-                MarkValue::False => Ok(()),
-                MarkValue::Unknown(ref mut deps) => {
-                    if deps.is_none() { *deps = Some(Box::new(MarkDeps::new())); }
-                    let deps = deps.as_mut().unwrap();
-
-                    // XXX probably we can test if `base = ty` this early with a wrapped context
-                    if let Some(ref mut eq_types) = deps.eq_types {
-                        try!(base.assert_eq(&mut eq_types.0, self));
-                        eq_types.1.push(ty.clone().into_send());
-                    } else {
-                        deps.eq_types = Some((base.clone().into_send(),
-                                              vec![ty.clone().into_send()]));
-                    }
-                    Ok(())
-                }
-            }
-        })(&mut value);
-
-        self.mark_infos.get_mut(&mark_).unwrap().value = value;
-        ret
+    fn assert_mark_require_sup(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()> {
+        println!("asserting {:?} requires {:?} :> {:?}", mark, *base, *ty);
+        self.assert_mark_require(mark, base, Rel::Sup, ty)
     }
 }
 

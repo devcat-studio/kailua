@@ -47,20 +47,20 @@ impl<'a> T<'a> {
     }
     pub fn tuple<'b, I: IntoIterator<Item=S<'b>>>(i: I) -> T<'a> {
         let i = i.into_iter().enumerate();
-        let fields = i.map(|(i,v)| ((i as i32 + 1).into(), Box::new(Slot::new(v.into_send()))));
+        let fields = i.map(|(i,v)| ((i as i32 + 1).into(), Slot::new(v.into_send())));
         T::Tables(Cow::Owned(Tables::Fields(fields.collect())))
     }
     pub fn record<'b, I: IntoIterator<Item=(Str,S<'b>)>>(i: I) -> T<'a> {
         let i = i.into_iter();
-        let fields = i.map(|(k,v)| (k.into(), Box::new(Slot::new(v.into_send()))));
+        let fields = i.map(|(k,v)| (k.into(), Slot::new(v.into_send())));
         T::Tables(Cow::Owned(Tables::Fields(fields.collect())))
     }
     pub fn array(v: S) -> T<'a> {
-        T::Tables(Cow::Owned(Tables::Array(Box::new(SlotWithNil::new(v.into_send())))))
+        T::Tables(Cow::Owned(Tables::Array(SlotWithNil::new(v.into_send()))))
     }
     pub fn map(k: T, v: S) -> T<'a> {
         T::Tables(Cow::Owned(Tables::Map(Box::new(k.into_send()),
-                                         Box::new(SlotWithNil::new(v.into_send())))))
+                                         SlotWithNil::new(v.into_send()))))
     }
 
     pub fn from(kind: &K) -> T<'a> {
@@ -93,7 +93,7 @@ impl<'a> T<'a> {
                 let mut newfields = BTreeMap::new();
                 for &(ref name, modf, ref kind) in fields {
                     let slot = slot_from_kind(modf, kind);
-                    newfields.insert(name.into(), Box::new(slot));
+                    newfields.insert(name.into(), slot);
                 }
                 T::Tables(Cow::Owned(Tables::Fields(newfields)))
             }
@@ -103,19 +103,19 @@ impl<'a> T<'a> {
                 for (i, &(modf, ref kind)) in fields.iter().enumerate() {
                     let key = Key::Int(i as i32 + 1);
                     let slot = slot_from_kind(modf, kind);
-                    newfields.insert(key, Box::new(slot));
+                    newfields.insert(key, slot);
                 }
                 T::Tables(Cow::Owned(Tables::Fields(newfields)))
             },
 
             K::Array(m, ref v) => {
                 let slot = SlotWithNil::from_slot(slot_from_kind(m, v));
-                T::Tables(Cow::Owned(Tables::Array(Box::new(slot))))
+                T::Tables(Cow::Owned(Tables::Array(slot)))
             },
 
             K::Map(ref k, m, ref v) => {
                 let slot = SlotWithNil::from_slot(slot_from_kind(m, v));
-                T::Tables(Cow::Owned(Tables::Map(Box::new(T::from(k)), Box::new(slot))))
+                T::Tables(Cow::Owned(Tables::Map(Box::new(T::from(k)), slot)))
             },
 
             K::Func(ref funcs) => {
