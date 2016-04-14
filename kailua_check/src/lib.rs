@@ -269,4 +269,12 @@ fn test_check() {
     assert_err!("local a --: const {[number] = number}
                        = {} -- XXX parser bug
                  a[1] = 42");
+    assert_ok!("--v () -> {a=integer}
+                local function p() return {a=4} end
+                local x = p().a + 5");
+    assert_err!("--v () -> {a=integer}
+                 local function p() return {a=4} end
+                 local x = p().a.b");
+    assert_ok!("local function p() return {a=4} end
+                local x = p().a + 5");
 }

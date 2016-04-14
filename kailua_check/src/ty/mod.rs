@@ -262,7 +262,9 @@ impl<T> Seq<T> {
 }
 
 impl<T: Lattice + fmt::Debug> Seq<T> {
-    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    pub fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+        println!("asserting a constraint {:?} <: {:?}", *self, *other);
+
         let mut selfhead = self.head.iter();
         let mut otherhead = other.head.iter();
         let selftail = self.tail.as_ref();
@@ -284,7 +286,9 @@ impl<T: Lattice + fmt::Debug> Seq<T> {
         }
     }
 
-    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    pub fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+        println!("asserting a constraint {:?} = {:?}", *self, *other);
+
         let mut selfhead = self.head.iter();
         let mut otherhead = other.head.iter();
         let selftail = self.tail.as_ref();

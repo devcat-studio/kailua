@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, UnOp, BinOp, FuncScope, SelfParam};
 use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
-use ty::{T, Seq, Lattice, TypeContext, Tables, Function, S, Slot, SlotWithNil};
+use ty::{T, Seq, Lattice, TypeContext, Tables, Function, Functions, S, Slot, SlotWithNil};
 use ty::{Builtin, Flags};
 use ty::flags::*;
 use env::{TyInfo, Env, Frame, Scope, Context};
@@ -58,10 +58,30 @@ impl<'env> Checker<'env> {
         self.env.context()
     }
 
+    // returns a pair of type flags that is an exact lower and upper bound for that type
+    // used as an approximate type bound testing like arithmetics;
+    // better be replaced with a non-instantiating assertion though.
     fn get_type_bounds(&self, ty: &T) -> (Flags, Flags) {
         let flags = ty.flags();
         let (lb, ub) = ty.has_tvar().map_or((T_NONE, T_NONE), |v| self.env.get_tvar_bounds(v));
         (flags | lb, flags | ub)
+    }
+
+    // exactly resolves the type variable inside `ty` if possible
+    // this is a requirement for table indexing and function calls
+    fn resolve_exact_type<'a>(&mut self, ty: &T<'a>) -> Option<T<'a>> {
+        match ty.split_tvar() {
+            (None, None) => unreachable!(),
+            (None, Some(t)) => Some(t),
+            (Some(tv), None) => self.env.get_tvar_exact_type(tv),
+            (Some(tv), Some(t)) => {
+                if let Some(t_) = self.env.get_tvar_exact_type(tv) {
+                    Some(t.union(&t_, self.env.context()))
+                } else {
+                    None
+                }
+            }
+        }
     }
 
     fn scoped<'chk>(&'chk mut self, scope: Scope) -> ScopedChecker<'chk, 'env> {
@@ -232,9 +252,11 @@ impl<'env> Checker<'env> {
         if !self.get_type_bounds(&ety).1.is_tabular() {
             return Err(format!("tried to index the non-table {:?}", ety));
         }
-        if ety.has_tvar().is_some() {
+        let ety = if let Some(ety) = self.resolve_exact_type(&ety) {
+            ety
+        } else {
             return Err(format!("the type {:?} is tabular but not known enough to index", ety));
-        }
+        };
 
         macro_rules! check {
             ($sub:expr) => {
@@ -591,8 +613,17 @@ impl<'env> Checker<'env> {
                 if tys.len() == 1 { // XXX temporary
                     let slot = tys[0].borrow();
                     let ty = slot.unlift();
-                    let returns = self.env.get_frame().returns.clone(); // XXX redundant
-                    try!(ty.assert_sub(&returns, self.context()));
+                    let (returns, returns_exact) = {
+                        let frame = self.env.get_frame();
+                        (frame.returns.clone(), frame.returns_exact) // XXX redundant
+                    };
+                    if returns_exact {
+                        try!(ty.assert_sub(&returns, self.context()));
+                    } else {
+                        // need to infer the return type
+                        let returns = (*returns).union(&ty, self.context());
+                        self.env.get_frame_mut().returns = Box::new(returns);
+                    }
                 }
                 Ok(Exit::Return)
             }
@@ -636,8 +667,19 @@ impl<'env> Checker<'env> {
         } else {
             vainfo = None;
         }
-        let retv = self.context().gen_tvar();
-        let frame = Frame { vararg: vainfo, returns: Box::new(T::TVar(retv)) };
+
+        // we accumulate all known return types inside the frame
+        // then checks if it matches with the `returns`.
+        //
+        // TODO the exception should be made to the recursive usage;
+        // we probably need to put a type variable that is later equated to the actual returns
+        let frame = if sig.returns.len() == 1 {
+            Frame { vararg: vainfo, returns: Box::new(T::from(&sig.returns[0])),
+                    returns_exact: true }
+        } else {
+            Frame { vararg: vainfo, returns: Box::new(T::None),
+                    returns_exact: false }
+        };
 
         let mut scope = self.scoped(Scope::new_function(frame));
         if let Some(selfinfo) = selfinfo {
@@ -663,14 +705,13 @@ impl<'env> Checker<'env> {
             args.head.push(Box::new(ty));
         }
 
-        let returns = Seq::from(Box::new(T::TVar(retv))); // XXX multiple returns
-        assert!(sig.returns.len() <= 1, "multiple returns not supported yet");
-        if sig.returns.len() == 1 {
-            T::TVar(retv).assert_sub(&T::from(&sig.returns[0]), scope.context()).unwrap();
+        if let Exit::None = try!(scope.visit_block(block)) {
+            // the last statement is an implicit return
+            try!(scope.visit_stmt(&St::Return(Vec::new())));
         }
 
-        try!(scope.visit_block(block));
-
+        // XXX multiple returns
+        let returns = Seq::from(scope.env.get_frame().returns.clone());
         Ok(TyInfo::from(T::func(Function { args: args, returns: returns })))
     }
 
@@ -753,21 +794,56 @@ impl<'env> Checker<'env> {
 
             Ex::FuncCall(ref func, ref args) => {
                 let funcinfo = try!(self.visit_exp(func));
+
                 let funcinfo = funcinfo.borrow();
                 let funcinfo = funcinfo.unlift();
+                if !self.get_type_bounds(&funcinfo).1.is_callable() {
+                    return Err(format!("tried to index the non-function {:?}", funcinfo));
+                }
+                if funcinfo.is_dynamic() {
+                    return Ok(TyInfo::from(T::Dynamic));
+                }
+                let funcinfo = if let Some(ty) = self.resolve_exact_type(&funcinfo) {
+                    ty
+                } else {
+                    return Err(format!("the type {:?} is callable but not known enough to call",
+                                       funcinfo));
+                };
+
+                macro_rules! check {
+                    ($sub:expr) => {
+                        if let Err(e) = $sub {
+                            return Err(format!("failed to call {:?}: {}", funcinfo, e));
+                        }
+                    }
+                }
 
                 let mut argtys = Seq::new();
                 for arg in args {
                     let argty = try!(self.visit_exp(arg));
                     argtys.head.push(Box::new(argty.borrow().unlift().clone().into_send()));
                 }
-                let retv = self.context().gen_tvar();
-                let rettys = Seq::from(Box::new(T::TVar(retv)));
-                let functy = T::func(Function { args: argtys, returns: rettys });
 
-                if let Err(e) = funcinfo.assert_sub(&functy, self.context()) {
-                    return Err(format!("failed to call {:?}: {}", funcinfo, e));
-                }
+                // check if funcinfo.args :> argtys
+                let returns = match *funcinfo.has_functions().unwrap() {
+                    Functions::Simple(ref func) => {
+                        check!(argtys.assert_sub(&func.args, self.context()));
+                        func.returns.clone()
+                    }
+                    Functions::Multi(ref _funcs) => unimplemented!(), // XXX
+                    Functions::All => {
+                        return Err(format!("cannot call {:?} without downcasting", funcinfo));
+                    }
+                };
+
+                // TODO for now, downcast `returns` to a single type
+                let returns = if !returns.head.is_empty() {
+                    (*returns.head[0]).clone()
+                } else if let Some(ref tail) = returns.tail {
+                    (**tail).clone()
+                } else {
+                    T::Nil
+                };
 
                 match funcinfo.builtin() {
                     // require("foo")
@@ -785,7 +861,7 @@ impl<'env> Checker<'env> {
                         Ok(TyInfo::from(T::Dynamic)) // XXX
                     },
 
-                    _ => Ok(TyInfo::from(T::TVar(retv))),
+                    _ => Ok(TyInfo::from(returns)),
                 }
             },
 

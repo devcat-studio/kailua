@@ -14,6 +14,7 @@ pub type TyInfo = Slot;
 pub struct Frame {
     pub vararg: Option<TyInfo>,
     pub returns: Ty,
+    pub returns_exact: bool, // if false, returns can be updated
 }
 
 pub struct Scope {
@@ -373,7 +374,8 @@ impl Context {
         };
 
         // it is fine to return from the top-level, so we treat it as like a function frame
-        let global_frame = Frame { vararg: None, returns: Box::new(T::TVar(TVar(0))) };
+        let global_frame = Frame { vararg: None, returns: Box::new(T::None),
+                                   returns_exact: false };
         ctx.global_scope.frame = Some(global_frame);
         ctx
     }
@@ -398,6 +400,10 @@ impl Context {
             assert_eq!(lb & !ub, T_NONE);
             (lb, ub)
         }
+    }
+
+    pub fn get_tvar_exact_type(&self, tvar: TVar) -> Option<T<'static>> {
+        self.tvar_eq.get_bound(tvar).and_then(|b| b.bound.as_ref()).map(|t| t.clone().into_send())
     }
 
     // used by assert_mark_require_{eq,sup}
@@ -899,6 +905,10 @@ impl<'ctx> Env<'ctx> {
 
     pub fn get_tvar_bounds(&self, tvar: TVar) -> (Flags /*lb*/, Flags /*ub*/) {
         self.context.get_tvar_bounds(tvar)
+    }
+
+    pub fn get_tvar_exact_type(&self, tvar: TVar) -> Option<T<'static>> {
+        self.context.get_tvar_exact_type(tvar)
     }
 }
 

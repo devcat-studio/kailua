@@ -302,6 +302,22 @@ impl<'a> T<'a> {
         }
     }
 
+    pub fn split_tvar(&self) -> (Option<TVar>, Option<T<'a>>) {
+        match *self {
+            T::TVar(tv) => (Some(tv), None),
+            T::Union(ref u) => {
+                if let Some(tv) = u.tvar {
+                    let mut u = u.clone().into_owned();
+                    u.tvar = None;
+                    (Some(tv), Some(u.simplify()))
+                } else {
+                    (None, Some(T::Union(u.clone())))
+                }
+            },
+            _ => (None, Some(self.clone())),
+        }
+    }
+
     pub fn builtin(&self) -> Option<Builtin> {
         match *self { T::Builtin(b, _) => Some(b), _ => None }
     }
