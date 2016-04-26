@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use kailua_syntax::{K, Kind, Str, M};
 use diag::CheckResult;
-use super::{S, Slot, SlotWithNil, TypeContext, Lattice, Flags, Seq};
+use super::{S, Slot, SlotWithNil, TypeContext, Lattice, Flags, TySeq};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Union, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
@@ -124,8 +124,8 @@ impl<'a> T<'a> {
                     let args = func.args.iter().map(|k| Box::new(T::from(k))).collect();
                     let argstail = if func.variadic { Some(Box::new(T::Dynamic)) } else { None };
                     let returns = func.returns.iter().map(|k| Box::new(T::from(k))).collect();
-                    let fty = Function { args: Seq { head: args, tail: argstail },
-                                         returns: Seq { head: returns, tail: None } };
+                    let fty = Function { args: TySeq { head: args, tail: argstail },
+                                         returns: TySeq { head: returns, tail: None } };
                     ftys.push(fty);
                 }
                 if ftys.len() == 1 {

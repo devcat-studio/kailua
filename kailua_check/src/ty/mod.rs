@@ -2,11 +2,13 @@ use std::fmt;
 use diag::CheckResult;
 
 pub use self::literals::{Numbers, Strings};
-pub use self::tables::{Key, SlotWithNil, Tables};
+pub use self::tables::{Key, Tables};
 pub use self::functions::{Function, Functions};
 pub use self::union::Union;
 pub use self::value::{T, Ty};
 pub use self::slot::{S, Slot};
+pub use self::with_nil::{TyWithNil, SlotWithNil};
+pub use self::seq::{TySeq, TySeqIter, SlotSeq, SlotSeqIter};
 pub use self::builtin::Builtin;
 
 mod literals;
@@ -15,6 +17,8 @@ mod functions;
 mod union;
 mod value;
 mod slot;
+mod with_nil;
+mod seq;
 mod builtin;
 
 fn error_not_bottom<T: fmt::Debug>(t: T) -> CheckResult<()> {
@@ -242,89 +246,6 @@ impl Lattice for TVar {
 
     fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         ctx.assert_tvar_eq_tvar(*self, *other)
-    }
-}
-
-#[derive(Clone, PartialEq)]
-pub struct Seq<T> {
-    pub head: Vec<T>,
-    pub tail: Option<T>,
-}
-
-impl<T> Seq<T> {
-    pub fn new() -> Seq<T> {
-        Seq { head: Vec::new(), tail: None }
-    }
-
-    pub fn from(t: T) -> Seq<T> {
-        Seq { head: vec![t], tail: None }
-    }
-}
-
-impl<T: Lattice + fmt::Debug> Seq<T> {
-    pub fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
-        println!("asserting a constraint {:?} <: {:?}", *self, *other);
-
-        let mut selfhead = self.head.iter();
-        let mut otherhead = other.head.iter();
-        let selftail = self.tail.as_ref();
-        let othertail = other.tail.as_ref();
-
-        loop {
-            match (selfhead.next(), otherhead.next(), selftail, othertail) {
-                (Some(a), Some(b), _, _) => try!(a.assert_sub(b, ctx)),
-                (Some(a), None, _, Some(b)) => try!(a.assert_sub(b, ctx)),
-                (Some(a), None, _, None) => return error_not_bottom(a),
-                (None, Some(b), Some(a), _) => try!(a.assert_sub(b, ctx)),
-                (None, Some(_), None, _) => {},
-
-                // terminal conditions
-                (None, None, Some(a), Some(b)) => return a.assert_sub(b, ctx),
-                (None, None, Some(a), None) => return error_not_bottom(a),
-                (None, None, None, _) => return Ok(()),
-            }
-        }
-    }
-
-    pub fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
-        println!("asserting a constraint {:?} = {:?}", *self, *other);
-
-        let mut selfhead = self.head.iter();
-        let mut otherhead = other.head.iter();
-        let selftail = self.tail.as_ref();
-        let othertail = other.tail.as_ref();
-
-        loop {
-            match (selfhead.next(), otherhead.next(), selftail, othertail) {
-                (Some(a), Some(b), _, _) => try!(a.assert_eq(b, ctx)),
-                (Some(a), None, _, Some(b)) => try!(a.assert_eq(b, ctx)),
-                (Some(a), None, _, None) => return error_not_bottom(a),
-                (None, Some(b), Some(a), _) => try!(a.assert_eq(b, ctx)),
-                (None, Some(b), None, _) => return error_not_bottom(b),
-
-                // terminal conditions
-                (None, None, Some(a), Some(b)) => return a.assert_eq(b, ctx),
-                (None, None, Some(a), None) => return error_not_bottom(a),
-                (None, None, None, Some(b)) => return error_not_bottom(b),
-                (None, None, None, None) => return Ok(()),
-            }
-        }
-    }
-}
-
-impl<T: fmt::Debug> fmt::Debug for Seq<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "("));
-        let mut first = true;
-        for t in &self.head {
-            if first { first = false; } else { try!(write!(f, ", ")); }
-            try!(write!(f, "{:?}", t));
-        }
-        if let Some(ref t) = self.tail {
-            if !first { try!(write!(f, ", ")); }
-            try!(write!(f, ", {:?}...", t));
-        }
-        write!(f, ")")
     }
 }
 

@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, UnOp, BinOp, FuncScope, SelfParam};
 use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
-use ty::{T, Seq, Lattice, TypeContext, Tables, Function, Functions, S, Slot, SlotWithNil};
+use ty::{T, TySeq, Lattice, TypeContext, Tables, Function, Functions, S, Slot, SlotWithNil};
 use ty::{Builtin, Flags};
 use ty::flags::*;
 use env::{TyInfo, Env, Frame, Scope, Context};
@@ -686,7 +686,7 @@ impl<'env> Checker<'env> {
             scope.env.add_local_var(&Name::from(&b"self"[..]), selfinfo, true);
         }
 
-        let mut args = Seq::new();
+        let mut args = TySeq::new();
         for param in &sig.args {
             let ty;
             let sty;
@@ -711,7 +711,7 @@ impl<'env> Checker<'env> {
         }
 
         // XXX multiple returns
-        let returns = Seq::from(scope.env.get_frame().returns.clone());
+        let returns = TySeq::from((*scope.env.get_frame().returns).clone());
         Ok(TyInfo::from(T::func(Function { args: args, returns: returns })))
     }
 
@@ -818,7 +818,7 @@ impl<'env> Checker<'env> {
                     }
                 }
 
-                let mut argtys = Seq::new();
+                let mut argtys = TySeq::new();
                 for arg in args {
                     let argty = try!(self.visit_exp(arg));
                     argtys.head.push(Box::new(argty.borrow().unlift().clone().into_send()));
@@ -837,13 +837,7 @@ impl<'env> Checker<'env> {
                 };
 
                 // TODO for now, downcast `returns` to a single type
-                let returns = if !returns.head.is_empty() {
-                    (*returns.head[0]).clone()
-                } else if let Some(ref tail) = returns.tail {
-                    (**tail).clone()
-                } else {
-                    T::Nil
-                };
+                let returns = *returns.into_first();
 
                 match funcinfo.builtin() {
                     // require("foo")

@@ -1,13 +1,13 @@
 use std::fmt;
 
 use diag::CheckResult;
-use super::{Ty, Seq, TypeContext, Lattice};
+use super::{TySeq, TypeContext, Lattice};
 use super::{error_not_sub, error_not_eq};
 
 #[derive(Clone, PartialEq)]
 pub struct Function {
-    pub args: Seq<Ty>,
-    pub returns: Seq<Ty>,
+    pub args: TySeq,
+    pub returns: TySeq,
 }
 
 impl Function {

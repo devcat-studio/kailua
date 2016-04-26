@@ -1,0 +1,96 @@
+use std::fmt;
+use std::ops::Deref;
+use diag::CheckResult;
+use super::{T, S, Slot, Lattice, TypeContext};
+
+// Array and Map values should NOT contain nil,
+// since there are always keys that do not map to the value of that type
+// and indexing always results in the value type plus nil.
+// in order to normalize this use case we (implicitly) add nils as soon as
+// it is assigned to Array and Map values.
+// internally the slot itself does not have nils.
+
+#[derive(Clone, PartialEq)]
+pub struct TyWithNil { ty: T<'static> }
+
+impl TyWithNil {
+    pub fn from<'a>(t: T<'a>) -> TyWithNil {
+        TyWithNil { ty: t.into_send().without_nil() }
+    }
+}
+
+impl Deref for TyWithNil {
+    type Target = T<'static>;
+    fn deref(&self) -> &T<'static> { &self.ty }
+}
+
+impl Lattice for TyWithNil {
+    type Output = TyWithNil;
+    fn normalize(self) -> TyWithNil {
+        // normalization cannot introduce nils, hopefully
+        TyWithNil { ty: self.ty.normalize() }
+    }
+    fn union(&self, other: &TyWithNil, ctx: &mut TypeContext) -> TyWithNil {
+        // union cannot introduce nils
+        TyWithNil { ty: self.ty.union(&other.ty, ctx) }
+    }
+    fn assert_sub(&self, other: &TyWithNil, ctx: &mut TypeContext) -> CheckResult<()> {
+        // since both self and other have been canonicalized
+        self.ty.assert_sub(&other.ty, ctx)
+    }
+    fn assert_eq(&self, other: &TyWithNil, ctx: &mut TypeContext) -> CheckResult<()> {
+        // since both self and other have been canonicalized
+        self.ty.assert_eq(&other.ty, ctx)
+    }
+}
+
+impl fmt::Debug for TyWithNil {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Debug::fmt(&self.ty, f) }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct SlotWithNil { slot: Slot }
+
+impl SlotWithNil {
+    pub fn from_slot(s: Slot) -> SlotWithNil {
+        SlotWithNil { slot: s.without_nil() }
+    }
+
+    pub fn new<'a>(s: S<'a>) -> SlotWithNil {
+        SlotWithNil { slot: Slot::new(s.into_send().without_nil()) }
+    }
+
+    pub fn from<'a>(t: T<'a>) -> SlotWithNil {
+        SlotWithNil { slot: Slot::from(t.into_send().without_nil()) }
+    }
+}
+
+impl Deref for SlotWithNil {
+    type Target = Slot;
+    fn deref(&self) -> &Slot { &self.slot }
+}
+
+impl Lattice for SlotWithNil {
+    type Output = SlotWithNil;
+    fn normalize(self) -> SlotWithNil {
+        // normalization cannot introduce nils, hopefully
+        SlotWithNil { slot: self.slot.normalize() }
+    }
+    fn union(&self, other: &SlotWithNil, ctx: &mut TypeContext) -> SlotWithNil {
+        // union cannot introduce nils
+        SlotWithNil { slot: self.slot.union(&other.slot, ctx) }
+    }
+    fn assert_sub(&self, other: &SlotWithNil, ctx: &mut TypeContext) -> CheckResult<()> {
+        // since both self and other have been canonicalized
+        self.slot.assert_sub(&other.slot, ctx)
+    }
+    fn assert_eq(&self, other: &SlotWithNil, ctx: &mut TypeContext) -> CheckResult<()> {
+        // since both self and other have been canonicalized
+        self.slot.assert_eq(&other.slot, ctx)
+    }
+}
+
+impl fmt::Debug for SlotWithNil {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { fmt::Debug::fmt(&self.slot, f) }
+}
+
