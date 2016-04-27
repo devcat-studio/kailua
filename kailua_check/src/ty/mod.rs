@@ -1,4 +1,5 @@
 use std::fmt;
+use std::borrow::Borrow;
 use diag::CheckResult;
 
 pub use self::literals::{Numbers, Strings};
@@ -101,20 +102,27 @@ pub trait TypeContext {
 
 pub trait Lattice<Other = Self> {
     type Output;
-    fn normalize(self) -> Self::Output;
-    fn union(&self, other: &Other, ctx: &mut TypeContext) -> Self::Output;
-    fn assert_sub(&self, other: &Other, ctx: &mut TypeContext) -> CheckResult<()>;
-    fn assert_eq(&self, other: &Other, ctx: &mut TypeContext) -> CheckResult<()>;
+
+    fn do_union(&self, other: &Other, ctx: &mut TypeContext) -> Self::Output;
+    fn do_assert_sub(&self, other: &Other, ctx: &mut TypeContext) -> CheckResult<()>;
+    fn do_assert_eq(&self, other: &Other, ctx: &mut TypeContext) -> CheckResult<()>;
+
+    // convenience methods
+    fn union<T: Borrow<Other>>(&self, other: &T, ctx: &mut TypeContext) -> Self::Output {
+        self.do_union(other.borrow(), ctx)
+    }
+    fn assert_sub<T: Borrow<Other>>(&self, other: &T, ctx: &mut TypeContext) -> CheckResult<()> {
+        self.do_assert_sub(other.borrow(), ctx)
+    }
+    fn assert_eq<T: Borrow<Other>>(&self, other: &T, ctx: &mut TypeContext) -> CheckResult<()> {
+        self.do_assert_eq(other.borrow(), ctx)
+    }
 }
 
 impl<T: Lattice<Output=Option<T>> + fmt::Debug + Clone> Lattice for Option<T> {
     type Output = Option<T>;
 
-    fn normalize(self) -> Option<T> {
-        self.and_then(Lattice::normalize)
-    }
-
-    fn union(&self, other: &Option<T>, ctx: &mut TypeContext) -> Option<T> {
+    fn do_union(&self, other: &Option<T>, ctx: &mut TypeContext) -> Option<T> {
         match (self, other) {
             (&Some(ref a), &Some(ref b)) => a.union(b, ctx),
             (&Some(ref a), &None) => Some(a.clone()),
@@ -123,7 +131,7 @@ impl<T: Lattice<Output=Option<T>> + fmt::Debug + Clone> Lattice for Option<T> {
         }
     }
 
-    fn assert_sub(&self, other: &Option<T>, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_sub(&self, other: &Option<T>, ctx: &mut TypeContext) -> CheckResult<()> {
         match (self, other) {
             (&Some(ref a), &Some(ref b)) => a.assert_sub(b, ctx),
             (&Some(ref a), &None) => error_not_bottom(a),
@@ -131,33 +139,13 @@ impl<T: Lattice<Output=Option<T>> + fmt::Debug + Clone> Lattice for Option<T> {
         }
     }
 
-    fn assert_eq(&self, other: &Option<T>, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_eq(&self, other: &Option<T>, ctx: &mut TypeContext) -> CheckResult<()> {
         match (self, other) {
             (&Some(ref a), &Some(ref b)) => a.assert_eq(b, ctx),
             (&Some(ref a), &None) => error_not_bottom(a),
             (&None, &Some(ref b)) => error_not_bottom(b),
             (&None, &None) => Ok(())
         }
-    }
-}
-
-impl<Left: Lattice<Right, Output=Output>, Right, Output> Lattice<Box<Right>> for Box<Left> {
-    type Output = Box<Output>;
-
-    fn normalize(self) -> Box<Output> {
-        Box::new((*self).normalize())
-    }
-
-    fn union(&self, other: &Box<Right>, ctx: &mut TypeContext) -> Box<Output> {
-        Box::new((**self).union(&**other, ctx))
-    }
-
-    fn assert_sub(&self, other: &Box<Right>, ctx: &mut TypeContext) -> CheckResult<()> {
-        (**self).assert_sub(&**other, ctx)
-    }
-
-    fn assert_eq(&self, other: &Box<Right>, ctx: &mut TypeContext) -> CheckResult<()> {
-        (**self).assert_eq(&**other, ctx)
     }
 }
 
@@ -231,20 +219,18 @@ fn err_on_instantiation<T, F>(ctx: &mut TypeContext, f: F) -> CheckResult<T>
 impl Lattice for TVar {
     type Output = TVar;
 
-    fn normalize(self) -> Self { self }
-
-    fn union(&self, other: &Self, ctx: &mut TypeContext) -> Self {
+    fn do_union(&self, other: &Self, ctx: &mut TypeContext) -> Self {
         let u = ctx.gen_tvar();
         assert_eq!(ctx.assert_tvar_sub_tvar(*self, u), Ok(()));
         assert_eq!(ctx.assert_tvar_sub_tvar(*other, u), Ok(()));
         u
     }
 
-    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         ctx.assert_tvar_sub_tvar(*self, *other)
     }
 
-    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         ctx.assert_tvar_eq_tvar(*self, *other)
     }
 }

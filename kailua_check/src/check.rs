@@ -621,7 +621,7 @@ impl<'env> Checker<'env> {
                         try!(ty.assert_sub(&returns, self.context()));
                     } else {
                         // need to infer the return type
-                        let returns = (*returns).union(&ty, self.context());
+                        let returns = returns.union(&ty, self.context());
                         self.env.get_frame_mut().returns = Box::new(returns);
                     }
                 }

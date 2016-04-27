@@ -100,15 +100,7 @@ impl Union {
 impl Lattice for Union {
     type Output = Union;
 
-    fn normalize(mut self) -> Self {
-        self.numbers   = self.numbers.normalize();
-        self.strings   = self.strings.normalize();
-        self.tables    = self.tables.normalize();
-        self.functions = self.functions.normalize();
-        self
-    }
-
-    fn union(&self, other: &Union, ctx: &mut TypeContext) -> Union {
+    fn do_union(&self, other: &Union, ctx: &mut TypeContext) -> Union {
         let has_nil   = self.has_nil   | other.has_nil;
         let has_true  = self.has_true  | other.has_true;
         let has_false = self.has_false | other.has_false;
@@ -129,7 +121,7 @@ impl Lattice for Union {
         }
     }
 
-    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         if (self.has_nil && !other.has_nil) || (self.has_true && !other.has_true) ||
                                                (self.has_false && !other.has_false) {
             return error_not_sub(self, other);
@@ -159,7 +151,7 @@ impl Lattice for Union {
         }
     }
 
-    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         match (self.tvar, self.flags(), other.tvar, other.flags()) {
             (Some(a), T_NONE, Some(b), T_NONE) =>
                 return ctx.assert_tvar_eq_tvar(a, b),

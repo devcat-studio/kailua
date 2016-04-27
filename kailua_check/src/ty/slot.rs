@@ -96,18 +96,6 @@ impl<'a> S<'a> {
         }
     }
 
-    pub fn normalize(self) -> S<'static> {
-        match self {
-            S::Any                  => S::Any,
-            S::Just(t)              => S::Just(t.normalize()),
-            S::Const(t)             => S::Const(t.normalize()),
-            S::Var(t)               => S::Var(t.normalize()),
-            S::Currently(t)         => S::Currently(t.normalize()),
-            S::VarOrConst(t, m)     => S::VarOrConst(t.normalize(), m),
-            S::VarOrCurrently(t, m) => S::VarOrCurrently(t.normalize(), m),
-        }
-    }
-
     // self and other may be possibly different slots and being merged by union
     // (thus Currently cannot be merged, even if the type is identical)
     // mainly used by `and`/`or` operators and table lifting
@@ -410,11 +398,7 @@ impl Slot {
 impl Lattice for Slot {
     type Output = Slot;
 
-    fn normalize(self) -> Slot {
-        Slot::new(self.0.borrow().clone().normalize())
-    }
-
-    fn union(&self, other: &Slot, ctx: &mut TypeContext) -> Slot {
+    fn do_union(&self, other: &Slot, ctx: &mut TypeContext) -> Slot {
         // if self and other point to the same slot, do not try to borrow mutably
         if self.0.deref() as *const _ == other.0.deref() as *const _ { return self.clone(); }
 
@@ -422,11 +406,11 @@ impl Lattice for Slot {
         Slot::new(self.0.borrow_mut().union(&mut other.0.borrow_mut(), ctx))
     }
 
-    fn assert_sub(&self, other: &Slot, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_sub(&self, other: &Slot, ctx: &mut TypeContext) -> CheckResult<()> {
         self.0.borrow().assert_sub(&other.0.borrow(), ctx)
     }
 
-    fn assert_eq(&self, other: &Slot, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_eq(&self, other: &Slot, ctx: &mut TypeContext) -> CheckResult<()> {
         self.0.borrow().assert_eq(&other.0.borrow(), ctx)
     }
 }

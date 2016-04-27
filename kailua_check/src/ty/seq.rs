@@ -50,12 +50,7 @@ impl TySeq {
 impl Lattice for TySeq {
     type Output = TySeq;
 
-    fn normalize(self) -> TySeq {
-        TySeq { head: self.head.into_iter().map(Lattice::normalize).collect(),
-                tail: self.tail.map(Lattice::normalize) }
-    }
-
-    fn union(&self, other: &TySeq, ctx: &mut TypeContext) -> TySeq {
+    fn do_union(&self, other: &TySeq, ctx: &mut TypeContext) -> TySeq {
         let nil = T::Nil;
         let selftail = self.tail.as_ref().map_or(&nil, |t| &**t);
         let othertail = other.tail.as_ref().map_or(&nil, |t| &**t);
@@ -63,13 +58,13 @@ impl Lattice for TySeq {
         let mut head = Vec::new();
         let n = cmp::min(self.head.len(), other.head.len());
         for (l, r) in self.head[..n].iter().zip(other.head[..n].iter()) {
-            head.push(l.union(r, ctx));
+            head.push(Box::new(l.union(r, ctx)));
         }
         for l in &self.head[n..] {
-            head.push(Box::new((**l).union(othertail, ctx)));
+            head.push(Box::new(l.union(othertail, ctx)));
         }
         for r in &other.head[n..] {
-            head.push(Box::new(selftail.union(&*r, ctx)));
+            head.push(Box::new(selftail.union(r, ctx)));
         }
 
         let tail = if self.tail.is_some() || other.tail.is_some() {
@@ -81,7 +76,7 @@ impl Lattice for TySeq {
         TySeq { head: head, tail: tail }
     }
 
-    fn assert_sub(&self, other: &TySeq, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_sub(&self, other: &TySeq, ctx: &mut TypeContext) -> CheckResult<()> {
         println!("asserting a constraint {:?} <: {:?}", *self, *other);
 
         let mut selfhead = self.head.iter().fuse();
@@ -92,14 +87,14 @@ impl Lattice for TySeq {
         loop {
             match (selfhead.next(), otherhead.next()) {
                 (Some(a), Some(b)) => try!(a.assert_sub(b, ctx)),
-                (Some(a), None) => try!((**a).assert_sub(othertail, ctx)),
-                (None, Some(b)) => try!(selftail.assert_sub(&*b, ctx)),
+                (Some(a), None) => try!(a.assert_sub(othertail, ctx)),
+                (None, Some(b)) => try!(selftail.assert_sub(b, ctx)),
                 (None, None) => return selftail.assert_sub(othertail, ctx),
             }
         }
     }
 
-    fn assert_eq(&self, other: &TySeq, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_eq(&self, other: &TySeq, ctx: &mut TypeContext) -> CheckResult<()> {
         println!("asserting a constraint {:?} = {:?}", *self, *other);
 
         let mut selfhead = self.head.iter().fuse();
@@ -110,8 +105,8 @@ impl Lattice for TySeq {
         loop {
             match (selfhead.next(), otherhead.next()) {
                 (Some(a), Some(b)) => try!(a.assert_eq(b, ctx)),
-                (Some(a), None) => try!((**a).assert_eq(othertail, ctx)),
-                (None, Some(b)) => try!(selftail.assert_eq(&*b, ctx)),
+                (Some(a), None) => try!(a.assert_eq(othertail, ctx)),
+                (None, Some(b)) => try!(selftail.assert_eq(b, ctx)),
                 (None, None) => return selftail.assert_eq(othertail, ctx),
             }
         }
@@ -197,7 +192,7 @@ impl SlotSeq {
             match (selfhead.next(), otherhead.next()) {
                 (Some(a), Some(b)) => try!(a.assert_sub(b, ctx)),
                 (Some(a), None) => try!(a.assert_sub(othertail, ctx)),
-                (None, Some(b)) => try!(selftail.assert_sub(&b, ctx)),
+                (None, Some(b)) => try!(selftail.assert_sub(b, ctx)),
                 (None, None) => return selftail.assert_sub(othertail, ctx),
             }
         }
@@ -215,7 +210,7 @@ impl SlotSeq {
             match (selfhead.next(), otherhead.next()) {
                 (Some(a), Some(b)) => try!(a.assert_eq(b, ctx)),
                 (Some(a), None) => try!(a.assert_eq(othertail, ctx)),
-                (None, Some(b)) => try!(selftail.assert_eq(&b, ctx)),
+                (None, Some(b)) => try!(selftail.assert_eq(b, ctx)),
                 (None, None) => return selftail.assert_eq(othertail, ctx),
             }
         }

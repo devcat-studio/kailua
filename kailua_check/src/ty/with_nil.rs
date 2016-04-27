@@ -26,19 +26,15 @@ impl Deref for TyWithNil {
 
 impl Lattice for TyWithNil {
     type Output = TyWithNil;
-    fn normalize(self) -> TyWithNil {
-        // normalization cannot introduce nils, hopefully
-        TyWithNil { ty: self.ty.normalize() }
-    }
-    fn union(&self, other: &TyWithNil, ctx: &mut TypeContext) -> TyWithNil {
+    fn do_union(&self, other: &TyWithNil, ctx: &mut TypeContext) -> TyWithNil {
         // union cannot introduce nils
         TyWithNil { ty: self.ty.union(&other.ty, ctx) }
     }
-    fn assert_sub(&self, other: &TyWithNil, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_sub(&self, other: &TyWithNil, ctx: &mut TypeContext) -> CheckResult<()> {
         // since both self and other have been canonicalized
         self.ty.assert_sub(&other.ty, ctx)
     }
-    fn assert_eq(&self, other: &TyWithNil, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_eq(&self, other: &TyWithNil, ctx: &mut TypeContext) -> CheckResult<()> {
         // since both self and other have been canonicalized
         self.ty.assert_eq(&other.ty, ctx)
     }
@@ -72,19 +68,15 @@ impl Deref for SlotWithNil {
 
 impl Lattice for SlotWithNil {
     type Output = SlotWithNil;
-    fn normalize(self) -> SlotWithNil {
-        // normalization cannot introduce nils, hopefully
-        SlotWithNil { slot: self.slot.normalize() }
-    }
-    fn union(&self, other: &SlotWithNil, ctx: &mut TypeContext) -> SlotWithNil {
+    fn do_union(&self, other: &SlotWithNil, ctx: &mut TypeContext) -> SlotWithNil {
         // union cannot introduce nils
         SlotWithNil { slot: self.slot.union(&other.slot, ctx) }
     }
-    fn assert_sub(&self, other: &SlotWithNil, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_sub(&self, other: &SlotWithNil, ctx: &mut TypeContext) -> CheckResult<()> {
         // since both self and other have been canonicalized
         self.slot.assert_sub(&other.slot, ctx)
     }
-    fn assert_eq(&self, other: &SlotWithNil, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_eq(&self, other: &SlotWithNil, ctx: &mut TypeContext) -> CheckResult<()> {
         // since both self and other have been canonicalized
         self.slot.assert_eq(&other.slot, ctx)
     }

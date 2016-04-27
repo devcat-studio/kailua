@@ -45,19 +45,7 @@ pub enum Functions {
 impl Lattice for Functions {
     type Output = Option<Functions>;
 
-    fn normalize(self) -> Option<Functions> {
-        if let Functions::Multi(set) = self {
-            match set.len() {
-                0 => None,
-                1 => Some(Functions::Simple(set.into_iter().next().unwrap())),
-                _ => Some(Functions::Multi(set)),
-            }
-        } else {
-            Some(self)
-        }
-    }
-
-    fn union(&self, other: &Functions, _: &mut TypeContext) -> Option<Functions> {
+    fn do_union(&self, other: &Functions, _: &mut TypeContext) -> Option<Functions> {
         match (self, other) {
             (&Functions::All, _) => Some(Functions::All),
             (_, &Functions::All) => Some(Functions::All),
@@ -70,7 +58,7 @@ impl Lattice for Functions {
         }
     }
 
-    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Functions::All, _) => false,
             (_, &Functions::All) => true,
@@ -97,7 +85,7 @@ impl Lattice for Functions {
         if ok { Ok(()) } else { error_not_sub(self, other) }
     }
 
-    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         match (self, other) {
             (&Functions::All, &Functions::All) => Ok(()),
             (&Functions::Simple(ref a), &Functions::Simple(ref b)) => a.assert_eq(b, ctx),

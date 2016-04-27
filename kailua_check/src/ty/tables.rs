@@ -6,7 +6,6 @@ use kailua_syntax::Str;
 use diag::CheckResult;
 use super::{T, Ty, Slot, SlotWithNil, TypeContext, Lattice};
 use super::{error_not_sub, error_not_eq};
-use super::flags::*;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Key {
@@ -124,7 +123,7 @@ impl Tables {
             // fall back to the map when in doubt
             (_, tab) => match tab.lift_to_map(ctx) {
                 Tables::Map(key_, value_) => {
-                    let key = key.union(&*key_, ctx);
+                    let key = key.union(&key_, ctx);
                     let value = SlotWithNil::from_slot(Slot::just(value).union(&*value_, ctx));
                     Tables::Map(Box::new(key), value)
                 },
@@ -137,32 +136,7 @@ impl Tables {
 impl Lattice for Tables {
     type Output = Option<Tables>;
 
-    fn normalize(self) -> Option<Tables> {
-        match self {
-            Tables::Fields(fields) => {
-                if fields.is_empty() { return Some(Tables::Empty); }
-
-                let norm_kv = |(k, v): (Key, Slot)| {
-                    let v = v.normalize();
-                    let flags = v.borrow().unlift().flags();
-                    if flags == T_NONE { None } else { Some((k, v)) }
-                };
-                let fields: BTreeMap<_, _> = fields.into_iter().filter_map(norm_kv).collect();
-                if fields.is_empty() {
-                    Some(Tables::Empty)
-                } else {
-                    Some(Tables::Fields(fields))
-                }
-            },
-
-            Tables::Empty => Some(Tables::Empty),
-            Tables::Array(v) => Some(Tables::Array(v.normalize())),
-            Tables::Map(k, v) => Some(Tables::Map(k.normalize(), v.normalize())),
-            Tables::All => Some(Tables::All),
-        }
-    }
-
-    fn union(&self, other: &Tables, ctx: &mut TypeContext) -> Option<Tables> {
+    fn do_union(&self, other: &Tables, ctx: &mut TypeContext) -> Option<Tables> {
         let tab = match (self, other) {
             (&Tables::All, _) => Tables::All,
             (_, &Tables::All) => Tables::All,
@@ -175,7 +149,7 @@ impl Lattice for Tables {
                     if let Some(v1) = fields1.remove(&k) {
                         fields.insert(k, v1.union(v2, ctx));
                     } else {
-                        fields.insert(k, Slot::just(T::Nil).union(&v2, ctx));
+                        fields.insert(k, Slot::just(T::Nil).union(v2, ctx));
                     }
                 }
                 for (k, v1) in fields1 {
@@ -209,20 +183,18 @@ impl Lattice for Tables {
                 Tables::Array(value1.union(value2, ctx)),
 
             (&Tables::Map(ref key1, ref value1), &Tables::Map(ref key2, ref value2)) =>
-                Tables::Map(key1.union(key2, ctx), value1.union(value2, ctx)),
+                Tables::Map(Box::new(key1.union(key2, ctx)), value1.union(value2, ctx)),
 
             (&Tables::Array(ref value1), &Tables::Map(ref key2, ref value2)) =>
-                Tables::Map(Box::new((**key2).union(&T::integer(), ctx)),
-                            value1.union(value2, ctx)),
+                Tables::Map(Box::new(key2.union(&T::integer(), ctx)), value1.union(value2, ctx)),
             (&Tables::Map(ref key1, ref value1), &Tables::Array(ref value2)) =>
-                Tables::Map(Box::new((**key1).union(&T::integer(), ctx)),
-                            value1.union(value2, ctx)),
+                Tables::Map(Box::new(key1.union(&T::integer(), ctx)), value1.union(value2, ctx)),
         };
 
         Some(tab)
     }
 
-    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Tables::Empty, _) => true,
             (_, &Tables::Empty) => false,
@@ -233,7 +205,7 @@ impl Lattice for Tables {
             (&Tables::Fields(ref a), &Tables::Fields(ref b)) => {
                 for (k, av) in a {
                     if let Some(ref bv) = b.get(k) {
-                        try!((*av).assert_sub(bv, ctx));
+                        try!(av.assert_sub(bv, ctx));
                     } else {
                         return error_not_sub(self, other);
                     }
@@ -244,7 +216,7 @@ impl Lattice for Tables {
             (&Tables::Fields(ref fields), &Tables::Map(ref key, ref value)) => {
                 for (k, v) in fields {
                     try!(k.clone().into_type().assert_sub(key, ctx));
-                    try!((*v).assert_sub(value, ctx));
+                    try!(v.assert_sub(&**value, ctx));
                 }
                 true
             },
@@ -274,7 +246,7 @@ impl Lattice for Tables {
         if ok { Ok(()) } else { error_not_sub(self, other) }
     }
 
-    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Tables::All, &Tables::All) => true,
             (&Tables::Empty, &Tables::Empty) => true,

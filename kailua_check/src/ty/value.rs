@@ -386,61 +386,14 @@ impl<'a> T<'a> {
 impl<'a, 'b> Lattice<T<'b>> for T<'a> {
     type Output = T<'static>;
 
-    fn normalize(self) -> T<'static> {
-        match self {
-            T::Dynamic    => T::Dynamic,
-            T::None       => T::None,
-            T::Nil        => T::Nil,
-            T::Boolean    => T::Boolean,
-            T::True       => T::True,
-            T::False      => T::False,
-
-            T::Numbers(num) => {
-                if let Some(num) = num.into_owned().normalize() {
-                    T::Numbers(Cow::Owned(num))
-                } else {
-                    T::None
-                }
-            }
-
-            T::Strings(str) => {
-                if let Some(str) = str.into_owned().normalize() {
-                    T::Strings(Cow::Owned(str))
-                } else {
-                    T::None
-                }
-            }
-
-            T::Tables(tab) => {
-                if let Some(tab) = tab.into_owned().normalize() {
-                    T::Tables(Cow::Owned(tab))
-                } else {
-                    T::None
-                }
-            }
-
-            T::Functions(func) => {
-                if let Some(func) = func.into_owned().normalize() {
-                    T::Functions(Cow::Owned(func))
-                } else {
-                    T::None
-                }
-            }
-
-            T::TVar(tv) => T::TVar(tv),
-            T::Builtin(b, t) => T::Builtin(b, t.normalize()),
-            T::Union(u) => T::Union(Cow::Owned(u.into_owned())),
-        }
-    }
-
-    fn union(&self, other: &T<'b>, ctx: &mut TypeContext) -> T<'static> {
+    fn do_union(&self, other: &T<'b>, ctx: &mut TypeContext) -> T<'static> {
         match (self, other) {
             // built-in types are destructured first unless they point to the same builtin
             (&T::Builtin(lb, ref lhs), &T::Builtin(rb, ref rhs)) if lb == rb =>
-                T::Builtin(lb, lhs.union(rhs, ctx)),
-            (&T::Builtin(_, ref lhs), &T::Builtin(_, ref rhs)) => (**lhs).union(&*rhs, ctx),
-            (&T::Builtin(_, ref lhs), rhs) => (**lhs).union(rhs, ctx),
-            (lhs, &T::Builtin(_, ref rhs)) => lhs.union(&*rhs, ctx),
+                T::Builtin(lb, Box::new(lhs.union(rhs, ctx))),
+            (&T::Builtin(_, ref lhs), &T::Builtin(_, ref rhs)) => lhs.union(rhs, ctx),
+            (&T::Builtin(_, ref lhs), rhs) => lhs.union(rhs, ctx),
+            (lhs, &T::Builtin(_, ref rhs)) => lhs.union(rhs, ctx),
 
             // dynamic eclipses everything else
             (&T::Dynamic, _) => T::Dynamic,
@@ -498,14 +451,14 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
         }
     }
 
-    fn assert_sub(&self, other: &T<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_sub(&self, other: &T<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
         println!("asserting a constraint {:?} <: {:?}", *self, *other);
 
         let ok = match (self, other) {
             // built-in types are destructured first
             (&T::Builtin(_, ref lhs), &T::Builtin(_, ref rhs)) => return lhs.assert_sub(rhs, ctx),
-            (&T::Builtin(_, ref lhs), rhs) => return (**lhs).assert_sub(rhs, ctx),
-            (lhs, &T::Builtin(_, ref rhs)) => return lhs.assert_sub(&**rhs, ctx),
+            (&T::Builtin(_, ref lhs), rhs) => return lhs.assert_sub(rhs, ctx),
+            (lhs, &T::Builtin(_, ref rhs)) => return lhs.assert_sub(rhs, ctx),
 
             (&T::Dynamic, _) => true,
             (_, &T::Dynamic) => true,
@@ -566,14 +519,14 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
         if ok { Ok(()) } else { error_not_sub(self, other) }
     }
 
-    fn assert_eq(&self, other: &T<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_eq(&self, other: &T<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
         println!("asserting a constraint {:?} = {:?}", *self, *other);
 
         let ok = match (self, other) {
             // built-in types are destructured first
             (&T::Builtin(_, ref lhs), &T::Builtin(_, ref rhs)) => return lhs.assert_eq(rhs, ctx),
-            (&T::Builtin(_, ref lhs), rhs) => return (**lhs).assert_eq(rhs, ctx),
-            (lhs, &T::Builtin(_, ref rhs)) => return lhs.assert_eq(&**rhs, ctx),
+            (&T::Builtin(_, ref lhs), rhs) => return lhs.assert_eq(rhs, ctx),
+            (lhs, &T::Builtin(_, ref rhs)) => return lhs.assert_eq(rhs, ctx),
 
             (&T::Dynamic, _) => true,
             (_, &T::Dynamic) => true,
@@ -656,13 +609,19 @@ impl<'a> fmt::Debug for T<'a> {
     }
 }
 
-impl<'a> From<T<'a>> for Union { fn from(x: T<'a>) -> Union { Union::from(&x) } }
+impl<'a> From<T<'a>> for Union {
+    fn from(x: T<'a>) -> Union { Union::from(&x) }
+}
 
-impl<'a> From<K> for T<'a> { fn from(x: K) -> T<'a> { T::from(&x) } }
+impl<'a> From<K> for T<'a> {
+    fn from(x: K) -> T<'a> { T::from(&x) }
+}
 
 pub type Ty = Box<T<'static>>;
 
-impl From<Kind> for Ty { fn from(x: Kind) -> Ty { Box::new(From::from(*x)) } }
+impl From<Kind> for Ty {
+    fn from(x: Kind) -> Ty { Box::new(From::from(*x)) }
+}
 
 #[cfg(test)] 
 mod tests {

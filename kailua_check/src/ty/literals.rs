@@ -17,18 +17,7 @@ pub enum Numbers {
 impl Lattice for Numbers {
     type Output = Option<Numbers>;
 
-    fn normalize(self) -> Option<Numbers> {
-        match self {
-            Numbers::Some(set) => match set.len() {
-                0 => None,
-                1 => Some(Numbers::One(set.into_iter().next().unwrap())),
-                _ => Some(Numbers::Some(set)),
-            },
-            num => Some(num),
-        }
-    }
-
-    fn union(&self, other: &Numbers, _: &mut TypeContext) -> Option<Numbers> {
+    fn do_union(&self, other: &Numbers, _: &mut TypeContext) -> Option<Numbers> {
         match (self, other) {
             (&Numbers::All, _) => Some(Numbers::All),
             (_, &Numbers::All) => Some(Numbers::All),
@@ -64,7 +53,7 @@ impl Lattice for Numbers {
         }
     }
 
-    fn assert_sub(&self, other: &Self, _: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_sub(&self, other: &Self, _: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Numbers::One(a), &Numbers::One(b)) => a == b,
             (&Numbers::One(a), &Numbers::Some(ref b)) => b.contains(&a),
@@ -86,7 +75,7 @@ impl Lattice for Numbers {
         if ok { Ok(()) } else { error_not_sub(self, other) }
     }
 
-    fn assert_eq(&self, other: &Self, _ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_eq(&self, other: &Self, _ctx: &mut TypeContext) -> CheckResult<()> {
         if *self == *other { Ok(()) } else { error_not_eq(self, other) }
     }
 }
@@ -134,18 +123,7 @@ pub enum Strings {
 impl Lattice for Strings {
     type Output = Option<Strings>;
 
-    fn normalize(self) -> Option<Strings> {
-        match self {
-            Strings::Some(set) => match set.len() {
-                0 => None,
-                1 => Some(Strings::One(set.into_iter().next().unwrap())),
-                _ => Some(Strings::Some(set)),
-            },
-            str => Some(str),
-        }
-    }
-
-    fn union(&self, other: &Strings, _: &mut TypeContext) -> Option<Strings> {
+    fn do_union(&self, other: &Strings, _: &mut TypeContext) -> Option<Strings> {
         match (self, other) {
             (&Strings::All, _) => Some(Strings::All),
             (_, &Strings::All) => Some(Strings::All),
@@ -178,7 +156,7 @@ impl Lattice for Strings {
         }
     }
 
-    fn assert_sub(&self, other: &Self, _: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_sub(&self, other: &Self, _: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Strings::One(ref a), &Strings::One(ref b)) => *a == *b,
             (&Strings::One(ref a), &Strings::Some(ref b)) => b.contains(a),
@@ -197,7 +175,7 @@ impl Lattice for Strings {
         if ok { Ok(()) } else { error_not_sub(self, other) }
     }
 
-    fn assert_eq(&self, other: &Self, _ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_eq(&self, other: &Self, _ctx: &mut TypeContext) -> CheckResult<()> {
         if *self == *other { Ok(()) } else { error_not_eq(self, other) }
     }
 }
