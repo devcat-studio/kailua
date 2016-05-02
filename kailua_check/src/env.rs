@@ -6,14 +6,14 @@ use vec_map::VecMap;
 
 use kailua_syntax::Name;
 use diag::CheckResult;
-use ty::{Ty, T, Slot, S, TVar, Mark, Lattice, TypeContext, Flags};
+use ty::{Ty, TySeq, T, Slot, S, TVar, Mark, Lattice, TypeContext, Flags};
 use ty::flags::*;
 
 pub type TyInfo = Slot;
 
 pub struct Frame {
-    pub vararg: Option<TyInfo>,
-    pub returns: Ty,
+    pub vararg: Option<TySeq>,
+    pub returns: Option<TySeq>, // None represents the bottom (TySeq does not have it)
     pub returns_exact: bool, // if false, returns can be updated
 }
 
@@ -374,8 +374,7 @@ impl Context {
         };
 
         // it is fine to return from the top-level, so we treat it as like a function frame
-        let global_frame = Frame { vararg: None, returns: Box::new(T::None),
-                                   returns_exact: false };
+        let global_frame = Frame { vararg: None, returns: None, returns_exact: false };
         ctx.global_scope.frame = Some(global_frame);
         ctx
     }
@@ -851,12 +850,8 @@ impl<'ctx> Env<'ctx> {
         self.context.global_scope_mut().get_frame_mut().expect("global scope lacks a frame")
     }
 
-    pub fn get_vararg<'a>(&'a self) -> Option<&'a TyInfo> {
+    pub fn get_vararg<'a>(&'a self) -> Option<&'a TySeq> {
         self.get_frame().vararg.as_ref()
-    }
-
-    pub fn get_vararg_mut<'a>(&'a mut self) -> Option<&'a mut TyInfo> {
-        self.get_frame_mut().vararg.as_mut()
     }
 
     // adapt is used when the info didn't come from the type specification

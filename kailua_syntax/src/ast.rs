@@ -90,7 +90,7 @@ impl<T: fmt::Debug> fmt::Debug for TypeSpec<T> {
 pub struct Sig {
     pub args: Vec<TypeSpec<Name>>,
     pub variadic: bool,
-    pub returns: Vec<Kind>,
+    pub returns: Option<Vec<Kind>>, // may have to be inferred
 }
 
 impl fmt::Debug for Sig {
@@ -107,10 +107,14 @@ impl fmt::Debug for Sig {
         } else {
             try!(fmt::Debug::fmt(&self.args, f));
         }
-        if self.returns.len() == 1 {
-            try!(write!(f, " -> {:?}", self.returns[0]));
-        } else if !self.returns.is_empty() {
-            try!(write!(f, " -> {:?}", self.returns));
+        if let Some(ref returns) = self.returns {
+            if returns.len() == 1 {
+                try!(write!(f, " -> {:?}", returns[0]));
+            } else if !returns.is_empty() {
+                try!(write!(f, " -> {:?}", *returns));
+            }
+        } else {
+            try!(write!(f, " -> _"));
         }
         Ok(())
     }

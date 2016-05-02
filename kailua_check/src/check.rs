@@ -1,12 +1,14 @@
 use std::i32;
 use std::cmp;
+use std::iter;
 use std::ops::{Deref, DerefMut};
 use std::borrow::Cow;
 
-use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, UnOp, BinOp, FuncScope, SelfParam};
+use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam};
 use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
-use ty::{T, TySeq, Lattice, TypeContext, Tables, Function, Functions, S, Slot, SlotWithNil};
+use ty::{T, TySeq, Lattice, TypeContext, Tables, Function, Functions};
+use ty::{S, Slot, SlotSeq, SlotWithNil};
 use ty::{Builtin, Flags};
 use ty::flags::*;
 use env::{TyInfo, Env, Frame, Scope, Context};
@@ -406,22 +408,12 @@ impl<'env> Checker<'env> {
                 for varspec in vars {
                     try!(self.visit_var_with_spec(varspec));
                 }
-                for (i, exp) in exps.iter().enumerate() {
-                    let info = try!(self.visit_exp(exp));
-                    if i < vars.len() {
-                        if let Var::Name(ref name) = vars[i].base {
-                            // XXX last exp should unpack
-                            try!(self.env.assign_to_var(name, info));
-                        }
-                    }
-                }
-                if vars.len() > exps.len() {
-                    for var in &vars[exps.len()..] {
-                        if let Var::Name(ref name) = var.base {
-                            let info = TyInfo::from(T::Dynamic);
-                            // XXX last exp should unpack
-                            try!(self.env.assign_to_var(name, info));
-                        }
+                let infos = try!(self.visit_explist(exps));
+                let infos = infos.into_iter().chain(iter::repeat(Slot::from(T::Nil)));
+                for (var, info) in vars.iter().zip(infos) {
+                    // TODO unify with visit_var_with_spec
+                    if let Var::Name(ref name) = var.base {
+                        try!(self.env.assign_to_var(name, info));
                     }
                 }
                 Ok(Exit::None)
@@ -430,7 +422,7 @@ impl<'env> Checker<'env> {
             St::Do(ref block) => self.visit_block(block),
 
             St::While(ref cond, ref block) => {
-                let ty = try!(self.visit_exp(cond));
+                let ty = try!(self.visit_exp(cond)).into_first();
                 let slot = ty.borrow();
                 let ty = slot.unlift();
                 if ty.is_truthy() {
@@ -448,7 +440,7 @@ impl<'env> Checker<'env> {
 
             St::Repeat(ref block, ref cond) => {
                 let exit = try!(self.visit_block(block)); // TODO scope merger
-                let ty = try!(self.visit_exp(cond));
+                let ty = try!(self.visit_exp(cond)).into_first();
                 if exit == Exit::None {
                     let slot = ty.borrow();
                     let ty = slot.unlift();
@@ -473,7 +465,7 @@ impl<'env> Checker<'env> {
                         // TODO warning
                         continue;
                     }
-                    let ty = try!(self.visit_exp(cond));
+                    let ty = try!(self.visit_exp(cond)).into_first();
                     let slot = ty.borrow();
                     let ty = slot.unlift();
                     if ty.is_truthy() {
@@ -496,10 +488,10 @@ impl<'env> Checker<'env> {
             }
 
             St::For(ref name, ref start, ref end, ref step, ref block) => {
-                let start = try!(self.visit_exp(start));
-                let end = try!(self.visit_exp(end));
+                let start = try!(self.visit_exp(start)).into_first();
+                let end = try!(self.visit_exp(end)).into_first();
                 let step = if let &Some(ref step) = step {
-                    try!(self.visit_exp(step))
+                    try!(self.visit_exp(step)).into_first()
                 } else {
                     Slot::just(T::integer()) // to simplify the matter
                 };
@@ -589,41 +581,27 @@ impl<'env> Checker<'env> {
                     }
                 };
 
-                for (i, exp) in exps.iter().enumerate() {
-                    let info = try!(self.visit_exp(exp));
-                    if i < names.len() {
-                        // XXX last exp should unpack
-                        try!(add_local_var(&mut self.env, &names[i], info));
-                    }
-                }
-                if names.len() > exps.len() {
-                    for namespec in &names[exps.len()..] {
-                        // XXX last exp should unpack
-                        try!(add_local_var(&mut self.env, namespec, TyInfo::from(T::Nil)));
-                    }
+                let infos = try!(self.visit_explist(exps));
+                let infos = infos.into_iter().chain(iter::repeat(Slot::from(T::Nil)));
+                for (namespec, info) in names.iter().zip(infos) {
+                    try!(add_local_var(&mut self.env, namespec, info));
                 }
                 Ok(Exit::None)
             }
 
             St::Return(ref exps) => {
-                let mut tys = Vec::new();
-                for exp in exps {
-                    tys.push(try!(self.visit_exp(exp)));
-                }
-                if tys.len() == 1 { // XXX temporary
-                    let slot = tys[0].borrow();
-                    let ty = slot.unlift();
-                    let (returns, returns_exact) = {
-                        let frame = self.env.get_frame();
-                        (frame.returns.clone(), frame.returns_exact) // XXX redundant
-                    };
-                    if returns_exact {
-                        try!(ty.assert_sub(&returns, self.context()));
-                    } else {
-                        // need to infer the return type
-                        let returns = returns.union(&ty, self.context());
-                        self.env.get_frame_mut().returns = Box::new(returns);
-                    }
+                let seq = try!(self.visit_explist(exps));
+                let seq = seq.unlift(); // XXX wait, is it safe?
+                let (returns, returns_exact) = {
+                    let frame = self.env.get_frame();
+                    (frame.returns.clone(), frame.returns_exact) // XXX redundant
+                };
+                if returns_exact {
+                    try!(Some(seq).assert_sub(&returns, self.context()));
+                } else {
+                    // need to infer the return type
+                    let returns = Some(seq).union(&returns, self.context());
+                    self.env.get_frame_mut().returns = returns;
                 }
                 Ok(Exit::Return)
             }
@@ -663,7 +641,7 @@ impl<'env> Checker<'env> {
                        block: &[Stmt]) -> CheckResult<TyInfo> {
         let vainfo;
         if sig.variadic {
-            vainfo = Some(TyInfo::from(T::Dynamic));
+            vainfo = Some(TySeq::from(T::Dynamic));
         } else {
             vainfo = None;
         }
@@ -673,12 +651,12 @@ impl<'env> Checker<'env> {
         //
         // TODO the exception should be made to the recursive usage;
         // we probably need to put a type variable that is later equated to the actual returns
-        let frame = if sig.returns.len() == 1 {
-            Frame { vararg: vainfo, returns: Box::new(T::from(&sig.returns[0])),
-                    returns_exact: true }
+        let frame = if let Some(ref returns) = sig.returns {
+            let returns = TySeq { head: returns.iter().map(|k| Box::new(T::from(k))).collect(),
+                                  tail: None };
+            Frame { vararg: vainfo, returns: Some(returns), returns_exact: true }
         } else {
-            Frame { vararg: vainfo, returns: Box::new(T::None),
-                    returns_exact: false }
+            Frame { vararg: vainfo, returns: None, returns_exact: false }
         };
 
         let mut scope = self.scoped(Scope::new_function(frame));
@@ -711,7 +689,7 @@ impl<'env> Checker<'env> {
         }
 
         // XXX multiple returns
-        let returns = TySeq::from((*scope.env.get_frame().returns).clone());
+        let returns = scope.env.get_frame_mut().returns.take().unwrap();
         Ok(TyInfo::from(T::func(Function { args: args, returns: returns })))
     }
 
@@ -728,72 +706,87 @@ impl<'env> Checker<'env> {
             },
 
             Var::Index(ref e, ref key) => {
-                let ty = try!(self.visit_exp(e));
-                let kty = try!(self.visit_exp(key));
+                let ty = try!(self.visit_exp(e)).into_first();
+                let kty = try!(self.visit_exp(key)).into_first();
                 self.check_index(&ty, &kty, true)
             },
         }
     }
 
-    fn visit_exp(&mut self, exp: &Ex) -> CheckResult<TyInfo> {
+    fn visit_exp(&mut self, exp: &Ex) -> CheckResult<SlotSeq> {
         println!("visiting exp {:?}", *exp);
         match *exp {
-            Ex::Nil => Ok(TyInfo::from(T::Nil)),
-            Ex::False => Ok(TyInfo::from(T::False)),
-            Ex::True => Ok(TyInfo::from(T::True)),
+            Ex::Nil => Ok(SlotSeq::from(T::Nil)),
+            Ex::False => Ok(SlotSeq::from(T::False)),
+            Ex::True => Ok(SlotSeq::from(T::True)),
             Ex::Num(v) if v.floor() == v =>
                 if i32::MIN as f64 <= v && v <= i32::MAX as f64 {
-                    Ok(TyInfo::from(T::int(v as i32)))
+                    Ok(SlotSeq::from(T::int(v as i32)))
                 } else {
-                    Ok(TyInfo::from(T::integer()))
+                    Ok(SlotSeq::from(T::integer()))
                 },
-            Ex::Num(_) => Ok(TyInfo::from(T::number())),
-            Ex::Str(ref s) => Ok(TyInfo::from(T::str(s.to_owned()))),
+            Ex::Num(_) => Ok(SlotSeq::from(T::number())),
+            Ex::Str(ref s) => Ok(SlotSeq::from(T::str(s.to_owned()))),
 
             Ex::Varargs => {
-                if let Some(info) = self.env.get_vararg() {
-                    Ok(info.to_owned())
+                if let Some(vararg) = self.env.get_vararg() {
+                    Ok(SlotSeq::from_seq(vararg.clone()))
                 } else {
                     Err("vararg not declared in the innermost func".into())
                 }
             },
             Ex::Var(ref name) => {
                 if let Some(info) = self.env.get_var(name) {
-                    Ok(info.to_owned())
+                    Ok(SlotSeq::from_slot(info.clone()))
                 } else {
                     Err(format!("global or local variable {:?} not defined", *name))
                 }
             },
 
             Ex::Func(ref sig, ref block) => {
-                Ok(try!(self.visit_func_body(None, sig, block)))
+                Ok(SlotSeq::from_slot(try!(self.visit_func_body(None, sig, block))))
             },
             Ex::Table(ref fields) => {
                 let mut tab = Tables::Empty;
 
                 let mut len = 0;
-                for &(ref key, ref value) in fields {
-                    let kty = if let Some(ref key) = *key {
-                        let key = try!(self.visit_exp(key));
-                        let key = key.borrow();
-                        key.unlift().clone().into_send()
+                for (idx, &(ref key, ref value)) in fields.iter().enumerate() {
+                    // if this is the last entry and no explicit index is set, splice the values
+                    if idx == fields.len() - 1 && key.is_none() {
+                        let vty = try!(self.visit_exp(value));
+                        for ty in &vty.head {
+                            let ty = ty.borrow().unlift().clone();
+                            len += 1;
+                            tab = tab.insert(T::int(len), ty, self.context());
+                        }
+                        if let Some(ty) = vty.tail {
+                            // a simple array is no longer sufficient now
+                            let ty = ty.borrow().unlift().clone();
+                            tab = tab.insert(T::integer(), ty, self.context());
+                        }
                     } else {
-                        len += 1;
-                        T::int(len)
-                    };
-                    let vty = try!(self.visit_exp(value));
-                    let vty = vty.borrow().unlift().clone();
+                        let kty = if let Some(ref key) = *key {
+                            let key = try!(self.visit_exp(key)).into_first();
+                            let key = key.borrow();
+                            key.unlift().clone().into_send()
+                        } else {
+                            len += 1;
+                            T::int(len)
+                        };
 
-                    // update the table type according to new field
-                    tab = tab.insert(kty, vty, self.context());
+                        // update the table type according to new field
+                        let vty = try!(self.visit_exp(value)).into_first();
+                        let vty = vty.borrow().unlift().clone();
+                        tab = tab.insert(kty, vty, self.context());
+                    }
                 }
 
                 // if the table remains intact, it is an empty table
-                Ok(TyInfo::from(T::Tables(Cow::Owned(tab))))
+                Ok(SlotSeq::from(T::Tables(Cow::Owned(tab))))
             },
 
             Ex::FuncCall(ref func, ref args) => {
-                let funcinfo = try!(self.visit_exp(func));
+                let funcinfo = try!(self.visit_exp(func)).into_first();
 
                 let funcinfo = funcinfo.borrow();
                 let funcinfo = funcinfo.unlift();
@@ -801,7 +794,7 @@ impl<'env> Checker<'env> {
                     return Err(format!("tried to index the non-function {:?}", funcinfo));
                 }
                 if funcinfo.is_dynamic() {
-                    return Ok(TyInfo::from(T::Dynamic));
+                    return Ok(SlotSeq::from(T::Dynamic));
                 }
                 let funcinfo = if let Some(ty) = self.resolve_exact_type(&funcinfo) {
                     ty
@@ -818,11 +811,7 @@ impl<'env> Checker<'env> {
                     }
                 }
 
-                let mut argtys = TySeq::new();
-                for arg in args {
-                    let argty = try!(self.visit_exp(arg));
-                    argtys.head.push(Box::new(argty.borrow().unlift().clone().into_send()));
-                }
+                let argtys = try!(self.visit_explist(args)).unlift();
 
                 // check if funcinfo.args :> argtys
                 let returns = match *funcinfo.has_functions().unwrap() {
@@ -835,9 +824,6 @@ impl<'env> Checker<'env> {
                         return Err(format!("cannot call {:?} without downcasting", funcinfo));
                     }
                 };
-
-                // TODO for now, downcast `returns` to a single type
-                let returns = *returns.into_first();
 
                 match funcinfo.builtin() {
                     // require("foo")
@@ -852,15 +838,15 @@ impl<'env> Checker<'env> {
                                                     opts: self.opts };
                             try!(sub.visit_block(&block));
                         }
-                        Ok(TyInfo::from(T::Dynamic)) // XXX
+                        Ok(SlotSeq::from(T::Dynamic)) // XXX
                     },
 
-                    _ => Ok(TyInfo::from(returns)),
+                    _ => Ok(SlotSeq::from_seq(returns)),
                 }
             },
 
             Ex::MethodCall(ref e, ref _method, ref args) => {
-                let info = try!(self.visit_exp(e));
+                let info = try!(self.visit_exp(e)).into_first();
                 if !info.borrow().unlift().is_tabular() {
                     return Err(format!("tried to index a non-table type {:?}", info));
                 }
@@ -868,30 +854,48 @@ impl<'env> Checker<'env> {
                 for arg in args {
                     try!(self.visit_exp(arg));
                 }
-                Ok(TyInfo::from(T::Dynamic))
+                Ok(SlotSeq::from(T::Dynamic))
             },
 
             Ex::Index(ref e, ref key) => {
-                let ty = try!(self.visit_exp(e));
-                let kty = try!(self.visit_exp(key));
+                let ty = try!(self.visit_exp(e)).into_first();
+                let kty = try!(self.visit_exp(key)).into_first();
                 if let Some(vinfo) = try!(self.check_index(&ty, &kty, false)) {
-                    Ok(vinfo)
+                    Ok(SlotSeq::from_slot(vinfo))
                 } else {
                     Err(format!("cannot index {:?} with {:?}", ty, kty))
                 }
             },
 
             Ex::Un(op, ref e) => {
-                let info = try!(self.visit_exp(e));
-                self.check_un_op(op, &info)
+                let info = try!(self.visit_exp(e)).into_first();
+                self.check_un_op(op, &info).map(SlotSeq::from_slot)
             },
 
             Ex::Bin(ref l, op, ref r) => {
-                let lhs = try!(self.visit_exp(l));
-                let rhs = try!(self.visit_exp(r));
-                self.check_bin_op(&lhs, op, &rhs)
+                let lhs = try!(self.visit_exp(l)).into_first();
+                let rhs = try!(self.visit_exp(r)).into_first();
+                self.check_bin_op(&lhs, op, &rhs).map(SlotSeq::from_slot)
             },
         }
+    }
+
+    fn visit_explist(&mut self, exps: &[Exp]) -> CheckResult<SlotSeq> {
+        let mut head = Vec::new();
+        let mut last: Option<SlotSeq> = None;
+        for exp in exps {
+            if let Some(last) = last.take() {
+                head.push(last.into_first());
+            }
+            last = Some(try!(self.visit_exp(exp)));
+        }
+
+        let mut seq = SlotSeq { head: head, tail: None };
+        if let Some(last) = last {
+            seq.head.extend(last.head.into_iter());
+            seq.tail = last.tail;
+        }
+        Ok(seq)
     }
 }
 

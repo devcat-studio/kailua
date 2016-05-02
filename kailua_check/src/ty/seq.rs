@@ -180,7 +180,43 @@ impl SlotSeq {
         Slot::just(T::Nil)
     }
 
-    pub fn assert_sub(&self, other: &SlotSeq, ctx: &mut TypeContext) -> CheckResult<()> {
+    pub fn unlift(self) -> TySeq {
+        let unlift = |slot: Slot| Box::new(slot.borrow().unlift().clone().into_send());
+        TySeq { head: self.head.into_iter().map(&unlift).collect(),
+                tail: self.tail.map(&unlift) }
+    }
+}
+
+impl Lattice for SlotSeq {
+    type Output = SlotSeq;
+
+    fn do_union(&self, other: &SlotSeq, ctx: &mut TypeContext) -> SlotSeq {
+        let nil = Slot::just(T::Nil);
+        let selftail = self.tail.as_ref().unwrap_or(&nil);
+        let othertail = other.tail.as_ref().unwrap_or(&nil);
+
+        let mut head = Vec::new();
+        let n = cmp::min(self.head.len(), other.head.len());
+        for (l, r) in self.head[..n].iter().zip(other.head[..n].iter()) {
+            head.push(l.union(r, ctx));
+        }
+        for l in &self.head[n..] {
+            head.push(l.union(othertail, ctx));
+        }
+        for r in &other.head[n..] {
+            head.push(selftail.union(r, ctx));
+        }
+
+        let tail = if self.tail.is_some() || other.tail.is_some() {
+            Some(selftail.union(othertail, ctx))
+        } else {
+            None
+        };
+
+        SlotSeq { head: head, tail: tail }
+    }
+
+    fn do_assert_sub(&self, other: &SlotSeq, ctx: &mut TypeContext) -> CheckResult<()> {
         println!("asserting a constraint {:?} <: {:?}", *self, *other);
 
         let mut selfhead = self.head.iter().fuse();
@@ -198,7 +234,7 @@ impl SlotSeq {
         }
     }
 
-    pub fn assert_eq(&self, other: &SlotSeq, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn do_assert_eq(&self, other: &SlotSeq, ctx: &mut TypeContext) -> CheckResult<()> {
         println!("asserting a constraint {:?} = {:?}", *self, *other);
 
         let mut selfhead = self.head.iter().fuse();

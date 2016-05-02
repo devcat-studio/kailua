@@ -43,18 +43,18 @@ pub enum Functions {
 }
 
 impl Lattice for Functions {
-    type Output = Option<Functions>;
+    type Output = Functions;
 
-    fn do_union(&self, other: &Functions, _: &mut TypeContext) -> Option<Functions> {
+    fn do_union(&self, other: &Functions, _: &mut TypeContext) -> Functions {
         match (self, other) {
-            (&Functions::All, _) => Some(Functions::All),
-            (_, &Functions::All) => Some(Functions::All),
+            (&Functions::All, _) => Functions::All,
+            (_, &Functions::All) => Functions::All,
 
             (&Functions::Simple(ref a), &Functions::Simple(ref b)) =>
-                if a == b { Some(Functions::Simple(a.clone())) } else { Some(Functions::All) },
+                if a == b { Functions::Simple(a.clone()) } else { Functions::All },
             (&Functions::Multi(ref a), &Functions::Multi(ref b)) =>
-                if a == b { Some(Functions::Multi(a.clone())) } else { Some(Functions::All) },
-            (_, _) => Some(Functions::All),
+                if a == b { Functions::Multi(a.clone()) } else { Functions::All },
+            (_, _) => Functions::All,
         }
     }
 

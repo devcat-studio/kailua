@@ -413,39 +413,16 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::False,   &T::True)    => T::Boolean,
             (&T::False,   &T::False)   => T::False,
 
-            (&T::Numbers(ref a), &T::Numbers(ref b)) => {
-                if let Some(num) = a.union(b, ctx) {
-                    T::Numbers(Cow::Owned(num))
-                } else {
-                    T::None
-                }
-            }
-
-            (&T::Strings(ref a), &T::Strings(ref b)) => {
-                if let Some(str) = a.union(b, ctx) {
-                    T::Strings(Cow::Owned(str))
-                } else {
-                    T::None
-                }
-            }
-
-            (&T::Tables(ref a), &T::Tables(ref b)) => {
-                if let Some(tab) = a.union(b, ctx) {
-                    T::Tables(Cow::Owned(tab))
-                } else {
-                    T::None
-                }
-            }
-
-            (&T::Functions(ref a), &T::Functions(ref b)) => {
-                if let Some(func) = a.union(b, ctx) {
-                    T::Functions(Cow::Owned(func))
-                } else {
-                    T::None
-                }
-            }
-
-            (&T::TVar(ref a), &T::TVar(ref b)) => T::TVar(a.union(b, ctx)),
+            (&T::Numbers(ref a), &T::Numbers(ref b)) =>
+                T::Numbers(Cow::Owned(a.union(b, ctx))),
+            (&T::Strings(ref a), &T::Strings(ref b)) =>
+                T::Strings(Cow::Owned(a.union(b, ctx))),
+            (&T::Tables(ref a), &T::Tables(ref b)) =>
+                T::Tables(Cow::Owned(a.union(b, ctx))),
+            (&T::Functions(ref a), &T::Functions(ref b)) =>
+                T::Functions(Cow::Owned(a.union(b, ctx))),
+            (&T::TVar(ref a), &T::TVar(ref b)) =>
+                T::TVar(a.union(b, ctx)),
 
             (a, b) => Union::from(&a).union(&Union::from(&b), ctx).simplify(),
         }

@@ -15,39 +15,39 @@ pub enum Numbers {
 }
 
 impl Lattice for Numbers {
-    type Output = Option<Numbers>;
+    type Output = Numbers;
 
-    fn do_union(&self, other: &Numbers, _: &mut TypeContext) -> Option<Numbers> {
+    fn do_union(&self, other: &Numbers, _: &mut TypeContext) -> Numbers {
         match (self, other) {
-            (&Numbers::All, _) => Some(Numbers::All),
-            (_, &Numbers::All) => Some(Numbers::All),
+            (&Numbers::All, _) => Numbers::All,
+            (_, &Numbers::All) => Numbers::All,
 
-            (&Numbers::Int, _) => Some(Numbers::Int),
-            (_, &Numbers::Int) => Some(Numbers::Int),
+            (&Numbers::Int, _) => Numbers::Int,
+            (_, &Numbers::Int) => Numbers::Int,
 
             (&Numbers::Some(ref a), &Numbers::Some(ref b)) => {
                 let mut ab = a.clone();
                 ab.extend(b.iter().cloned());
-                Some(Numbers::Some(ab))
+                Numbers::Some(ab)
             }
             (&Numbers::Some(ref a), &Numbers::One(b)) => {
                 let mut ab = a.clone();
                 ab.insert(b);
-                Some(Numbers::Some(ab))
+                Numbers::Some(ab)
             }
             (&Numbers::One(a), &Numbers::Some(ref b)) => {
                 let mut ab = b.clone();
                 ab.insert(a);
-                Some(Numbers::Some(ab))
+                Numbers::Some(ab)
             }
             (&Numbers::One(a), &Numbers::One(b)) => {
                 if a == b {
-                    Some(Numbers::One(a))
+                    Numbers::One(a)
                 } else {
                     let mut ab = HashSet::new();
                     ab.insert(a);
                     ab.insert(b);
-                    Some(Numbers::Some(ab))
+                    Numbers::Some(ab)
                 }
             }
         }
@@ -121,36 +121,36 @@ pub enum Strings {
 }
 
 impl Lattice for Strings {
-    type Output = Option<Strings>;
+    type Output = Strings;
 
-    fn do_union(&self, other: &Strings, _: &mut TypeContext) -> Option<Strings> {
+    fn do_union(&self, other: &Strings, _: &mut TypeContext) -> Strings {
         match (self, other) {
-            (&Strings::All, _) => Some(Strings::All),
-            (_, &Strings::All) => Some(Strings::All),
+            (&Strings::All, _) => Strings::All,
+            (_, &Strings::All) => Strings::All,
 
             (&Strings::Some(ref a), &Strings::Some(ref b)) => {
                 let mut ab = a.clone();
                 ab.extend(b.iter().cloned());
-                Some(Strings::Some(ab))
+                Strings::Some(ab)
             }
             (&Strings::Some(ref a), &Strings::One(ref b)) => {
                 let mut ab = a.clone();
                 ab.insert(b.clone());
-                Some(Strings::Some(ab))
+                Strings::Some(ab)
             }
             (&Strings::One(ref a), &Strings::Some(ref b)) => {
                 let mut ab = b.clone();
                 ab.insert(a.clone());
-                Some(Strings::Some(ab))
+                Strings::Some(ab)
             }
             (&Strings::One(ref a), &Strings::One(ref b)) => {
                 if a == b {
-                    Some(Strings::One(a.clone()))
+                    Strings::One(a.clone())
                 } else {
                     let mut ab = HashSet::new();
                     ab.insert(a.clone());
                     ab.insert(b.clone());
-                    Some(Strings::Some(ab))
+                    Strings::Some(ab)
                 }
             }
         }

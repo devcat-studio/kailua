@@ -134,10 +134,10 @@ impl Tables {
 }
 
 impl Lattice for Tables {
-    type Output = Option<Tables>;
+    type Output = Tables;
 
-    fn do_union(&self, other: &Tables, ctx: &mut TypeContext) -> Option<Tables> {
-        let tab = match (self, other) {
+    fn do_union(&self, other: &Tables, ctx: &mut TypeContext) -> Tables {
+        match (self, other) {
             (&Tables::All, _) => Tables::All,
             (_, &Tables::All) => Tables::All,
 
@@ -189,9 +189,7 @@ impl Lattice for Tables {
                 Tables::Map(Box::new(key2.union(&T::integer(), ctx)), value1.union(value2, ctx)),
             (&Tables::Map(ref key1, ref value1), &Tables::Array(ref value2)) =>
                 Tables::Map(Box::new(key1.union(&T::integer(), ctx)), value1.union(value2, ctx)),
-        };
-
-        Some(tab)
+        }
     }
 
     fn do_assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {

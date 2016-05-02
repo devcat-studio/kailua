@@ -277,4 +277,88 @@ fn test_check() {
                  local x = p().a.b");
     assert_ok!("local function p() return {a=4} end
                 local x = p().a + 5");
+    assert_ok!("--v () -> (integer, integer)
+                local function p()
+                    return 3, 4
+                end");
+    assert_err!("--v () -> (integer, string)
+                 local function p()
+                     return 3, 4
+                 end");
+    assert_ok!("--v () -> (integer, nil)
+                local function p()
+                    return 3
+                end");
+    assert_ok!("--v () -> integer
+                local function p()
+                    return 3, nil
+                end");
+    assert_ok!("--v (n: boolean) -> (string|nil, string|nil)
+                local function p(n)
+                    if n then return 'string' else return nil, 'error' end
+                end");
+    assert_ok!("local function p()
+                    return 3, 4, 5
+                end
+                local a, --: var integer
+                      b  --: var integer
+                      = p()");
+    assert_ok!("local function p()
+                    return 3, 4, 'string'
+                end
+                local a, --: var integer
+                      b  --: var integer
+                      = p()");
+    assert_err!("local function p()
+                     return 3, 'string', 5
+                 end
+                 local a, --: var integer
+                       b  --: var integer
+                       = p()");
+    assert_ok!("local function p()
+                    return 3, 4
+                end
+                local a, --: var integer
+                      b, --: var integer
+                      c  --: var nil
+                      = p()");
+    assert_ok!("local function p()
+                    return 3, 4, nil
+                end
+                local a, --: var integer
+                      b  --: var integer
+                      = p()");
+    assert_ok!("local function p(n)
+                    if n then return 'string' else return nil, 'error' end
+                end
+                local a, --: var string|nil
+                      b  --: var string|nil
+                      = p(false)");
+    assert_err!("local function p(n)
+                     if n then return 'string' else return nil, 'error' end
+                 end
+                 local a, --: var string
+                       b  --: var string|nil
+                       = p(false)");
+    assert_err!("local function p(n)
+                     if n then return 'string' else return nil, 'error' end
+                 end
+                 local a, --: var string|nil
+                       b  --: var string
+                       = p(false)");
+    assert_ok!("local function p()
+                    return 1, 2, 3
+                end
+                local a --: var {integer, integer, integer, integer}
+                      = {p(), p()}
+                local b --: var {foo = integer}
+                      = {foo = p()}
+                local c --: var {[integer|string] = integer}
+                      = {p(), bar = p()}");
+    assert_ok!("local function p()
+                    return 1, 'string', false
+                end
+                --v (a: number, b: integer, c: number, d: integer, e: string, f: boolean)
+                local function q(a,b,c,d,e,f) end
+                q(3.14, p(), -42, p())")
 }

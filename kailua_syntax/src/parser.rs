@@ -455,8 +455,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
             }
             sig = presig;
         } else {
-            sig = Sig { args: args, variadic: variadic,
-                        returns: returns.unwrap_or(Vec::new()) };
+            sig = Sig { args: args, variadic: variadic, returns: returns };
         }
 
         let block = try!(self.parse_block());
@@ -1204,7 +1203,7 @@ impl<T: Iterator<Item=Tok>> Parser<T> {
             };
             try!(self.end_meta_comment(Punct::DashDashV));
 
-            Ok(Some(Sig { args: args, variadic: variadic, returns: returns }))
+            Ok(Some(Sig { args: args, variadic: variadic, returns: Some(returns) }))
         } else {
             Ok(None)
         }

@@ -119,12 +119,12 @@ pub trait Lattice<Other = Self> {
     }
 }
 
-impl<T: Lattice<Output=Option<T>> + fmt::Debug + Clone> Lattice for Option<T> {
+impl<T: Lattice<Output=T> + fmt::Debug + Clone> Lattice for Option<T> {
     type Output = Option<T>;
 
     fn do_union(&self, other: &Option<T>, ctx: &mut TypeContext) -> Option<T> {
         match (self, other) {
-            (&Some(ref a), &Some(ref b)) => a.union(b, ctx),
+            (&Some(ref a), &Some(ref b)) => Some(a.union(b, ctx)),
             (&Some(ref a), &None) => Some(a.clone()),
             (&None, &Some(ref b)) => Some(b.clone()),
             (&None, &None) => None,
