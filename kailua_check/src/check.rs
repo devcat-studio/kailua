@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam};
 use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
-use ty::{T, TySeq, Lattice, TypeContext, Tables, Function, Functions};
+use ty::{T, TySeq, Lattice, TypeContext, Tables, Function, Functions, TyWithNil};
 use ty::{S, Slot, SlotSeq, SlotWithNil};
 use ty::{Builtin, Flags};
 use ty::flags::*;
@@ -639,12 +639,13 @@ impl<'env> Checker<'env> {
 
     fn visit_func_body(&mut self, selfinfo: Option<TyInfo>, sig: &Sig,
                        block: &[Stmt]) -> CheckResult<TyInfo> {
-        let vainfo;
-        if sig.variadic {
-            vainfo = Some(TySeq::from(T::Dynamic));
-        } else {
-            vainfo = None;
-        }
+        let vatype = match sig.varargs {
+            None => None,
+            // varargs present but types are unspecified
+            Some(None) => Some(Box::new(TyWithNil::from(T::TVar(self.context().gen_tvar())))),
+            Some(Some(ref k)) => Some(Box::new(TyWithNil::from(T::from(k)))),
+        };
+        let vainfo = vatype.clone().map(|t| TySeq { head: Vec::new(), tail: Some(t) });
 
         // we accumulate all known return types inside the frame
         // then checks if it matches with the `returns`.
@@ -664,7 +665,7 @@ impl<'env> Checker<'env> {
             scope.env.add_local_var(&Name::from(&b"self"[..]), selfinfo, true);
         }
 
-        let mut args = TySeq::new();
+        let mut argshead = Vec::new();
         for param in &sig.args {
             let ty;
             let sty;
@@ -680,15 +681,15 @@ impl<'env> Checker<'env> {
                 sty = Slot::new(S::Var(T::TVar(argv)));
             }
             scope.env.add_local_var(&param.base, sty, false);
-            args.head.push(Box::new(ty));
+            argshead.push(Box::new(ty));
         }
+        let args = TySeq { head: argshead, tail: vatype };
 
         if let Exit::None = try!(scope.visit_block(block)) {
             // the last statement is an implicit return
             try!(scope.visit_stmt(&St::Return(Vec::new())));
         }
 
-        // XXX multiple returns
         let returns = scope.env.get_frame_mut().returns.take().unwrap();
         Ok(TyInfo::from(T::func(Function { args: args, returns: returns })))
     }

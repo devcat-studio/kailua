@@ -17,6 +17,10 @@ impl TyWithNil {
     pub fn from<'a>(t: T<'a>) -> TyWithNil {
         TyWithNil { ty: t.into_send().without_nil() }
     }
+
+    pub fn into_type(self) -> T<'static> {
+        self.ty | T::Nil
+    }
 }
 
 impl Deref for TyWithNil {
@@ -58,6 +62,14 @@ impl SlotWithNil {
 
     pub fn from<'a>(t: T<'a>) -> SlotWithNil {
         SlotWithNil { slot: Slot::from(t.into_send().without_nil()) }
+    }
+
+    pub fn from_ty_with_nil(t: TyWithNil) -> SlotWithNil {
+        SlotWithNil { slot: Slot::from(t.ty) }
+    }
+
+    pub fn into_slot(self) -> Slot {
+        self.slot.union(&Slot::just(T::Nil), &mut ())
     }
 }
 

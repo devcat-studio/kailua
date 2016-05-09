@@ -3,7 +3,7 @@ use std::fmt;
 use std::vec;
 use std::usize;
 use diag::CheckResult;
-use super::{T, Ty, Slot, Lattice, TypeContext};
+use super::{T, Ty, TyWithNil, Slot, SlotWithNil, Lattice, TypeContext};
 
 pub struct TySeqIter {
     head: vec::IntoIter<Ty>,
@@ -23,7 +23,16 @@ impl Iterator for TySeqIter {
 #[derive(Clone, PartialEq)]
 pub struct TySeq {
     pub head: Vec<Ty>,
-    pub tail: Option<Ty>, // None is same to Some(Box::new(T::Nil)) but has a display hint
+
+    // why is this TyWithNil? the TySeq (and others) is never infinite,
+    // so there should be a `nil` somewhere. since we don't know where it ends,
+    // the tail is implicitly unioned with `nil` in all practical sense.
+    //
+    // None is same to Some(Box::new(T::Nil)) but has a display hint
+    // and has a different behavior for the arity calculation.
+    // (we may need this because, well, C/C++ API *can* count the proper number of args.
+    // TODO this is not yet enforced due to a number of concerns)
+    pub tail: Option<Box<TyWithNil>>,
 }
 
 impl TySeq {
@@ -37,12 +46,12 @@ impl TySeq {
 
     pub fn into_iter(self) -> TySeqIter {
         TySeqIter { head: self.head.into_iter(),
-                    tail: self.tail.unwrap_or_else(|| Box::new(T::Nil)) }
+                    tail: Box::new(self.tail.map_or(T::Nil, |t| t.into_type())) }
     }
 
     pub fn into_first(self) -> Ty {
         if let Some(head) = self.head.into_iter().next() { return head; }
-        if let Some(tail) = self.tail { return tail; }
+        if let Some(tail) = self.tail { return Box::new(tail.into_type()); }
         Box::new(T::Nil)
     }
 }
@@ -51,9 +60,8 @@ impl Lattice for TySeq {
     type Output = TySeq;
 
     fn do_union(&self, other: &TySeq, ctx: &mut TypeContext) -> TySeq {
-        let nil = T::Nil;
-        let selftail = self.tail.as_ref().map_or(&nil, |t| &**t);
-        let othertail = other.tail.as_ref().map_or(&nil, |t| &**t);
+        let selftail = self.tail.clone().map_or(T::Nil, |t| t.into_type());
+        let othertail = other.tail.clone().map_or(T::Nil, |t| t.into_type());
 
         let mut head = Vec::new();
         let n = cmp::min(self.head.len(), other.head.len());
@@ -61,14 +69,14 @@ impl Lattice for TySeq {
             head.push(Box::new(l.union(r, ctx)));
         }
         for l in &self.head[n..] {
-            head.push(Box::new(l.union(othertail, ctx)));
+            head.push(Box::new(l.union(&othertail, ctx)));
         }
         for r in &other.head[n..] {
             head.push(Box::new(selftail.union(r, ctx)));
         }
 
         let tail = if self.tail.is_some() || other.tail.is_some() {
-            Some(Box::new(selftail.union(othertail, ctx)))
+            Some(Box::new(TyWithNil::from(selftail.union(&othertail, ctx))))
         } else {
             None
         };
@@ -81,15 +89,14 @@ impl Lattice for TySeq {
 
         let mut selfhead = self.head.iter().fuse();
         let mut otherhead = other.head.iter().fuse();
-        let nil = T::Nil;
-        let selftail = self.tail.as_ref().map_or(&nil, |t| &**t);
-        let othertail = other.tail.as_ref().map_or(&nil, |t| &**t);
+        let selftail = self.tail.clone().map_or(T::Nil, |t| t.into_type());
+        let othertail = other.tail.clone().map_or(T::Nil, |t| t.into_type());
         loop {
             match (selfhead.next(), otherhead.next()) {
                 (Some(a), Some(b)) => try!(a.assert_sub(b, ctx)),
-                (Some(a), None) => try!(a.assert_sub(othertail, ctx)),
+                (Some(a), None) => try!(a.assert_sub(&othertail, ctx)),
                 (None, Some(b)) => try!(selftail.assert_sub(b, ctx)),
-                (None, None) => return selftail.assert_sub(othertail, ctx),
+                (None, None) => return selftail.assert_sub(&othertail, ctx),
             }
         }
     }
@@ -99,15 +106,14 @@ impl Lattice for TySeq {
 
         let mut selfhead = self.head.iter().fuse();
         let mut otherhead = other.head.iter().fuse();
-        let nil = T::Nil;
-        let selftail = self.tail.as_ref().map_or(&nil, |t| &*t);
-        let othertail = other.tail.as_ref().map_or(&nil, |t| &*t);
+        let selftail = self.tail.clone().map_or(T::Nil, |t| t.into_type());
+        let othertail = other.tail.clone().map_or(T::Nil, |t| t.into_type());
         loop {
             match (selfhead.next(), otherhead.next()) {
                 (Some(a), Some(b)) => try!(a.assert_eq(b, ctx)),
-                (Some(a), None) => try!(a.assert_eq(othertail, ctx)),
+                (Some(a), None) => try!(a.assert_eq(&othertail, ctx)),
                 (None, Some(b)) => try!(selftail.assert_eq(b, ctx)),
-                (None, None) => return selftail.assert_eq(othertail, ctx),
+                (None, None) => return selftail.assert_eq(&othertail, ctx),
             }
         }
     }
@@ -123,7 +129,7 @@ impl fmt::Debug for TySeq {
         }
         if let Some(ref t) = self.tail {
             if !first { try!(write!(f, ", ")); }
-            try!(write!(f, ", {:?}...", t));
+            try!(write!(f, "{:?}...", t));
         }
         write!(f, ")")
     }
@@ -149,7 +155,7 @@ impl Iterator for SlotSeqIter {
 #[derive(Clone, PartialEq)]
 pub struct SlotSeq {
     pub head: Vec<Slot>,
-    pub tail: Option<Slot>,
+    pub tail: Option<SlotWithNil>,
 }
 
 impl SlotSeq {
@@ -167,23 +173,29 @@ impl SlotSeq {
 
     pub fn from_seq(seq: TySeq) -> SlotSeq {
         SlotSeq { head: seq.head.into_iter().map(|t| Slot::just(*t)).collect(),
-                  tail: seq.tail.map(|t| Slot::just(*t)) }
+                  tail: seq.tail.map(|t| SlotWithNil::from_ty_with_nil(*t)) }
     }
 
     pub fn into_iter(self) -> SlotSeqIter {
-        SlotSeqIter { head: self.head.into_iter(), tail: self.tail }
+        SlotSeqIter { head: self.head.into_iter(),
+                      tail: self.tail.map(|s| s.into_slot()) }
     }
 
     pub fn into_first(self) -> Slot {
         if let Some(head) = self.head.into_iter().next() { return head; }
-        if let Some(tail) = self.tail { return tail; }
+        if let Some(tail) = self.tail { return tail.into_slot(); }
         Slot::just(T::Nil)
     }
 
     pub fn unlift(self) -> TySeq {
-        let unlift = |slot: Slot| Box::new(slot.borrow().unlift().clone().into_send());
-        TySeq { head: self.head.into_iter().map(&unlift).collect(),
-                tail: self.tail.map(&unlift) }
+        let head =
+            self.head.into_iter().map(|s| Box::new(s.borrow().unlift().clone().into_send()));
+        let tail = if let Some(tail) = self.tail {
+            Some(Box::new(TyWithNil::from(tail.borrow().unlift().clone().into_send())))
+        } else {
+            None
+        };
+        TySeq { head: head.collect(), tail: tail }
     }
 }
 
@@ -191,9 +203,8 @@ impl Lattice for SlotSeq {
     type Output = SlotSeq;
 
     fn do_union(&self, other: &SlotSeq, ctx: &mut TypeContext) -> SlotSeq {
-        let nil = Slot::just(T::Nil);
-        let selftail = self.tail.as_ref().unwrap_or(&nil);
-        let othertail = other.tail.as_ref().unwrap_or(&nil);
+        let selftail = self.tail.clone().map_or(Slot::just(T::Nil), |s| s.into_slot());
+        let othertail = other.tail.clone().map_or(Slot::just(T::Nil), |s| s.into_slot());
 
         let mut head = Vec::new();
         let n = cmp::min(self.head.len(), other.head.len());
@@ -201,14 +212,14 @@ impl Lattice for SlotSeq {
             head.push(l.union(r, ctx));
         }
         for l in &self.head[n..] {
-            head.push(l.union(othertail, ctx));
+            head.push(l.union(&othertail, ctx));
         }
         for r in &other.head[n..] {
             head.push(selftail.union(r, ctx));
         }
 
         let tail = if self.tail.is_some() || other.tail.is_some() {
-            Some(selftail.union(othertail, ctx))
+            Some(SlotWithNil::from_slot(selftail.union(&othertail, ctx)))
         } else {
             None
         };
@@ -221,15 +232,14 @@ impl Lattice for SlotSeq {
 
         let mut selfhead = self.head.iter().fuse();
         let mut otherhead = other.head.iter().fuse();
-        let nil = Slot::just(T::Nil);
-        let selftail = self.tail.as_ref().unwrap_or(&nil);
-        let othertail = other.tail.as_ref().unwrap_or(&nil);
+        let selftail = self.tail.clone().map_or(Slot::just(T::Nil), |s| s.into_slot());
+        let othertail = other.tail.clone().map_or(Slot::just(T::Nil), |s| s.into_slot());
         loop {
             match (selfhead.next(), otherhead.next()) {
                 (Some(a), Some(b)) => try!(a.assert_sub(b, ctx)),
-                (Some(a), None) => try!(a.assert_sub(othertail, ctx)),
+                (Some(a), None) => try!(a.assert_sub(&othertail, ctx)),
                 (None, Some(b)) => try!(selftail.assert_sub(b, ctx)),
-                (None, None) => return selftail.assert_sub(othertail, ctx),
+                (None, None) => return selftail.assert_sub(&othertail, ctx),
             }
         }
     }
@@ -239,15 +249,14 @@ impl Lattice for SlotSeq {
 
         let mut selfhead = self.head.iter().fuse();
         let mut otherhead = other.head.iter().fuse();
-        let nil = Slot::just(T::Nil);
-        let selftail = self.tail.as_ref().unwrap_or(&nil);
-        let othertail = other.tail.as_ref().unwrap_or(&nil);
+        let selftail = self.tail.clone().map_or(Slot::just(T::Nil), |s| s.into_slot());
+        let othertail = other.tail.clone().map_or(Slot::just(T::Nil), |s| s.into_slot());
         loop {
             match (selfhead.next(), otherhead.next()) {
                 (Some(a), Some(b)) => try!(a.assert_eq(b, ctx)),
-                (Some(a), None) => try!(a.assert_eq(othertail, ctx)),
+                (Some(a), None) => try!(a.assert_eq(&othertail, ctx)),
                 (None, Some(b)) => try!(selftail.assert_eq(b, ctx)),
-                (None, None) => return selftail.assert_eq(othertail, ctx),
+                (None, None) => return selftail.assert_eq(&othertail, ctx),
             }
         }
     }
@@ -263,7 +272,7 @@ impl fmt::Debug for SlotSeq {
         }
         if let Some(ref t) = self.tail {
             if !first { try!(write!(f, ", ")); }
-            try!(write!(f, ", {:?}...", t));
+            try!(write!(f, "{:?}...", t));
         }
         write!(f, ")")
     }

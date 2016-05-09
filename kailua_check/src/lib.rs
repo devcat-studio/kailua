@@ -360,5 +360,14 @@ fn test_check() {
                 end
                 --v (a: number, b: integer, c: number, d: integer, e: string, f: boolean)
                 local function q(a,b,c,d,e,f) end
-                q(3.14, p(), -42, p())")
+                q(3.14, p(), -42, p())");
+    assert_ok!("--v (...: integer)
+                local function p(...) end
+                p(1, 2, 3)");
+    assert_err!("--v (...: integer)
+                 local function p(...) end
+                 p(1, false, 3)");
+    assert_ok!("--v (...: integer)
+                local function p(...) end
+                p(1, 2, 3, nil, nil, nil)");
 }

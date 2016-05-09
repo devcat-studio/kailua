@@ -89,13 +89,13 @@ impl<T: fmt::Debug> fmt::Debug for TypeSpec<T> {
 #[derive(Clone, PartialEq)]
 pub struct Sig {
     pub args: Vec<TypeSpec<Name>>,
-    pub variadic: bool,
+    pub varargs: Option<Option<Kind>>, // may have to be inferred; Const only
     pub returns: Option<Vec<Kind>>, // may have to be inferred
 }
 
 impl fmt::Debug for Sig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.variadic {
+        if let Some(ref varargs) = self.varargs {
             try!(write!(f, "["));
             let mut first = true;
             for namespec in &self.args {
@@ -103,7 +103,13 @@ impl fmt::Debug for Sig {
                 try!(write!(f, "{:?}", *namespec));
             }
             if !first { try!(write!(f, ", ")); }
-            try!(write!(f, "...]"));
+            try!(write!(f, "...: "));
+            if let Some(ref kind) = *varargs {
+                try!(write!(f, "{:?}", *kind));
+            } else {
+                try!(write!(f, "_"));
+            }
+            try!(write!(f, "]"));
         } else {
             try!(fmt::Debug::fmt(&self.args, f));
         }
@@ -318,7 +324,7 @@ impl fmt::Debug for M {
 #[derive(Clone, PartialEq)]
 pub struct FuncKind {
     pub args: Vec<Kind>,
-    pub variadic: bool,
+    pub varargs: Option<Kind>,
     pub returns: Vec<Kind>,
 }
 
@@ -330,9 +336,9 @@ impl fmt::Debug for FuncKind {
             if first { first = false; } else { try!(write!(f, ", ")); }
             try!(write!(f, "{:?}", *kind));
         }
-        if self.variadic {
+        if let Some(ref kind) = self.varargs {
             if !first { try!(write!(f, ", ")); }
-            try!(write!(f, "..."));
+            try!(write!(f, "{:?}...", *kind));
         }
         try!(write!(f, ") -> "));
         if self.returns.len() == 1 {

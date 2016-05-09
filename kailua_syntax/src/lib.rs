@@ -28,15 +28,17 @@ fn test_parse() {
     assert_eq!(test("\n"), "[]");
     assert_eq!(test("\n\n"), "[]");
     assert_eq!(test("do break; end; break"), "[Do([Break]), Break]");
-    assert_eq!(test("function r(p) --[[...]] end"), "[FuncDecl(Global, `r`, [`p`], [])]");
-    assert_eq!(test("local function r(p,...)\n\nend"), "[FuncDecl(Local, `r`, [`p`, ...], [])]");
+    assert_eq!(test("function r(p) --[[...]] end"),
+               "[FuncDecl(Global, `r`, [`p`] -> _, [])]");
+    assert_eq!(test("local function r(p,...)\n\nend"),
+               "[FuncDecl(Local, `r`, [`p`, ...: _] -> _, [])]");
     assert_eq!(test("local a, b"), "[Local([`a`, `b`], [])]");
     assert_eq!(test("local a --: integer\n, b --: var ?"),
                "[Local([`a`: _ Integer, `b`: Var Dynamic], [])]");
     assert_eq!(test("local a, --: const table\nb"),
                "[Local([`a`: Const Table, `b`], [])]");
     assert_eq!(test("local function r(p --: integer\n)\n\nend"),
-               "[FuncDecl(Local, `r`, [`p`: _ Integer], [])]");
+               "[FuncDecl(Local, `r`, [`p`: _ Integer] -> _, [])]");
     assert_eq!(test("local function r(p, q) --: integer --> string\n\nend"),
                "[FuncDecl(Local, `r`, [`p`, `q`: _ Integer] -> String, [])]");
     assert_eq!(test("f()"), "[Void(`f`())]");
@@ -82,10 +84,11 @@ fn test_parse() {
     assert_eq!(test("local x --: function"), "[Local([`x`: _ Function], [])]");
     assert_eq!(test("local x --: function()"), "[Local([`x`: _ Func([() -> ()])], [])]");
     assert_eq!(test("local x --: function()->()"), "[Local([`x`: _ Func([() -> ()])], [])]");
-    assert_eq!(test("local x --: function () & (integer,...)->string?"),
-               "[Local([`x`: _ Func([() -> (), (Integer, ...) -> Union([String, Nil])])], [])]");
-    assert_eq!(test("local x --: function (...) | string?"),
-               "[Local([`x`: _ Union([Func([(...) -> ()]), Union([String, Nil])])], [])]");
+    assert_eq!(test("local x --: function () & (integer, boolean...)->string?"),
+               "[Local([`x`: _ Func([() -> (), \
+                                     (Integer, Boolean...) -> Union([String, Nil])])], [])]");
+    assert_eq!(test("local x --: function (boolean...) | string?"),
+               "[Local([`x`: _ Union([Func([(Boolean...) -> ()]), Union([String, Nil])])], [])]");
     assert_eq!(test("local x --: `function`"), "[Local([`x`: _ Function], [])]");
     assert_eq!(test("local x --: `function`()"), "parse error");
     assert_eq!(test("local x --: (integer, string)"), "parse error");
@@ -136,7 +139,7 @@ fn test_parse() {
                                                                 Nil]))))], [])]");
     assert_eq!(test("--v ()
                      function foo() end"),
-               "[FuncDecl(Global, `foo`, [], [])]");
+               "[FuncDecl(Global, `foo`, [], [])]"); // note that the return is specified (not `_`)
     assert_eq!(test("--v (a: integer)
                      function foo() end"), "parse error");
     assert_eq!(test("--v (a: integer)
@@ -152,7 +155,7 @@ fn test_parse() {
                       --v  ...)
                       --v -> string
                       function(a, ...) end)()"),
-               "[Void(Func([`a`: Const Integer, ...] -> String, [])())]");
+               "[Void(Func([`a`: Const Integer, ...: _] -> String, [])())]");
     assert_eq!(test("--v ()
                      function foo() --> string
                      end"), "parse error");
@@ -170,5 +173,30 @@ fn test_parse() {
                      --# assume x: integer"), "parse error");
     assert_eq!(test("--v ()
                      for i = 1, 3 do end"), "parse error");
+    assert_eq!(test("function foo(a, --: integer
+                                  b, ...) --: string
+                     end"),
+               "[FuncDecl(Global, `foo`, [`a`: _ Integer, `b`, ...: String] -> _, [])]");
+    assert_eq!(test("--v (a: integer, b: boolean, ...: string)
+                     function foo(a, b, ...) --: string
+                     end"), "parse error");
+    assert_eq!(test("--v (a: integer, b: boolean)
+                     function foo(a, b, ...)
+                     end"), "parse error");
+    assert_eq!(test("--v (a: integer, b: boolean, ...: string)
+                     function foo(a, b)
+                     end"), "parse error");
+    assert_eq!(test("--v (a: integer, b: boolean, ...: string)
+                     function foo(a, b, ...)
+                     end"),
+               "[FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ Boolean, ...: String], [])]");
+    assert_eq!(test("--v (...: string)
+                     function foo(...)
+                     end"),
+               "[FuncDecl(Global, `foo`, [...: String], [])]");
+    assert_eq!(test("--v (...: string)
+                     local function foo(...)
+                     end"),
+               "[FuncDecl(Local, `foo`, [...: String], [])]");
 }
 
