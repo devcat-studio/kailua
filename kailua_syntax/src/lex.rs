@@ -1,4 +1,8 @@
-use std::{str, iter, u64};
+use std::str;
+use std::u64;
+use std::fmt;
+
+use kailua_diag::{SourceBytes, Pos, Span, Spanned, WithLoc, Report};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tok {
@@ -11,79 +15,91 @@ pub enum Tok {
     EOF, // only used in the parser
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Punct {
-    Plus,
-    Dash,
-    Star,
-    Slash,
-    Percent,
-    Caret,
-    Hash,
-    EqEq,
-    TildeEq,
-    LtEq,
-    GtEq,
-    Lt,
-    Gt,
-    Eq,
-    LParen,
-    RParen,
-    LBrace,
-    RBrace,
-    LBracket,
-    RBracket,
-    Semicolon,
-    Colon,
-    Comma,
-    Dot,
-    DotDot,
-    DotDotDot,
-
-    // Kailua extensions
-    DashDashHash,
-    DashDashV,
-    DashDashColon,
-    DashDashGt,
-    Ques,
-    Pipe,
-    Amp,
-    DashGt,
-    Newline,
+macro_rules! tt_to_expr { ($e:expr) => ($e) }
+macro_rules! define_tokens {
+    ($ty:ident: $($t:tt $i:ident,)*) => (
+        #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+        pub enum $ty { $($i,)* }
+        impl fmt::Display for $ty {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                let text = match *self { $($ty::$i => tt_to_expr!($t),)* };
+                fmt::Display::fmt(text, f)
+            }
+        }
+    );
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Keyword {
-    And,
-    Break,
-    Do,
-    Else,
-    Elseif,
-    End,
-    False,
-    For,
-    Function,
-    If,
-    In,
-    Local,
-    Nil,
-    Not,
-    Or,
-    Repeat,
-    Return,
-    Then,
-    True,
-    Until,
-    While,
+define_tokens! { Punct:
+    "`+`"   Plus,
+    "`-`"   Dash,
+    "`*`"   Star,
+    "`/`"   Slash,
+    "`%`"   Percent,
+    "`^`"   Caret,
+    "`#`"   Hash,
+    "`==`"  EqEq,
+    "`~=`"  TildeEq,
+    "`<=`"  LtEq,
+    "`>=`"  GtEq,
+    "`<`"   Lt,
+    "`>`"   Gt,
+    "`=`"   Eq,
+    "`(`"   LParen,
+    "`)`"   RParen,
+    "`{`"   LBrace,
+    "`}`"   RBrace,
+    "`[`"   LBracket,
+    "`]`"   RBracket,
+    "`;`"   Semicolon,
+    "`:`"   Colon,
+    "`,`"   Comma,
+    "`.`"   Dot,
+    "`..`"  DotDot,
+    "`...`" DotDotDot,
 
     // Kailua extensions
-    Assume,
-    Const,
-    Global,
-    Module,
-    Once,
-    Open,
-    Var,
+    "`--#`" DashDashHash,
+    "`--v`" DashDashV,
+    "`--:`" DashDashColon,
+    "`-->`" DashDashGt,
+    "`?`"   Ques,
+    "`|`"   Pipe,
+    "`&`"   Amp,
+    "`->`"  DashGt,
+    "a newline" Newline,
+}
+
+define_tokens! { Keyword:
+    "a keyword `and`"       And,
+    "a keyword `break`"     Break,
+    "a keyword `do`"        Do,
+    "a keyword `else`"      Else,
+    "a keyword `elseif`"    Elseif,
+    "a keyword `end`"       End,
+    "a keyword `false`"     False,
+    "a keyword `for`"       For,
+    "a keyword `function`"  Function,
+    "a keyword `if`"        If,
+    "a keyword `in`"        In,
+    "a keyword `local`"     Local,
+    "a keyword `nil`"       Nil,
+    "a keyword `not`"       Not,
+    "a keyword `or`"        Or,
+    "a keyword `repeat`"    Repeat,
+    "a keyword `return`"    Return,
+    "a keyword `then`"      Then,
+    "a keyword `true`"      True,
+    "a keyword `until`"     Until,
+    "a keyword `while`"     While,
+
+    // Kailua extensions
+    "a keyword `assume`"    Assume,
+    "a keyword `const`"     Const,
+    "a keyword `global`"    Global,
+    "a keyword `module`"    Module,
+    "a keyword `once`"      Once,
+    "a keyword `open`"      Open,
+    "a keyword `var`"       Var,
 }
 
 impl Keyword {
@@ -124,28 +140,55 @@ impl Keyword {
     }
 }
 
-pub struct Lexer<T> {
-    iter: iter::Fuse<T>,
-    lookahead: Option<u8>,
+pub struct Lexer<'a, R> {
+    bytes: SourceBytes<'a>,
+    last_pos: Pos,
+    last_byte: u8,
+    lookahead: bool,
     meta: bool,
+    report: R,
 }
 
 pub type Error = &'static str;
 
 fn is_digit(c: u8) -> bool { b'0' <= c && c <= b'9' }
 
-impl<T: Iterator<Item=u8>> Lexer<T> {
-    pub fn new(iter: T) -> Lexer<T> {
-        Lexer { iter: iter.fuse(), lookahead: None, meta: false }
+impl<'a, R: Report<Error=Error>> Lexer<'a, R> {
+    pub fn new(bytes: SourceBytes<'a>, report: R) -> Lexer<'a, R> {
+        Lexer {
+            bytes: bytes,
+            last_pos: Pos::dummy(),
+            last_byte: b'\0',
+            lookahead: false,
+            meta: false,
+            report: report,
+        }
+    }
+
+    fn pos(&self) -> Pos {
+        if self.lookahead { self.last_pos } else { self.bytes.pos() }
     }
 
     fn read(&mut self) -> Option<u8> {
-        self.lookahead.take().or_else(|| self.iter.next())
+        if self.lookahead {
+            self.lookahead = false;
+            Some(self.last_byte)
+        } else {
+            self.last_pos = self.bytes.pos();
+            if let Some(c) = self.bytes.next() {
+                self.last_byte = c;
+                Some(c)
+            } else {
+                None
+            }
+        }
     }
 
-    fn unread(&mut self, c: u8) {
-        assert!(self.lookahead.is_none(), "only one lookahead byte is supported");
-        self.lookahead = Some(c);
+    fn unread(&mut self, last: u8) {
+        assert!(!self.lookahead, "only one lookahead byte is supported");
+        assert!(!self.last_pos.is_dummy());
+        assert_eq!(self.last_byte, last);
+        self.lookahead = true;
     }
 
     fn try<Cond>(&mut self, mut cond: Cond) -> Option<u8>
@@ -181,13 +224,18 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
 
     // assumes that the first `[` is already read and
     // the next character in the lookahead is either `=` or `[`.
-    fn scan_long_bracket<F>(&mut self, mut f: F) -> Result<(), Error>
+    fn scan_long_bracket<F>(&mut self, begin: Pos, mut f: F) -> Result<(), R::Error>
             where F: FnMut(u8) {
         let opening_level = self.count_equals();
         match self.read() {
-            Some(b'[') => {},
-            Some(_) => return Err("unexpected start of long bracket"),
-            None => return Err("unexpected EOF in long bracket"),
+            Some(b'[') => {}
+            Some(c) => {
+                self.unread(c);
+                return self.report.fatal(begin..self.pos(), "Unexpected start of long bracket");
+            }
+            None => {
+                return Err("unexpected EOF in long bracket");
+            }
         }
         loop {
             match self.read() {
@@ -208,14 +256,16 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
                     return Err("newline disallowed in long bracket inside metablock")
                 },
                 Some(c) => f(c),
-                None => return Err("unexpected EOF in long bracket"),
+                None => {
+                    return self.report.error(begin..self.pos(), "Unexpected EOF in long bracket");
+                }
             }
         }
         Ok(())
     }
 
     // assumes that the first quote is already read
-    fn scan_quoted_string<F>(&mut self, quote: u8, mut f: F) -> Result<(), Error>
+    fn scan_quoted_string<F>(&mut self, quote: u8, mut f: F) -> Result<(), R::Error>
             where F: FnMut(u8) {
         loop {
             match self.read() {
@@ -258,15 +308,7 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
         Ok(())
     }
 
-    pub fn next_token(&mut self) -> Result<Option<Tok>, Error> {
-        macro_rules! tok {
-            (Keyword($e:expr)) => (Ok(Some(Tok::Keyword($e))));
-            (Name($e:expr))    => (Ok(Some(Tok::Name($e))));
-            (Num($e:expr))     => (Ok(Some(Tok::Num($e))));
-            (Str($e:expr))     => (Ok(Some(Tok::Str($e))));
-            ($i:ident)         => (Ok(Some(Tok::Punct(Punct::$i))));
-        }
-
+    pub fn next_token(&mut self) -> Result<Option<Spanned<Tok>>, R::Error> {
         loop {
             // skip any whitespace
             if self.meta {
@@ -274,6 +316,20 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
                 self.scan_while(|c| c == b' ' || c == b'\t', |_| {});
             } else {
                 self.scan_while(|c| c == b' ' || c == b'\t' || c == b'\r' || c == b'\n', |_| {});
+            }
+
+            let begin = self.pos();
+
+            macro_rules! tok {
+                (@token Keyword($e:expr)) => (Tok::Keyword($e));
+                (@token Name($e:expr))    => (Tok::Name($e));
+                (@token Num($e:expr))     => (Tok::Num($e));
+                (@token Str($e:expr))     => (Tok::Str($e));
+                (@token $i:ident)         => (Tok::Punct(Punct::$i));
+
+                ($($t:tt)*) => (
+                    Ok(Some(tok!(@token $($t)*).with_loc(Span::new(begin, self.pos()))))
+                );
             }
 
             match self.read() {
@@ -344,7 +400,7 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
                         self.unread(c);
                         if c == b'=' || c == b'[' {
                             let mut s = Vec::new();
-                            try!(self.scan_long_bracket(|c| s.push(c)));
+                            try!(self.scan_long_bracket(begin, |c| s.push(c)));
                             return tok!(Str(s));
                         }
                     }
@@ -358,7 +414,7 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
                                 if let Some(c) = self.try(|c| c == b'[' || c == b'=') {
                                     // long comment
                                     self.unread(c);
-                                    try!(self.scan_long_bracket(|_| {}));
+                                    try!(self.scan_long_bracket(begin, |_| {}));
                                     continue;
                                 }
                             }
@@ -454,14 +510,14 @@ impl<T: Iterator<Item=u8>> Lexer<T> {
     }
 }
 
-impl<T: Iterator<Item=u8>> Iterator for Lexer<T> {
-    type Item = Tok;
+impl<'a, R: Report<Error=Error>> Iterator for Lexer<'a, R> {
+    type Item = Spanned<Tok>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.next_token() {
             Ok(Some(tok)) => Some(tok),
             Ok(None) => None,
-            Err(_) => Some(Tok::Error),
+            Err(_) => Some(Tok::Error.with_loc(Span::dummy())),
         }
     }
 }

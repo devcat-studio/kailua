@@ -1,3 +1,4 @@
+extern crate kailua_diag;
 #[macro_use] extern crate custom_derive;
 #[macro_use] extern crate newtype_derive;
 
@@ -5,14 +6,22 @@ pub use lex::Error;
 pub use ast::{Name, Str, Var, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam};
 pub use ast::{St, Stmt, Block, M, K, Kind};
 
-//mod source;
 mod lex;
 mod ast;
 mod parser;
 
 pub fn parse_chunk(s: &[u8]) -> Result<Block, Error> {
-    let lexer = lex::Lexer::new(s.iter().cloned());
-    parser::Parser::new(lexer).into_chunk()
+    let mut source = kailua_diag::Source::new();
+    let span = source.add_string("<none>", s);
+    let report = kailua_diag::ConsoleReport::new(&source);
+    let lexer = lex::Lexer::new(source.iter_bytes_from_span(span), &report);
+    let parser = parser::Parser::new(lexer, &report);
+    let chunk = try!(parser.into_chunk());
+    if report.max_kind_seen() >= Some(kailua_diag::Kind::Error) {
+        Err("parsing error")
+    } else {
+        Ok(chunk)
+    }
 }
 
 #[test]
@@ -198,5 +207,7 @@ fn test_parse() {
                      local function foo(...)
                      end"),
                "[FuncDecl(Local, `foo`, [...: String], [])]");
+    assert_eq!(test("--# assume a: { x
+                     --#             y"), "parse error");
 }
 

@@ -1,0 +1,8 @@
+[package]
+name = "kailua_diag"
+version = "0.1.0"
+authors = ["Kang Seonghoon <public+git@mearie.org>"]
+
+[dependencies]
+term = "0.4.4"
+unicode-width = "0.1.3"
