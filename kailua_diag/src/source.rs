@@ -118,7 +118,7 @@ impl fmt::Debug for Span {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Spanned<T> {
     pub span: Span,
     pub base: T,
@@ -129,7 +129,27 @@ impl From<Pos> for Span {
 }
 
 impl From<ops::Range<Pos>> for Span {
-    fn from(range: ops::Range<Pos>) -> Span { Span::new(range.start, range.end) }
+    fn from(range: ops::Range<Pos>) -> Span {
+        if range.start <= range.end {
+            Span::new(range.start, range.end)
+        } else {
+            // this is possible when the range actually describes an empty span.
+            // in the ordinary case we take the beginning of the first token and
+            // the end of the last token for the span:
+            //
+            // function f()    FIRST_TOKEN ... LAST_TOKEN    end
+            //                 ^ begin               end ^
+            //
+            // but if the span is empty, the order is swapped:
+            //
+            // function f()    end
+            //         end ^   ^ begin
+            //
+            // the most reasonable choice here would be using (end..begin)
+            // as an indication of the empty span.
+            Span::new(range.end, range.start)
+        }
+    }
 }
 
 impl<T> From<Spanned<T>> for Span {
@@ -389,11 +409,11 @@ impl Source {
 
     pub fn file_from_pos(&self, pos: Pos) -> Option<&SourceFile> {
         let f = match self.files.binary_search_by(|f| f.span.end.cmp(&pos)) {
-            Ok(_) => return None, // f.span.end itself is a sentinel
-            Err(i) if i == self.files.len() => return None, // pos >= data.len()
+            Ok(i) => &self.files[i], // refers to the sentinel, which belongs to the last line
+            Err(i) if i == self.files.len() => return None, // pos > data.len()
             Err(i) => &self.files[i],
         };
-        assert!(pos < f.span.end);
+        assert!(pos <= f.span.end);
         if pos < f.span.begin { return None; } // sentinel or stripped BOM
         Some(f)
     }

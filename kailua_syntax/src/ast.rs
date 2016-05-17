@@ -1,4 +1,5 @@
 use std::fmt;
+use kailua_diag::Spanned;
 
 fn format_ascii_vec(f: &mut fmt::Formatter, s: &[u8]) -> fmt::Result {
     for &c in s {
@@ -60,19 +61,15 @@ impl From<Name> for Str {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Var {
-    Name(Name),
-    Index(Exp, Exp),
-}
-
-impl From<Name> for Var {
-    fn from(n: Name) -> Var { Var::Name(n) }
+    Name(Spanned<Name>),
+    Index(Spanned<Exp>, Spanned<Exp>),
 }
 
 #[derive(Clone, PartialEq)]
 pub struct TypeSpec<T> {
     pub base: T,
     pub modf: M,
-    pub kind: Option<Kind>,
+    pub kind: Option<Spanned<Kind>>,
 }
 
 impl<T: fmt::Debug> fmt::Debug for TypeSpec<T> {
@@ -88,9 +85,9 @@ impl<T: fmt::Debug> fmt::Debug for TypeSpec<T> {
 
 #[derive(Clone, PartialEq)]
 pub struct Sig {
-    pub args: Vec<TypeSpec<Name>>,
-    pub varargs: Option<Option<Kind>>, // may have to be inferred; Const only
-    pub returns: Option<Vec<Kind>>, // may have to be inferred
+    pub args: Vec<TypeSpec<Spanned<Name>>>,
+    pub varargs: Option<Option<Spanned<Kind>>>, // may have to be inferred; Const only
+    pub returns: Option<Vec<Spanned<Kind>>>, // may have to be inferred
 }
 
 impl fmt::Debug for Sig {
@@ -135,16 +132,16 @@ pub enum Ex {
     Num(f64),
     Str(Str),
     Varargs,
-    Func(Sig, Block),
-    Table(Vec<(Option<Exp>, Exp)>),
+    Func(Sig, Spanned<Block>),
+    Table(Vec<(Option<Spanned<Exp>>, Spanned<Exp>)>),
 
     // expressions
-    Var(Name),
-    FuncCall(Exp, Vec<Exp>), // desugared form
-    MethodCall(Exp, Name, Vec<Exp>),
-    Index(Exp, Exp),
-    Un(UnOp, Exp),
-    Bin(Exp, BinOp, Exp),
+    Var(Spanned<Name>),
+    FuncCall(Spanned<Exp>, Vec<Spanned<Exp>>), // desugared form
+    MethodCall(Spanned<Exp>, Spanned<Name>, Vec<Spanned<Exp>>),
+    Index(Spanned<Exp>, Spanned<Exp>),
+    Un(Spanned<UnOp>, Spanned<Exp>),
+    Bin(Spanned<Exp>, Spanned<BinOp>, Spanned<Exp>),
 }
 
 impl fmt::Debug for Ex {
@@ -185,15 +182,7 @@ impl fmt::Debug for Ex {
     }
 }
 
-impl From<f64> for Ex { fn from(v: f64) -> Ex { Ex::Num(v) } }
-impl From<Str> for Ex { fn from(s: Str) -> Ex { Ex::Str(s) } }
-impl From<Name> for Ex { fn from(n: Name) -> Ex { Ex::Var(n.into()) } }
-
 pub type Exp = Box<Ex>;
-
-impl From<f64> for Exp { fn from(x: f64) -> Exp { Box::new(From::from(x)) } }
-impl From<Str> for Exp { fn from(x: Str) -> Exp { Box::new(From::from(x)) } }
-impl From<Name> for Exp { fn from(x: Name) -> Exp { Box::new(From::from(x)) } }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum UnOp {
@@ -260,49 +249,34 @@ pub enum FuncScope {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum SelfParam {
-    No,
-    Yes,
-}
+pub struct SelfParam;
 
 impl fmt::Debug for SelfParam {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            SelfParam::No => write!(f, "()"),
-            SelfParam::Yes => write!(f, "(self)"),
-        }
-    }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "self") }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum St {
-    Void(Exp), // technically not every Exp is valid here, but for simplicity.
-    Assign(Vec<TypeSpec<Var>>, Vec<Exp>),
-    Do(Block),
-    While(Exp, Block),
-    Repeat(Block, Exp),
-    If(Vec<(Exp, Block)>, Option<Block>),
-    For(Name, Exp, Exp, Option<Exp>, Block),
-    ForIn(Vec<Name>, Vec<Exp>, Block),
-    FuncDecl(FuncScope, Name, Sig, Block),
-    MethodDecl(Vec<Name>, SelfParam, Sig, Block),
-    Local(Vec<TypeSpec<Name>>, Vec<Exp>),
-    Return(Vec<Exp>),
+    Void(Spanned<Exp>), // technically not every Exp is valid here, but for simplicity.
+    Assign(Vec<TypeSpec<Spanned<Var>>>, Vec<Spanned<Exp>>),
+    Do(Spanned<Block>),
+    While(Spanned<Exp>, Spanned<Block>),
+    Repeat(Spanned<Block>, Spanned<Exp>),
+    If(Vec<(Spanned<Exp>, Spanned<Block>)>, Option<Spanned<Block>>),
+    For(Spanned<Name>, Spanned<Exp>, Spanned<Exp>, Option<Spanned<Exp>>, Spanned<Block>),
+    ForIn(Vec<Spanned<Name>>, Vec<Spanned<Exp>>, Spanned<Block>),
+    FuncDecl(FuncScope, Spanned<Name>, Sig, Spanned<Block>),
+    MethodDecl(Vec<Spanned<Name>>, Option<Spanned<SelfParam>>, Sig, Spanned<Block>),
+    Local(Vec<TypeSpec<Spanned<Name>>>, Vec<Spanned<Exp>>),
+    Return(Vec<Spanned<Exp>>),
     Break,
 
     // Kailua extensions
-    KailuaAssume(Name, M, Kind, Option<Str>),
+    KailuaAssume(Spanned<Name>, M, Spanned<Kind>, Option<Spanned<Str>>),
 }
 
-impl From<Exp> for St { fn from(e: Exp) -> St { St::Void(e) } }
-impl From<Block> for St { fn from(block: Block) -> St { St::Do(block) } }
-
 pub type Stmt = Box<St>;
-
-impl From<Exp> for Stmt { fn from(x: Exp) -> Stmt { Box::new(From::from(x)) } }
-impl From<Block> for Stmt { fn from(x: Block) -> Stmt { Box::new(From::from(x)) } }
-
-pub type Block = Vec<Stmt>;
+pub type Block = Vec<Spanned<Stmt>>;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum M {
@@ -322,10 +296,22 @@ impl fmt::Debug for M {
 }
 
 #[derive(Clone, PartialEq)]
+pub struct SlotKind {
+    pub modf: M,
+    pub kind: Spanned<Kind>,
+}
+
+impl fmt::Debug for SlotKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?} {:?}", self.modf, self.kind)
+    }
+}
+
+#[derive(Clone, PartialEq)]
 pub struct FuncKind {
-    pub args: Vec<Kind>,
-    pub varargs: Option<Kind>,
-    pub returns: Vec<Kind>,
+    pub args: Vec<Spanned<Kind>>,
+    pub varargs: Option<Spanned<Kind>>,
+    pub returns: Vec<Spanned<Kind>>,
 }
 
 impl fmt::Debug for FuncKind {
@@ -370,77 +356,47 @@ pub enum K {
     StringLit(Str),
     Table,
     EmptyTable,
-    Record(Vec<(Str, M, Kind)>),
-    Tuple(Vec<(M, Kind)>),
-    Array(M, Kind),
-    Map(Kind, M, Kind),
+    Record(Vec<(Spanned<Str>, Spanned<SlotKind>)>),
+    Tuple(Vec<Spanned<SlotKind>>),
+    Array(Spanned<SlotKind>),
+    Map(Spanned<Kind>, Spanned<SlotKind>),
     Function,
-    Func(Vec<FuncKind>),
-    Union(Vec<Kind>),
+    Func(Vec<Spanned<FuncKind>>),
+    Union(Vec<Spanned<Kind>>),
 }
 
 impl fmt::Debug for K {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            K::Dynamic              => write!(f, "Dynamic"),
-            K::Nil                  => write!(f, "Nil"),
-            K::Boolean              => write!(f, "Boolean"),
-            K::BooleanLit(true)     => write!(f, "True"),
-            K::BooleanLit(false)    => write!(f, "False"),
-            K::Number               => write!(f, "Number"),
-            K::Integer              => write!(f, "Integer"),
-            K::IntegerLit(v)        => write!(f, "Integer({})", v),
-            K::String               => write!(f, "String"),
-            K::StringLit(ref s)     => write!(f, "String({:?})", *s),
-            K::Table                => write!(f, "Table"),
-            K::EmptyTable           => write!(f, "EmptyTable"),
-            K::Array(m, ref v)      => write!(f, "Array({:?} {:?})", m, *v),
-            K::Map(ref k, m, ref v) => write!(f, "Map({:?}, {:?} {:?})", *k, m, *v),
-            K::Function             => write!(f, "Function"),
+            K::Dynamic           => write!(f, "Dynamic"),
+            K::Nil               => write!(f, "Nil"),
+            K::Boolean           => write!(f, "Boolean"),
+            K::BooleanLit(true)  => write!(f, "True"),
+            K::BooleanLit(false) => write!(f, "False"),
+            K::Number            => write!(f, "Number"),
+            K::Integer           => write!(f, "Integer"),
+            K::IntegerLit(v)     => write!(f, "Integer({})", v),
+            K::String            => write!(f, "String"),
+            K::StringLit(ref s)  => write!(f, "String({:?})", *s),
+            K::Table             => write!(f, "Table"),
+            K::EmptyTable        => write!(f, "EmptyTable"),
+            K::Array(ref v)      => write!(f, "Array({:?})", *v),
+            K::Map(ref k, ref v) => write!(f, "Map({:?}, {:?})", *k, *v),
+            K::Function          => write!(f, "Function"),
 
             K::Record(ref fields) => {
                 try!(write!(f, "Record(["));
                 let mut first = true;
-                for &(ref name, modf, ref kind) in fields {
+                for &(ref name, ref value) in fields {
                     if first { first = false; } else { try!(write!(f, ", ")); }
-                    try!(write!(f, "{:?}: {:?} {:?}", *name, modf, *kind));
+                    try!(write!(f, "{:?}: {:?}", *name, *value));
                 }
                 try!(write!(f, "])"));
                 Ok(())
             },
-
-            K::Tuple(ref fields) => {
-                try!(write!(f, "Tuple(["));
-                let mut first = true;
-                for &(modf, ref kind) in fields {
-                    if first { first = false; } else { try!(write!(f, ", ")); }
-                    try!(write!(f, "{:?} {:?}", modf, *kind));
-                }
-                try!(write!(f, "])"));
-                Ok(())
-            },
-
-            K::Func(ref funcs) => {
-                try!(write!(f, "Func(["));
-                let mut first = true;
-                for func in funcs {
-                    if first { first = false; } else { try!(write!(f, ", ")); }
-                    try!(write!(f, "{:?}", *func));
-                }
-                try!(write!(f, "])"));
-                Ok(())
-            },
-
-            K::Union(ref kinds) => {
-                try!(write!(f, "Union(["));
-                let mut first = true;
-                for kind in kinds {
-                    if first { first = false; } else { try!(write!(f, ", ")); }
-                    try!(write!(f, "{:?}", *kind));
-                }
-                try!(write!(f, "])"));
-                Ok(())
-            },
+            K::Tuple(ref fields) => write!(f, "Tuple({:?})", *fields),
+            K::Func(ref funcs) => write!(f, "Func({:?})", *funcs),
+            K::Union(ref kinds) => write!(f, "Union({:?})", *kinds),
         }
     }
 }

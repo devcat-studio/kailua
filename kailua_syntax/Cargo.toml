@@ -10,3 +10,6 @@ name = "kailua-parse"
 custom_derive = "0.1.2"
 newtype_derive = "0.1.2"
 kailua_diag = { path = "../kailua_diag" }
+
+[dev-dependencies]
+regex = "0.1"

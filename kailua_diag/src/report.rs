@@ -1,5 +1,6 @@
 use std::str;
 use std::cmp;
+use std::result;
 use std::cell::{Cell, RefCell};
 
 use source::{Source, Span, Pos};
@@ -14,55 +15,45 @@ pub enum Kind {
     Fatal,
 }
 
+// used to stop the further parsing or type checking
+//#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+//pub struct Stop;
+pub type Stop = &'static str; // TODO should be eliminated!
+
+pub type Result<T> = result::Result<T, Stop>;
+
 pub trait Report {
-    type Error;
+    fn add_span(&self, kind: Kind, span: Span, msg: String) -> Result<()>;
+}
 
-    fn add_span(&self, kind: Kind, span: Span, msg: String) -> Result<(), Self::Error>;
+impl<'a, R: Report> Report for &'a R {
+    fn add_span(&self, k: Kind, s: Span, m: String) -> Result<()> { (**self).add_span(k, s, m) }
+}
 
-    fn fatal<Loc: Into<Span>,
-             Msg: Into<String>, T>(&self, loc: Loc, msg: Msg) -> Result<T, Self::Error> {
+impl<'a> Report for &'a Report {
+    fn add_span(&self, k: Kind, s: Span, m: String) -> Result<()> { (**self).add_span(k, s, m) }
+}
+
+pub trait Reporter: Report {
+    fn fatal<Loc: Into<Span>, Msg: Into<String>, T>(&self, loc: Loc, msg: Msg) -> Result<T> {
         self.add_span(Kind::Fatal, loc.into(), msg.into())
             .map(|_| panic!("Report::fatal should always return Err"))
     }
 
-    fn error<Loc: Into<Span>,
-             Msg: Into<String>>(&self, loc: Loc, msg: Msg) -> Result<(), Self::Error> {
+    fn error<Loc: Into<Span>, Msg: Into<String>>(&self, loc: Loc, msg: Msg) -> Result<()> {
         self.add_span(Kind::Error, loc.into(), msg.into())
     }
 
-    fn warn<Loc: Into<Span>,
-            Msg: Into<String>>(&self, loc: Loc, msg: Msg) -> Result<(), Self::Error> {
+    fn warn<Loc: Into<Span>, Msg: Into<String>>(&self, loc: Loc, msg: Msg) -> Result<()> {
         self.add_span(Kind::Warn, loc.into(), msg.into())
     }
 
-    fn note<Loc: Into<Span>,
-            Msg: Into<String>>(&self, loc: Loc, msg: Msg) -> Result<(), Self::Error> {
+    fn note<Loc: Into<Span>, Msg: Into<String>>(&self, loc: Loc, msg: Msg) -> Result<()> {
         self.add_span(Kind::Note, loc.into(), msg.into())
     }
 }
 
-impl<'a, R: Report> Report for &'a R {
-    type Error = R::Error;
-    fn add_span(&self, k: Kind, s: Span, m: String) -> Result<(), Self::Error> {
-        (**self).add_span(k, s, m)
-    }
-    fn fatal<Loc: Into<Span>,
-             Msg: Into<String>, T>(&self, l: Loc, m: Msg) -> Result<T, Self::Error> {
-        (**self).fatal(l, m)
-    }
-    fn error<Loc: Into<Span>,
-             Msg: Into<String>>(&self, l: Loc, m: Msg) -> Result<(), Self::Error> {
-        (**self).error(l, m)
-    }
-    fn warn<Loc: Into<Span>,
-            Msg: Into<String>>(&self, l: Loc, m: Msg) -> Result<(), Self::Error> {
-        (**self).warn(l, m)
-    }
-    fn note<Loc: Into<Span>,
-            Msg: Into<String>>(&self, l: Loc, m: Msg) -> Result<(), Self::Error> {
-        (**self).note(l, m)
-    }
-}
+impl<T: Report> Reporter for T {}
 
 fn strip_newline(mut s: &[u8]) -> &[u8] {
     loop {
@@ -135,9 +126,7 @@ impl<'a> ConsoleReport<'a> {
 }
 
 impl<'a> Report for ConsoleReport<'a> {
-    type Error = &'static str;
-
-    fn add_span(&self, kind: Kind, span: Span, msg: String) -> Result<(), Self::Error> {
+    fn add_span(&self, kind: Kind, span: Span, msg: String) -> Result<()> {
         let mut term = self.term.borrow_mut();
         let term = &mut *term;
 
@@ -148,8 +137,10 @@ impl<'a> Report for ConsoleReport<'a> {
                 let begincol = self.calculate_column(beginspan, span.begin());
                 let endspan = spans.next_back().unwrap_or(beginspan);
                 let endcol = self.calculate_column(endspan, span.end());
-                let _ = write!(term, "{}:{}:{}: {}:{} ", f.path(),
-                               beginline + 1, begincol + 1, endline + 1, endcol + 1);
+                let _ = write!(term, "{}:{}:{}: ", f.path(), beginline + 1, begincol + 1);
+                if span.begin() != span.end() {
+                    let _ = write!(term, "{}:{} ", endline + 1, endcol + 1);
+                }
                 codeinfo = Some((beginline, begincol, beginspan, endline, endcol, endspan));
             }
         }
@@ -219,11 +210,8 @@ impl<'a> Report for ConsoleReport<'a> {
                 let beginoff = span.begin().to_usize() - beginspan.begin().to_usize();
                 let endoff = span.end().to_usize() - beginspan.begin().to_usize();
 
-                // 123 | bbbbb          begincol = endcol = 0
-                //     | <
-                //
-                // 123 | aaaabbbbbb     begincol = endcol > 0
-                //     |    ><
+                // 123 | aaaabbbbbb     begincol = endcol
+                //     |     *
                 //
                 // 123 | aaaaXXXXXbbb   begincol < endcol
                 //     |     ^^^^^
@@ -233,11 +221,7 @@ impl<'a> Report for ConsoleReport<'a> {
                 write_lineno_empty(term);
                 let _ = term.fg(bright);
                 if begincol == endcol {
-                    if begincol == 0 {
-                        let _ = write!(term, "<");
-                    } else {
-                        let _ = write!(term, "{:1$}><", "", begincol - 1);
-                    }
+                    let _ = write!(term, "{:1$}*", "", begincol);
                 } else {
                     let _ = write!(term, "{:2$}{:^>3$}", "", "", begincol, endcol - begincol);
                 }
@@ -265,7 +249,7 @@ impl<'a> Report for ConsoleReport<'a> {
                 }
 
                 // 321 | bbbbbbbbbb     endcol = 0
-                //     | < ...to here
+                //     | * ...to here
                 //
                 // 321 | XXXXXbbbbb     endcol > 0
                 //     |     ^ to here
@@ -277,7 +261,7 @@ impl<'a> Report for ConsoleReport<'a> {
                 write_lineno_empty(term);
                 let _ = term.fg(bright);
                 if endcol == 0 {
-                    let _ = write!(term, "<");
+                    let _ = write!(term, "*");
                 } else {
                     let _ = write!(term, "{:1$}^", "", endcol - 1);
                 }

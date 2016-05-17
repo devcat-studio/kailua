@@ -4,7 +4,8 @@ use std::iter;
 use std::ops::{Deref, DerefMut};
 use std::borrow::Cow;
 
-use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam};
+use kailua_diag::{Span, Spanned, WithLoc};
+use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, FuncScope};
 use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
 use ty::{T, TySeq, Lattice, TypeContext, Tables, Function, Functions, TyWithNil};
@@ -14,7 +15,7 @@ use ty::flags::*;
 use env::{TyInfo, Env, Frame, Scope, Context};
 
 pub trait Options {
-    fn require_block(&mut self, path: &[u8]) -> CheckResult<Block> {
+    fn require_block(&mut self, path: &[u8]) -> CheckResult<Spanned<Block>> {
         Err("not implemented".into())
     }
 }
@@ -378,15 +379,15 @@ impl<'env> Checker<'env> {
         }
     }
 
-    pub fn visit(&mut self, chunk: &[Stmt]) -> CheckResult<()> {
+    pub fn visit(&mut self, chunk: &Spanned<Block>) -> CheckResult<()> {
         try!(self.visit_block(chunk));
         Ok(())
     }
 
-    fn visit_block(&mut self, block: &[Stmt]) -> CheckResult<Exit> {
+    fn visit_block(&mut self, block: &Spanned<Block>) -> CheckResult<Exit> {
         let mut scope = self.scoped(Scope::new());
         let mut exit = Exit::None;
-        for stmt in block {
+        for stmt in &block.base {
             if exit != Exit::None {
                 // TODO warning
                 continue;
@@ -396,9 +397,9 @@ impl<'env> Checker<'env> {
         Ok(exit)
     }
 
-    fn visit_stmt(&mut self, stmt: &St) -> CheckResult<Exit> {
+    fn visit_stmt(&mut self, stmt: &Spanned<Stmt>) -> CheckResult<Exit> {
         println!("visiting stmt {:?}", *stmt);
-        match *stmt {
+        match *stmt.base {
             St::Void(ref exp) => {
                 try!(self.visit_exp(exp));
                 Ok(Exit::None)
@@ -412,7 +413,7 @@ impl<'env> Checker<'env> {
                 let infos = infos.into_iter().chain(iter::repeat(Slot::from(T::Nil)));
                 for (var, info) in vars.iter().zip(infos) {
                     // TODO unify with visit_var_with_spec
-                    if let Var::Name(ref name) = var.base {
+                    if let Var::Name(ref name) = var.base.base {
                         try!(self.env.assign_to_var(name, info));
                     }
                 }
@@ -557,15 +558,17 @@ impl<'env> Checker<'env> {
             St::MethodDecl(ref names, selfparam, ref sig, ref block) => {
                 // TODO verify names
                 let selfinfo = match selfparam {
-                    SelfParam::Yes => Some(TyInfo::from(T::Dynamic)),
-                    SelfParam::No => None,
+                    Some(_) => Some(TyInfo::from(T::Dynamic)),
+                    None => None,
                 };
                 try!(self.visit_func_body(selfinfo, sig, block));
                 Ok(Exit::None)
             }
 
             St::Local(ref names, ref exps) => {
-                let add_local_var = |env: &mut Env, namespec: &TypeSpec<Name>, info: TyInfo| {
+                let add_local_var = |env: &mut Env,
+                                     namespec: &TypeSpec<Spanned<Name>>,
+                                     info: TyInfo| {
                     if let Some(ref kind) = namespec.kind {
                         let ty = T::from(kind);
                         let newinfo = match namespec.modf {
@@ -573,10 +576,10 @@ impl<'env> Checker<'env> {
                             M::Var => Slot::new(S::Var(ty)),
                             M::Const => Slot::new(S::Const(ty)),
                         };
-                        env.add_local_var(&namespec.base, newinfo, false);
-                        env.assign_to_var(&namespec.base, info)
+                        env.add_local_var(&namespec.base.base, newinfo, false);
+                        env.assign_to_var(&namespec.base.base, info)
                     } else {
-                        env.add_local_var(&namespec.base, info, true);
+                        env.add_local_var(&namespec.base.base, info, true);
                         Ok(())
                     }
                 };
@@ -610,7 +613,7 @@ impl<'env> Checker<'env> {
 
             St::KailuaAssume(ref name, kindm, ref kind, ref builtin) => {
                 let builtin = if let Some(ref builtin) = *builtin {
-                    match &***builtin {
+                    match &****builtin {
                         b"require" => Some(Builtin::Require),
                         _ => {
                             println!("unrecognized builtin name {:?} for {:?} ignored",
@@ -638,7 +641,7 @@ impl<'env> Checker<'env> {
     }
 
     fn visit_func_body(&mut self, selfinfo: Option<TyInfo>, sig: &Sig,
-                       block: &[Stmt]) -> CheckResult<TyInfo> {
+                       block: &Spanned<Vec<Spanned<Stmt>>>) -> CheckResult<TyInfo> {
         let vatype = match sig.varargs {
             None => None,
             // varargs present but types are unspecified
@@ -687,16 +690,18 @@ impl<'env> Checker<'env> {
 
         if let Exit::None = try!(scope.visit_block(block)) {
             // the last statement is an implicit return
-            try!(scope.visit_stmt(&St::Return(Vec::new())));
+            let ret = Box::new(St::Return(Vec::new())).with_loc(Span::dummy());
+            try!(scope.visit_stmt(&ret));
         }
 
         let returns = scope.env.get_frame_mut().returns.take().unwrap();
         Ok(TyInfo::from(T::func(Function { args: args, returns: returns })))
     }
 
-    fn visit_var_with_spec(&mut self, varspec: &TypeSpec<Var>) -> CheckResult<Option<TyInfo>> {
+    fn visit_var_with_spec(&mut self,
+                           varspec: &TypeSpec<Spanned<Var>>) -> CheckResult<Option<TyInfo>> {
         // TODO fully process varspec
-        match varspec.base {
+        match varspec.base.base {
             Var::Name(ref name) => {
                 // may refer to the global variable yet to be defined!
                 if let Some(info) = self.env.get_var(name) {
@@ -714,9 +719,9 @@ impl<'env> Checker<'env> {
         }
     }
 
-    fn visit_exp(&mut self, exp: &Ex) -> CheckResult<SlotSeq> {
+    fn visit_exp(&mut self, exp: &Spanned<Exp>) -> CheckResult<SlotSeq> {
         println!("visiting exp {:?}", *exp);
-        match *exp {
+        match *exp.base {
             Ex::Nil => Ok(SlotSeq::from(T::Nil)),
             Ex::False => Ok(SlotSeq::from(T::False)),
             Ex::True => Ok(SlotSeq::from(T::True)),
@@ -829,7 +834,7 @@ impl<'env> Checker<'env> {
                 match funcinfo.builtin() {
                     // require("foo")
                     Some(Builtin::Require) if args.len() >= 1 => {
-                        if let Ex::Str(ref path) = *args[0] {
+                        if let Ex::Str(ref path) = *args[0].base {
                             let block = match self.opts.require_block(path) {
                                 Ok(block) => block,
                                 Err(e) => return Err(format!("failed to require {:?}: {}",
@@ -870,18 +875,18 @@ impl<'env> Checker<'env> {
 
             Ex::Un(op, ref e) => {
                 let info = try!(self.visit_exp(e)).into_first();
-                self.check_un_op(op, &info).map(SlotSeq::from_slot)
+                self.check_un_op(op.base, &info).map(SlotSeq::from_slot)
             },
 
             Ex::Bin(ref l, op, ref r) => {
                 let lhs = try!(self.visit_exp(l)).into_first();
                 let rhs = try!(self.visit_exp(r)).into_first();
-                self.check_bin_op(&lhs, op, &rhs).map(SlotSeq::from_slot)
+                self.check_bin_op(&lhs, op.base, &rhs).map(SlotSeq::from_slot)
             },
         }
     }
 
-    fn visit_explist(&mut self, exps: &[Exp]) -> CheckResult<SlotSeq> {
+    fn visit_explist(&mut self, exps: &[Spanned<Exp>]) -> CheckResult<SlotSeq> {
         let mut head = Vec::new();
         let mut last: Option<SlotSeq> = None;
         for exp in exps {

@@ -1,3 +1,4 @@
+extern crate kailua_diag;
 extern crate kailua_syntax;
 extern crate kailua_check;
 
@@ -8,7 +9,10 @@ use std::path::Path;
 use std::io::Read;
 use std::collections::HashSet;
 
-fn parse(path: &Path) -> Result<kailua_syntax::Block, String> {
+use kailua_diag::{Span, Spanned, WithLoc};
+use kailua_syntax::Block;
+
+fn parse(path: &Path) -> Result<Spanned<Block>, String> {
     let mut f = try!(fs::File::open(path).map_err(|e| e.to_string()));
     let mut buf = Vec::new();
     try!(f.read_to_end(&mut buf).map_err(|e| e.to_string()));
@@ -29,10 +33,10 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
         required: HashSet<Vec<u8>>,
     }
     impl<'a> kailua_check::Options for Options<'a> {
-        fn require_block(&mut self, path: &[u8]) -> Result<kailua_syntax::Block, String> {
+        fn require_block(&mut self, path: &[u8]) -> Result<Spanned<Block>, String> {
             // require only runs once per path
             if self.required.contains(path) {
-                return Ok(Vec::new());
+                return Ok(Vec::new().with_loc(Span::dummy()));
             }
             self.required.insert(path.to_owned());
 
@@ -44,7 +48,7 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
 
             if BUILTIN_MODS.iter().any(|&name| name.as_bytes() == path) {
                 // dummy: they should not affect anything here
-                Ok(Vec::new())
+                Ok(Vec::new().with_loc(Span::dummy()))
             } else {
                 println!("requiring {:?}", kailua_syntax::Str::from(path));
 

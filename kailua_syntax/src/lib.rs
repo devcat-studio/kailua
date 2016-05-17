@@ -2,17 +2,23 @@ extern crate kailua_diag;
 #[macro_use] extern crate custom_derive;
 #[macro_use] extern crate newtype_derive;
 
+use kailua_diag::Spanned;
+
 pub use lex::Error;
 pub use ast::{Name, Str, Var, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam};
-pub use ast::{St, Stmt, Block, M, K, Kind};
+pub use ast::{St, Stmt, Block, M, K, Kind, FuncKind, SlotKind};
 
 mod lex;
 mod ast;
 mod parser;
 
-pub fn parse_chunk(s: &[u8]) -> Result<Block, Error> {
+pub fn parse_chunk(s: &[u8]) -> Result<Spanned<Block>, Error> {
+    parse_chunk_with_path(s, "<none>")
+}
+
+pub fn parse_chunk_with_path(s: &[u8], path: &str) -> Result<Spanned<Block>, Error> {
     let mut source = kailua_diag::Source::new();
-    let span = source.add_string("<none>", s);
+    let span = source.add_string(path, s);
     let report = kailua_diag::ConsoleReport::new(&source);
     let lexer = lex::Lexer::new(source.iter_bytes_from_span(span), &report);
     let parser = parser::Parser::new(lexer, &report);
@@ -26,12 +32,19 @@ pub fn parse_chunk(s: &[u8]) -> Result<Block, Error> {
 
 #[test]
 fn test_parse() {
-    fn test(s: &str) -> String {
+    extern crate regex;
+
+    let span_pattern = regex::Regex::new(r"@(?:_|[0-9a-f]+(?:-[0-9a-f]+)?)").unwrap();
+    let strip_span = |s: &str| span_pattern.replace_all(s, "");
+    assert_eq!(strip_span("[X@1, Y@3a-4f0]@_"), "[X, Y]");
+
+    let test = |s: &str| {
+        println!("{:?}", s);
         match parse_chunk(s.as_bytes()) {
-            Ok(ast) => format!("{:?}", ast),
-            Err(_) => String::from("parse error"),
+            Ok(ast) => strip_span(&format!("{:?}", ast)),
+            Err(e) => { println!("{:?}", e); String::from("parse error") },
         }
-    }
+    };
 
     assert_eq!(test(""), "[]");
     assert_eq!(test("\n"), "[]");
@@ -70,7 +83,10 @@ fn test_parse() {
     assert_eq!(test("--#\n"), "[]");
     assert_eq!(test("--#"), "[]");
     assert_eq!(test("--#\n--#"), "[]");
+    assert_eq!(test("--#\n--#\n--#"), "[]");
+    assert_eq!(test("--#\n--#\ndo end"), "[Do([])]");
     assert_eq!(test("--#\n\n--#"), "[]");
+    assert_eq!(test("--#\n\n--#\n\n--#"), "[]");
     assert_eq!(test("--# --foo\ndo end"), "[Do([])]");
     assert_eq!(test("--# --[[foo]]\ndo end"), "[Do([])]");
     assert_eq!(test("--# --[[foo\n--# --foo]]\ndo end"), "parse error");

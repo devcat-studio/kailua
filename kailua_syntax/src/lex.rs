@@ -2,7 +2,8 @@ use std::str;
 use std::u64;
 use std::fmt;
 
-use kailua_diag::{SourceBytes, Pos, Span, Spanned, WithLoc, Report};
+use kailua_diag as diag;
+use kailua_diag::{SourceBytes, Pos, Span, Spanned, WithLoc, Report, Reporter};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tok {
@@ -12,7 +13,21 @@ pub enum Tok {
     Num(f64),
     Name(Vec<u8>),
     Str(Vec<u8>),
-    EOF, // only used in the parser
+    EOF,
+}
+
+impl fmt::Display for Tok {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Tok::Error      => write!(f, "an invalid character"),
+            Tok::Punct(p)   => write!(f, "{}", p),
+            Tok::Keyword(w) => write!(f, "{}", w),
+            Tok::Num(_)     => write!(f, "a number"),
+            Tok::Name(_)    => write!(f, "a name"),
+            Tok::Str(_)     => write!(f, "a string literal"),
+            Tok::EOF        => write!(f, "the end of file"),
+        }
+    }
 }
 
 macro_rules! tt_to_expr { ($e:expr) => ($e) }
@@ -140,27 +155,31 @@ impl Keyword {
     }
 }
 
-pub struct Lexer<'a, R> {
+pub struct Lexer<'a> {
     bytes: SourceBytes<'a>,
     last_pos: Pos,
     last_byte: u8,
     lookahead: bool,
     meta: bool,
-    report: R,
+    meta_span: Span,
+    eof: bool,
+    report: &'a Report,
 }
 
 pub type Error = &'static str;
 
 fn is_digit(c: u8) -> bool { b'0' <= c && c <= b'9' }
 
-impl<'a, R: Report<Error=Error>> Lexer<'a, R> {
-    pub fn new(bytes: SourceBytes<'a>, report: R) -> Lexer<'a, R> {
+impl<'a> Lexer<'a> {
+    pub fn new(bytes: SourceBytes<'a>, report: &'a Report) -> Lexer<'a> {
         Lexer {
             bytes: bytes,
             last_pos: Pos::dummy(),
             last_byte: b'\0',
             lookahead: false,
             meta: false,
+            meta_span: Span::dummy(),
+            eof: false,
             report: report,
         }
     }
@@ -224,20 +243,23 @@ impl<'a, R: Report<Error=Error>> Lexer<'a, R> {
 
     // assumes that the first `[` is already read and
     // the next character in the lookahead is either `=` or `[`.
-    fn scan_long_bracket<F>(&mut self, begin: Pos, mut f: F) -> Result<(), R::Error>
+    fn scan_long_bracket<F>(&mut self, begin: Pos, mut f: F) -> diag::Result<()>
             where F: FnMut(u8) {
         let opening_level = self.count_equals();
         match self.read() {
             Some(b'[') => {}
             Some(c) => {
                 self.unread(c);
-                return self.report.fatal(begin..self.pos(), "Unexpected start of long bracket");
+                return self.report.fatal(begin..self.pos(),
+                                         "Opening long bracket should end with `]`");
             }
             None => {
-                return Err("unexpected EOF in long bracket");
+                return self.report.fatal(begin..self.pos(),
+                                         "Opening long bracket should end with `]`");
             }
         }
         loop {
+            let lastpos = self.pos();
             match self.read() {
                 Some(b']') => {
                     let closing_level = self.count_equals();
@@ -249,15 +271,27 @@ impl<'a, R: Report<Error=Error>> Lexer<'a, R> {
                             for _ in 0..closing_level { f(b'='); }
                             self.unread(c); // may be the start of closing bracket
                         },
-                        None => return Err("unexpected EOF in long bracket"),
+                        None => {
+                            let stop = self.report.fatal(self.pos(),
+                                                         "Premature end of file in a long string");
+                            try!(self.report.note(begin, "The long string started here"));
+                            return stop;
+                        }
                     }
                 },
                 Some(b'\r') | Some(b'\n') if self.meta => {
-                    return Err("newline disallowed in long bracket inside metablock")
+                    let stop = self.report.fatal(begin..lastpos, // do not include newlines
+                                                 "A newline is disallowed in a long string inside \
+                                                  the meta block");
+                    try!(self.report.note(self.meta_span, "The meta block started here"));
+                    return stop;
                 },
                 Some(c) => f(c),
                 None => {
-                    return self.report.error(begin..self.pos(), "Unexpected EOF in long bracket");
+                    let stop = self.report.fatal(self.pos(),
+                                                 "Premature end of file in a long string");
+                    try!(self.report.note(begin, "The long string started here"));
+                    return stop;
                 }
             }
         }
@@ -265,9 +299,10 @@ impl<'a, R: Report<Error=Error>> Lexer<'a, R> {
     }
 
     // assumes that the first quote is already read
-    fn scan_quoted_string<F>(&mut self, quote: u8, mut f: F) -> Result<(), R::Error>
+    fn scan_quoted_string<F>(&mut self, begin: Pos, quote: u8, mut f: F) -> diag::Result<()>
             where F: FnMut(u8) {
         loop {
+            let lastpos = self.pos();
             match self.read() {
                 Some(b'\\') => match self.read() {
                     Some(b'a')  => f(b'\x07'),
@@ -297,18 +332,31 @@ impl<'a, R: Report<Error=Error>> Lexer<'a, R> {
                         }
                         f(n)
                     },
-                    Some(_) => return Err("unexpected escape sequence in string"),
-                    None => return Err("unexpected EOF in string"),
+                    Some(_) => {
+                        try!(self.report.error(lastpos..self.pos(),
+                                               "Unrecognized escape sequence in a string"));
+                    },
+                    None => {
+                        let stop = self.report.fatal(self.pos(),
+                                                     "Premature end of file in a string");
+                        try!(self.report.note(begin, "The string started here"));
+                        return stop;
+                    },
                 },
                 Some(c) if c == quote => break,
                 Some(c) => f(c),
-                None => return Err("unexpected EOF in string"),
+                None => {
+                    let stop = self.report.fatal(self.pos(),
+                                                 "Premature end of file in a string");
+                    try!(self.report.note(begin, "The string started here"));
+                    return stop;
+                },
             }
         }
         Ok(())
     }
 
-    pub fn next_token(&mut self) -> Result<Option<Spanned<Tok>>, R::Error> {
+    pub fn next_token(&mut self) -> diag::Result<Option<Spanned<Tok>>> {
         loop {
             // skip any whitespace
             if self.meta {
@@ -327,6 +375,12 @@ impl<'a, R: Report<Error=Error>> Lexer<'a, R> {
                 (@token Str($e:expr))     => (Tok::Str($e));
                 (@token $i:ident)         => (Tok::Punct(Punct::$i));
 
+                (meta: $($t:tt)*) => ({
+                    let span = Span::new(begin, self.pos());
+                    self.meta = true;
+                    self.meta_span = span;
+                    Ok(Some(tok!(@token $($t)*).with_loc(span)))
+                });
                 ($($t:tt)*) => (
                     Ok(Some(tok!(@token $($t)*).with_loc(Span::new(begin, self.pos()))))
                 );
@@ -385,13 +439,13 @@ impl<'a, R: Report<Error=Error>> Lexer<'a, R> {
                         }
                     }
 
-                    return Err("invalid number");
+                    return self.report.fatal(begin..self.pos(), "Invalid number");
                 }
 
                 // strings
                 Some(q @ b'\'') | Some(q @ b'"') => {
                     let mut s = Vec::new();
-                    try!(self.scan_quoted_string(q, |c| s.push(c)));
+                    try!(self.scan_quoted_string(begin, q, |c| s.push(c)));
                     return tok!(Str(s));
                 }
 
@@ -422,10 +476,10 @@ impl<'a, R: Report<Error=Error>> Lexer<'a, R> {
                             // Kailua extensions
                             // meta comment inside meta comment is tokenized but does not nest 
                             // and thus is going to cause a parser error (intentional).
-                            Some(b'#') => { self.meta = true; return tok!(DashDashHash); }
-                            Some(b':') => { self.meta = true; return tok!(DashDashColon); }
-                            Some(b'>') => { self.meta = true; return tok!(DashDashGt); }
-                            Some(b'v') => { self.meta = true; return tok!(DashDashV); }
+                            Some(b'#') => return tok!(meta: DashDashHash),
+                            Some(b':') => return tok!(meta: DashDashColon),
+                            Some(b'>') => return tok!(meta: DashDashGt),
+                            Some(b'v') => return tok!(meta: DashDashV),
 
                             Some(c) => { self.unread(c); }
                             None => {}
@@ -456,7 +510,7 @@ impl<'a, R: Report<Error=Error>> Lexer<'a, R> {
                 },
                 Some(b'~') => {
                     if let Some(_) = self.try(|c| c == b'=') { return tok!(TildeEq); }
-                    return Err("unexpected character");
+                    return self.report.fatal(begin..self.pos(), "Unexpected character");
                 },
                 Some(b'<') => {
                     if let Some(_) = self.try(|c| c == b'=') { return tok!(LtEq); }
@@ -485,7 +539,7 @@ impl<'a, R: Report<Error=Error>> Lexer<'a, R> {
                 // Kailua extensions
                 Some(q @ b'`') if self.meta => {
                     let mut s = Vec::new();
-                    try!(self.scan_quoted_string(q, |c| s.push(c)));
+                    try!(self.scan_quoted_string(begin, q, |c| s.push(c)));
                     return tok!(Name(s));
                 }
                 Some(b'\r') | Some(b'\n') if self.meta => {
@@ -496,13 +550,18 @@ impl<'a, R: Report<Error=Error>> Lexer<'a, R> {
                 Some(b'|') if self.meta => return tok!(Pipe),
                 Some(b'&') if self.meta => return tok!(Amp),
 
-                Some(_) => return Err("unexpected character"),
+                Some(_) => {
+                    return self.report.fatal(begin..self.pos(), "Unexpected character");
+                },
                 None => {
                     if self.meta { // the last line should be closed by the (dummy) Newline token
                         self.meta = false;
                         return tok!(Newline);
+                    } else if !self.eof {
+                        self.eof = true;
+                        return Ok(Some(Tok::EOF.with_loc(self.pos())));
                     } else {
-                        return Ok(None)
+                        return Ok(None);
                     }
                 },
             }
@@ -510,14 +569,13 @@ impl<'a, R: Report<Error=Error>> Lexer<'a, R> {
     }
 }
 
-impl<'a, R: Report<Error=Error>> Iterator for Lexer<'a, R> {
+impl<'a> Iterator for Lexer<'a> {
     type Item = Spanned<Tok>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.next_token() {
-            Ok(Some(tok)) => Some(tok),
-            Ok(None) => None,
-            Err(_) => Some(Tok::Error.with_loc(Span::dummy())),
+            Ok(tok) => tok,
+            Err(_) => Some(Tok::Error.with_loc(self.pos())),
         }
     }
 }

@@ -1,3 +1,4 @@
+extern crate kailua_diag;
 extern crate kailua_syntax;
 #[macro_use] extern crate bitflags;
 extern crate vec_map;

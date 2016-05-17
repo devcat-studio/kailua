@@ -3,7 +3,7 @@ use std::ops;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use kailua_syntax::{K, Kind, Str, M};
+use kailua_syntax::{K, Kind, SlotKind, Str, M};
 use diag::CheckResult;
 use super::{TyWithNil, S, Slot, SlotWithNil, TypeContext, Lattice, Flags, TySeq};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Union, TVar, Builtin};
@@ -64,9 +64,9 @@ impl<'a> T<'a> {
     }
 
     pub fn from(kind: &K) -> T<'a> {
-        let slot_from_kind = |modf, kind| {
-            let ty = T::from(kind);
-            let sty = match modf {
+        let slot_from_slotkind = |slotkind: &SlotKind| {
+            let ty = T::from(&slotkind.kind.base);
+            let sty = match slotkind.modf {
                 M::None => S::Just(ty), // XXX
                 M::Var => S::Var(ty),
                 M::Const => S::Const(ty),
@@ -91,30 +91,30 @@ impl<'a> T<'a> {
 
             K::Record(ref fields) => {
                 let mut newfields = BTreeMap::new();
-                for &(ref name, modf, ref kind) in fields {
-                    let slot = slot_from_kind(modf, kind);
-                    newfields.insert(name.into(), slot);
+                for &(ref name, ref slotkind) in fields {
+                    let slot = slot_from_slotkind(&slotkind.base);
+                    newfields.insert(name.base.clone().into(), slot);
                 }
                 T::Tables(Cow::Owned(Tables::Fields(newfields)))
             }
 
             K::Tuple(ref fields) => {
                 let mut newfields = BTreeMap::new();
-                for (i, &(modf, ref kind)) in fields.iter().enumerate() {
+                for (i, slotkind) in fields.iter().enumerate() {
                     let key = Key::Int(i as i32 + 1);
-                    let slot = slot_from_kind(modf, kind);
+                    let slot = slot_from_slotkind(slotkind);
                     newfields.insert(key, slot);
                 }
                 T::Tables(Cow::Owned(Tables::Fields(newfields)))
             },
 
-            K::Array(m, ref v) => {
-                let slot = SlotWithNil::from_slot(slot_from_kind(m, v));
+            K::Array(ref v) => {
+                let slot = SlotWithNil::from_slot(slot_from_slotkind(v));
                 T::Tables(Cow::Owned(Tables::Array(slot)))
             },
 
-            K::Map(ref k, m, ref v) => {
-                let slot = SlotWithNil::from_slot(slot_from_kind(m, v));
+            K::Map(ref k, ref v) => {
+                let slot = SlotWithNil::from_slot(slot_from_slotkind(v));
                 T::Tables(Cow::Owned(Tables::Map(Box::new(T::from(k)), slot)))
             },
 
