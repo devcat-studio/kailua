@@ -253,5 +253,19 @@ fn test_parse() {
     assert_eq!(test("function p(#"), "parse error");
     assert_eq!(test("function p(...) --: var integer
                      end"), "parse error");
+    assert_eq!(test("f({x#})"), "parse error");
+    assert_eq!(test("f(x.0)"), "parse error");
+    assert_eq!(test("f(x:g - 1)"), "parse error");
+    assert_eq!(test("f(2, *3)"), "parse error");
+    assert_eq!(test("a, *b = 5"), "parse error");
+    assert_eq!(test("--# assume x: #"), "parse error");
+    assert_eq!(test("--# assume x: (...)"), "parse error");
+    assert_eq!(test("--# assume x: (string...)"), "parse error");
+    assert_eq!(test("--# assume x: (integer, ...)"), "parse error");
+    assert_eq!(test("--# assume x: (integer, string)"), "parse error");
+    assert_eq!(test("--# assume x: (integer, string...)"), "parse error");
+    assert_eq!(test("--# assume x: (integer, #)"), "parse error");
+    assert_eq!(test("--# assume x: function () -> #"), "parse error");
+    assert_eq!(test("--# assume x: whatever"), "parse error");
 }
 

@@ -231,6 +231,10 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         Ok(())
     }
 
+    fn dummy_kind(&self) -> Spanned<Kind> {
+        Box::new(K::Dynamic).with_loc(Span::dummy())
+    }
+
     fn try_parse_name(&mut self) -> ParseResult<Option<Spanned<Name>>> {
         let tok = try!(self.read());
         if let Tok::Name(name) = tok.1.base {
@@ -557,7 +561,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             }
             if let Some((m, kind)) = varargs_ {
                 if m.base != M::None {
-                    try!(self.report.error(m.span, "variadic argument specifier \
+                    try!(self.report.error(m.span, "Variadic argument specifier \
                                                     cannot have modifiers"));
                 }
                 varargs = Some(Some(kind));
@@ -669,7 +673,11 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 (_, Spanned { base: Tok::Punct(Punct::Comma), .. }) |
                 (_, Spanned { base: Tok::Punct(Punct::Semicolon), .. }) => {}
                 (_, Spanned { base: Tok::Punct(Punct::RBrace), .. }) => break,
-                _ => return Err("unexpected token in the table constructor")
+                (_, tok) => {
+                    return self.report.fatal(tok.span,
+                                             format!("Expected `,`, `;` or `}}`, got {}",
+                                                     tok.base));
+                }
             }
         }
 
@@ -731,7 +739,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         let span = begin..self.last_pos();
                         exp = Box::new(Ex::Index(exp, name)).with_loc(span);
                     } else {
-                        return Err("unexpected token after `<expression> .`");
+                        return self.report.fatal(tok.span,
+                                                 format!("Expected a name after \
+                                                          `<expression> .`, got {}", tok.base));
                     }
                 }
 
@@ -750,7 +760,11 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         let span = begin..self.last_pos();
                         exp = Box::new(Ex::MethodCall(exp, name, args)).with_loc(span);
                     } else {
-                        return Err("unexpected token after `<expression> : <name>`");
+                        let tok = try!(self.read()).1;
+                        return self.report.fatal(tok.span,
+                                                 format!("Expected argument(s) after \
+                                                          `<expression> : <name>`, \
+                                                          got {}", tok.base));
                     }
                 }
 
@@ -849,7 +863,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         } else if ops.is_empty() {
             Ok(None)
         } else {
-            Err("expected expression after a unary operator")
+            let tok = try!(self.read()).1;
+            self.report.fatal(tok.span, format!("Expected a name after \
+                                                 a unary operator, got {}", tok.base))
         }
     }
 
@@ -966,7 +982,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         if let Some(exp) = try!(self.try_parse_exp()) {
             Ok(exp)
         } else {
-            Err("expected expression")
+            let tok = try!(self.read()).1;
+            self.report.fatal(tok.span, format!("Expected an expression, got {}", tok.base))
         }
     }
 
@@ -984,7 +1001,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         if let Some(var) = try!(self.try_parse_var()) {
             Ok(var)
         } else {
-            Err("expected variable")
+            let tok = try!(self.read()).1;
+            self.report.fatal(tok.span, format!("Expected a variable, got {}", tok.base))
         }
     }
 
@@ -1086,11 +1104,36 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         // try to read the first KIND
         let kind = match try!(self.try_parse_kailua_kind()) {
             Some(kind) => kind,
-            None => return Ok((kinds, None)),
+            None => match try!(self.read()) {
+                (_, Spanned { base: Tok::Punct(Punct::DotDotDot), span }) => {
+                    try!(self.report.error(span, "`...` should be preceded with a kind \
+                                                  in the ordinary kinds"));
+                    // suppose that (an invalid) `(...)` as `(?...)`
+                    return Ok((kinds, Some(Box::new(K::Dynamic).with_loc(span))));
+                }
+                tok => {
+                    self.unread(tok);
+                    return Ok((kinds, None));
+                }
+            },
         };
         kinds.push(kind);
         while self.may_expect(Punct::Comma) {
-            let kind = try!(self.parse_kailua_kind());
+            let kind = match try!(self.try_parse_kailua_kind()) {
+                Some(kind) => kind,
+                None => match try!(self.read()) {
+                    (_, Spanned { base: Tok::Punct(Punct::DotDotDot), span }) => {
+                        try!(self.report.error(span, "`...` should be preceded with a kind \
+                                                      in the ordinary kinds"));
+                        // suppose that (an invalid) `(<explist>, ...)` as `(<explist>, ?...)`
+                        return Ok((kinds, Some(Box::new(K::Dynamic).with_loc(span))));
+                    }
+                    (_, tok) => {
+                        return self.report.fatal(tok.span,
+                                                 format!("Expected a kind, got {}", tok.base));
+                    }
+                },
+            };
             kinds.push(kind);
         }
         if self.may_expect(Punct::DotDotDot) {
@@ -1181,8 +1224,11 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             (_, Spanned { base: Tok::Punct(Punct::LParen), .. }) => {
                 let (mut args, varargs) = try!(self.parse_kailua_kindlist());
                 try!(self.expect(Punct::RParen));
-                if varargs.is_some() {
-                    return Err("variadic argument can only be used as a function argument");
+                if let Some(ref varargs) = varargs {
+                    try!(self.report.error(varargs.span,
+                                           "Variadic argument can only be used \
+                                            as a function argument"));
+                    self.dummy_kind()
                 } else if args.len() != 1 {
                     // cannot be followed by postfix operators - XXX really?
                     return Ok(Some(args));
@@ -1284,7 +1330,10 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     b"string"   => K::String,
                     b"table"    => K::Table,
                     b"function" => K::Function, // allow for quoted `function` too
-                    _ => return Err("unknown type name"), // for now
+                    _ => {
+                        try!(self.report.error(span, "Unknown type name")); // for now
+                        K::Dynamic
+                    }
                 };
                 Box::new(kind).with_loc(span)
             }
@@ -1312,10 +1361,12 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         Ok(Some(vec![kind]))
     }
 
-    fn try_parse_kailua_kind_seq(&mut self) -> ParseResult<Option<Vec<Spanned<Kind>>>> {
+    fn try_parse_kailua_kind_seq(&mut self) -> ParseResult<Option<Spanned<Vec<Spanned<Kind>>>>> {
         let begin = self.pos();
         if let Some(mut kindseq) = try!(self.try_parse_kailua_atomic_kind_seq()) {
-            if kindseq.len() != 1 { return Ok(Some(kindseq)); }
+            if kindseq.len() != 1 {
+                return Ok(Some(kindseq.with_loc(begin..self.last_pos())));
+            }
             let mut kind = kindseq.pop().unwrap();
             if self.lookahead(Punct::Pipe) { // A | B | ...
                 // TODO the current parser is massively ambiguous about pipes in atomic types
@@ -1330,7 +1381,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 }
                 kind = Box::new(K::Union(kinds)).with_loc(begin..self.last_pos());
             }
-            Ok(Some(vec![kind]))
+            Ok(Some(vec![kind].with_loc(begin..self.last_pos())))
         } else {
             Ok(None)
         }
@@ -1338,10 +1389,14 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
     fn try_parse_kailua_kind(&mut self) -> ParseResult<Option<Spanned<Kind>>> {
         if let Some(mut kindseq) = try!(self.try_parse_kailua_kind_seq()) {
-            if kindseq.len() == 1 {
-                Ok(Some(kindseq.pop().unwrap()))
+            if kindseq.base.len() == 1 {
+                let first = kindseq.base.pop().unwrap();
+                let span = kindseq.span | first.span; // overwrite the span
+                Ok(Some(first.base.with_loc(span)))
             } else {
-                Err("expected a single type, not type sequence")
+                try!(self.report.error(kindseq.span,
+                                       "Expected a single type, not type sequence"));
+                Ok(Some(self.dummy_kind()))
             }
         } else {
             Ok(None)
@@ -1350,9 +1405,13 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
     fn parse_kailua_kind_seq(&mut self) -> ParseResult<Vec<Spanned<Kind>>> {
         if let Some(kindseq) = try!(self.try_parse_kailua_kind_seq()) {
-            Ok(kindseq)
+            Ok(kindseq.base)
         } else {
-            Err("expected a single type or type sequence")
+            let tok = try!(self.read()).1;
+            try!(self.report.error(tok.span,
+                                   format!("Expected a single type or type sequence, \
+                                            got {}", tok.base)));
+            Ok(vec![self.dummy_kind()])
         }
     }
 
@@ -1360,7 +1419,10 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         if let Some(kind) = try!(self.try_parse_kailua_kind()) {
             Ok(kind)
         } else {
-            Err("expected a single type")
+            let tok = try!(self.read()).1;
+            try!(self.report.error(tok.span,
+                                   format!("Expected a single type, got {}", tok.base)));
+            Ok(self.dummy_kind())
         }
     }
 
