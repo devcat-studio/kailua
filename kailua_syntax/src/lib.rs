@@ -198,6 +198,8 @@ fn test_parse() {
                      --# assume x: integer"), "parse error");
     assert_eq!(test("--v ()
                      for i = 1, 3 do end"), "parse error");
+    assert_eq!(test("f(--v ()
+                       g())"), "parse error");
     assert_eq!(test("function foo(a, --: integer
                                   b, ...) --: string
                      end"),
@@ -225,5 +227,31 @@ fn test_parse() {
                "[FuncDecl(Local, `foo`, [...: String], [])]");
     assert_eq!(test("--# assume a: { x
                      --#             y"), "parse error");
+    assert_eq!(test("f([==== ["), "parse error");
+    assert_eq!(test("f([===="), "parse error");
+    assert_eq!(test("f([====["), "parse error");
+    assert_eq!(test("f([====[foo]"), "parse error");
+    assert_eq!(test("--# assume p: [[xxx
+                     --# yyy]]"), "parse error");
+    assert_eq!(test("--# assume p: --[[xxx
+                     --# yyy]]"), "parse error");
+    assert_eq!(test("--# assume p: --[[xxx
+                     yyy]]"), "parse error");
+    assert_eq!(test("f('foo\\xyz')"), "parse error");
+    assert_eq!(test("f('foo\\xyz', 'bar\\zyx')"), "parse error");
+    assert_eq!(test("f('foo\\"), "parse error");
+    assert_eq!(test("f('foo"), "parse error");
+    assert_eq!(test("f(0x12345678901234567)"),
+               "[Void(`f`(20988295476557332000))]"); // relies on std's correct f64 rounding
+    assert_eq!(test("f(3e"), "parse error");
+    assert_eq!(test("f(3e+"), "parse error");
+    assert_eq!(test("f(~3)"), "parse error");
+    assert_eq!(test("f(@3)"), "parse error");
+    assert_eq!(test("--# assume p: integer f"), "parse error");
+    assert_eq!(test("for a of x"), "parse error");
+    assert_eq!(test("local (x, y) = (1, 2)"), "parse error");
+    assert_eq!(test("function p(#"), "parse error");
+    assert_eq!(test("function p(...) --: var integer
+                     end"), "parse error");
 }
 

@@ -412,10 +412,21 @@ impl<'a> Lexer<'a> {
                                           _ => false },
                             |c| num.push(c));
 
-                        if let Ok(s) = str::from_utf8(&num) {
-                            if let Ok(v) = u64::from_str_radix(s, 16) {
-                                return tok!(Num(v as f64));
-                            }
+                        let s = str::from_utf8(&num).unwrap();
+                        if s.len() <= 16 {
+                            let v = u64::from_str_radix(s, 16).unwrap();
+                            return tok!(Num(v as f64));
+                        } else {
+                            // uh, this is possible when `0x` is followed by 17+ hex digits.
+                            // it is still a valid number however,
+                            // so we take the initial 16 digits (64 bits) and scale accordingly.
+                            // it should be noted that, while 64 bits are enough to fit to
+                            // f64's mantissa, it takes ALL digits to correctly round that.
+                            // we don't seriously use such numbers in the checker though,
+                            // so we won't care.
+                            let v = u64::from_str_radix(&s[..16], 16).unwrap();
+                            let shift = 4 * (s.len() - 16);
+                            return tok!(Num(v as f64 * (shift as f64).exp2()));
                         }
                     } else {
                         let mut num = vec![c];
@@ -437,9 +448,9 @@ impl<'a> Lexer<'a> {
                                 return tok!(Num(v));
                             }
                         }
-                    }
 
-                    return self.report.fatal(begin..self.pos(), "Invalid number");
+                        return self.report.fatal(begin..self.pos(), "Invalid number");
+                    }
                 }
 
                 // strings

@@ -202,7 +202,6 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     // also consumes a newline
     fn end_meta_comment(&mut self, meta: Punct) -> ParseResult<()> {
         assert_eq!(self.ignore_after_newline, Some(meta));
-        self.ignore_after_newline = None;
 
         // if the next token (sans elided newline-meta pairs) is a newline, it's the end.
         // otherwise a newline token may have been elided; try to reconstruct if possible.
@@ -210,7 +209,16 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         self.elided_newline = false; // may_expect requires this
         if !self.may_expect(Punct::Newline) {
             if !elided {
-                return Err("expected a newline");
+                let (span, msg) = {
+                    let next = self.peek();
+                    (next.span, format!("Expected a newline, got {}", next.base))
+                };
+                try!(self.report.error(span, msg));
+
+                // skip until the end of meta block if we continue
+                while try!(self.read()).1.base != Tok::Punct(Punct::Newline) {}
+                self.ignore_after_newline = None;
+                return Ok(())
             }
 
             // newline (implicitly consumed) - meta - original lookahead
@@ -219,6 +227,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             self.lookahead = Some(Tok::Punct(meta).with_loc(Span::dummy()));
         }
 
+        self.ignore_after_newline = None;
         Ok(())
     }
 
@@ -363,7 +372,11 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         try!(self.parse_stmt_for_in(vars))
                     }
 
-                    _ => return Err("unexpected token after `for NAME`"),
+                    (_, tok) => {
+                        return self.report.fatal(tok.span,
+                                                 "Expected `=`, `,`, `in` or `--:` \
+                                                  after `for NAME`");
+                    }
                 }
             }
 
@@ -419,7 +432,10 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         Box::new(St::Local(names, exps))
                     }
 
-                    _ => return Err("unexpected token after `local`"),
+                    (_, tok) => {
+                        return self.report.fatal(tok.span,
+                                                 "Expected a name or `function` after `local`");
+                    }
                 }
             }
 
@@ -528,15 +544,22 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             tok @ (_, Spanned { base: Tok::Punct(Punct::RParen), .. }) => {
                 self.unread(tok);
             }
-            _ => return Err("unexpected token after `function ... (`")
+            (_, tok) => {
+                return self.report.fatal(tok.span, "Expected a name, `)` or `...`");
+            }
         }
         if variadic {
             // we've already read `...` and flushed the name-spec pair
-            let mut varargs_ = try!(self.try_parse_kailua_type_spec()); // 4)
+            let mut varargs_ = try!(self.try_parse_kailua_type_spec_with_spanned_modf()); // 4)
             try!(self.expect(Punct::RParen));
-            if varargs_.is_none() { varargs_ = try!(self.try_parse_kailua_type_spec()) } // 5)
+            if varargs_.is_none() {
+                varargs_ = try!(self.try_parse_kailua_type_spec_with_spanned_modf()); // 5)
+            }
             if let Some((m, kind)) = varargs_ {
-                if m != M::None { return Err("variadic argument specifier cannot have modifiers"); }
+                if m.base != M::None {
+                    try!(self.report.error(m.span, "variadic argument specifier \
+                                                    cannot have modifiers"));
+                }
                 varargs = Some(Some(kind));
             } else {
                 varargs = Some(None);
@@ -577,12 +600,14 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     return Err("inline argument type spec cannot appear with the function spec");
                 }
             }
-            if returns.is_some() {
-                return Err("inline return type spec cannot appear with the function spec");
+            if let Some(returns) = returns {
+                try!(self.report.error(returns.span,
+                                       "Inline return type spec cannot appear \
+                                        with the function spec"));
             }
             sig = presig;
         } else {
-            sig = Sig { args: args, varargs: varargs, returns: returns };
+            sig = Sig { args: args, varargs: varargs, returns: returns.map(|tt| tt.base) };
         }
 
         let block = try!(self.parse_block());
@@ -1339,12 +1364,17 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn try_parse_kailua_type_spec(&mut self) -> ParseResult<Option<(M, Spanned<Kind>)>> {
+    fn try_parse_kailua_type_spec_with_spanned_modf(&mut self)
+            -> ParseResult<Option<(Spanned<M>, Spanned<Kind>)>> {
         if self.may_expect(Punct::DashDashColon) {
             // allow for `--: { a = foo,
             //            --:   b = bar }`
             self.begin_meta_comment(Punct::DashDashColon);
-            let modf = try!(self.parse_kailua_mod());
+            let begin = self.pos();
+            let modf = match try!(self.parse_kailua_mod()) {
+                M::None => M::None.with_loc(begin), // i.e. the beginning of the kind
+                modf => modf.with_loc(begin..self.last_pos()),
+            };
             let kind = try!(self.parse_kailua_kind());
             // allow for `--: last type --> return type` in the function decl
             if !self.lookahead(Punct::DashDashGt) {
@@ -1363,13 +1393,21 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn try_parse_kailua_rettype_spec(&mut self) -> ParseResult<Option<Vec<Spanned<Kind>>>> {
+    fn try_parse_kailua_type_spec(&mut self) -> ParseResult<Option<(M, Spanned<Kind>)>> {
+        let spec = try!(self.try_parse_kailua_type_spec_with_spanned_modf());
+        Ok(spec.map(|(m,k)| (m.base, k)))
+    }
+
+    fn try_parse_kailua_rettype_spec(&mut self)
+            -> ParseResult<Option<Spanned<Vec<Spanned<Kind>>>>> {
+        let begin = self.pos();
         if self.may_expect(Punct::DashDashGt) {
             self.begin_meta_comment(Punct::DashDashGt);
             let kinds = try!(self.parse_kailua_kind_seq());
+            let end = self.last_pos();
             try!(self.end_meta_comment(Punct::DashDashGt));
 
-            Ok(Some(kinds))
+            Ok(Some(kinds.with_loc(begin..end)))
         } else {
             Ok(None)
         }
