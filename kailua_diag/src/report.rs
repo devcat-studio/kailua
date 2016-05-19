@@ -4,13 +4,13 @@ use std::result;
 use std::cell::{Cell, RefCell};
 
 use source::{Source, Span, Pos};
-use dummy_term::stderr_or_dummy;
+use dummy_term::{stderr_or_dummy};
 use term::{color, StderrTerminal};
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Kind {
     Note,
-    Warn,
+    Warning,
     Error,
     Fatal,
 }
@@ -25,14 +25,17 @@ pub type Result<T> = result::Result<T, Stop>;
 
 pub trait Report {
     fn add_span(&self, kind: Kind, span: Span, msg: String) -> Result<()>;
+    fn can_continue(&self) -> bool;
 }
 
 impl<'a, R: Report> Report for &'a R {
     fn add_span(&self, k: Kind, s: Span, m: String) -> Result<()> { (**self).add_span(k, s, m) }
+    fn can_continue(&self) -> bool { (**self).can_continue() }
 }
 
 impl<'a> Report for &'a Report {
     fn add_span(&self, k: Kind, s: Span, m: String) -> Result<()> { (**self).add_span(k, s, m) }
+    fn can_continue(&self) -> bool { (**self).can_continue() }
 }
 
 pub trait Reporter: Report + Sized {
@@ -48,7 +51,7 @@ pub trait Reporter: Report + Sized {
     }
 
     fn warn<Loc: Into<Span>, Msg: Into<String>>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
-        let ret = self.add_span(Kind::Warn, loc.into(), msg.into());
+        let ret = self.add_span(Kind::Warning, loc.into(), msg.into());
         ReportMore::new(self, ret)
     }
 
@@ -122,10 +125,6 @@ impl<'a> ConsoleReport<'a> {
         }
     }
 
-    pub fn max_kind_seen(&self) -> Option<Kind> {
-        self.maxkind.get()
-    }
-
     // column number starts from 0
     // the final newlines are ignored and not counted towards columns
     fn calculate_column(&self, linespan: Span, pos: Pos) -> usize {
@@ -191,7 +190,7 @@ impl<'a> Report for ConsoleReport<'a> {
         let (dim, bright, text) = match kind {
             Kind::Fatal => (color::RED, color::BRIGHT_RED, "Fatal"),
             Kind::Error => (color::RED, color::BRIGHT_RED, "Error"),
-            Kind::Warn => (color::YELLOW, color::BRIGHT_YELLOW, "Warning"),
+            Kind::Warning => (color::YELLOW, color::BRIGHT_YELLOW, "Warning"),
             Kind::Note => (color::CYAN, color::BRIGHT_CYAN, "Note"),
         };
         let _ = term.fg(dim);
@@ -322,6 +321,35 @@ impl<'a> Report for ConsoleReport<'a> {
         }
 
         if kind == Kind::Fatal { Err("fatal error") } else { Ok(()) }
+    }
+
+    fn can_continue(&self) -> bool {
+        self.maxkind.get() < Some(Kind::Error)
+    }
+}
+
+pub struct CollectedReport {
+    collected: RefCell<Vec<(Kind, Span, String)>>,
+}
+
+impl CollectedReport {
+    pub fn new() -> CollectedReport {
+        CollectedReport { collected: RefCell::new(Vec::new()) }
+    }
+
+    pub fn into_reports(self) -> Vec<(Kind, Span, String)> {
+        self.collected.into_inner()
+    }
+}
+
+impl Report for CollectedReport {
+    fn add_span(&self, kind: Kind, span: Span, msg: String) -> Result<()> {
+        self.collected.borrow_mut().push((kind, span, msg));
+        if kind == Kind::Fatal { Err("fatal error") } else { Ok(()) }
+    }
+
+    fn can_continue(&self) -> bool {
+        self.collected.borrow().iter().all(|&(kind, _, _)| kind < Kind::Error)
     }
 }
 

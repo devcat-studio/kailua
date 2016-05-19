@@ -81,6 +81,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         let next = self.iter.next();
         if false { // useful for debugging
             if let Some(ref t) = next {
+                println!("got {:?}", *t);
                 let _ = self.report.note(t.span, format!("got {:?}", t.base)).done();
             }
         }
@@ -208,6 +209,10 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         let elided = self.elided_newline;
         self.elided_newline = false; // may_expect requires this
         if !self.may_expect(Punct::Newline) {
+            // ...and may_expect may have set this again!
+            let elided = elided || self.elided_newline;
+            self.elided_newline = false;
+
             if !elided {
                 let (span, msg) = {
                     let next = self.peek();
@@ -218,7 +223,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 // skip until the end of meta block if we continue
                 while try!(self.read()).1.base != Tok::Punct(Punct::Newline) {}
                 self.ignore_after_newline = None;
-                return Ok(())
+                return Ok(());
             }
 
             // newline (implicitly consumed) - meta - original lookahead
@@ -1582,7 +1587,12 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     pub fn into_chunk(mut self) -> ParseResult<Spanned<Block>> {
         let chunk = try!(self.parse_block());
         try!(self.expect(EOF));
-        Ok(chunk)
+        if self.report.can_continue() {
+            Ok(chunk)
+        } else {
+            // the report had recoverable error(s), but we now stop here
+            Err("error reported")
+        }
     }
 }
 

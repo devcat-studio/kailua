@@ -1,17 +1,16 @@
+extern crate kailua_diag;
 extern crate kailua_syntax;
 
 use std::env;
-use std::fs;
-use std::io::Read;
+use std::path::Path;
 
 fn parse_and_dump(path: &str) -> Result<(), String> {
-    let mut f = try!(fs::File::open(path).map_err(|e| e.to_string()));
-    let mut buf = Vec::new();
-    try!(f.read_to_end(&mut buf).map_err(|e| e.to_string()));
-    drop(f);
-
-    let chunk = try!(kailua_syntax::parse_chunk_with_path(&buf, path).map_err(|e| e.to_string()));
-    println!("{:?}", chunk);
+    let mut source = kailua_diag::Source::new();
+    let filespan = try!(source.add_file(&Path::new(path)).map_err(|e| e.to_string()));
+    let report = kailua_diag::ConsoleReport::new(&source);
+    if let Ok(chunk) = kailua_syntax::parse_chunk(&source, filespan, &report) {
+        println!("{:?}", chunk);
+    }
     Ok(())
 }
 

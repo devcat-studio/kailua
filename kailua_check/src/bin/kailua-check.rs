@@ -4,31 +4,21 @@ extern crate kailua_check;
 
 use std::str;
 use std::env;
-use std::fs;
 use std::path::Path;
-use std::io::Read;
 use std::collections::HashSet;
 
-use kailua_diag::{Span, Spanned, WithLoc};
-use kailua_syntax::Block;
+use kailua_diag::{Span, Spanned, WithLoc, Source, ConsoleReport};
+use kailua_syntax::{parse_chunk, Block};
 
-fn parse(path: &Path) -> Result<Spanned<Block>, String> {
-    let mut f = try!(fs::File::open(path).map_err(|e| e.to_string()));
-    let mut buf = Vec::new();
-    try!(f.read_to_end(&mut buf).map_err(|e| e.to_string()));
-    drop(f);
-
-    // strip any BOM
-    let mut offset = 0;
-    if buf.len() >= 3 && &buf[0..3] == b"\xef\xbb\xbf" {
-        offset = 3;
-    }
-
-    kailua_syntax::parse_chunk(&buf[offset..]).map_err(|e| e.to_string())
+fn parse(source: &mut Source, path: &Path) -> Result<Spanned<Block>, String> {
+    let filespan = try!(source.add_file(path).map_err(|e| e.to_string()));
+    let report = ConsoleReport::new(&source);
+    parse_chunk(source, filespan, &report).map_err(|e| e.to_string())
 }
 
 fn parse_and_check(mainpath: &Path) -> Result<(), String> {
     struct Options<'a> {
+        source: Source,
         mainpath: &'a Path,
         required: HashSet<Vec<u8>>,
     }
@@ -61,7 +51,7 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
                 let maindir = self.mainpath.parent().unwrap_or(&Path::new("."));
                 let mut reqpath = maindir.join("..");
                 reqpath.push(&path);
-                parse(&reqpath)
+                parse(&mut self.source, &reqpath)
             }
         }
     }
@@ -98,11 +88,15 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
         --# assume `debug`: ?
     "#;
 
-    let chunk = try!(parse(&mainpath));
+    let mut source = Source::new();
+    let bootstrapspan = source.add_string("<bootstrap>", BOOTSTRAP_CODE.as_bytes());
+    let chunk = try!(parse(&mut source, &mainpath));
+    let bootstrapchunk = parse_chunk(&source, bootstrapspan,
+                                     &ConsoleReport::new(&source)).unwrap();
     let mut context = kailua_check::Context::new();
-    let mut opts = Options { mainpath: mainpath, required: HashSet::new() };
+    let mut opts = Options { source: source, mainpath: mainpath, required: HashSet::new() };
     let mut checker = kailua_check::Checker::new(&mut context, &mut opts);
-    try!(checker.visit(&kailua_syntax::parse_chunk(BOOTSTRAP_CODE.as_bytes()).unwrap()));
+    try!(checker.visit(&bootstrapchunk));
     checker.visit(&chunk)
 }
 

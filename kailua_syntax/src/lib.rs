@@ -12,264 +12,657 @@ mod lex;
 mod ast;
 mod parser;
 
-pub fn parse_chunk(s: &[u8]) -> Result<Spanned<Block>, Error> {
-    parse_chunk_with_path(s, "<none>")
-}
-
-pub fn parse_chunk_with_path(s: &[u8], path: &str) -> Result<Spanned<Block>, Error> {
-    let mut source = kailua_diag::Source::new();
-    let span = source.add_string(path, s);
-    let report = kailua_diag::ConsoleReport::new(&source);
+pub fn parse_chunk(source: &kailua_diag::Source, span: kailua_diag::Span,
+                   report: &kailua_diag::Report) -> Result<Spanned<Block>, Error> {
     let lexer = lex::Lexer::new(source.iter_bytes_from_span(span), &report);
     let parser = parser::Parser::new(lexer, &report);
-    let chunk = try!(parser.into_chunk());
-    if report.max_kind_seen() >= Some(kailua_diag::Kind::Error) {
-        Err("parsing error")
-    } else {
-        Ok(chunk)
-    }
+    parser.into_chunk()
 }
 
 #[test]
+#[allow(unused_mut)]
 fn test_parse() {
     extern crate regex;
+    use std::io::{stderr, Write};
+    use std::collections::HashMap;
+    use kailua_diag::Report;
 
     let span_pattern = regex::Regex::new(r"@(?:_|[0-9a-f]+(?:-[0-9a-f]+)?)").unwrap();
     let strip_span = |s: &str| span_pattern.replace_all(s, "");
     assert_eq!(strip_span("[X@1, Y@3a-4f0]@_"), "[X, Y]");
 
-    let test = |s: &str| {
-        println!("{:?}", s);
-        match parse_chunk(s.as_bytes()) {
-            Ok(ast) => strip_span(&format!("{:?}", ast)),
-            Err(e) => { println!("{:?}", e); String::from("parse error") },
+    let parse = |code: &str, path: &str| {
+        let mut source = kailua_diag::Source::new();
+        let filespan = source.add_string(path, code.as_bytes());
+        let report = kailua_diag::CollectedReport::new();
+        let chunk = match parse_chunk(&source, filespan, &report) {
+            Ok(chunk) => strip_span(&format!("{:?}", chunk)),
+            Err(_) => String::from("error"),
+        };
+        let reports: Vec<_> = {
+            let file = source.file_from_span(filespan).unwrap();
+            report.into_reports().into_iter().map(|(kind, span, msg)| {
+                let lines = file.lines_from_span(span).map(|(begin, _, end)| (begin + 1, end + 1));
+                (kind, span, lines, msg)
+            }).collect()
+        };
+        (source, chunk, reports)
+    };
+
+    let check = |code: &str, path: &str,
+                 expectedchunk: &str, expectedreports: &[(Option<(usize, usize)>, &str)]| {
+        let (source, chunk, reports) = parse(code, path);
+        let mut reportset = HashMap::new();
+        for &(lines, msg) in expectedreports {
+            *reportset.entry((lines, msg.to_owned())).or_insert(0isize) += 1;
+        }
+        for &(kind, _span, lines, ref msg) in &reports {
+            let key = (lines, format!("[{:?}] {}", kind, msg));
+            if let Some(value) = reportset.get_mut(&key) { *value -= 1; }
+        }
+        if chunk != expectedchunk || reportset.values().any(|&v| v > 0) {
+            // lazily print the reports
+            let mut err = stderr();
+            let _ = writeln!(err, "");
+            let _ = writeln!(err, "{:-<60}", "EXPECTED ");
+            let _ = writeln!(err, "{:?}", expectedchunk);
+            if !expectedreports.is_empty() {
+                let _ = writeln!(err, "");
+                for &(lines, msg) in expectedreports {
+                    if let Some((begin, end)) = lines {
+                        if begin == end {
+                            let _ = write!(err, "{}:{}:_: ", path, begin);
+                        } else {
+                            let _ = write!(err, "{}:{}:_: {}:_ ", path, begin, end);
+                        }
+                    }
+                    let _ = writeln!(err, "{}", msg);
+                }
+            }
+            let _ = writeln!(err, "{:-<60}", "ACTUAL ");
+            let _ = writeln!(err, "{:?}", chunk);
+            if !reports.is_empty() {
+                let _ = writeln!(err, "");
+                let display = kailua_diag::ConsoleReport::new(&source);
+                for &(kind, span, _lines, ref msg) in &reports {
+                    let _ = display.add_span(kind, span, msg.clone());
+                }
+            }
+            let _ = writeln!(err, "{:-<60}", "");
+            false
+        } else {
+            true
         }
     };
 
-    assert_eq!(test(""), "[]");
-    assert_eq!(test("\n"), "[]");
-    assert_eq!(test("\n\n"), "[]");
-    assert_eq!(test("do break; end; break"), "[Do([Break]), Break]");
-    assert_eq!(test("function r(p) --[[...]] end"),
-               "[FuncDecl(Global, `r`, [`p`] -> _, [])]");
-    assert_eq!(test("local function r(p,...)\n\nend"),
-               "[FuncDecl(Local, `r`, [`p`, ...: _] -> _, [])]");
-    assert_eq!(test("local a, b"), "[Local([`a`, `b`], [])]");
-    assert_eq!(test("local a --: integer\n, b --: var ?"),
-               "[Local([`a`: _ Integer, `b`: Var Dynamic], [])]");
-    assert_eq!(test("local a, --: const table\nb"),
-               "[Local([`a`: Const Table, `b`], [])]");
-    assert_eq!(test("local function r(p --: integer\n)\n\nend"),
-               "[FuncDecl(Local, `r`, [`p`: _ Integer] -> _, [])]");
-    assert_eq!(test("local function r(p, q) --: integer --> string\n\nend"),
-               "[FuncDecl(Local, `r`, [`p`, `q`: _ Integer] -> String, [])]");
-    assert_eq!(test("f()"), "[Void(`f`())]");
-    assert_eq!(test("f(3)"), "[Void(`f`(3))]");
-    assert_eq!(test("f(3+4)"), "[Void(`f`((3 + 4)))]");
-    assert_eq!(test("f(3+4-5)"), "[Void(`f`(((3 + 4) - 5)))]");
-    assert_eq!(test("f(3+4*5)"), "[Void(`f`((3 + (4 * 5))))]");
-    assert_eq!(test("f((3+4)*5)"), "[Void(`f`(((3 + 4) * 5)))]");
-    assert_eq!(test("f(2^3^4)"), "[Void(`f`((2 ^ (3 ^ 4))))]");
-    assert_eq!(test("f'oo'"), "[Void(`f`(\"oo\"))]");
-    assert_eq!(test("f{a=1,[3.1]=4e5;[=[[[]]]=],}"),
-               "[Void(`f`(Table([(Some(\"a\"), 1), \
-                                 (Some(3.1), 400000), \
-                                 (None, \"[[]]\")])))]");
-    assert_eq!(test("f{a=a, a}"), "[Void(`f`(Table([(Some(\"a\"), `a`), (None, `a`)])))]");
-    assert_eq!(test("f{a=a; a;}"), "[Void(`f`(Table([(Some(\"a\"), `a`), (None, `a`)])))]");
-    assert_eq!(test("--[a]\ndo end--]]"), "[Do([])]");
-    assert_eq!(test("--[[a]\ndo end--]]"), "[]");
-    assert_eq!(test("--#\ndo end"), "[Do([])]");
-    assert_eq!(test("--#\n"), "[]");
-    assert_eq!(test("--#"), "[]");
-    assert_eq!(test("--#\n--#"), "[]");
-    assert_eq!(test("--#\n--#\n--#"), "[]");
-    assert_eq!(test("--#\n--#\ndo end"), "[Do([])]");
-    assert_eq!(test("--#\n\n--#"), "[]");
-    assert_eq!(test("--#\n\n--#\n\n--#"), "[]");
-    assert_eq!(test("--# --foo\ndo end"), "[Do([])]");
-    assert_eq!(test("--# --[[foo]]\ndo end"), "[Do([])]");
-    assert_eq!(test("--# --[[foo\n--# --foo]]\ndo end"), "parse error");
-    assert_eq!(test("--# assume a: string"), "[KailuaAssume(`a`, _, String, None)]");
-    assert_eq!(test("--# assume a: string\n--#"), "[KailuaAssume(`a`, _, String, None)]");
-    assert_eq!(test("--# assume a:
-                     --#   string"), "[KailuaAssume(`a`, _, String, None)]");
-    assert_eq!(test("--# assume a:
-                     --# assume b: string"), "parse error");
-    assert_eq!(test("--# assume a: {x=string}
-                     --# assume b: {y=string}"),
-               "[KailuaAssume(`a`, _, Record([\"x\": _ String]), None), \
-                 KailuaAssume(`b`, _, Record([\"y\": _ String]), None)]");
-    assert_eq!(test("--# assume assume: ?"), "parse error");
-    assert_eq!(test("--# assume `assume`: ?"), "[KailuaAssume(`assume`, _, Dynamic, None)]");
-    assert_eq!(test("--# `assume` `assume`: ?"), "parse error");
-    assert_eq!(test("local x --: {b=var string, a=integer, c=const {d=const {}}}"),
-               "[Local([`x`: _ Record([\"b\": Var String, \"a\": _ Integer, \
-                                       \"c\": Const Record([\"d\": Const EmptyTable])])], [])]");
-    assert_eq!(test("local x --: function"), "[Local([`x`: _ Function], [])]");
-    assert_eq!(test("local x --: function()"), "[Local([`x`: _ Func([() -> ()])], [])]");
-    assert_eq!(test("local x --: function()->()"), "[Local([`x`: _ Func([() -> ()])], [])]");
-    assert_eq!(test("local x --: function () & (integer, boolean...)->string?"),
-               "[Local([`x`: _ Func([() -> (), \
-                                     (Integer, Boolean...) -> Union([String, Nil])])], [])]");
-    assert_eq!(test("local x --: function (boolean...) | string?"),
-               "[Local([`x`: _ Union([Func([(Boolean...) -> ()]), Union([String, Nil])])], [])]");
-    assert_eq!(test("local x --: `function`"), "[Local([`x`: _ Function], [])]");
-    assert_eq!(test("local x --: `function`()"), "parse error");
-    assert_eq!(test("local x --: (integer, string)"), "parse error");
-    assert_eq!(test("local x --: (integer)"), "[Local([`x`: _ Integer], [])]");
-    assert_eq!(test("local x --: (integer)?"), "[Local([`x`: _ Union([Integer, Nil])], [])]");
-    assert_eq!(test("local x --:
-                             --: (integer)?"), "[Local([`x`: _ Union([Integer, Nil])], [])]");
-    assert_eq!(test("local x --: (
-                             --:   integer
-                             --: )?"), "[Local([`x`: _ Union([Integer, Nil])], [])]");
-    assert_eq!(test("local x --: (
-                             --:   integer"), "parse error");
-    assert_eq!(test("local x --: {}"), "[Local([`x`: _ EmptyTable], [])]");
-    assert_eq!(test("local x --: {a = const function (), b = var string,
-                             --:  c = const function (string) -> integer &
-                             --:                     (string, integer) -> number}?"),
-               "[Local([`x`: _ Union([Record([\"a\": Const Func([() -> ()]), \
-                                              \"b\": Var String, \
-                                              \"c\": Const Func([(String) -> Integer, \
-                                                                 (String, Integer) -> Number])\
-                                             ]), Nil])], [])]");
-    assert_eq!(test("local x --: {const function (); var string;
-                             --:  const function (string) -> integer &
-                             --:                 (string, integer) -> number;
-                             --: }?"),
-               "[Local([`x`: _ Union([Tuple([Const Func([() -> ()]), \
-                                             Var String, \
-                                             Const Func([(String) -> Integer, \
-                                                         (String, Integer) -> Number])\
-                                            ]), Nil])], [])]");
-    assert_eq!(test("local x --: {?}"), "[Local([`x`: _ Array(_ Dynamic)], [])]");
-    assert_eq!(test("local x --: {?,}"), "[Local([`x`: _ Tuple([_ Dynamic])], [])]");
-    assert_eq!(test("local x --: {?,?}"), "[Local([`x`: _ Tuple([_ Dynamic, _ Dynamic])], [])]");
-    assert_eq!(test("local x --: {?;?;}"), "[Local([`x`: _ Tuple([_ Dynamic, _ Dynamic])], [])]");
-    assert_eq!(test("local x --: {var integer}"), "[Local([`x`: _ Array(Var Integer)], [])]");
-    assert_eq!(test("local x --: {[string] = const integer}"),
-               "[Local([`x`: _ Map(String, Const Integer)], [])]");
-    assert_eq!(test("local x --: {[string] = integer|boolean}"),
-               "[Local([`x`: _ Map(String, _ Union([Integer, Boolean]))], [])]");
-    assert_eq!(test("local x --: {[string|boolean] = integer|boolean}"),
-               "[Local([`x`: _ Map(Union([String, Boolean]), _ Union([Integer, Boolean]))], [])]");
-    assert_eq!(test("local x --: {[string?] = integer?}"),
-               "[Local([`x`: _ Map(Union([String, Nil]), _ Union([Integer, Nil]))], [])]");
-    assert_eq!(test("local x --: {[integer] = const {var {[string] = {integer, integer}?}}}"),
-               "[Local([`x`: _ Map(Integer, \
-                                   Const Array(Var Map(String, \
-                                                       _ Union([Tuple([_ Integer, _ Integer]), \
-                                                                Nil]))))], [])]");
-    assert_eq!(test("--v ()
-                     function foo() end"),
-               "[FuncDecl(Global, `foo`, [], [])]"); // note that the return is specified (not `_`)
-    assert_eq!(test("--v (a: integer)
-                     function foo() end"), "parse error");
-    assert_eq!(test("--v (a: integer)
-                     function foo(b) end"), "parse error");
-    assert_eq!(test("--v ()
-                     function foo(b) end"), "parse error");
-    assert_eq!(test("--v (a: integer, b: integer)
-                     function foo(b, a) end"), "parse error");
-    assert_eq!(test("--v (a: integer)
-                     local function foo(a) end"),
-               "[FuncDecl(Local, `foo`, [`a`: _ Integer], [])]");
-    assert_eq!(test("(--v (a: const integer,
-                      --v  ...)
-                      --v -> string
-                      function(a, ...) end)()"),
-               "[Void(Func([`a`: Const Integer, ...: _] -> String, [])())]");
-    assert_eq!(test("--v ()
-                     function foo() --> string
-                     end"), "parse error");
-    assert_eq!(test("--v ()
-                     function foo(a) --: integer --> string
-                     end"), "parse error");
-    assert_eq!(test("--v ()
-                     function foo(a, --: integer
-                                  b) --> string
-                     end"), "parse error");
-    assert_eq!(test("--v ()"), "parse error");
-    assert_eq!(test("--v ()
-                     local v = 42"), "parse error");
-    assert_eq!(test("--v ()
-                     --# assume x: integer"), "parse error");
-    assert_eq!(test("--v ()
-                     for i = 1, 3 do end"), "parse error");
-    assert_eq!(test("f(--v ()
-                       g())"), "parse error");
-    assert_eq!(test("function foo(a, --: integer
-                                  b, ...) --: string
-                     end"),
-               "[FuncDecl(Global, `foo`, [`a`: _ Integer, `b`, ...: String] -> _, [])]");
-    assert_eq!(test("--v (a: integer, b: boolean, ...: string)
-                     function foo(a, b, ...) --: string
-                     end"), "parse error");
-    assert_eq!(test("--v (a: integer, b: boolean)
-                     function foo(a, b, ...)
-                     end"), "parse error");
-    assert_eq!(test("--v (a: integer, b: boolean, ...: string)
-                     function foo(a, b)
-                     end"), "parse error");
-    assert_eq!(test("--v (a: integer, b: boolean, ...: string)
-                     function foo(a, b, ...)
-                     end"),
-               "[FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ Boolean, ...: String], [])]");
-    assert_eq!(test("--v (...: string)
-                     function foo(...)
-                     end"),
-               "[FuncDecl(Global, `foo`, [...: String], [])]");
-    assert_eq!(test("--v (...: string)
-                     local function foo(...)
-                     end"),
-               "[FuncDecl(Local, `foo`, [...: String], [])]");
-    assert_eq!(test("--# assume a: { x
-                     --#             y"), "parse error");
-    assert_eq!(test("f([==== ["), "parse error");
-    assert_eq!(test("f([===="), "parse error");
-    assert_eq!(test("f([====["), "parse error");
-    assert_eq!(test("f([====[foo]"), "parse error");
-    assert_eq!(test("--# assume p: [[xxx
-                     --# yyy]]"), "parse error");
-    assert_eq!(test("--# assume p: --[[xxx
-                     --# yyy]]"), "parse error");
-    assert_eq!(test("--# assume p: --[[xxx
-                     yyy]]"), "parse error");
-    assert_eq!(test("f('foo\\xyz')"), "parse error");
-    assert_eq!(test("f('foo\\xyz', 'bar\\zyx')"), "parse error");
-    assert_eq!(test("f('foo\\"), "parse error");
-    assert_eq!(test("f('foo"), "parse error");
-    assert_eq!(test("f(0x12345678901234567)"),
-               "[Void(`f`(20988295476557332000))]"); // relies on std's correct f64 rounding
-    assert_eq!(test("f(3e"), "parse error");
-    assert_eq!(test("f(3e+"), "parse error");
-    assert_eq!(test("f(~3)"), "parse error");
-    assert_eq!(test("f(@3)"), "parse error");
-    assert_eq!(test("--# assume p: integer f"), "parse error");
-    assert_eq!(test("for a of x"), "parse error");
-    assert_eq!(test("local (x, y) = (1, 2)"), "parse error");
-    assert_eq!(test("function p(#"), "parse error");
-    assert_eq!(test("function p(...) --: var integer
-                     end"), "parse error");
-    assert_eq!(test("f({x#})"), "parse error");
-    assert_eq!(test("f(x.0)"), "parse error");
-    assert_eq!(test("f(x:g - 1)"), "parse error");
-    assert_eq!(test("f(2, *3)"), "parse error");
-    assert_eq!(test("a, *b = 5"), "parse error");
-    assert_eq!(test("--# assume x: #"), "parse error");
-    assert_eq!(test("--# assume x: (...)"), "parse error");
-    assert_eq!(test("--# assume x: (string...)"), "parse error");
-    assert_eq!(test("--# assume x: (integer, ...)"), "parse error");
-    assert_eq!(test("--# assume x: (integer, string)"), "parse error");
-    assert_eq!(test("--# assume x: (integer, string...)"), "parse error");
-    assert_eq!(test("--# assume x: (integer, #)"), "parse error");
-    assert_eq!(test("--# assume x: function () -> #"), "parse error");
-    assert_eq!(test("--# assume x: whatever"), "parse error");
-    assert_eq!(test("--# assume x: {x = integer #}"), "parse error");
-    assert_eq!(test("--# assume x: {integer #}"), "parse error");
-    assert_eq!(test("--# assume x: {x = integer, x = string}"), "parse error");
-    assert_eq!(test("--# assume x: {x = integer, x = string, x = boolean}"), "parse error");
+    macro_rules! test {
+        (@expr $e:expr) => ($e);
+
+        (@reports $out:expr) => ({});
+        (@reports $out:expr;) => ({});
+        (@reports $out:expr; $line:tt: $msg:tt $($t:tt)*) => ({
+            $out.push((Some((test!(@expr $line), test!(@expr $line))), test!(@expr $msg)));
+            test!(@reports $out $($t)*)
+        });
+        (@reports $out:expr; $begin:tt-$end:tt: $msg:tt $($t:tt)*) => ({
+            $out.push((Some((test!(@expr $begin), test!(@expr $end))), test!(@expr $msg)));
+            test!(@reports $out $($t)*)
+        });
+        (@reports $out:expr; $msg:tt $($t:tt)*) => ({
+            $out.push((None, test!(@expr $msg)));
+            test!(@reports $out $($t)*)
+        });
+
+        ($code:expr; $ast:tt $($t:tt)*) => ({
+            let path = format!("<string at {}:{}>", file!(), line!());
+            let mut reports = Vec::new();
+            test!(@reports reports $($t)*);
+            if !check($code, &path, test!(@expr $ast), &reports) { panic!("check failed"); }
+        });
+    }
+
+    test!("";
+          "[]");
+
+    test!("\n";
+          "[]");
+
+    test!("\n\n";
+          "[]");
+
+    test!("do break; end; break";
+          "[Do([Break]), Break]");
+
+    test!("function r(p) --[[...]] end";
+          "[FuncDecl(Global, `r`, [`p`] -> _, [])]");
+
+    test!("local function r(p,...)\n\nend";
+          "[FuncDecl(Local, `r`, [`p`, ...: _] -> _, [])]");
+
+    test!("local a, b";
+          "[Local([`a`, `b`], [])]");
+
+    test!("local a --: integer\n, b --: var ?";
+          "[Local([`a`: _ Integer, `b`: Var Dynamic], [])]");
+
+    test!("local a, --: const table\nb";
+          "[Local([`a`: Const Table, `b`], [])]");
+
+    test!("local function r(p --: integer\n)\n\nend";
+          "[FuncDecl(Local, `r`, [`p`: _ Integer] -> _, [])]");
+
+    test!("local function r(p, q) --: integer --> string\n\nend";
+          "[FuncDecl(Local, `r`, [`p`, `q`: _ Integer] -> String, [])]");
+
+    test!("f()";
+          "[Void(`f`())]");
+
+    test!("f(3)";
+          "[Void(`f`(3))]");
+
+    test!("f(3+4)";
+          "[Void(`f`((3 + 4)))]");
+
+    test!("f(3+4-5)";
+          "[Void(`f`(((3 + 4) - 5)))]");
+
+    test!("f(3+4*5)";
+          "[Void(`f`((3 + (4 * 5))))]");
+
+    test!("f((3+4)*5)";
+          "[Void(`f`(((3 + 4) * 5)))]");
+
+    test!("f(2^3^4)";
+          "[Void(`f`((2 ^ (3 ^ 4))))]");
+
+    test!("f'oo'";
+          "[Void(`f`(\"oo\"))]");
+
+    test!("f{a=1,[3.1]=4e5;[=[[[]]]=],}";
+          "[Void(`f`(Table([(Some(\"a\"), 1), \
+                            (Some(3.1), 400000), \
+                            (None, \"[[]]\")])))]");
+
+    test!("f{a=a, a}";
+          "[Void(`f`(Table([(Some(\"a\"), `a`), (None, `a`)])))]");
+
+    test!("f{a=a; a;}";
+          "[Void(`f`(Table([(Some(\"a\"), `a`), (None, `a`)])))]");
+
+    test!("--[a]\ndo end--]]";
+          "[Do([])]");
+
+    test!("--[[a]\ndo end--]]";
+          "[]");
+
+    test!("--#\ndo end";
+          "[Do([])]");
+
+    test!("--#\n";
+          "[]");
+
+    test!("--#";
+          "[]");
+
+    test!("--#\n--#";
+          "[]");
+
+    test!("--#\n--#\n--#";
+          "[]");
+
+    test!("--#\n--#\ndo end";
+          "[Do([])]");
+
+    test!("--#\n\n--#";
+          "[]");
+
+    test!("--#\n\n--#\n\n--#";
+          "[]");
+
+    test!("--# --foo\ndo end";
+          "[Do([])]");
+
+    test!("--# --[[foo]]\ndo end";
+          "[Do([])]");
+
+    test!("--# --[[foo\n--# --foo]]\ndo end";
+          "error";
+          1: "[Fatal] A newline is disallowed in a long string inside the meta block";
+          1: "[Note] The meta block started here");
+
+    test!("--# assume a: string";
+          "[KailuaAssume(`a`, _, String, None)]");
+
+    test!("--# assume a: string\n--#";
+          "[KailuaAssume(`a`, _, String, None)]");
+
+    test!("--# assume a:
+           --#   string";
+          "[KailuaAssume(`a`, _, String, None)]");
+
+    test!("--# assume a:
+           --# assume b: string";
+          "error";
+          2: "[Error] Expected a single type, got a keyword `assume`");
+
+    test!("--# assume a: {x=string}
+           --# assume b: {y=string}";
+          "[KailuaAssume(`a`, _, Record([\"x\": _ String]), None), \
+            KailuaAssume(`b`, _, Record([\"y\": _ String]), None)]");
+
+    test!("--# assume assume: ?";
+          "error";
+          1: "[Fatal] Expected a name, got a keyword `assume`");
+
+    test!("--# assume `assume`: ?";
+          "[KailuaAssume(`assume`, _, Dynamic, None)]");
+
+    test!("--# `assume` `assume`: ?";
+          "error";
+          1: "[Error] Expected a newline, got a name");
+
+    test!("--# assume a: ? = \"foo\"
+           --# assume b: ?";
+          "[KailuaAssume(`a`, _, Dynamic, Some(\"foo\")), \
+            KailuaAssume(`b`, _, Dynamic, None)]");
+
+    test!("local x --: {b=var string, a=integer, c=const {d=const {}}}";
+          "[Local([`x`: _ Record([\"b\": Var String, \"a\": _ Integer, \
+                                  \"c\": Const Record([\"d\": Const EmptyTable])])], [])]");
+
+    test!("local x --: function";
+          "[Local([`x`: _ Function], [])]");
+
+    test!("local x --: function()";
+          "[Local([`x`: _ Func([() -> ()])], [])]");
+
+    test!("local x --: function()->()";
+          "[Local([`x`: _ Func([() -> ()])], [])]");
+
+    test!("local x --: function () & (integer, boolean...)->string?";
+          "[Local([`x`: _ Func([() -> (), \
+                                (Integer, Boolean...) -> Union([String, Nil])])], [])]");
+
+    test!("local x --: function (boolean...) | string?";
+          "[Local([`x`: _ Union([Func([(Boolean...) -> ()]), Union([String, Nil])])], [])]");
+
+    test!("local x --: `function`";
+          "[Local([`x`: _ Function], [])]");
+
+    test!("local x --: `function`()
+           local";
+          "error";
+          1: "[Error] Expected a newline, got `(`";
+          2: "[Fatal] Expected a name or `function` after `local`"); // recoverable
+
+    test!("local x --: (integer, string)";
+          "error";
+          1: "[Error] Expected a single type, not type sequence");
+
+    test!("local x --: (integer)";
+          "[Local([`x`: _ Integer], [])]");
+
+    test!("local x --: (integer)?";
+          "[Local([`x`: _ Union([Integer, Nil])], [])]");
+
+    test!("local x --:
+                   --: (integer)?";
+          "[Local([`x`: _ Union([Integer, Nil])], [])]");
+
+    test!("local x --: (
+                   --:   integer
+                   --: )?";
+          "[Local([`x`: _ Union([Integer, Nil])], [])]");
+
+    test!("local x --: (
+                   --:   integer";
+          "error";
+          2: "[Fatal] Expected `)`, got a newline");
+
+    test!("local x --: {}";
+          "[Local([`x`: _ EmptyTable], [])]");
+
+    test!("local x --: {a = const function (), b = var string,
+                   --:  c = const function (string) -> integer &
+                   --:                     (string, integer) -> number}?";
+          "[Local([`x`: _ Union([Record([\"a\": Const Func([() -> ()]), \
+                                         \"b\": Var String, \
+                                         \"c\": Const Func([(String) -> Integer, \
+                                                            (String, Integer) -> Number])\
+                                        ]), Nil])], [])]");
+
+    test!("local x --: {const function (); var string;
+                   --:  const function (string) -> integer &
+                   --:                 (string, integer) -> number;
+                   --: }?";
+          "[Local([`x`: _ Union([Tuple([Const Func([() -> ()]), \
+                                        Var String, \
+                                        Const Func([(String) -> Integer, \
+                                                    (String, Integer) -> Number])\
+                                       ]), Nil])], [])]");
+
+    test!("local x --: {?}";
+          "[Local([`x`: _ Array(_ Dynamic)], [])]");
+
+    test!("local x --: {?,}";
+          "[Local([`x`: _ Tuple([_ Dynamic])], [])]");
+
+    test!("local x --: {?,?}";
+          "[Local([`x`: _ Tuple([_ Dynamic, _ Dynamic])], [])]");
+
+    test!("local x --: {?;?;}";
+          "[Local([`x`: _ Tuple([_ Dynamic, _ Dynamic])], [])]");
+
+    test!("local x --: {var integer}";
+          "[Local([`x`: _ Array(Var Integer)], [])]");
+
+    test!("local x --: {[string] = const integer}";
+          "[Local([`x`: _ Map(String, Const Integer)], [])]");
+
+    test!("local x --: {[string] = integer|boolean}";
+          "[Local([`x`: _ Map(String, _ Union([Integer, Boolean]))], [])]");
+
+    test!("local x --: {[string|boolean] = integer|boolean}";
+          "[Local([`x`: _ Map(Union([String, Boolean]), _ Union([Integer, Boolean]))], [])]");
+
+    test!("local x --: {[string?] = integer?}";
+          "[Local([`x`: _ Map(Union([String, Nil]), _ Union([Integer, Nil]))], [])]");
+
+    test!("local x --: {[integer] = const {var {[string] = {integer, integer}?}}}";
+          "[Local([`x`: _ Map(Integer, \
+                              Const Array(Var Map(String, \
+                                                  _ Union([Tuple([_ Integer, _ Integer]), \
+                                                           Nil]))))], [])]");
+
+    test!("--v ()
+           function foo() end";
+          "[FuncDecl(Global, `foo`, [], [])]"); // note that the return is specified (not `_`)
+
+    test!("--v (a: integer)
+           function foo() end";
+          "error"); // TODO
+
+    test!("--v (a: integer)
+           function foo(b) end";
+          "error"); // TODO
+
+    test!("--v ()
+           function foo(b) end";
+          "error"); // TODO
+
+    test!("--v (a: integer, b: integer)
+           function foo(b, a) end";
+          "error"); // TODO
+
+    test!("--v (a: integer)
+           local function foo(a) end";
+          "[FuncDecl(Local, `foo`, [`a`: _ Integer], [])]");
+
+    test!("(--v (a: const integer,
+            --v  ...)
+            --v -> string
+            function(a, ...) end)()";
+          "[Void(Func([`a`: Const Integer, ...: _] -> String, [])())]");
+
+    test!("--v ()
+           function foo() --> string
+           end";
+          "error";
+          2: "[Error] Inline return type spec cannot appear with the function spec");
+
+    test!("--v ()
+           function foo(a) --: integer --> string
+           end";
+          "error"); // TODO
+
+    test!("--v ()
+           function foo(a, --: integer
+                        b) --> string
+           end";
+          "error"); // TODO
+
+    test!("--v ()";
+          "error";
+          1: "[Error] No function declaration after the function specification");
+
+    test!("--v ()
+           local v = 42";
+          "error";
+          1: "[Error] No function declaration after the function specification");
+
+    test!("--v ()
+           local v = 42
+           --v ()";
+          "error";
+          1: "[Error] No function declaration after the function specification";
+          3: "[Error] No function declaration after the function specification");
+
+    test!("--v ()
+           --# assume x: integer";
+          "error";
+          1: "[Error] No function declaration after the function specification");
+
+    test!("--v ()
+           for i = 1, 3 do end";
+          "error";
+          1: "[Error] No function declaration after the function specification");
+
+    test!("f(--v ()
+             g())";
+          "error";
+          1: "[Error] No function literal after the function specification");
+
+    test!("function foo(a, --: integer
+                        b, ...) --: string
+           end";
+          "[FuncDecl(Global, `foo`, [`a`: _ Integer, `b`, ...: String] -> _, [])]");
+
+    test!("--v (a: integer, b: boolean, ...: string)
+           function foo(a, b, ...) --: string
+           end";
+          "error"); // TODO
+
+    test!("--v (a: integer, b: boolean)
+           function foo(a, b, ...)
+           end";
+          "error"); // TODO
+
+    test!("--v (a: integer, b: boolean, ...: string)
+           function foo(a, b)
+           end";
+          "error"); // TODO
+
+    test!("--v (a: integer, b: boolean, ...: string)
+           function foo(a, b, ...)
+           end";
+          "[FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ Boolean, ...: String], [])]");
+
+    test!("--v (...: string)
+           function foo(...)
+           end";
+          "[FuncDecl(Global, `foo`, [...: String], [])]");
+
+    test!("--v (...: string)
+           local function foo(...)
+           end";
+          "[FuncDecl(Local, `foo`, [...: String], [])]");
+
+    test!("--# assume a: { integer, string
+           --#                      boolean";
+          "error";
+          2: "[Fatal] expected `,`, `;` or `}`, got a name");
+
+    test!("f([==== [";
+          "error";
+          1: "[Fatal] Opening long bracket should end with `]`");
+
+    test!("f([====";
+          "error";
+          1: "[Fatal] Opening long bracket should end with `]`");
+
+    test!("f([====[";
+          "error";
+          1: "[Fatal] Premature end of file in a long string";
+          1: "[Note] The long string started here");
+
+    test!("f([====[foo]";
+          "error";
+          1: "[Fatal] Premature end of file in a long string";
+          1: "[Note] The long string started here");
+
+    test!("--# assume p: [[xxx
+           --# yyy]]";
+          "error";
+          1: "[Fatal] A newline is disallowed in a long string inside the meta block";
+          1: "[Note] The meta block started here");
+
+    test!("--# assume p: --[[xxx
+           --# yyy]]";
+          "error";
+          1: "[Fatal] A newline is disallowed in a long string inside the meta block";
+          1: "[Note] The meta block started here");
+
+    test!("--# assume p: --[[xxx
+                             yyy]]";
+          "error";
+          1: "[Fatal] A newline is disallowed in a long string inside the meta block";
+          1: "[Note] The meta block started here");
+
+    test!("f('foo\\xyz')";
+          "error";
+          1: "[Error] Unrecognized escape sequence in a string");
+
+    test!("f('foo\\xyz', 'bar\\zyx')";
+          "error";
+          1: "[Error] Unrecognized escape sequence in a string";
+          1: "[Error] Unrecognized escape sequence in a string");
+
+    test!("f('foo\\";
+          "error";
+          1: "[Fatal] Premature end of file in a string";
+          1: "[Note] The string started here");
+
+    test!("f('foo";
+          "error";
+          1: "[Fatal] Premature end of file in a string";
+          1: "[Note] The string started here");
+
+    test!("f(0x12345678901234567)";
+          "[Void(`f`(20988295476557332000))]"); // relies on std's correct f64 rounding
+
+    test!("f(3e";
+          "error";
+          1: "[Fatal] Invalid number");
+
+    test!("f(3e+";
+          "error";
+          1: "[Fatal] Invalid number");
+
+    test!("f(~3)";
+          "error";
+          1: "[Fatal] Unexpected character");
+
+    test!("f(@3)";
+          "error";
+          1: "[Fatal] Unexpected character");
+
+    test!("--# assume p: integer f";
+          "error";
+          1: "[Error] Expected a newline, got a name");
+
+    test!("for a of x";
+          "error";
+          1: "[Fatal] Expected `=`, `,`, `in` or `--:` after `for NAME`");
+
+    test!("local (x, y) = (1, 2)";
+          "error";
+          1: "[Fatal] Expected a name or `function` after `local`");
+
+    test!("function p(#";
+          "error";
+          1: "[Fatal] Expected a name, `)` or `...`");
+
+    test!("function p(...) --: var integer
+           end";
+          "error";
+          1: "[Error] Variadic argument specifier cannot have modifiers");
+
+    test!("f({x#})";
+          "error";
+          1: "[Fatal] expected `,`, `;` or `}`, got `#`");
+
+    test!("f(x.0)";
+          "error";
+          1: "[Fatal] Expected a name after `<expression> .`, got a number");
+
+    test!("f(x:g - 1)";
+          "error";
+          1: "[Fatal] Expected argument(s) after `<expression> : <name>`, got `-`");
+
+    test!("f(2, *3)";
+          "error";
+          1: "[Fatal] Expected an expression, got `*`");
+
+    test!("a, *b = 5";
+          "error";
+          1: "[Fatal] Expected a variable, got `*`");
+
+    test!("--# assume x: #";
+          "error";
+          1: "[Error] Expected a single type, got `#`");
+
+    test!("--# assume x: (...)";
+          "error";
+          1: "[Error] `...` should be preceded with a kind in the ordinary kinds";
+          1: "[Error] Variadic argument can only be used as a function argument");
+
+    test!("--# assume x: (string...)";
+          "error";
+          1: "[Error] Variadic argument can only be used as a function argument");
+
+    test!("--# assume x: (integer, ...)";
+          "error";
+          1: "[Error] `...` should be preceded with a kind in the ordinary kinds";
+          1: "[Error] Variadic argument can only be used as a function argument");
+
+    test!("--# assume x: (integer, string)";
+          "error";
+          1: "[Error] Expected a single type, not type sequence");
+
+    test!("--# assume x: (integer, string...)";
+          "error";
+          1: "[Error] Variadic argument can only be used as a function argument");
+
+    test!("--# assume x: (integer, #)";
+          "error";
+          1: "[Fatal] Expected a kind, got `#`");
+
+    test!("--# assume x: function () -> #";
+          "error";
+          1: "[Error] Expected a single type or type sequence, got `#`");
+
+    test!("--# assume x: whatever";
+          "error";
+          1: "[Error] Unknown type name");
+
+    test!("--# assume x: {x = integer #}";
+          "error";
+          1: "[Fatal] expected `,`, `;` or `}`, got `#`");
+
+    test!("--# assume x: {integer #}";
+          "error";
+          1: "[Fatal] expected `,`, `;` or `}`, got `#`");
+
+    test!("--# assume x: {x = integer, x = string}";
+          "error";
+          1: "[Error] Duplicate record field in the type specification";
+          1: "[Note] The first duplicate here");
+
+    test!("--# assume x: {x = integer, x = string, x = boolean}";
+          "error";
+          1: "[Error] Duplicate record field in the type specification";
+          1: "[Note] The first duplicate here";
+          1: "[Error] Duplicate record field in the type specification";
+          1: "[Note] The first duplicate here");
 }
 

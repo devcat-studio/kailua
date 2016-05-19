@@ -18,8 +18,11 @@ fn test_check() {
     fn check(s: &str) -> CheckResult<()> {
         println!("");
         println!("checking `{}`", s);
-        let parsed = kailua_syntax::parse_chunk(s.as_bytes());
-        let chunk = try!(parsed.map_err(|s| format!("parse error: {}", s)));
+        let mut source = kailua_diag::Source::new();
+        let filespan = source.add_string("<test>", s.as_bytes());
+        let report = kailua_diag::CollectedReport::new();
+        let chunk = try!(kailua_syntax::parse_chunk(&source, filespan,
+                                                    &report).map_err(|_| format!("parse error")));
 
         struct Opts;
         impl Options for Opts {}

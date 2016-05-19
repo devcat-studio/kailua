@@ -3,7 +3,8 @@ extern crate unicode_width;
 
 pub use source::{Pos, Span, Spanned, WithLoc};
 pub use source::{Source, SourceFile, SourceBytes, SourceLineSpans};
-pub use report::{Kind, Stop, Result, Report, ReportMore, Reporter, ConsoleReport};
+pub use report::{Kind, Stop, Result, Report, ReportMore, Reporter};
+pub use report::{ConsoleReport, CollectedReport};
 
 mod source;
 mod report;
