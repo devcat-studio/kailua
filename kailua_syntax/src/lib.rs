@@ -267,5 +267,9 @@ fn test_parse() {
     assert_eq!(test("--# assume x: (integer, #)"), "parse error");
     assert_eq!(test("--# assume x: function () -> #"), "parse error");
     assert_eq!(test("--# assume x: whatever"), "parse error");
+    assert_eq!(test("--# assume x: {x = integer #}"), "parse error");
+    assert_eq!(test("--# assume x: {integer #}"), "parse error");
+    assert_eq!(test("--# assume x: {x = integer, x = string}"), "parse error");
+    assert_eq!(test("--# assume x: {x = integer, x = string, x = boolean}"), "parse error");
 }
 

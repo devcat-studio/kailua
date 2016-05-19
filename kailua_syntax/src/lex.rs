@@ -251,11 +251,13 @@ impl<'a> Lexer<'a> {
             Some(c) => {
                 self.unread(c);
                 return self.report.fatal(begin..self.pos(),
-                                         "Opening long bracket should end with `]`");
+                                         "Opening long bracket should end with `]`")
+                                  .done();
             }
             None => {
                 return self.report.fatal(begin..self.pos(),
-                                         "Opening long bracket should end with `]`");
+                                         "Opening long bracket should end with `]`")
+                                  .done();
             }
         }
         loop {
@@ -272,26 +274,25 @@ impl<'a> Lexer<'a> {
                             self.unread(c); // may be the start of closing bracket
                         },
                         None => {
-                            let stop = self.report.fatal(self.pos(),
-                                                         "Premature end of file in a long string");
-                            try!(self.report.note(begin, "The long string started here"));
-                            return stop;
+                            return self.report.fatal(self.pos(),
+                                                     "Premature end of file in a long string")
+                                              .note(begin, "The long string started here")
+                                              .done();
                         }
                     }
                 },
                 Some(b'\r') | Some(b'\n') if self.meta => {
-                    let stop = self.report.fatal(begin..lastpos, // do not include newlines
-                                                 "A newline is disallowed in a long string inside \
-                                                  the meta block");
-                    try!(self.report.note(self.meta_span, "The meta block started here"));
-                    return stop;
+                    return self.report.fatal(begin..lastpos, // do not include newlines
+                                             "A newline is disallowed in a long string inside \
+                                              the meta block")
+                                      .note(self.meta_span, "The meta block started here")
+                                      .done();
                 },
                 Some(c) => f(c),
                 None => {
-                    let stop = self.report.fatal(self.pos(),
-                                                 "Premature end of file in a long string");
-                    try!(self.report.note(begin, "The long string started here"));
-                    return stop;
+                    return self.report.fatal(self.pos(), "Premature end of file in a long string")
+                                      .note(begin, "The long string started here")
+                                      .done();
                 }
             }
         }
@@ -334,22 +335,21 @@ impl<'a> Lexer<'a> {
                     },
                     Some(_) => {
                         try!(self.report.error(lastpos..self.pos(),
-                                               "Unrecognized escape sequence in a string"));
+                                               "Unrecognized escape sequence in a string")
+                                        .done());
                     },
                     None => {
-                        let stop = self.report.fatal(self.pos(),
-                                                     "Premature end of file in a string");
-                        try!(self.report.note(begin, "The string started here"));
-                        return stop;
+                        return self.report.fatal(self.pos(), "Premature end of file in a string")
+                                          .note(begin, "The string started here")
+                                          .done();
                     },
                 },
                 Some(c) if c == quote => break,
                 Some(c) => f(c),
                 None => {
-                    let stop = self.report.fatal(self.pos(),
-                                                 "Premature end of file in a string");
-                    try!(self.report.note(begin, "The string started here"));
-                    return stop;
+                    return self.report.fatal(self.pos(), "Premature end of file in a string")
+                                      .note(begin, "The string started here")
+                                      .done();
                 },
             }
         }
@@ -449,7 +449,7 @@ impl<'a> Lexer<'a> {
                             }
                         }
 
-                        return self.report.fatal(begin..self.pos(), "Invalid number");
+                        return self.report.fatal(begin..self.pos(), "Invalid number").done();
                     }
                 }
 
@@ -521,7 +521,7 @@ impl<'a> Lexer<'a> {
                 },
                 Some(b'~') => {
                     if let Some(_) = self.try(|c| c == b'=') { return tok!(TildeEq); }
-                    return self.report.fatal(begin..self.pos(), "Unexpected character");
+                    return self.report.fatal(begin..self.pos(), "Unexpected character").done();
                 },
                 Some(b'<') => {
                     if let Some(_) = self.try(|c| c == b'=') { return tok!(LtEq); }
@@ -562,7 +562,7 @@ impl<'a> Lexer<'a> {
                 Some(b'&') if self.meta => return tok!(Amp),
 
                 Some(_) => {
-                    return self.report.fatal(begin..self.pos(), "Unexpected character");
+                    return self.report.fatal(begin..self.pos(), "Unexpected character").done();
                 },
                 None => {
                     if self.meta { // the last line should be closed by the (dummy) Newline token

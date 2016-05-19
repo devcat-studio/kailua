@@ -16,6 +16,7 @@ pub enum Kind {
 }
 
 // used to stop the further parsing or type checking
+//#[must_use]
 //#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 //pub struct Stop;
 pub type Stop = &'static str; // TODO should be eliminated!
@@ -34,26 +35,68 @@ impl<'a> Report for &'a Report {
     fn add_span(&self, k: Kind, s: Span, m: String) -> Result<()> { (**self).add_span(k, s, m) }
 }
 
-pub trait Reporter: Report {
-    fn fatal<Loc: Into<Span>, Msg: Into<String>, T>(&self, loc: Loc, msg: Msg) -> Result<T> {
-        self.add_span(Kind::Fatal, loc.into(), msg.into())
-            .map(|_| panic!("Report::fatal should always return Err"))
+pub trait Reporter: Report + Sized {
+    fn fatal<Loc: Into<Span>, Msg: Into<String>, T>(&self, loc: Loc, msg: Msg) -> ReportMore<T> {
+        let ret = self.add_span(Kind::Fatal, loc.into(), msg.into());
+        let ret = ret.map(|_| panic!("Report::fatal should always return Err"));
+        ReportMore::new(self, ret)
     }
 
-    fn error<Loc: Into<Span>, Msg: Into<String>>(&self, loc: Loc, msg: Msg) -> Result<()> {
-        self.add_span(Kind::Error, loc.into(), msg.into())
+    fn error<Loc: Into<Span>, Msg: Into<String>>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
+        let ret = self.add_span(Kind::Error, loc.into(), msg.into());
+        ReportMore::new(self, ret)
     }
 
-    fn warn<Loc: Into<Span>, Msg: Into<String>>(&self, loc: Loc, msg: Msg) -> Result<()> {
-        self.add_span(Kind::Warn, loc.into(), msg.into())
+    fn warn<Loc: Into<Span>, Msg: Into<String>>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
+        let ret = self.add_span(Kind::Warn, loc.into(), msg.into());
+        ReportMore::new(self, ret)
     }
 
-    fn note<Loc: Into<Span>, Msg: Into<String>>(&self, loc: Loc, msg: Msg) -> Result<()> {
-        self.add_span(Kind::Note, loc.into(), msg.into())
+    fn note<Loc: Into<Span>, Msg: Into<String>>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
+        let ret = self.add_span(Kind::Note, loc.into(), msg.into());
+        ReportMore::new(self, ret)
     }
 }
 
 impl<T: Report> Reporter for T {}
+
+#[must_use]
+pub struct ReportMore<'a, T> {
+    report: &'a Report,
+    result: Result<T>,
+}
+
+impl<'a, T> ReportMore<'a, T> {
+    fn new(report: &'a Report, result: Result<T>) -> ReportMore<'a, T> {
+        ReportMore { report: report, result: result }
+    }
+
+    pub fn fatal<Loc: Into<Span>, Msg: Into<String>, U>(self,
+                                                        loc: Loc, msg: Msg) -> ReportMore<'a, U> {
+        let ret = self.report.fatal(loc, msg).result;
+        ReportMore::new(self.report, self.result.and(ret))
+    }
+
+    pub fn error<Loc: Into<Span>, Msg: Into<String>>(self,
+                                                     loc: Loc, msg: Msg) -> ReportMore<'a, T> {
+        let ret = self.report.error(loc, msg).result;
+        ReportMore::new(self.report, if let Err(e) = ret { Err(e) } else { self.result })
+    }
+
+    pub fn warn<Loc: Into<Span>, Msg: Into<String>>(self,
+                                                    loc: Loc, msg: Msg) -> ReportMore<'a, T> {
+        let ret = self.report.warn(loc, msg).result;
+        ReportMore::new(self.report, if let Err(e) = ret { Err(e) } else { self.result })
+    }
+
+    pub fn note<Loc: Into<Span>, Msg: Into<String>>(self,
+                                                    loc: Loc, msg: Msg) -> ReportMore<'a, T> {
+        let ret = self.report.note(loc, msg).result;
+        ReportMore::new(self.report, if let Err(e) = ret { Err(e) } else { self.result })
+    }
+
+    pub fn done(self) -> Result<T> { self.result }
+}
 
 fn strip_newline(mut s: &[u8]) -> &[u8] {
     loop {
