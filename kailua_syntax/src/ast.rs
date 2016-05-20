@@ -83,6 +83,24 @@ impl<T: fmt::Debug> fmt::Debug for TypeSpec<T> {
     }
 }
 
+// more spanned version of Sig, only used during the parsing
+#[derive(Clone, PartialEq)]
+pub struct Presig {
+    pub args: Vec<Spanned<TypeSpec<Spanned<Name>>>>,
+    pub varargs: Option<Spanned<Option<Spanned<Kind>>>>,
+    pub returns: Option<Vec<Spanned<Kind>>>,
+}
+
+impl Presig {
+    pub fn to_sig(self) -> Sig {
+        Sig {
+            args: self.args.into_iter().map(|arg| arg.base).collect(),
+            varargs: self.varargs.map(|varargs| varargs.base),
+            returns: self.returns,
+        }
+    }
+}
+
 #[derive(Clone, PartialEq)]
 pub struct Sig {
     pub args: Vec<TypeSpec<Spanned<Name>>>,

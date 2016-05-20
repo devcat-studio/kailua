@@ -378,21 +378,43 @@ fn test_parse() {
            function foo() end";
           "[FuncDecl(Global, `foo`, [], [])]"); // note that the return is specified (not `_`)
 
-    test!("--v (a: integer)
+    test!("--v (a: integer,
+           --v  b: string)
            function foo() end";
-          "error"); // TODO
+          "error";
+          1-2: "[Error] Excess arguments in the function specification");
+
+    test!("--v (a: integer,
+           --v  b: string)
+           function foo(a) end";
+          "error";
+          2: "[Error] Excess arguments in the function specification");
 
     test!("--v (a: integer)
            function foo(b) end";
-          "error"); // TODO
+          "error";
+          2: "[Error] Mismatching argument name in the function specification";
+          1: "[Note] The corresponding argument was here");
 
     test!("--v ()
-           function foo(b) end";
-          "error"); // TODO
+           function foo(a,
+                        b) end";
+          "error";
+          2-3: "[Error] Excess arguments in the function declaration");
+
+    test!("--v (a: integer)
+           function foo(a,
+                        b) end";
+          "error";
+          3: "[Error] Excess arguments in the function declaration");
 
     test!("--v (a: integer, b: integer)
            function foo(b, a) end";
-          "error"); // TODO
+          "error";
+          2: "[Error] Mismatching argument name in the function specification";
+          1: "[Note] The corresponding argument was here";
+          2: "[Error] Mismatching argument name in the function specification";
+          1: "[Note] The corresponding argument was here");
 
     test!("--v (a: integer)
            local function foo(a) end";
@@ -408,18 +430,32 @@ fn test_parse() {
            function foo() --> string
            end";
           "error";
-          2: "[Error] Inline return type spec cannot appear with the function spec");
+          2: "[Error] Inline return type specification cannot appear \
+                      with the function specification";
+          1: "[Note] The function specification appeared here");
 
-    test!("--v ()
+    test!("--v (a: integer)
            function foo(a) --: integer --> string
            end";
-          "error"); // TODO
+          "error";
+          2: "[Error] Inline argument type specification cannot appear \
+                      with the function specification";
+          1: "[Note] The function specification appeared here";
+          2: "[Error] Inline return type specification cannot appear \
+                      with the function specification";
+          1: "[Note] The function specification appeared here");
 
-    test!("--v ()
+    test!("--v (a: integer, b: boolean)
            function foo(a, --: integer
                         b) --> string
            end";
-          "error"); // TODO
+          "error";
+          2: "[Error] Inline argument type specification cannot appear \
+                      with the function specification";
+          1: "[Note] The function specification appeared here";
+          3: "[Error] Inline return type specification cannot appear \
+                      with the function specification";
+          1: "[Note] The function specification appeared here");
 
     test!("--v ()";
           "error";
@@ -460,17 +496,24 @@ fn test_parse() {
     test!("--v (a: integer, b: boolean, ...: string)
            function foo(a, b, ...) --: string
            end";
-          "error"); // TODO
+          "error";
+          2: "[Error] Inline variadic argument type specification \
+                      cannot appear with the function specification";
+          1: "[Note] The corresponding argument in the function specification was here");
 
     test!("--v (a: integer, b: boolean)
            function foo(a, b, ...)
            end";
-          "error"); // TODO
+          "error";
+          2: "[Error] Variadic arguments appear in the function \
+                      but not in the function specification");
 
     test!("--v (a: integer, b: boolean, ...: string)
            function foo(a, b)
            end";
-          "error"); // TODO
+          "error";
+          1: "[Error] Variadic arguments appear in the function \
+                      specification but not in the function itself");
 
     test!("--v (a: integer, b: boolean, ...: string)
            function foo(a, b, ...)
@@ -655,14 +698,35 @@ fn test_parse() {
 
     test!("--# assume x: {x = integer, x = string}";
           "error";
-          1: "[Error] Duplicate record field in the type specification";
-          1: "[Note] The first duplicate here");
+          1: "[Error] Duplicate record field `x` in the type specification";
+          1: "[Note] The first duplicate appeared here");
 
-    test!("--# assume x: {x = integer, x = string, x = boolean}";
+    test!("--# assume x: {x = integer,
+           --#            x = string,
+           --#            y = table,
+           --#            x = boolean,
+           --#            y = number}";
           "error";
-          1: "[Error] Duplicate record field in the type specification";
-          1: "[Note] The first duplicate here";
-          1: "[Error] Duplicate record field in the type specification";
-          1: "[Note] The first duplicate here");
+          2: "[Error] Duplicate record field `x` in the type specification";
+          1: "[Note] The first duplicate appeared here";
+          4: "[Error] Duplicate record field `x` in the type specification";
+          1: "[Note] The first duplicate appeared here";
+          5: "[Error] Duplicate record field `y` in the type specification";
+          3: "[Note] The first duplicate appeared here");
+
+    test!("--# assume x: ? = hello
+           --# assume y: \"bo\\gus\"
+           f(";
+          "error";
+          1: "[Error] Expected a string after `assume <name> : <kind> =`, got a name";
+          2: "[Error] Unrecognized escape sequence in a string";
+          3: "[Fatal] Expected `)`, got the end of file");
+
+    test!("--# assume x: integer | (string,
+           --#                      boolean) | nil
+           f(";
+          "error";
+          1-2: "[Error] A sequence of types cannot be inside a union";
+          3: "[Fatal] Expected `)`, got the end of file");
 }
 

@@ -6,7 +6,7 @@ use std::collections::{hash_map, HashMap};
 use kailua_diag as diag;
 use kailua_diag::{Pos, Span, Spanned, WithLoc, Report, Reporter};
 use lex::{Tok, Punct, Keyword};
-use ast::{Name, Str, Var, Sig, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam, St, Stmt, Block};
+use ast::{Name, Str, Var, Presig, Sig, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam, St, Stmt, Block};
 use ast::{M, K, Kind, SlotKind, FuncKind, TypeSpec};
 
 pub struct Parser<'a, T> {
@@ -219,11 +219,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     (next.span, format!("Expected a newline, got {}", next.base))
                 };
                 try!(self.report.error(span, msg).done());
-
-                // skip until the end of meta block if we continue
-                while try!(self.read()).1.base != Tok::Punct(Punct::Newline) {}
-                self.ignore_after_newline = None;
-                return Ok(());
+                return self.skip_meta_comment(meta);
             }
 
             // newline (implicitly consumed) - meta - original lookahead
@@ -232,6 +228,14 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             self.lookahead = Some(Tok::Punct(meta).with_loc(Span::dummy()));
         }
 
+        self.ignore_after_newline = None;
+        Ok(())
+    }
+
+    // consumes a newline, used for error recovery
+    fn skip_meta_comment(&mut self, meta: Punct) -> ParseResult<()> {
+        assert_eq!(self.ignore_after_newline, Some(meta));
+        while try!(self.read()).1.base != Tok::Punct(Punct::Newline) {}
         self.ignore_after_newline = None;
         Ok(())
     }
@@ -426,9 +430,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
                         // forbid `--v ...` then `local NAME ...`
                         if let Some(ref presig) = presig {
-                            try!(self.report.error(presig.span,
-                                                   "No function declaration after \
-                                                    the function specification")
+                            try!(self.report.error(presig.span, "No function declaration after \
+                                                                 the function specification")
                                             .done());
                         }
 
@@ -515,7 +518,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn parse_func_body(&mut self,
-                       presig: Option<Spanned<Sig>>) -> ParseResult<(Sig, Spanned<Block>)> {
+                       presig: Option<Spanned<Presig>>) -> ParseResult<(Sig, Spanned<Block>)> {
         let mut args = Vec::new();
         let mut varargs = None;
         let returns; // to check the error case
@@ -533,10 +536,10 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         try!(self.expect(Punct::LParen));
         let mut name = None;
         let mut spec = None;
-        let mut variadic = false;
+        let mut variadic = None;
         match try!(self.read()) {
-            (_, Spanned { base: Tok::Punct(Punct::DotDotDot), .. }) => {
-                variadic = true;
+            (_, Spanned { base: Tok::Punct(Punct::DotDotDot), span }) => {
+                variadic = Some(span);
             }
             (_, Spanned { base: Tok::Name(name0), span }) => {
                 let name0: Name = name0.into();
@@ -544,10 +547,11 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 spec = try!(self.try_parse_kailua_type_spec()); // 1)
                 while self.may_expect(Punct::Comma) {
                     // try to read the type spec after a comma if there was no prior spec
-                    if spec.is_none() { spec = try!(self.try_parse_kailua_type_spec()); }
-                    args.push(self.make_kailua_typespec(name.take().unwrap(), spec.take())); // 2)
+                    if spec.is_none() { spec = try!(self.try_parse_kailua_type_spec()); } // 2)
+                    args.push((name.take().unwrap(), spec.take()));
+                    let begin = self.pos();
                     if self.may_expect(Punct::DotDotDot) {
-                        variadic = true;
+                        variadic = Some((begin..self.last_pos()).into());
                         break;
                     } else {
                         name = Some(try!(self.parse_name()));
@@ -562,29 +566,30 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 return self.report.fatal(tok.span, "Expected a name, `)` or `...`").done();
             }
         }
-        if variadic {
+        if let Some(span) = variadic {
             // we've already read `...` and flushed the name-spec pair
             let mut varargs_ = try!(self.try_parse_kailua_type_spec_with_spanned_modf()); // 4)
             try!(self.expect(Punct::RParen));
             if varargs_.is_none() {
                 varargs_ = try!(self.try_parse_kailua_type_spec_with_spanned_modf()); // 5)
             }
-            if let Some((m, kind)) = varargs_ {
+            let varargs_ = if let Some(Spanned { base: (m, kind), .. }) = varargs_ {
                 if m.base != M::None {
                     try!(self.report.error(m.span, "Variadic argument specifier \
                                                     cannot have modifiers")
                                     .done());
                 }
-                varargs = Some(Some(kind));
+                Some(kind)
             } else {
-                varargs = Some(None);
-            }
+                None
+            };
+            varargs = Some(varargs_.with_loc(span));
         } else {
             try!(self.expect(Punct::RParen));
             if let Some(name) = name {
                 // the last type spec may follow the right parenthesis
                 if spec.is_none() { spec = try!(self.try_parse_kailua_type_spec()); } // 3)
-                args.push(self.make_kailua_typespec(name, spec));
+                args.push((name, spec));
             }
         }
         returns = try!(self.try_parse_kailua_rettype_spec());
@@ -593,37 +598,68 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         // inline argument type spec is an error
         let sig;
         if let Some(presig) = presig {
-            let presig = presig.base;
-            if args.len() != presig.args.len() {
-                return Err("mismatching number of arguments in the function spec");
+            if args.len() > presig.base.args.len() {
+                let excess = &args[presig.base.args.len()..];
+                let span = excess.iter().fold(Span::dummy(), |span, i| span | i.0.span);
+                try!(self.report.error(span, "Excess arguments in the function declaration")
+                                .done());
+            } else if args.len() < presig.base.args.len() {
+                let excess = &presig.base.args[args.len()..];
+                let span = excess.iter().fold(Span::dummy(), |span, i| span | i.span);
+                try!(self.report.error(span, "Excess arguments in the function specification")
+                                .done());
             }
-            match (&varargs, &presig.varargs) {
-                (&Some(_), &None) | (&None, &Some(_)) => {
-                    return Err("mismatching variadic arguments in the function spec");
+            match (&varargs, &presig.base.varargs) {
+                (&Some(ref v), &None) => {
+                    try!(self.report.error(v.span, "Variadic arguments appear in the function \
+                                                    but not in the function specification")
+                                    .done());
                 }
-                (&Some(Some(_)), &Some(_)) => {
-                    return Err("inline variadic argument type spec cannot appear \
-                                with the function spec");
+                (&None, &Some(ref v)) => {
+                    try!(self.report.error(v.span, "Variadic arguments appear in the function \
+                                                    specification but not in the function itself")
+                                    .done());
+                }
+                (&Some(Spanned { base: Some(_), span }), &Some(ref v)) => {
+                    try!(self.report.error(span, "Inline variadic argument type specification \
+                                                  cannot appear with the function specification")
+                                    .note(v.span, "The corresponding argument in the \
+                                                   function specification was here")
+                                    .done());
                 }
                 (_, _) => {}
             }
-            for (arg, sigarg) in args.iter().zip(presig.args.iter()) {
-                if arg.base.base != sigarg.base.base { // TODO might not be needed
-                    return Err("mismatching argument name in the function spec");
+            for (arg, sigarg) in args.iter().zip(presig.base.args.iter()) {
+                if arg.0.base != sigarg.base.base.base { // TODO might not be needed
+                    try!(self.report.error(arg.0.span, "Mismatching argument name \
+                                                        in the function specification")
+                                    .note(sigarg.base.base.span,
+                                          "The corresponding argument was here")
+                                    .done());
                 }
-                if arg.modf != M::None || arg.kind.is_some() {
-                    return Err("inline argument type spec cannot appear with the function spec");
+                if let Some(ref spec) = arg.1 {
+                    try!(self.report.error(spec.span, "Inline argument type specification cannot \
+                                                       appear with the function specification")
+                                    .note(presig.span,
+                                          "The function specification appeared here")
+                                    .done());
                 }
             }
             if let Some(returns) = returns {
                 try!(self.report.error(returns.span,
-                                       "Inline return type spec cannot appear \
-                                        with the function spec")
+                                       "Inline return type specification cannot appear \
+                                        with the function specification")
+                                .note(presig.span,
+                                      "The function specification appeared here")
                                 .done());
             }
-            sig = presig;
+            sig = presig.base.to_sig();
         } else {
-            sig = Sig { args: args, varargs: varargs, returns: returns.map(|tt| tt.base) };
+            sig = Sig {
+                args: args.into_iter().map(|(n,s)| self.make_kailua_typespec(n, s)).collect(),
+                varargs: varargs.map(|tt| tt.base),
+                returns: returns.map(|tt| tt.base),
+            };
         }
 
         let block = try!(self.parse_block());
@@ -821,9 +857,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         if let Some(ref presig) = presig {
             if !self.lookahead(Keyword::Function) {
                 // limit the possible lookahead
-                try!(self.report.error(presig.span,
-                                       "No function literal after \
-                                        the function specification")
+                try!(self.report.error(presig.span, "No function literal after \
+                                                     the function specification")
                                 .done());
             }
         }
@@ -1089,8 +1124,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     // Kailua-specific syntaxes
 
     fn make_kailua_typespec<Base>(&self, base: Base,
-                                  spec: Option<(M, Spanned<Kind>)>) -> TypeSpec<Base> {
-        if let Some((modf, kind)) = spec {
+                                  spec: Option<Spanned<(M, Spanned<Kind>)>>) -> TypeSpec<Base> {
+        if let Some(Spanned { base: (modf, kind), .. }) = spec {
             TypeSpec { base: base, modf: modf, kind: Some(kind) }
         } else {
             TypeSpec { base: base, modf: M::None, kind: None }
@@ -1167,12 +1202,14 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     // may contain ellipsis, the caller is expected to error on unwanted cases
-    fn parse_kailua_namekindlist(&mut self) -> ParseResult<(Vec<TypeSpec<Spanned<Name>>>,
-                                                            Option<Option<Spanned<Kind>>>)> {
-        let mut variadic = false;
+    fn parse_kailua_namekindlist(&mut self)
+            -> ParseResult<(Vec<Spanned<TypeSpec<Spanned<Name>>>>,
+                            Option<Spanned<Option<Spanned<Kind>>>>)> {
+        let mut variadic = None;
         let mut specs = Vec::new();
+        let begin = self.pos();
         if self.may_expect(Punct::DotDotDot) { // "..." [":" KIND]
-            variadic = true;
+            variadic = Some(begin);
         } else { // NAME ":" KIND {"," NAME ":" KIND} ["," "..." [":" KIND]] or empty
             let name = match try!(self.try_parse_name()) {
                 Some(name) => name,
@@ -1181,27 +1218,31 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             try!(self.expect(Punct::Colon));
             let modf = try!(self.parse_kailua_mod());
             let kind = try!(self.parse_kailua_kind());
-            specs.push(self.make_kailua_typespec(name, Some((modf, kind))));
+            let spec = TypeSpec { base: name, modf: modf, kind: Some(kind) };
+            specs.push(spec.with_loc(begin..self.last_pos()));
             while self.may_expect(Punct::Comma) {
+                let begin = self.pos();
                 if self.may_expect(Punct::DotDotDot) {
-                    variadic = true;
+                    variadic = Some(begin);
                     break;
                 }
                 let name = try!(self.parse_name());
                 try!(self.expect(Punct::Colon));
                 let modf = try!(self.parse_kailua_mod());
                 let kind = try!(self.parse_kailua_kind());
-                specs.push(self.make_kailua_typespec(name, Some((modf, kind))));
+                let spec = TypeSpec { base: name, modf: modf, kind: Some(kind) };
+                specs.push(spec.with_loc(begin..self.last_pos()));
             }
         }
-        if variadic {
+        if let Some(begin) = variadic {
             // we've already read `...`
-            if self.may_expect(Punct::Colon) {
+            let varargs = if self.may_expect(Punct::Colon) {
                 let kind = try!(self.parse_kailua_kind());
-                Ok((specs, Some(Some(kind))))
+                Some(kind)
             } else {
-                Ok((specs, Some(None)))
-            }
+                None
+            };
+            Ok((specs, Some(varargs.with_loc(begin..self.last_pos()))))
         } else {
             Ok((specs, None))
         }
@@ -1294,10 +1335,12 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                 match seen.entry(name.base.clone()) {
                                     hash_map::Entry::Occupied(e) => {
                                         try!(self.report.error(name.span,
-                                                               "Duplicate record field in \
-                                                                the type specification")
+                                                               format!("Duplicate record field \
+                                                                        {:?} in the \
+                                                                        type specification",
+                                                                       name.base))
                                                         .note(*e.get(),
-                                                              "The first duplicate here")
+                                                              "The first duplicate appeared here")
                                                         .done());
                                     }
                                     hash_map::Entry::Vacant(e) => {
@@ -1415,12 +1458,17 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 // TODO the current parser is massively ambiguous about pipes in atomic types
                 let mut kinds = vec![kind];
                 while self.may_expect(Punct::Pipe) {
+                    let begin = self.pos();
                     let mut kindseq2 = try!(try!(self.try_parse_kailua_atomic_kind_seq())
                                             .ok_or("expected type"));
                     if kindseq2.len() != 1 {
-                        return Err("a sequence of types cannot be inside a union");
+                        try!(self.report.error(begin..self.last_pos(),
+                                               "A sequence of types cannot be inside a union")
+                                        .done());
+                        kinds.push(self.dummy_kind());
+                    } else {
+                        kinds.push(kindseq2.pop().unwrap());
                     }
-                    kinds.push(kindseq2.pop().unwrap());
                 }
                 kind = Box::new(K::Union(kinds)).with_loc(begin..self.last_pos());
             }
@@ -1473,7 +1521,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn try_parse_kailua_type_spec_with_spanned_modf(&mut self)
-            -> ParseResult<Option<(Spanned<M>, Spanned<Kind>)>> {
+            -> ParseResult<Option<Spanned<(Spanned<M>, Spanned<Kind>)>>> {
+        let metabegin = self.pos();
         if self.may_expect(Punct::DashDashColon) {
             // allow for `--: { a = foo,
             //            --:   b = bar }`
@@ -1484,6 +1533,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 modf => modf.with_loc(begin..self.last_pos()),
             };
             let kind = try!(self.parse_kailua_kind());
+            let metaend = self.last_pos();
             // allow for `--: last type --> return type` in the function decl
             if !self.lookahead(Punct::DashDashGt) {
                 try!(self.end_meta_comment(Punct::DashDashColon));
@@ -1495,15 +1545,15 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 //                         --: --> return_type`. seems harmless though.
                 self.elided_newline = false;
             }
-            Ok(Some((modf, kind)))
+            Ok(Some((modf, kind).with_loc(metabegin..metaend)))
         } else {
             Ok(None)
         }
     }
 
-    fn try_parse_kailua_type_spec(&mut self) -> ParseResult<Option<(M, Spanned<Kind>)>> {
+    fn try_parse_kailua_type_spec(&mut self) -> ParseResult<Option<Spanned<(M, Spanned<Kind>)>>> {
         let spec = try!(self.try_parse_kailua_type_spec_with_spanned_modf());
-        Ok(spec.map(|(m,k)| (m.base, k)))
+        Ok(spec.map(|spec| spec.map(|(m,k)| (m.base, k))))
     }
 
     fn try_parse_kailua_rettype_spec(&mut self)
@@ -1521,7 +1571,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn try_parse_kailua_func_spec(&mut self) -> ParseResult<Option<Spanned<Sig>>> {
+    fn try_parse_kailua_func_spec(&mut self) -> ParseResult<Option<Spanned<Presig>>> {
         let begin = self.pos();
         if self.may_expect(Punct::DashDashV) {
             // "(" [NAME ":" KIND] {"," NAME ":" KIND} ["," "..."] ")" ["->" KIND]
@@ -1530,14 +1580,14 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             let (args, varargs) = try!(self.parse_kailua_namekindlist());
             try!(self.expect(Punct::RParen));
             let returns = if self.may_expect(Punct::DashGt) {
-                try!(self.parse_kailua_kind_seq())
+                Some(try!(self.parse_kailua_kind_seq()))
             } else {
-                Vec::new()
+                Some(Vec::new())
             };
             let end = self.last_pos();
             try!(self.end_meta_comment(Punct::DashDashV));
 
-            let sig = Sig { args: args, varargs: varargs, returns: Some(returns) };
+            let sig = Presig { args: args, varargs: varargs, returns: returns };
             Ok(Some(sig.with_loc(begin..end)))
         } else {
             Ok(None)
@@ -1563,7 +1613,13 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     if let Tok::Str(s) = tok.base {
                         builtin = Some(Str::from(s).with_loc(tok.span));
                     } else {
-                        return Err("string expected after `assume NAME : KIND =`");
+                        try!(self.report.error(tok.span,
+                                               format!("Expected a string after \
+                                                        `assume <name> : <kind> =`, got {}",
+                                                       tok.base))
+                                        .done());
+                        try!(self.skip_meta_comment(Punct::DashDashHash));
+                        return Ok(Some(None));
                     }
                 } else {
                     builtin = None;

@@ -124,6 +124,12 @@ pub struct Spanned<T> {
     pub base: T,
 }
 
+impl<T> Spanned<T> {
+    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Spanned<U> {
+        Spanned { span: self.span, base: f(self.base) }
+    }
+}
+
 impl From<Pos> for Span {
     fn from(pos: Pos) -> Span { Span { begin: pos, end: pos } }
 }
