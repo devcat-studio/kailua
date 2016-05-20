@@ -4,7 +4,6 @@ extern crate kailua_diag;
 
 use kailua_diag::Spanned;
 
-pub use lex::Error;
 pub use ast::{Name, Str, Var, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam};
 pub use ast::{St, Stmt, Block, M, K, Kind, FuncKind, SlotKind};
 
@@ -13,7 +12,7 @@ mod ast;
 mod parser;
 
 pub fn parse_chunk(source: &kailua_diag::Source, span: kailua_diag::Span,
-                   report: &kailua_diag::Report) -> Result<Spanned<Block>, Error> {
+                   report: &kailua_diag::Report) -> kailua_diag::Result<Spanned<Block>> {
     let lexer = lex::Lexer::new(source.iter_bytes_from_span(span), &report);
     let parser = parser::Parser::new(lexer, &report);
     parser.into_chunk()
@@ -646,6 +645,18 @@ fn test_parse() {
           "error";
           1: "[Fatal] Expected an expression, got `*`");
 
+    test!("f(2 + *3)";
+          "error";
+          1: "[Fatal] Expected an expression, got `*`");
+
+    test!("f(2 .. *3)";
+          "error";
+          1: "[Fatal] Expected an expression, got `*`");
+
+    test!("f(#*3)";
+          "error";
+          1: "[Fatal] Expected an expression, got `*`");
+
     test!("a, *b = 5";
           "error";
           1: "[Fatal] Expected a variable, got `*`");
@@ -721,6 +732,16 @@ fn test_parse() {
           1: "[Error] Expected a string after `assume <name> : <kind> =`, got a name";
           2: "[Error] Unrecognized escape sequence in a string";
           3: "[Fatal] Expected `)`, got the end of file");
+
+    test!("--# assume x: integer | #";
+          "error";
+          1: "[Fatal] Expected a type, got `#`");
+
+    test!("--# assume x: integer | () | nil
+           f(";
+          "error";
+          1: "[Error] A sequence of types cannot be inside a union";
+          2: "[Fatal] Expected `)`, got the end of file");
 
     test!("--# assume x: integer | (string,
            --#                      boolean) | nil

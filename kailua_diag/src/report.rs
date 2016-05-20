@@ -16,10 +16,9 @@ pub enum Kind {
 }
 
 // used to stop the further parsing or type checking
-//#[must_use]
-//#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-//pub struct Stop;
-pub type Stop = &'static str; // TODO should be eliminated!
+#[must_use]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct Stop;
 
 pub type Result<T> = result::Result<T, Stop>;
 
@@ -320,7 +319,7 @@ impl<'a> Report for ConsoleReport<'a> {
             self.maxkind.set(Some(kind));
         }
 
-        if kind == Kind::Fatal { Err("fatal error") } else { Ok(()) }
+        if kind == Kind::Fatal { Err(Stop) } else { Ok(()) }
     }
 
     fn can_continue(&self) -> bool {
@@ -345,7 +344,7 @@ impl CollectedReport {
 impl Report for CollectedReport {
     fn add_span(&self, kind: Kind, span: Span, msg: String) -> Result<()> {
         self.collected.borrow_mut().push((kind, span, msg));
-        if kind == Kind::Fatal { Err("fatal error") } else { Ok(()) }
+        if kind == Kind::Fatal { Err(Stop) } else { Ok(()) }
     }
 
     fn can_continue(&self) -> bool {

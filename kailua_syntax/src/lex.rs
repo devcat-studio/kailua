@@ -166,8 +166,6 @@ pub struct Lexer<'a> {
     report: &'a Report,
 }
 
-pub type Error = &'static str;
-
 fn is_digit(c: u8) -> bool { b'0' <= c && c <= b'9' }
 
 impl<'a> Lexer<'a> {

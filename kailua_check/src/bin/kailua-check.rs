@@ -13,7 +13,7 @@ use kailua_syntax::{parse_chunk, Block};
 fn parse(source: &mut Source, path: &Path) -> Result<Spanned<Block>, String> {
     let filespan = try!(source.add_file(path).map_err(|e| e.to_string()));
     let report = ConsoleReport::new(&source);
-    parse_chunk(source, filespan, &report).map_err(|e| e.to_string())
+    parse_chunk(source, filespan, &report).map_err(|_| format!("parse error"))
 }
 
 fn parse_and_check(mainpath: &Path) -> Result<(), String> {
