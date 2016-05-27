@@ -3,9 +3,9 @@ use std::ops;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use kailua_syntax::{K, Kind, SlotKind, Str, M};
+use kailua_syntax::{K, SlotKind, Str, M};
 use diag::CheckResult;
-use super::{TyWithNil, S, Slot, SlotWithNil, TypeContext, Lattice, Flags, TySeq};
+use super::{TyWithNil, S, Slot, SlotWithNil, TypeContext, TypeResolver, Lattice, Flags, TySeq};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Union, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
@@ -14,6 +14,7 @@ use super::flags::*;
 #[derive(Clone)]
 pub enum T<'a> {
     Dynamic,                            // ?
+    All,                                // any (top)
     None,                               // (bottom)
     Nil,                                // nil
     Boolean,                            // boolean
@@ -63,93 +64,104 @@ impl<'a> T<'a> {
                                          SlotWithNil::new(v.into_send()))))
     }
 
-    pub fn from(kind: &K) -> T<'a> {
-        let slot_from_slotkind = |slotkind: &SlotKind| {
-            let ty = T::from(&slotkind.kind.base);
+    pub fn from(kind: &K, resolv: &mut TypeResolver) -> CheckResult<T<'a>> {
+        let slot_from_slotkind = |slotkind: &SlotKind,
+                                  resolv: &mut TypeResolver| -> CheckResult<Slot> {
+            let ty = try!(T::from(&slotkind.kind.base, resolv));
             let sty = match slotkind.modf {
                 M::None => S::Just(ty), // XXX
                 M::Var => S::Var(ty),
                 M::Const => S::Const(ty),
             };
-            Slot::new(sty)
+            Ok(Slot::new(sty))
         };
 
         match *kind {
-            K::Dynamic           => T::Dynamic,
-            K::Nil               => T::Nil,
-            K::Boolean           => T::Boolean,
-            K::BooleanLit(true)  => T::True,
-            K::BooleanLit(false) => T::False,
-            K::Number            => T::Numbers(Cow::Owned(Numbers::All)),
-            K::Integer           => T::Numbers(Cow::Owned(Numbers::Int)),
-            K::IntegerLit(v)     => T::Numbers(Cow::Owned(Numbers::One(v))),
-            K::String            => T::Strings(Cow::Owned(Strings::All)),
-            K::StringLit(ref s)  => T::Strings(Cow::Owned(Strings::One(s.to_owned()))),
-            K::Table             => T::Tables(Cow::Owned(Tables::All)),
-            K::EmptyTable        => T::Tables(Cow::Owned(Tables::Empty)),
-            K::Function          => T::Functions(Cow::Owned(Functions::All)),
+            K::Dynamic           => Ok(T::Dynamic),
+            K::Any               => Ok(T::All),
+            K::Nil               => Ok(T::Nil),
+            K::Boolean           => Ok(T::Boolean),
+            K::BooleanLit(true)  => Ok(T::True),
+            K::BooleanLit(false) => Ok(T::False),
+            K::Number            => Ok(T::Numbers(Cow::Owned(Numbers::All))),
+            K::Integer           => Ok(T::Numbers(Cow::Owned(Numbers::Int))),
+            K::IntegerLit(v)     => Ok(T::Numbers(Cow::Owned(Numbers::One(v)))),
+            K::String            => Ok(T::Strings(Cow::Owned(Strings::All))),
+            K::StringLit(ref s)  => Ok(T::Strings(Cow::Owned(Strings::One(s.to_owned())))),
+            K::Table             => Ok(T::Tables(Cow::Owned(Tables::All))),
+            K::EmptyTable        => Ok(T::Tables(Cow::Owned(Tables::Empty))),
+            K::Function          => Ok(T::Functions(Cow::Owned(Functions::All))),
+            K::Named(ref name)   => resolv.ty_from_name(name),
 
             K::Record(ref fields) => {
                 let mut newfields = BTreeMap::new();
                 for &(ref name, ref slotkind) in fields {
-                    let slot = slot_from_slotkind(&slotkind.base);
+                    let slot = try!(slot_from_slotkind(&slotkind.base, resolv));
                     newfields.insert(name.base.clone().into(), slot);
                 }
-                T::Tables(Cow::Owned(Tables::Fields(newfields)))
+                Ok(T::Tables(Cow::Owned(Tables::Fields(newfields))))
             }
 
             K::Tuple(ref fields) => {
                 let mut newfields = BTreeMap::new();
                 for (i, slotkind) in fields.iter().enumerate() {
                     let key = Key::Int(i as i32 + 1);
-                    let slot = slot_from_slotkind(slotkind);
+                    let slot = try!(slot_from_slotkind(slotkind, resolv));
                     newfields.insert(key, slot);
                 }
-                T::Tables(Cow::Owned(Tables::Fields(newfields)))
+                Ok(T::Tables(Cow::Owned(Tables::Fields(newfields))))
             },
 
             K::Array(ref v) => {
-                let slot = SlotWithNil::from_slot(slot_from_slotkind(v));
-                T::Tables(Cow::Owned(Tables::Array(slot)))
+                let slot = SlotWithNil::from_slot(try!(slot_from_slotkind(v, resolv)));
+                Ok(T::Tables(Cow::Owned(Tables::Array(slot))))
             },
 
             K::Map(ref k, ref v) => {
-                let slot = SlotWithNil::from_slot(slot_from_slotkind(v));
-                T::Tables(Cow::Owned(Tables::Map(Box::new(T::from(k)), slot)))
+                let slot = SlotWithNil::from_slot(try!(slot_from_slotkind(v, resolv)));
+                Ok(T::Tables(Cow::Owned(Tables::Map(Box::new(try!(T::from(k, resolv))), slot))))
             },
 
             K::Func(ref funcs) => {
                 let mut ftys = Vec::new();
                 for func in funcs {
-                    let args = func.args.iter().map(|k| Box::new(T::from(k))).collect();
-                    let argstail = func.varargs.as_ref()
-                                               .map(|k| Box::new(TyWithNil::from(T::from(k))));
-                    let returns = func.returns.iter().map(|k| Box::new(T::from(k))).collect();
+                    let args = try!(func.args.iter()
+                                             .map(|k| T::from(k, resolv).map(Box::new))
+                                             .collect());
+                    let argstail = if let Some(ref k) = func.varargs {
+                        Some(Box::new(TyWithNil::from(try!(T::from(k, resolv)))))
+                    } else {
+                        None
+                    };
+                    let returns = try!(func.returns.iter()
+                                                   .map(|k| T::from(k, resolv).map(Box::new))
+                                                   .collect());
                     let fty = Function { args: TySeq { head: args, tail: argstail },
                                          returns: TySeq { head: returns, tail: None } };
                     ftys.push(fty);
                 }
                 if ftys.len() == 1 {
-                    T::Functions(Cow::Owned(Functions::Simple(ftys.pop().unwrap())))
+                    Ok(T::Functions(Cow::Owned(Functions::Simple(ftys.pop().unwrap()))))
                 } else {
-                    T::Functions(Cow::Owned(Functions::Multi(ftys)))
+                    Ok(T::Functions(Cow::Owned(Functions::Multi(ftys))))
                 }
             }
 
             K::Union(ref kinds) => {
                 assert!(!kinds.is_empty());
-                let mut ty = T::from(&kinds[0]);
+                let mut ty = try!(T::from(&kinds[0], resolv));
                 for kind in &kinds[1..] {
-                    ty = ty | T::from(kind);
+                    ty = ty | try!(T::from(kind, resolv));
                 }
-                ty
+                Ok(ty)
             }
         }
     }
 
     pub fn flags(&self) -> Flags {
         match *self {
-            T::Dynamic => T_DYNAMIC,
+            T::Dynamic => T_ALL | T_DYNAMIC,
+            T::All     => T_ALL,
             T::None    => T_NONE,
             T::Nil     => T_NIL,
             T::Boolean => T_BOOLEAN,
@@ -173,6 +185,7 @@ impl<'a> T<'a> {
     pub fn to_ref<'b: 'a>(&'b self) -> T<'b> {
         match *self {
             T::Dynamic => T::Dynamic,
+            T::All     => T::All,
             T::None    => T::None,
             T::Nil     => T::Nil,
             T::Boolean => T::Boolean,
@@ -366,6 +379,7 @@ impl<'a> T<'a> {
     pub fn into_send(self) -> T<'static> {
         match self {
             T::Dynamic    => T::Dynamic,
+            T::All        => T::All,
             T::None       => T::None,
             T::Nil        => T::Nil,
             T::Boolean    => T::Boolean,
@@ -399,6 +413,10 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             // dynamic eclipses everything else
             (&T::Dynamic, _) => T::Dynamic,
             (_, &T::Dynamic) => T::Dynamic,
+
+            // top eclipses everything else except for dynamic
+            (&T::All, _) => T::All,
+            (_, &T::All) => T::All,
 
             (&T::None, ty) => ty.clone().into_send(),
             (ty, &T::None) => ty.clone().into_send(),
@@ -440,6 +458,9 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
 
             (&T::Dynamic, _) => true,
             (_, &T::Dynamic) => true,
+
+            (&T::All, _) => false,
+            (_, &T::All) => true,
 
             (&T::None, _) => true,
             (_, &T::None) => false,
@@ -509,6 +530,9 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::Dynamic, _) => true,
             (_, &T::Dynamic) => true,
 
+            (&T::All, _) => true,
+            (_, &T::All) => true,
+
             (&T::None, _) => true,
             (_, &T::None) => false,
 
@@ -547,6 +571,7 @@ impl<'a, 'b> PartialEq<T<'b>> for T<'a> {
     fn eq(&self, other: &T<'b>) -> bool {
         match (self, other) {
             (&T::Dynamic, &T::Dynamic) => true,
+            (&T::All,     &T::All)     => true,
             (&T::None,    &T::None)    => true,
             (&T::Nil,     &T::Nil)     => true,
             (&T::Boolean, &T::Boolean) => true,
@@ -570,6 +595,7 @@ impl<'a> fmt::Debug for T<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             T::Dynamic => write!(f, "?"),
+            T::All     => write!(f, "any"),
             T::None    => write!(f, "<bottom>"),
             T::Nil     => write!(f, "nil"),
             T::Boolean => write!(f, "boolean"),
@@ -591,15 +617,7 @@ impl<'a> From<T<'a>> for Union {
     fn from(x: T<'a>) -> Union { Union::from(&x) }
 }
 
-impl<'a> From<K> for T<'a> {
-    fn from(x: K) -> T<'a> { T::from(&x) }
-}
-
 pub type Ty = Box<T<'static>>;
-
-impl From<Kind> for Ty {
-    fn from(x: Kind) -> Ty { Box::new(From::from(*x)) }
-}
 
 #[cfg(test)] 
 mod tests {
@@ -637,10 +655,13 @@ mod tests {
             })
         }
 
-        // dynamic vs. everything else
+        // dynamic & top vs. everything else
         check!(T::Dynamic, T::Dynamic; T::Dynamic);
         check!(T::Dynamic, T::integer(); T::Dynamic);
         check!(T::tuple(vec![var(T::integer()), curr(T::Boolean)]), T::Dynamic; T::Dynamic);
+        check!(T::All, T::Boolean; T::All);
+        check!(T::Dynamic, T::All; T::Dynamic);
+        check!(T::All, T::All; T::All);
 
         // integer literals
         check!(T::integer(), T::number(); T::number());

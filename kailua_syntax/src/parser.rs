@@ -240,6 +240,19 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         Box::new(K::Dynamic).with_loc(Span::dummy())
     }
 
+    fn builtin_kind(&self, name: &[u8]) -> Option<K> {
+        match name {
+            b"any"      => Some(K::Any),
+            b"boolean"  => Some(K::Boolean),
+            b"number"   => Some(K::Number),
+            b"integer"  => Some(K::Integer),
+            b"string"   => Some(K::String),
+            b"table"    => Some(K::Table),
+            b"function" => Some(K::Function), // allow for quoted `function` too
+            _ => None,
+        }
+    }
+
     fn try_parse_name(&mut self) -> diag::Result<Option<Spanned<Name>>> {
         let tok = try!(self.read());
         if let Tok::Name(name) = tok.1.base {
@@ -1416,17 +1429,12 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 Box::new(K::BooleanLit(false)).with_loc(span),
 
             (_, Spanned { base: Tok::Name(name), span }) => {
-                let kind = match &*name {
-                    b"boolean"  => K::Boolean,
-                    b"number"   => K::Number,
-                    b"integer"  => K::Integer,
-                    b"string"   => K::String,
-                    b"table"    => K::Table,
-                    b"function" => K::Function, // allow for quoted `function` too
-                    _ => {
-                        try!(self.report.error(span, "Unknown type name").done()); // for now
-                        K::Dynamic
-                    }
+                let kind = match self.builtin_kind(&name) {
+                    Some(kind) => kind,
+                    None => {
+                        let name: Name = name.into();
+                        K::Named(name.with_loc(span))
+                    },
                 };
                 Box::new(kind).with_loc(span)
             }
@@ -1612,42 +1620,66 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         if self.may_expect(Punct::DashDashHash) {
             self.begin_meta_comment(Punct::DashDashHash);
 
-            // assume NAME ":" MODF KIND
-            // assume NAME ":" MODF KIND "=" STR (for builtin spec)
-            if self.may_expect(Keyword::Assume) {
-                let name = try!(self.parse_name());
-                try!(self.expect(Punct::Colon));
-                let modf = try!(self.parse_kailua_mod());
-                let kind = try!(self.parse_kailua_kind());
+            let stmt = match try!(self.read()) {
+                // assume NAME ":" MODF KIND
+                // assume NAME ":" MODF KIND "=" STR (for builtin spec)
+                (_, Spanned { base: Tok::Keyword(Keyword::Assume), .. }) => {
+                    let name = try!(self.parse_name());
+                    try!(self.expect(Punct::Colon));
+                    let modf = try!(self.parse_kailua_mod());
+                    let kind = try!(self.parse_kailua_kind());
 
-                let builtin;
-                if self.may_expect(Punct::Eq) {
-                    let tok = try!(self.read()).1;
-                    if let Tok::Str(s) = tok.base {
-                        builtin = Some(Str::from(s).with_loc(tok.span));
+                    let builtin;
+                    if self.may_expect(Punct::Eq) {
+                        let tok = try!(self.read()).1;
+                        if let Tok::Str(s) = tok.base {
+                            builtin = Some(Str::from(s).with_loc(tok.span));
+                        } else {
+                            try!(self.report.error(tok.span,
+                                                   format!("Expected a string after \
+                                                            `assume <name> : <kind> =`, got {}",
+                                                           tok.base))
+                                            .done());
+                            try!(self.skip_meta_comment(Punct::DashDashHash));
+                            return Ok(Some(None));
+                        }
                     } else {
-                        try!(self.report.error(tok.span,
-                                               format!("Expected a string after \
-                                                        `assume <name> : <kind> =`, got {}",
-                                                       tok.base))
-                                        .done());
-                        try!(self.skip_meta_comment(Punct::DashDashHash));
-                        return Ok(Some(None));
+                        builtin = None;
                     }
-                } else {
-                    builtin = None;
+
+                    Some(Box::new(St::KailuaAssume(name, modf, kind, builtin)))
                 }
 
-                let end = self.last_pos();
-                try!(self.end_meta_comment(Punct::DashDashHash));
+                // open NAME
+                (_, Spanned { base: Tok::Keyword(Keyword::Open), .. }) => {
+                    let name = try!(self.parse_name());
+                    // TODO also set the parser option
+                    Some(Box::new(St::KailuaOpen(name)))
+                }
 
-                let assume = Box::new(St::KailuaAssume(name, modf, kind, builtin));
-                return Ok(Some(Some(assume.with_loc(begin..end))));
-            }
+                // type NAME = KIND
+                (_, Spanned { base: Tok::Keyword(Keyword::Type), .. }) => {
+                    let name = try!(self.parse_name());
+                    try!(self.expect(Punct::Eq));
+                    let kind = try!(self.parse_kailua_kind());
 
-            // empty `--#` is valid
+                    // forbid overriding builtin types
+                    if self.builtin_kind(&*name.base).is_some() {
+                        try!(self.report.error(name.span, "Cannot redefine a builtin type").done());
+                    }
+
+                    Some(Box::new(St::KailuaType(name, kind)))
+                }
+
+                tok => {
+                    self.unread(tok);
+                    None // empty `--#` is valid
+                }
+            };
+
+            let end = self.last_pos();
             try!(self.end_meta_comment(Punct::DashDashHash));
-            Ok(Some(None))
+            Ok(Some(stmt.map(|st| st.with_loc(begin..end))))
         } else {
             Ok(None)
         }

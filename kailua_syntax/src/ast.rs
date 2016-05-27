@@ -290,6 +290,8 @@ pub enum St {
     Break,
 
     // Kailua extensions
+    KailuaOpen(Spanned<Name>),
+    KailuaType(Spanned<Name>, Spanned<Kind>),
     KailuaAssume(Spanned<Name>, M, Spanned<Kind>, Option<Spanned<Str>>),
 }
 
@@ -364,6 +366,7 @@ impl fmt::Debug for FuncKind {
 #[derive(Clone, PartialEq)]
 pub enum K {
     Dynamic,
+    Any,
     Nil,
     Boolean,
     BooleanLit(bool),
@@ -380,6 +383,7 @@ pub enum K {
     Map(Spanned<Kind>, Spanned<SlotKind>),
     Function,
     Func(Vec<Spanned<FuncKind>>),
+    Named(Spanned<Name>),
     Union(Vec<Spanned<Kind>>),
 }
 
@@ -387,6 +391,7 @@ impl fmt::Debug for K {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             K::Dynamic           => write!(f, "Dynamic"),
+            K::Any               => write!(f, "Any"),
             K::Nil               => write!(f, "Nil"),
             K::Boolean           => write!(f, "Boolean"),
             K::BooleanLit(true)  => write!(f, "True"),
@@ -401,6 +406,7 @@ impl fmt::Debug for K {
             K::Array(ref v)      => write!(f, "Array({:?})", *v),
             K::Map(ref k, ref v) => write!(f, "Map({:?}, {:?})", *k, *v),
             K::Function          => write!(f, "Function"),
+            K::Named(ref name)   => write!(f, "{:?}", *name),
 
             K::Record(ref fields) => {
                 try!(write!(f, "Record(["));

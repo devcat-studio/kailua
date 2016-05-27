@@ -6,7 +6,7 @@ use vec_map::VecMap;
 
 use kailua_syntax::Name;
 use diag::CheckResult;
-use ty::{Ty, TySeq, T, Slot, S, TVar, Mark, Lattice, TypeContext, Flags};
+use ty::{Ty, TySeq, T, Slot, S, TVar, Mark, Lattice, TypeContext, TypeResolver, Flags};
 use ty::flags::*;
 
 pub type TyInfo = Slot;
@@ -20,15 +20,16 @@ pub struct Frame {
 pub struct Scope {
     names: HashMap<Name, TyInfo>,
     frame: Option<Frame>,
+    types: HashMap<Name, Ty>,
 }
 
 impl Scope {
     pub fn new() -> Scope {
-        Scope { names: HashMap::new(), frame: None }
+        Scope { names: HashMap::new(), frame: None, types: HashMap::new() }
     }
 
     pub fn new_function(frame: Frame) -> Scope {
-        Scope { names: HashMap::new(), frame: Some(frame) }
+        Scope { names: HashMap::new(), frame: Some(frame), types: HashMap::new() }
     }
 
     pub fn get<'a>(&'a self, name: &Name) -> Option<&'a TyInfo> {
@@ -47,8 +48,17 @@ impl Scope {
         self.frame.as_mut()
     }
 
+    pub fn get_type<'a>(&'a self, name: &Name) -> Option<&'a T> {
+        self.types.get(name).map(|t| &**t)
+    }
+
     pub fn put(&mut self, name: Name, info: TyInfo) {
         self.names.insert(name, info);
+    }
+
+    // the caller should check for the outermost types first
+    pub fn put_type(&mut self, name: Name, ty: Ty) -> bool {
+        self.types.insert(name, ty).is_none()
     }
 }
 
@@ -904,6 +914,36 @@ impl<'ctx> Env<'ctx> {
 
     pub fn get_tvar_exact_type(&self, tvar: TVar) -> Option<T<'static>> {
         self.context.get_tvar_exact_type(tvar)
+    }
+
+    pub fn get_named_type<'a>(&'a self, name: &Name) -> Option<T<'a>> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(t) = scope.get_type(name) { return Some(t.to_ref()); }
+        }
+        if let Some(t) = self.context.global_scope().get_type(name) { return Some(t.to_ref()); }
+        None
+    }
+
+    pub fn define_type(&mut self, name: &Name, ty: Ty) -> CheckResult<()> {
+        if self.get_named_type(name).is_some() {
+            return Err(format!("type name {:?} is already defined outside", *name));
+        }
+
+        if !self.current_scope_mut().put_type(name.clone(), ty) {
+            Err(format!("type name {:?} is already defined in this scope", *name))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl<'ctx> TypeResolver for Env<'ctx> {
+    fn ty_from_name(&self, name: &Name) -> CheckResult<T<'static>> {
+        if let Some(t) = self.get_named_type(name) {
+            Ok(t.into_send())
+        } else {
+            Err(format!("unknown type name {:?}", *name))
+        }
     }
 }
 

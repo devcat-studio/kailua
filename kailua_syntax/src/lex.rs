@@ -114,6 +114,7 @@ define_tokens! { Keyword:
     "a keyword `module`"    Module,
     "a keyword `once`"      Once,
     "a keyword `open`"      Open,
+    "a keyword `type`"      Type,
     "a keyword `var`"       Var,
 }
 
@@ -148,6 +149,7 @@ impl Keyword {
             (true, b"module") => Some(Keyword::Module),
             (true, b"once")   => Some(Keyword::Once),
             (true, b"open")   => Some(Keyword::Open),
+            (true, b"type")   => Some(Keyword::Type),
             (true, b"var")    => Some(Keyword::Var),
 
             (_, _) => None,

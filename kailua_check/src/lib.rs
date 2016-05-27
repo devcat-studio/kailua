@@ -21,8 +21,7 @@ fn test_check() {
         let mut source = kailua_diag::Source::new();
         let filespan = source.add_string("<test>", s.as_bytes());
         let report = kailua_diag::CollectedReport::new();
-        let chunk = try!(kailua_syntax::parse_chunk(&source, filespan,
-                                                    &report).map_err(|_| format!("parse error")));
+        let chunk = kailua_syntax::parse_chunk(&source, filespan, &report).expect("parse error");
 
         struct Opts;
         impl Options for Opts {}
@@ -273,6 +272,13 @@ fn test_check() {
     assert_err!("local a --: const {[number] = number}
                        = {} -- XXX parser bug
                  a[1] = 42");
+    assert_ok!("local a --: var any
+                a = {}
+                a = 'hello'
+                a = 42");
+    assert_err!("local a --: var any
+                 a = 42
+                 local b = a + 5");
     assert_ok!("--v () -> {a=integer}
                 local function p() return {a=4} end
                 local x = p().a + 5");
@@ -374,4 +380,23 @@ fn test_check() {
     assert_ok!("--v (...: integer)
                 local function p(...) end
                 p(1, 2, 3, nil, nil, nil)");
+    assert_ok!("--# type known_type = number
+                --# assume p: known_type
+                local q = p - 5");
+    assert_err!("do
+                   --# type known_type = number
+                 end
+                 --# assume p: known_type");
+    assert_err!("--# type known_type = integer
+                 do
+                   --# type known_type = number
+                 end");
+    assert_err!("--# type known_type = known_type");
+    assert_ok!("--# type some_type = integer
+                --# type another_type = some_type
+                --# assume p: another_type
+                local q = p * 3");
+    assert_err!("--# type some_type = another_type");
+    assert_err!("--# type some_type = another_type
+                 --# type another_type = integer"); // this is intentional
 }

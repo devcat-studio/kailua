@@ -1,6 +1,7 @@
 use std::fmt;
 use std::borrow::Borrow;
 use diag::CheckResult;
+use kailua_syntax::Name;
 
 pub use self::literals::{Numbers, Strings};
 pub use self::tables::{Key, Tables};
@@ -79,6 +80,10 @@ impl fmt::Debug for Mark {
             write!(f, "<mark #{}>", self.0)
         }
     }
+}
+
+pub trait TypeResolver {
+    fn ty_from_name(&self, name: &Name) -> CheckResult<T<'static>>;
 }
 
 pub trait TypeContext {
@@ -249,6 +254,7 @@ bitflags! {
         const T_STRING     = 0b0_0100_0000,
         const T_TABLE      = 0b0_1000_0000,
         const T_FUNCTION   = 0b1_0000_0000,
+        const T_ALL        = 0b1_1111_1110,
 
         const T_INTEGRAL   = T_DYNAMIC.bits | T_INTEGER.bits,
         // strings can be also used in place of numbers in Lua but omitted here
@@ -303,7 +309,7 @@ impl Flags {
 
 pub mod flags {
     pub use super::{T_NONE, T_DYNAMIC, T_NIL, T_TRUE, T_FALSE, T_BOOLEAN,
-                    T_NONINTEGER, T_INTEGER, T_NUMBER, T_STRING, T_TABLE, T_FUNCTION,
+                    T_NONINTEGER, T_INTEGER, T_NUMBER, T_STRING, T_TABLE, T_FUNCTION, T_ALL,
                     T_INTEGRAL, T_NUMERIC, T_STRINGY, T_TABULAR, T_CALLABLE, T_TRUTHY, T_FALSY};
 }
 

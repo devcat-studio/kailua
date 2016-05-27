@@ -696,8 +696,7 @@ fn test_parse() {
           1: "[Error] Expected a single type or type sequence, got `#`");
 
     test!("--# assume x: whatever";
-          "error";
-          1: "[Error] Unknown type name");
+          "[KailuaAssume(`x`, _, `whatever`, None)]");
 
     test!("--# assume x: {x = integer #}";
           "error";
@@ -749,5 +748,29 @@ fn test_parse() {
           "error";
           1-2: "[Error] A sequence of types cannot be inside a union";
           3: "[Fatal] Expected `)`, got the end of file");
+
+    test!("--# open lua51";
+          "[KailuaOpen(`lua51`)]");
+
+    test!("--# open
+           --# open your heart";
+          "error";
+          2: "[Fatal] Expected a name, got a keyword `open`");
+
+    test!("--# type int = integer
+           --# assume x: {int}";
+          "[KailuaType(`int`, Integer), \
+            KailuaAssume(`x`, _, Array(_ `int`), None)]");
+
+    test!("--# type any = integer
+           --# assume x: {any}";
+          "error";
+          1: "[Error] Cannot redefine a builtin type");
+
+    test!("--# type int =
+           --# assume x: {int}";
+          "error";
+          2: "[Error] Expected a single type, got a keyword `assume`";
+          2: "[Error] Expected a newline, got a name");
 }
 

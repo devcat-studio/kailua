@@ -27,7 +27,8 @@ impl Union {
         };
 
         match ty.as_base() {
-            &T::Dynamic => panic!("Union::from called with T::Dynamic"),
+            &T::Dynamic | &T::All => panic!("Union::from called with T::Dynamic or T::All"),
+
             &T::None    => {}
             &T::Nil     => { u.has_nil = true; }
             &T::Boolean => { u.has_true = true; u.has_false = true; }

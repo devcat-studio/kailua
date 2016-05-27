@@ -570,7 +570,7 @@ impl<'env> Checker<'env> {
                                      namespec: &TypeSpec<Spanned<Name>>,
                                      info: TyInfo| {
                     if let Some(ref kind) = namespec.kind {
-                        let ty = T::from(kind);
+                        let ty = try!(T::from(kind, env));
                         let newinfo = match namespec.modf {
                             M::None => Slot::new(S::VarOrCurrently(ty, env.context().gen_mark())),
                             M::Var => Slot::new(S::Var(ty)),
@@ -611,6 +611,16 @@ impl<'env> Checker<'env> {
 
             St::Break => Ok(Exit::Break),
 
+            St::KailuaOpen(ref name) => {
+                panic!("TODO")
+            }
+
+            St::KailuaType(ref name, ref kind) => {
+                let ty = Box::new(try!(T::from(kind, &mut self.env)));
+                try!(self.env.define_type(&name.base, ty));
+                Ok(Exit::None)
+            }
+
             St::KailuaAssume(ref name, kindm, ref kind, ref builtin) => {
                 let builtin = if let Some(ref builtin) = *builtin {
                     match &****builtin {
@@ -625,9 +635,9 @@ impl<'env> Checker<'env> {
                     None
                 };
                 let ty = if let Some(builtin) = builtin {
-                    T::Builtin(builtin, Box::new(T::from(kind)))
+                    T::Builtin(builtin, Box::new(try!(T::from(kind, &mut self.env))))
                 } else {
-                    T::from(kind)
+                    try!(T::from(kind, &mut self.env))
                 };
                 let sty = match kindm {
                     M::None => S::VarOrCurrently(ty, self.context().gen_mark()),
@@ -646,7 +656,7 @@ impl<'env> Checker<'env> {
             None => None,
             // varargs present but types are unspecified
             Some(None) => Some(Box::new(TyWithNil::from(T::TVar(self.context().gen_tvar())))),
-            Some(Some(ref k)) => Some(Box::new(TyWithNil::from(T::from(k)))),
+            Some(Some(ref k)) => Some(Box::new(TyWithNil::from(try!(T::from(k, &mut self.env))))),
         };
         let vainfo = vatype.clone().map(|t| TySeq { head: Vec::new(), tail: Some(t) });
 
@@ -656,8 +666,12 @@ impl<'env> Checker<'env> {
         // TODO the exception should be made to the recursive usage;
         // we probably need to put a type variable that is later equated to the actual returns
         let frame = if let Some(ref returns) = sig.returns {
-            let returns = TySeq { head: returns.iter().map(|k| Box::new(T::from(k))).collect(),
-                                  tail: None };
+            let returns = TySeq {
+                head: try!(returns.iter()
+                                  .map(|k| T::from(k, &mut self.env).map(Box::new))
+                                  .collect()),
+                tail: None,
+            };
             Frame { vararg: vainfo, returns: Some(returns), returns_exact: true }
         } else {
             Frame { vararg: vainfo, returns: None, returns_exact: false }
@@ -673,7 +687,7 @@ impl<'env> Checker<'env> {
             let ty;
             let sty;
             if let Some(ref kind) = param.kind {
-                ty = T::from(kind);
+                ty = try!(T::from(kind, &mut scope.env));
                 sty = match param.modf {
                     M::None | M::Var => Slot::new(S::Var(ty.clone())),
                     M::Const => Slot::new(S::Const(ty.clone())),
