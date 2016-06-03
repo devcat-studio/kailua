@@ -1,13 +1,18 @@
 use std::mem;
 use std::ops;
+use std::str;
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use vec_map::VecMap;
 
-use kailua_syntax::Name;
+use kailua_diag::{Spanned, Report};
+use kailua_syntax::{Name, parse_chunk};
 use diag::CheckResult;
 use ty::{Ty, TySeq, T, Slot, S, TVar, Mark, Lattice, TypeContext, TypeResolver, Flags};
 use ty::flags::*;
+use defs::get_defs;
+use options::Options;
+use check::Checker;
 
 pub type TyInfo = Slot;
 
@@ -361,6 +366,8 @@ impl Partition for Box<MarkInfo> {
     }
 }
 
+// global context (also acts as a type context).
+// anything has to be retained across multiple files should be here
 pub struct Context {
     global_scope: Scope,
     next_tvar: Cell<TVar>,
@@ -369,6 +376,7 @@ pub struct Context {
     tvar_eq: Constraints, // tight bound
     next_mark: Cell<Mark>,
     mark_infos: Partitions<Box<MarkInfo>>,
+    opened: HashSet<String>,
 }
 
 impl Context {
@@ -381,6 +389,7 @@ impl Context {
             tvar_eq: Constraints::new("="),
             next_mark: Cell::new(Mark(0)),
             mark_infos: Partitions::new(),
+            opened: HashSet::new(),
         };
 
         // it is fine to return from the top-level, so we treat it as like a function frame
@@ -395,6 +404,28 @@ impl Context {
 
     pub fn global_scope_mut(&mut self) -> &mut Scope {
         &mut self.global_scope
+    }
+
+    pub fn open_library(&mut self, name: &Spanned<Name>,
+                        opts: &mut Options, report: &Report) -> CheckResult<()> {
+        let name_ = try!(str::from_utf8(&name.base).map_err(|e| e.to_string()));
+        if let Some(defs) = get_defs(name_) {
+            // one library may consist of multiple files, so we defer duplicate check
+            for def in defs {
+                if self.opened.insert(def.name.to_owned()) {
+                    let name = format!("<internal: {}>", def.name);
+                    let span = opts.source().borrow_mut().add_string(&name, def.code);
+                    let chunk = parse_chunk(&opts.source().borrow(), span, report);
+                    let chunk = try!(chunk.map_err(|_| format!("parse error")));
+                    let mut env = Env::new(self);
+                    let mut checker = Checker::new(&mut env, opts, report);
+                    try!(checker.visit(&chunk))
+                }
+            }
+            Ok(())
+        } else {
+            Err(format!("cannot open an unknown library {:?}", name.base))
+        }
     }
 
     pub fn get_tvar_bounds(&self, tvar: TVar) -> (Flags /*lb*/, Flags /*ub*/) {
@@ -775,6 +806,7 @@ impl TypeContext for Context {
     }
 }
 
+// per-file environment
 pub struct Env<'ctx> {
     context: &'ctx mut Context,
     scopes: Vec<Scope>,
@@ -782,8 +814,11 @@ pub struct Env<'ctx> {
 
 impl<'ctx> Env<'ctx> {
     pub fn new(context: &'ctx mut Context) -> Env<'ctx> {
-        // we have local variables even at the global position, so we need at least one Scope
-        Env { context: context, scopes: vec![Scope::new()] }
+        Env {
+            context: context,
+            // we have local variables even at the global position, so we need at least one Scope
+            scopes: vec![Scope::new()],
+        }
     }
 
     // not to be called internally; it intentionally reduces the lifetime
@@ -902,7 +937,10 @@ impl<'ctx> Env<'ctx> {
             *previnfo = info;
             return Ok(());
         }
+        self.assume_global_var(name, info)
+    }
 
+    pub fn assume_global_var(&mut self, name: &Name, info: TyInfo) -> CheckResult<()> {
         println!("(force) adding a global variable {:?} as {:?}", *name, info);
         self.context.global_scope_mut().put(name.to_owned(), info);
         Ok(())

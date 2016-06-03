@@ -1,0 +1,93 @@
+-- definitions for Lua 5.1 basic library
+
+--# -- TODO return generics
+--# assume global `assert`:
+--#     const function(any, string?) = "assert"
+--#
+--# assume global `collectgarbage`:
+--#     const function(string?, any?) -> any?
+--#
+--# assume global `dofile`:
+--#     const function(string?) -> any? = "eval"
+--#
+--# -- TODO diverging function signature
+--# assume global `error`:
+--#     const function(string, integer?)
+--#
+--# assume global `_G`:
+--#     const table = "genv"
+--#
+--# assume global `getfenv`:
+--#     const function(function|integer?) -> table
+--#
+--# assume global `getmetatable`:
+--#     const function(any) -> table?
+--#
+--# assume global `ipairs`:
+--#     const function(table) -> (function(table, integer) -> integer?, table, integer)
+--#
+--# -- TODO sequence conditional union
+--# assume global `load`:
+--#     const function(function() -> string?, string?) -> (function?, string?) = "eval"
+--#
+--# -- TODO sequence conditional union
+--# assume global `loadfile`:
+--#     const function(string?) -> (function?, string?) = "eval"
+--#
+--# -- TODO sequence conditional union
+--# assume global `loadstring`:
+--#     const function(string, string?) -> (function?, string?) = "eval"
+--#
+--# -- TODO genericity
+--# assume global `next`:
+--#     const function(table, any?) -> (integer, any)
+--#
+--# assume global `pairs`:
+--#     const function(table) -> (function(table, any) -> any?, table, any)
+--#
+--# -- TODO `f` should be once function
+--# -- TODO genericity
+--# assume global `pcall`:
+--#     const function(function, any...) -> (boolean, any)--...)
+--#
+--# assume global `print`:
+--#     const function(any...)
+--#
+--# assume global `rawequal`:
+--#     const function(any, any) -> boolean
+--#
+--# assume global `rawget`:
+--#     const function(table, any) -> any?
+--#
+--# assume global `rawset`:
+--#     const function(table, any, any) -> table
+--#
+--# -- TODO genericity
+--# assume global `select`:
+--#     const function(number|'#', any...) -> (any)--...)
+--#
+--# assume global `setfenv`:
+--#     const function(function|integer?, table) -> function
+--#
+--# assume global `setmetatable`:
+--#     const function(table, any?) -> table
+--#
+--# assume global `tonumber`:
+--#     const function(any, integer?) -> number
+--#
+--# assume global `tostring`:
+--#     const function(any) -> string
+--#
+--# -- TODO enumerate all the possibility?
+--# assume global `type`:
+--#     const function(any) -> string = "type"
+--#
+--# -- TODO genericity
+--# assume global `unpack`:
+--#     const function(table, integer?, integer?) -> (any)--...)
+--#
+--# -- TODO `f` and `err` should be once function
+--# -- TODO genericity
+--# assume global `xpcall`:
+--#     const function(function, function) -> (boolean, any)--...)
+

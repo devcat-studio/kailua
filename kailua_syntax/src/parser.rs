@@ -6,7 +6,7 @@ use std::collections::{hash_map, HashMap};
 use kailua_diag as diag;
 use kailua_diag::{Pos, Span, Spanned, WithLoc, Report, Reporter, Stop};
 use lex::{Tok, Punct, Keyword};
-use ast::{Name, Str, Var, Presig, Sig, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam, St, Stmt, Block};
+use ast::{Name, Str, Var, Presig, Sig, Ex, Exp, UnOp, BinOp, NameScope, SelfParam, St, Stmt, Block};
 use ast::{M, K, Kind, SlotKind, FuncKind, TypeSpec};
 
 pub struct Parser<'a, T> {
@@ -418,7 +418,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 if names.len() == 1 {
                     assert!(selfparam.is_none(), "ordinary function cannot have an implicit self");
                     let name = names.pop().unwrap();
-                    Box::new(St::FuncDecl(FuncScope::Global, name, sig, body))
+                    Box::new(St::FuncDecl(NameScope::Global, name, sig, body))
                 } else {
                     Box::new(St::MethodDecl(names, selfparam, sig, body))
                 }
@@ -430,7 +430,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     (_, Spanned { base: Tok::Keyword(Keyword::Function), .. }) => {
                         let name = try!(self.parse_name());
                         let (sig, body) = try!(self.parse_func_body(presig));
-                        Box::new(St::FuncDecl(FuncScope::Local, name, sig, body))
+                        Box::new(St::FuncDecl(NameScope::Local, name, sig, body))
                     }
 
                     // local NAME ...
@@ -1621,9 +1621,14 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             self.begin_meta_comment(Punct::DashDashHash);
 
             let stmt = match try!(self.read()) {
-                // assume NAME ":" MODF KIND
-                // assume NAME ":" MODF KIND "=" STR (for builtin spec)
+                // assume [global] NAME ":" MODF KIND
+                // assume [global] NAME ":" MODF KIND "=" STR (for builtin spec)
                 (_, Spanned { base: Tok::Keyword(Keyword::Assume), .. }) => {
+                    let scope = if self.may_expect(Keyword::Global) {
+                        NameScope::Global
+                    } else {
+                        NameScope::Local
+                    };
                     let name = try!(self.parse_name());
                     try!(self.expect(Punct::Colon));
                     let modf = try!(self.parse_kailua_mod());
@@ -1647,7 +1652,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         builtin = None;
                     }
 
-                    Some(Box::new(St::KailuaAssume(name, modf, kind, builtin)))
+                    Some(Box::new(St::KailuaAssume(scope, name, modf, kind, builtin)))
                 }
 
                 // open NAME

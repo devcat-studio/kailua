@@ -4,7 +4,7 @@ extern crate kailua_diag;
 
 use kailua_diag::Spanned;
 
-pub use ast::{Name, Str, Var, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, FuncScope, SelfParam};
+pub use ast::{Name, Str, Var, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, NameScope, SelfParam};
 pub use ast::{St, Stmt, Block, M, K, Kind, FuncKind, SlotKind};
 
 mod lex;
@@ -22,6 +22,7 @@ pub fn parse_chunk(source: &kailua_diag::Source, span: kailua_diag::Span,
 #[allow(unused_mut)]
 fn test_parse() {
     extern crate regex;
+    use std::cell::RefCell;
     use std::io::{stderr, Write};
     use std::collections::HashMap;
     use kailua_diag::Report;
@@ -45,7 +46,7 @@ fn test_parse() {
                 (kind, span, lines, msg)
             }).collect()
         };
-        (source, chunk, reports)
+        (RefCell::new(source), chunk, reports)
     };
 
     let check = |code: &str, path: &str,
@@ -230,31 +231,39 @@ fn test_parse() {
           1: "[Note] The meta block started here");
 
     test!("--# assume a: string";
-          "[KailuaAssume(`a`, _, String, None)]");
+          "[KailuaAssume(Local, `a`, _, String, None)]");
 
     test!("--# assume a: string\n--#";
-          "[KailuaAssume(`a`, _, String, None)]");
+          "[KailuaAssume(Local, `a`, _, String, None)]");
 
     test!("--# assume a:
            --#   string";
-          "[KailuaAssume(`a`, _, String, None)]");
+          "[KailuaAssume(Local, `a`, _, String, None)]");
+
+    test!("--# assume global a:
+           --#   string";
+          "[KailuaAssume(Global, `a`, _, String, None)]");
+
+    test!("--# assume global global";
+          "error";
+          1: "[Fatal] Expected a name, got a keyword `global`");
 
     test!("--# assume a:
            --# assume b: string";
           "error";
           2: "[Error] Expected a single type, got a keyword `assume`");
 
-    test!("--# assume a: {x=string}
+    test!("--# assume global a: {x=string}
            --# assume b: {y=string}";
-          "[KailuaAssume(`a`, _, Record([\"x\": _ String]), None), \
-            KailuaAssume(`b`, _, Record([\"y\": _ String]), None)]");
+          "[KailuaAssume(Global, `a`, _, Record([\"x\": _ String]), None), \
+            KailuaAssume(Local, `b`, _, Record([\"y\": _ String]), None)]");
 
     test!("--# assume assume: ?";
           "error";
           1: "[Fatal] Expected a name, got a keyword `assume`");
 
     test!("--# assume `assume`: ?";
-          "[KailuaAssume(`assume`, _, Dynamic, None)]");
+          "[KailuaAssume(Local, `assume`, _, Dynamic, None)]");
 
     test!("--# `assume` `assume`: ?";
           "error";
@@ -262,8 +271,8 @@ fn test_parse() {
 
     test!("--# assume a: ? = \"foo\"
            --# assume b: ?";
-          "[KailuaAssume(`a`, _, Dynamic, Some(\"foo\")), \
-            KailuaAssume(`b`, _, Dynamic, None)]");
+          "[KailuaAssume(Local, `a`, _, Dynamic, Some(\"foo\")), \
+            KailuaAssume(Local, `b`, _, Dynamic, None)]");
 
     test!("local x --: {b=var string, a=integer, c=const {d=const {}}}";
           "[Local([`x`: _ Record([\"b\": Var String, \"a\": _ Integer, \
@@ -696,7 +705,7 @@ fn test_parse() {
           1: "[Error] Expected a single type or type sequence, got `#`");
 
     test!("--# assume x: whatever";
-          "[KailuaAssume(`x`, _, `whatever`, None)]");
+          "[KailuaAssume(Local, `x`, _, `whatever`, None)]");
 
     test!("--# assume x: {x = integer #}";
           "error";
@@ -760,7 +769,7 @@ fn test_parse() {
     test!("--# type int = integer
            --# assume x: {int}";
           "[KailuaType(`int`, Integer), \
-            KailuaAssume(`x`, _, Array(_ `int`), None)]");
+            KailuaAssume(Local, `x`, _, Array(_ `int`), None)]");
 
     test!("--# type any = integer
            --# assume x: {any}";

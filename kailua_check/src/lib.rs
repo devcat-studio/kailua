@@ -5,30 +5,55 @@ extern crate vec_map;
 
 pub use diag::{Error, CheckResult};
 pub use ty::*;
+pub use options::Options;
 pub use env::{TyInfo, Context};
-pub use check::{Options, Checker};
+pub use check::Checker;
 
 mod diag;
 mod ty;
+mod options;
 mod env;
+mod defs;
 mod check;
+
+pub fn check_from_span(context: &mut Context,
+                       span: kailua_diag::Span,
+                       opts: &mut Options,
+                       report: &kailua_diag::Report) -> CheckResult<()> {
+    let chunk = kailua_syntax::parse_chunk(&opts.source().borrow(), span, report);
+    let chunk = try!(chunk.map_err(|_| format!("parse error")));
+    check_from_chunk(context, &chunk, opts, report)
+}
+
+pub fn check_from_chunk(context: &mut Context,
+                        chunk: &kailua_diag::Spanned<kailua_syntax::Block>,
+                        opts: &mut Options,
+                        report: &kailua_diag::Report) -> CheckResult<()> {
+    let mut env = env::Env::new(context);
+    let mut checker = check::Checker::new(&mut env, opts, report);
+    checker.visit(chunk)
+}
 
 #[test]
 fn test_check() {
     fn check(s: &str) -> CheckResult<()> {
+        use std::cell::RefCell;
+        use kailua_diag::{Source, CollectedReport};
+        use kailua_syntax::parse_chunk;
+
         println!("");
         println!("checking `{}`", s);
-        let mut source = kailua_diag::Source::new();
+        let mut source = Source::new();
         let filespan = source.add_string("<test>", s.as_bytes());
-        let report = kailua_diag::CollectedReport::new();
-        let chunk = kailua_syntax::parse_chunk(&source, filespan, &report).expect("parse error");
+        let report = CollectedReport::new();
+        let chunk = parse_chunk(&source, filespan, &report).expect("parse error");
 
-        struct Opts;
-        impl Options for Opts {}
-        let mut context = Context::new();
-        let mut opts = Opts;
-        let mut checker = Checker::new(&mut context, &mut opts);
-        checker.visit(&chunk)
+        struct Opts(RefCell<Source>);
+        impl Options for Opts {
+            fn source(&self) -> &RefCell<Source> { &self.0 }
+        }
+        let mut opts = Opts(RefCell::new(source));
+        check_from_chunk(&mut Context::new(), &chunk, &mut opts, &report)
     }
 
     macro_rules! assert_ok { ($e:expr) => (assert_eq!(check($e), Ok(()))) }
@@ -399,4 +424,7 @@ fn test_check() {
     assert_err!("--# type some_type = another_type");
     assert_err!("--# type some_type = another_type
                  --# type another_type = integer"); // this is intentional
+    assert_err!("print('hello')");
+    assert_ok!("--# open lua51
+                print('hello')");
 }

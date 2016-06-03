@@ -4,25 +4,24 @@ extern crate kailua_check;
 
 use std::str;
 use std::env;
+use std::cell::RefCell;
 use std::path::Path;
 use std::collections::HashSet;
 
-use kailua_diag::{Span, Spanned, WithLoc, Source, ConsoleReport};
+use kailua_diag::{Span, Spanned, WithLoc, Source, Report, ConsoleReport};
 use kailua_syntax::{parse_chunk, Block};
-
-fn parse(source: &mut Source, path: &Path) -> Result<Spanned<Block>, String> {
-    let filespan = try!(source.add_file(path).map_err(|e| e.to_string()));
-    let report = ConsoleReport::new(&source);
-    parse_chunk(source, filespan, &report).map_err(|_| format!("parse error"))
-}
 
 fn parse_and_check(mainpath: &Path) -> Result<(), String> {
     struct Options<'a> {
-        source: Source,
+        source: &'a RefCell<Source>,
         mainpath: &'a Path,
+        report: &'a Report,
         required: HashSet<Vec<u8>>,
     }
+
     impl<'a> kailua_check::Options for Options<'a> {
+        fn source(&self) -> &RefCell<Source> { self.source }
+
         fn require_block(&mut self, path: &[u8]) -> Result<Spanned<Block>, String> {
             // require only runs once per path
             if self.required.contains(path) {
@@ -51,53 +50,22 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
                 let maindir = self.mainpath.parent().unwrap_or(&Path::new("."));
                 let mut reqpath = maindir.join("..");
                 reqpath.push(&path);
-                parse(&mut self.source, &reqpath)
+                let span = try!(self.source.borrow_mut().add_file(&reqpath)
+                                                        .map_err(|e| e.to_string()));
+                parse_chunk(&self.source.borrow(), span, self.report)
+                    .map_err(|_| format!("parse error"))
             }
         }
     }
 
-    const BOOTSTRAP_CODE: &'static str = r#"
-        --# assume `require`: ? = "require"
-        --# assume `package`: ?
-        --# assume `assert`: ?
-        --# assume `type`: ?
-        --# assume `tonumber`: ?
-        --# assume `tostring`: ?
-        --# assume `pairs`: ?
-        --# assume `ipairs`: ?
-        --# assume `pcall`: ?
-        --# assume `xpcall`: ?
-        --# assume `error`: ?
-        --# assume `getmetatable`: ?
-        --# assume `setmetatable`: ?
-        --# assume `rawget`: ?
-        --# assume `rawset`: ?
-        --# assume `select`: ?
-        --# assume `print`: ?
-        --# assume `loadstring`: ?
-        --# assume `pack`: ?
-        --# assume `unpack`: ?
-        --# assume `next`: ?
-        --# assume `_G`: ? = "globals" -- not yet supported
-
-        --# assume `string`: ?
-        --# assume `math`: ?
-        --# assume `table`: ?
-        --# assume `io`: ?
-        --# assume `os`: ?
-        --# assume `debug`: ?
-    "#;
-
     let mut source = Source::new();
-    let bootstrapspan = source.add_string("<bootstrap>", BOOTSTRAP_CODE.as_bytes());
-    let chunk = try!(parse(&mut source, &mainpath));
-    let bootstrapchunk = parse_chunk(&source, bootstrapspan,
-                                     &ConsoleReport::new(&source)).unwrap();
+    let filespan = try!(source.add_file(mainpath).map_err(|e| e.to_string()));
+    let source = RefCell::new(source);
+    let report = ConsoleReport::new(&source);
     let mut context = kailua_check::Context::new();
-    let mut opts = Options { source: source, mainpath: mainpath, required: HashSet::new() };
-    let mut checker = kailua_check::Checker::new(&mut context, &mut opts);
-    try!(checker.visit(&bootstrapchunk));
-    checker.visit(&chunk)
+    let mut opts = Options { source: &source, mainpath: mainpath,
+                             report: &report, required: HashSet::new() };
+    kailua_check::check_from_span(&mut context, filespan, &mut opts, &report)
 }
 
 pub fn main() {

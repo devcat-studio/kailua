@@ -86,6 +86,14 @@ pub trait TypeResolver {
     fn ty_from_name(&self, name: &Name) -> CheckResult<T<'static>>;
 }
 
+impl<'a, R: TypeResolver> TypeResolver for &'a R {
+    fn ty_from_name(&self, name: &Name) -> CheckResult<T<'static>> { (**self).ty_from_name(name) }
+}
+
+impl<'a, R: TypeResolver> TypeResolver for &'a mut R {
+    fn ty_from_name(&self, name: &Name) -> CheckResult<T<'static>> { (**self).ty_from_name(name) }
+}
+
 pub trait TypeContext {
     fn last_tvar(&self) -> Option<TVar>;
     fn gen_tvar(&mut self) -> TVar;

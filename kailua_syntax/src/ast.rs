@@ -261,7 +261,7 @@ impl BinOp {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum FuncScope {
+pub enum NameScope {
     Local,
     Global,
 }
@@ -283,7 +283,7 @@ pub enum St {
     If(Vec<(Spanned<Exp>, Spanned<Block>)>, Option<Spanned<Block>>),
     For(Spanned<Name>, Spanned<Exp>, Spanned<Exp>, Option<Spanned<Exp>>, Spanned<Block>),
     ForIn(Vec<Spanned<Name>>, Vec<Spanned<Exp>>, Spanned<Block>),
-    FuncDecl(FuncScope, Spanned<Name>, Sig, Spanned<Block>),
+    FuncDecl(NameScope, Spanned<Name>, Sig, Spanned<Block>),
     MethodDecl(Vec<Spanned<Name>>, Option<Spanned<SelfParam>>, Sig, Spanned<Block>),
     Local(Vec<TypeSpec<Spanned<Name>>>, Vec<Spanned<Exp>>),
     Return(Vec<Spanned<Exp>>),
@@ -292,7 +292,7 @@ pub enum St {
     // Kailua extensions
     KailuaOpen(Spanned<Name>),
     KailuaType(Spanned<Name>, Spanned<Kind>),
-    KailuaAssume(Spanned<Name>, M, Spanned<Kind>, Option<Spanned<Str>>),
+    KailuaAssume(NameScope, Spanned<Name>, M, Spanned<Kind>, Option<Spanned<Str>>),
 }
 
 pub type Stmt = Box<St>;

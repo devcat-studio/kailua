@@ -110,13 +110,13 @@ fn strip_newline(mut s: &[u8]) -> &[u8] {
 }
 
 pub struct ConsoleReport<'a> {
-    source: &'a Source,
+    source: &'a RefCell<Source>,
     term: RefCell<Box<StderrTerminal>>,
     maxkind: Cell<Option<Kind>>,
 }
 
 impl<'a> ConsoleReport<'a> {
-    pub fn new(source: &'a Source) -> ConsoleReport<'a> {
+    pub fn new(source: &'a RefCell<Source>) -> ConsoleReport<'a> {
         ConsoleReport {
             source: source,
             term: RefCell::new(stderr_or_dummy()),
@@ -130,7 +130,8 @@ impl<'a> ConsoleReport<'a> {
         assert!(linespan.contains_or_end(pos));
         let off = pos.to_usize() - linespan.begin().to_usize();
 
-        let line = strip_newline(self.source.bytes_from_span(linespan));
+        let source = self.source.borrow();
+        let line = strip_newline(source.bytes_from_span(linespan));
         if let Ok(line) = str::from_utf8(line) {
             // it is a UTF-8 string, use unicode-width
             use unicode_width::UnicodeWidthChar;
@@ -170,9 +171,10 @@ impl<'a> Report for ConsoleReport<'a> {
     fn add_span(&self, kind: Kind, span: Span, msg: String) -> Result<()> {
         let mut term = self.term.borrow_mut();
         let term = &mut *term;
+        let source = self.source.borrow();
 
         let mut codeinfo = None;
-        if let Some(f) = self.source.file_from_span(span) {
+        if let Some(f) = source.file_from_span(span) {
             if let Some((beginline, mut spans, endline)) = f.lines_from_span(span) {
                 let beginspan = spans.next().unwrap();
                 let begincol = self.calculate_column(beginspan, span.begin());
@@ -247,7 +249,7 @@ impl<'a> Report for ConsoleReport<'a> {
             };
 
             if beginline == endline {
-                let bytes = strip_newline(self.source.bytes_from_span(beginspan));
+                let bytes = strip_newline(source.bytes_from_span(beginspan));
                 let beginoff = span.begin().to_usize() - beginspan.begin().to_usize();
                 let endoff = span.end().to_usize() - beginspan.begin().to_usize();
 
@@ -271,7 +273,7 @@ impl<'a> Report for ConsoleReport<'a> {
             } else {
                 // 123 | aaaaXXXXXXXX
                 //     |     ^ from here...
-                let beginbytes = strip_newline(self.source.bytes_from_span(beginspan));
+                let beginbytes = strip_newline(source.bytes_from_span(beginspan));
                 let beginoff = span.begin().to_usize() - beginspan.begin().to_usize();
                 write_lineno(term, beginline);
                 write_bytes(term, beginbytes, beginoff, beginbytes.len());
@@ -294,7 +296,7 @@ impl<'a> Report for ConsoleReport<'a> {
                 //
                 // 321 | XXXXXbbbbb     endcol > 0
                 //     |     ^ to here
-                let endbytes = strip_newline(self.source.bytes_from_span(endspan));
+                let endbytes = strip_newline(source.bytes_from_span(endspan));
                 let endoff = span.end().to_usize() - endspan.begin().to_usize();
                 write_lineno(term, endline);
                 write_bytes(term, endbytes, 0, endoff);
@@ -350,5 +352,12 @@ impl Report for CollectedReport {
     fn can_continue(&self) -> bool {
         self.collected.borrow().iter().all(|&(kind, _, _)| kind < Kind::Error)
     }
+}
+
+pub struct NoReport;
+
+impl Report for NoReport {
+    fn add_span(&self, _kind: Kind, _span: Span, _msg: String) -> Result<()> { Err(Stop) }
+    fn can_continue(&self) -> bool { true }
 }
 

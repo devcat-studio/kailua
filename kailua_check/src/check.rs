@@ -4,8 +4,8 @@ use std::iter;
 use std::ops::{Deref, DerefMut};
 use std::borrow::Cow;
 
-use kailua_diag::{Span, Spanned, WithLoc};
-use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, FuncScope};
+use kailua_diag::{Span, Spanned, WithLoc, Report};
+use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, NameScope};
 use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
 use ty::{T, TySeq, Lattice, TypeContext, Tables, Function, Functions, TyWithNil};
@@ -13,12 +13,7 @@ use ty::{S, Slot, SlotSeq, SlotWithNil};
 use ty::{Builtin, Flags};
 use ty::flags::*;
 use env::{TyInfo, Env, Frame, Scope, Context};
-
-pub trait Options {
-    fn require_block(&mut self, path: &[u8]) -> CheckResult<Spanned<Block>> {
-        Err("not implemented".into())
-    }
-}
+use options::Options;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Exit {
@@ -48,13 +43,15 @@ impl<'chk, 'env> Drop for ScopedChecker<'chk, 'env> {
 }
 
 pub struct Checker<'env> {
-    env: Env<'env>,
+    env: &'env mut Env<'env>,
     opts: &'env mut Options,
+    report: &'env Report,
 }
 
 impl<'env> Checker<'env> {
-    pub fn new(context: &'env mut Context, opts: &'env mut Options) -> Checker<'env> {
-        Checker { env: Env::new(context), opts: opts }
+    pub fn new(env: &'env mut Env<'env>, opts: &'env mut Options,
+               report: &'env Report) -> Checker<'env> {
+        Checker { env: env, opts: opts, report: report }
     }
 
     fn context(&mut self) -> &mut Context {
@@ -92,7 +89,7 @@ impl<'env> Checker<'env> {
         ScopedChecker(self)
     }
 
-    pub fn check_un_op(&mut self, op: UnOp, info: &TyInfo) -> CheckResult<TyInfo> {
+    fn check_un_op(&mut self, op: UnOp, info: &TyInfo) -> CheckResult<TyInfo> {
         let slot = info.borrow();
         let ty = slot.unlift();
 
@@ -131,7 +128,7 @@ impl<'env> Checker<'env> {
         }
     }
 
-    pub fn check_bin_op(&mut self, lhs: &TyInfo, op: BinOp, rhs: &TyInfo) -> CheckResult<TyInfo> {
+    fn check_bin_op(&mut self, lhs: &TyInfo, op: BinOp, rhs: &TyInfo) -> CheckResult<TyInfo> {
         let lslot = lhs.borrow();
         let rslot = rhs.borrow();
         let lty = lslot.unlift();
@@ -547,8 +544,8 @@ impl<'env> Checker<'env> {
                 let funcv = self.context().gen_tvar();
                 let info = TyInfo::from(T::TVar(funcv));
                 match scope {
-                    FuncScope::Local => self.env.add_local_var(name, info, true),
-                    FuncScope::Global => try!(self.env.assign_to_var(name, info)),
+                    NameScope::Local => self.env.add_local_var(name, info, true),
+                    NameScope::Global => try!(self.env.assign_to_var(name, info)),
                 }
                 let functy = try!(self.visit_func_body(None, sig, block));
                 try!(T::TVar(funcv).assert_eq(functy.borrow().unlift(), self.context()));
@@ -612,7 +609,8 @@ impl<'env> Checker<'env> {
             St::Break => Ok(Exit::Break),
 
             St::KailuaOpen(ref name) => {
-                panic!("TODO")
+                try!(self.env.context().open_library(name, self.opts, self.report));
+                Ok(Exit::None)
             }
 
             St::KailuaType(ref name, ref kind) => {
@@ -621,7 +619,7 @@ impl<'env> Checker<'env> {
                 Ok(Exit::None)
             }
 
-            St::KailuaAssume(ref name, kindm, ref kind, ref builtin) => {
+            St::KailuaAssume(scope, ref name, kindm, ref kind, ref builtin) => {
                 let builtin = if let Some(ref builtin) = *builtin {
                     match &****builtin {
                         b"require" => Some(Builtin::Require),
@@ -644,7 +642,10 @@ impl<'env> Checker<'env> {
                     M::Var => S::Var(ty),
                     M::Const => S::Const(ty),
                 };
-                try!(self.env.assume_var(name, Slot::new(sty)));
+                match scope {
+                    NameScope::Local => try!(self.env.assume_var(name, Slot::new(sty))),
+                    NameScope::Global => try!(self.env.assume_global_var(name, Slot::new(sty))),
+                }
                 Ok(Exit::None)
             }
         }
@@ -854,8 +855,8 @@ impl<'env> Checker<'env> {
                                 Err(e) => return Err(format!("failed to require {:?}: {}",
                                                              *path, e)),
                             };
-                            let mut sub = Checker { env: Env::new(self.env.context()),
-                                                    opts: self.opts };
+                            let mut env = Env::new(self.env.context());
+                            let mut sub = Checker::new(&mut env, self.opts, self.report);
                             try!(sub.visit_block(&block));
                         }
                         Ok(SlotSeq::from(T::Dynamic)) // XXX
