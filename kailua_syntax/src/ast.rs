@@ -385,28 +385,31 @@ pub enum K {
     Func(Vec<Spanned<FuncKind>>),
     Named(Spanned<Name>),
     Union(Vec<Spanned<Kind>>),
+    Error(Option<Spanned<Str>>),
 }
 
 impl fmt::Debug for K {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            K::Dynamic           => write!(f, "Dynamic"),
-            K::Any               => write!(f, "Any"),
-            K::Nil               => write!(f, "Nil"),
-            K::Boolean           => write!(f, "Boolean"),
-            K::BooleanLit(true)  => write!(f, "True"),
-            K::BooleanLit(false) => write!(f, "False"),
-            K::Number            => write!(f, "Number"),
-            K::Integer           => write!(f, "Integer"),
-            K::IntegerLit(v)     => write!(f, "Integer({})", v),
-            K::String            => write!(f, "String"),
-            K::StringLit(ref s)  => write!(f, "String({:?})", *s),
-            K::Table             => write!(f, "Table"),
-            K::EmptyTable        => write!(f, "EmptyTable"),
-            K::Array(ref v)      => write!(f, "Array({:?})", *v),
-            K::Map(ref k, ref v) => write!(f, "Map({:?}, {:?})", *k, *v),
-            K::Function          => write!(f, "Function"),
-            K::Named(ref name)   => write!(f, "{:?}", *name),
+            K::Dynamic            => write!(f, "Dynamic"),
+            K::Any                => write!(f, "Any"),
+            K::Nil                => write!(f, "Nil"),
+            K::Boolean            => write!(f, "Boolean"),
+            K::BooleanLit(true)   => write!(f, "True"),
+            K::BooleanLit(false)  => write!(f, "False"),
+            K::Number             => write!(f, "Number"),
+            K::Integer            => write!(f, "Integer"),
+            K::IntegerLit(v)      => write!(f, "Integer({})", v),
+            K::String             => write!(f, "String"),
+            K::StringLit(ref s)   => write!(f, "String({:?})", *s),
+            K::Table              => write!(f, "Table"),
+            K::EmptyTable         => write!(f, "EmptyTable"),
+            K::Array(ref v)       => write!(f, "Array({:?})", *v),
+            K::Map(ref k, ref v)  => write!(f, "Map({:?}, {:?})", *k, *v),
+            K::Function           => write!(f, "Function"),
+            K::Named(ref name)    => write!(f, "{:?}", *name),
+            K::Error(None)        => write!(f, "Error"),
+            K::Error(Some(ref s)) => write!(f, "Error({:?})", *s),
 
             K::Record(ref fields) => {
                 try!(write!(f, "Record(["));

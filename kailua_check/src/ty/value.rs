@@ -92,6 +92,7 @@ impl<'a> T<'a> {
             K::EmptyTable        => Ok(T::Tables(Cow::Owned(Tables::Empty))),
             K::Function          => Ok(T::Functions(Cow::Owned(Functions::All))),
             K::Named(ref name)   => resolv.ty_from_name(name),
+            K::Error(..)         => Err(format!("error type not yet supported in checker")),
 
             K::Record(ref fields) => {
                 let mut newfields = BTreeMap::new();

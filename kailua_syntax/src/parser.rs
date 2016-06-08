@@ -1429,14 +1429,29 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 Box::new(K::BooleanLit(false)).with_loc(span),
 
             (_, Spanned { base: Tok::Name(name), span }) => {
-                let kind = match self.builtin_kind(&name) {
-                    Some(kind) => kind,
-                    None => {
-                        let name: Name = name.into();
-                        K::Named(name.with_loc(span))
-                    },
-                };
-                Box::new(kind).with_loc(span)
+                if name == b"error" {
+                    // may follow an error reason
+                    let reason = match try!(self.read()) {
+                        (_, Spanned { base: Tok::Str(s), span }) => {
+                            let s: Str = s.into();
+                            Some(s.with_loc(span))
+                        }
+                        tok => {
+                            self.unread(tok);
+                            None
+                        }
+                    };
+                    Box::new(K::Error(reason)).with_loc(span)
+                } else {
+                    let kind = match self.builtin_kind(&name) {
+                        Some(kind) => kind,
+                        None => {
+                            let name: Name = name.into();
+                            K::Named(name.with_loc(span))
+                        },
+                    };
+                    Box::new(kind).with_loc(span)
+                }
             }
 
             (_, Spanned { base: Tok::Num(v), span })

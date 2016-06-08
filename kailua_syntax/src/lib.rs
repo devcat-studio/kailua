@@ -781,5 +781,14 @@ fn test_parse() {
           "error";
           2: "[Error] Expected a single type, got a keyword `assume`";
           2: "[Error] Expected a newline, got a name");
+
+    test!("--# type x = error";
+          "[KailuaType(`x`, Error)]");
+
+    test!("--# type x = error 'whatever'";
+          "[KailuaType(`x`, Error(\"whatever\"))]");
+
+    test!("--# type x = error | 'whatever'";
+          "[KailuaType(`x`, Union([Error, String(\"whatever\")]))]");
 }
 

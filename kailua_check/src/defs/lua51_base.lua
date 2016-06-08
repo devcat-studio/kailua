@@ -86,8 +86,24 @@
 --# assume global `unpack`:
 --#     const function(table, integer?, integer?) -> (any)--...)
 --#
+--# assume global `_VERSION`:
+--#     const string
+--#
 --# -- TODO `f` and `err` should be once function
 --# -- TODO genericity
 --# assume global `xpcall`:
 --#     const function(function, function) -> (boolean, any)--...)
+--#
+--# type thread = ? -- TODO
+--# assume global `coroutine`:
+--#     const {
+--#         -- TODO genericity
+--#         `create` = const function(function) -> thread;
+--#         `resume` = const function(thread, any...) -> (boolean, any);--...);
+--#         `running` = const function() -> thread?;
+--#         `status` = const function(thread) -> string;
+--#         -- TODO genericity
+--#         `wrap` = const function(function) -> thread;
+--#         `yield` = const function(any...) -> (any);--...):
+--#     }
 
