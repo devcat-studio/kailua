@@ -4,7 +4,7 @@ extern crate kailua_diag;
 
 use kailua_diag::Spanned;
 
-pub use ast::{Name, Str, Var, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, NameScope, SelfParam};
+pub use ast::{Name, Str, Seq, Var, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, NameScope, SelfParam};
 pub use ast::{St, Stmt, Block, M, K, Kind, FuncKind, SlotKind};
 
 mod lex;

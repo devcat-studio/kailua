@@ -59,6 +59,29 @@ impl From<Name> for Str {
     fn from(Name(n): Name) -> Str { Str(n) }
 }
 
+#[derive(Clone, PartialEq)]
+pub struct Seq<Head, Tail=Head> {
+    pub head: Vec<Head>,
+    pub tail: Option<Tail>,
+}
+
+impl<Head: fmt::Debug, Tail: fmt::Debug> fmt::Debug for Seq<Head, Tail> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if !f.sign_minus() { try!(write!(f, "[")); }
+        let mut first = true;
+        for e in &self.head {
+            if first { first = false; } else { try!(write!(f, ", ")); }
+            try!(write!(f, "{:?}", *e));
+        }
+        if let Some(ref e) = self.tail {
+            if !first { try!(write!(f, ", ")); }
+            try!(write!(f, "{:?}...", *e));
+        }
+        if !f.sign_minus() { try!(write!(f, "]")); }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Var {
     Name(Spanned<Name>),
@@ -86,16 +109,15 @@ impl<T: fmt::Debug> fmt::Debug for TypeSpec<T> {
 // more spanned version of Sig, only used during the parsing
 #[derive(Clone, PartialEq)]
 pub struct Presig {
-    pub args: Vec<Spanned<TypeSpec<Spanned<Name>>>>,
-    pub varargs: Option<Spanned<Option<Spanned<Kind>>>>,
-    pub returns: Option<Vec<Spanned<Kind>>>,
+    pub args: Seq<Spanned<TypeSpec<Spanned<Name>>>, Spanned<Option<Spanned<Kind>>>>,
+    pub returns: Option<Seq<Spanned<Kind>>>,
 }
 
 impl Presig {
     pub fn to_sig(self) -> Sig {
         Sig {
-            args: self.args.into_iter().map(|arg| arg.base).collect(),
-            varargs: self.varargs.map(|varargs| varargs.base),
+            args: Seq { head: self.args.head.into_iter().map(|arg| arg.base).collect(),
+                        tail: self.args.tail.map(|arg| arg.base) },
             returns: self.returns,
         }
     }
@@ -103,20 +125,20 @@ impl Presig {
 
 #[derive(Clone, PartialEq)]
 pub struct Sig {
-    pub args: Vec<TypeSpec<Spanned<Name>>>,
-    pub varargs: Option<Option<Spanned<Kind>>>, // may have to be inferred; Const only
-    pub returns: Option<Vec<Spanned<Kind>>>, // may have to be inferred
+    pub args: Seq<TypeSpec<Spanned<Name>>,
+                  Option<Spanned<Kind>>>, // may have to be inferred; Const only
+    pub returns: Option<Seq<Spanned<Kind>>>, // may have to be inferred
 }
 
 impl fmt::Debug for Sig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if let Some(ref varargs) = self.varargs {
-            try!(write!(f, "["));
-            let mut first = true;
-            for namespec in &self.args {
-                if first { first = false; } else { try!(write!(f, ", ")); }
-                try!(write!(f, "{:?}", *namespec));
-            }
+        try!(write!(f, "["));
+        let mut first = true;
+        for namespec in &self.args.head {
+            if first { first = false; } else { try!(write!(f, ", ")); }
+            try!(write!(f, "{:?}", *namespec));
+        }
+        if let Some(ref varargs) = self.args.tail {
             if !first { try!(write!(f, ", ")); }
             try!(write!(f, "...: "));
             if let Some(ref kind) = *varargs {
@@ -124,14 +146,12 @@ impl fmt::Debug for Sig {
             } else {
                 try!(write!(f, "_"));
             }
-            try!(write!(f, "]"));
-        } else {
-            try!(fmt::Debug::fmt(&self.args, f));
         }
+        try!(write!(f, "]"));
         if let Some(ref returns) = self.returns {
-            if returns.len() == 1 {
-                try!(write!(f, " -> {:?}", returns[0]));
-            } else if !returns.is_empty() {
+            if returns.head.len() == 1 && returns.tail.is_none() {
+                try!(write!(f, " -> {:?}", returns.head[0]));
+            } else if !(returns.head.is_empty() && returns.tail.is_none()) {
                 try!(write!(f, " -> {:?}", *returns));
             }
         } else {
@@ -329,34 +349,17 @@ impl fmt::Debug for SlotKind {
 
 #[derive(Clone, PartialEq)]
 pub struct FuncKind {
-    pub args: Vec<Spanned<Kind>>,
-    pub varargs: Option<Spanned<Kind>>,
-    pub returns: Vec<Spanned<Kind>>,
+    pub args: Seq<Spanned<Kind>>,
+    pub returns: Seq<Spanned<Kind>>,
 }
 
 impl fmt::Debug for FuncKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "("));
-        let mut first = true;
-        for kind in &self.args {
-            if first { first = false; } else { try!(write!(f, ", ")); }
-            try!(write!(f, "{:?}", *kind));
-        }
-        if let Some(ref kind) = self.varargs {
-            if !first { try!(write!(f, ", ")); }
-            try!(write!(f, "{:?}...", *kind));
-        }
-        try!(write!(f, ") -> "));
-        if self.returns.len() == 1 {
-            try!(write!(f, "{:?}", self.returns[0]));
+        try!(write!(f, "({:-?})", self.args));
+        if self.returns.head.len() == 1 && self.returns.tail.is_none() {
+            try!(write!(f, " -> {:?}", self.returns.head[0]));
         } else {
-            try!(write!(f, "("));
-            let mut first = true;
-            for kind in &self.returns {
-                if first { first = false; } else { try!(write!(f, ", ")); }
-                try!(write!(f, "{:?}", *kind));
-            }
-            try!(write!(f, ")"));
+            try!(write!(f, " -> ({:-?})", self.returns));
         }
         Ok(())
     }

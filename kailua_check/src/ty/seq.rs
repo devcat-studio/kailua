@@ -2,8 +2,11 @@ use std::cmp;
 use std::fmt;
 use std::vec;
 use std::usize;
+
+use kailua_diag::Spanned;
+use kailua_syntax::{Seq, Kind};
 use diag::CheckResult;
-use super::{T, Ty, TyWithNil, Slot, SlotWithNil, Lattice, TypeContext};
+use super::{T, Ty, TyWithNil, Slot, SlotWithNil, Lattice, TypeContext, TypeResolver};
 
 pub struct TySeqIter {
     head: vec::IntoIter<Ty>,
@@ -42,6 +45,19 @@ impl TySeq {
 
     pub fn from(t: T) -> TySeq {
         TySeq { head: vec![Box::new(t.into_send())], tail: None }
+    }
+
+    pub fn from_kind_seq(seq: &Seq<Spanned<Kind>>,
+                         resolv: &mut TypeResolver) -> CheckResult<TySeq> {
+        let head = try!(seq.head.iter()
+                                .map(|k| T::from(k, resolv).map(Box::new))
+                                .collect());
+        let tail = if let Some(ref k) = seq.tail {
+            Some(Box::new(TyWithNil::from(try!(T::from(k, resolv)))))
+        } else {
+            None
+        };
+        Ok(TySeq { head: head, tail: tail })
     }
 
     pub fn into_iter(self) -> TySeqIter {

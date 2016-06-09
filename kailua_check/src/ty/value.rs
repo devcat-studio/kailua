@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use kailua_syntax::{K, SlotKind, Str, M};
 use diag::CheckResult;
-use super::{TyWithNil, S, Slot, SlotWithNil, TypeContext, TypeResolver, Lattice, Flags, TySeq};
+use super::{S, Slot, SlotWithNil, TypeContext, TypeResolver, Lattice, Flags, TySeq};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Union, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
@@ -126,20 +126,10 @@ impl<'a> T<'a> {
             K::Func(ref funcs) => {
                 let mut ftys = Vec::new();
                 for func in funcs {
-                    let args = try!(func.args.iter()
-                                             .map(|k| T::from(k, resolv).map(Box::new))
-                                             .collect());
-                    let argstail = if let Some(ref k) = func.varargs {
-                        Some(Box::new(TyWithNil::from(try!(T::from(k, resolv)))))
-                    } else {
-                        None
-                    };
-                    let returns = try!(func.returns.iter()
-                                                   .map(|k| T::from(k, resolv).map(Box::new))
-                                                   .collect());
-                    let fty = Function { args: TySeq { head: args, tail: argstail },
-                                         returns: TySeq { head: returns, tail: None } };
-                    ftys.push(fty);
+                    ftys.push(Function {
+                        args: try!(TySeq::from_kind_seq(&func.args, resolv)),
+                        returns: try!(TySeq::from_kind_seq(&func.returns, resolv)),
+                    });
                 }
                 if ftys.len() == 1 {
                     Ok(T::Functions(Cow::Owned(Functions::Simple(ftys.pop().unwrap()))))

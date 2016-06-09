@@ -6,7 +6,8 @@ use std::collections::{hash_map, HashMap};
 use kailua_diag as diag;
 use kailua_diag::{Pos, Span, Spanned, WithLoc, Report, Reporter, Stop};
 use lex::{Tok, Punct, Keyword};
-use ast::{Name, Str, Var, Presig, Sig, Ex, Exp, UnOp, BinOp, NameScope, SelfParam, St, Stmt, Block};
+use ast::{Name, Str, Var, Seq, Presig, Sig};
+use ast::{Ex, Exp, UnOp, BinOp, NameScope, SelfParam, St, Stmt, Block};
 use ast::{M, K, Kind, SlotKind, FuncKind, TypeSpec};
 
 pub struct Parser<'a, T> {
@@ -607,18 +608,18 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         // inline argument type spec is an error
         let sig;
         if let Some(presig) = presig {
-            if args.len() > presig.base.args.len() {
-                let excess = &args[presig.base.args.len()..];
+            if args.len() > presig.base.args.head.len() {
+                let excess = &args[presig.base.args.head.len()..];
                 let span = excess.iter().fold(Span::dummy(), |span, i| span | i.0.span);
                 try!(self.report.error(span, "Excess arguments in the function declaration")
                                 .done());
-            } else if args.len() < presig.base.args.len() {
-                let excess = &presig.base.args[args.len()..];
+            } else if args.len() < presig.base.args.head.len() {
+                let excess = &presig.base.args.head[args.len()..];
                 let span = excess.iter().fold(Span::dummy(), |span, i| span | i.span);
                 try!(self.report.error(span, "Excess arguments in the function specification")
                                 .done());
             }
-            match (&varargs, &presig.base.varargs) {
+            match (&varargs, &presig.base.args.tail) {
                 (&Some(ref v), &None) => {
                     try!(self.report.error(v.span, "Variadic arguments appear in the function \
                                                     but not in the function specification")
@@ -638,7 +639,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 }
                 (_, _) => {}
             }
-            for (arg, sigarg) in args.iter().zip(presig.base.args.iter()) {
+            for (arg, sigarg) in args.iter().zip(presig.base.args.head.iter()) {
                 if arg.0.base != sigarg.base.base.base { // TODO might not be needed
                     try!(self.report.error(arg.0.span, "Mismatching argument name \
                                                         in the function specification")
@@ -664,11 +665,12 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             }
             sig = presig.base.to_sig();
         } else {
-            sig = Sig {
-                args: args.into_iter().map(|(n,s)| self.make_kailua_typespec(n, s)).collect(),
-                varargs: varargs.map(|tt| tt.base),
-                returns: returns.map(|tt| tt.base),
+            let args = Seq {
+                head: args.into_iter().map(|(n,s)| self.make_kailua_typespec(n, s)).collect(),
+                tail: varargs.map(|tt| tt.base),
             };
+            let returns = returns.map(|returns| Seq { head: returns.base, tail: None });
+            sig = Sig { args: args, returns: returns };
         }
 
         let block = try!(self.parse_block());
@@ -1171,8 +1173,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     // may contain ellipsis, the caller is expected to error on unwanted cases
-    fn parse_kailua_kindlist(&mut self) -> diag::Result<(Vec<Spanned<Kind>>,
-                                                         Option<Spanned<Kind>>)> {
+    fn parse_kailua_kindlist(&mut self) -> diag::Result<Seq<Spanned<Kind>>> {
         let mut kinds = Vec::new();
         // KIND {"," KIND} ["..."] or empty
         // try to read the first KIND
@@ -1184,11 +1185,11 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                                   in the ordinary kinds")
                                     .done());
                     // pretend that (an invalid) `(...)` is `(?...)`
-                    return Ok((kinds, Some(Box::new(K::Dynamic).with_loc(span))));
+                    return Ok(Seq { head: kinds, tail: Some(Box::new(K::Dynamic).with_loc(span)) });
                 }
                 tok => {
                     self.unread(tok);
-                    return Ok((kinds, None));
+                    return Ok(Seq { head: kinds, tail: None });
                 }
             },
         };
@@ -1202,7 +1203,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                                       in the ordinary kinds")
                                         .done());
                         // pretend that (an invalid) `(<explist>, ...)` is `(<explist>, ?...)`
-                        return Ok((kinds, Some(Box::new(K::Dynamic).with_loc(span))));
+                        return Ok(Seq { head: kinds,
+                                        tail: Some(Box::new(K::Dynamic).with_loc(span)) });
                     }
                     (_, tok) => {
                         return self.report.fatal(tok.span,
@@ -1215,16 +1217,16 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
         if self.may_expect(Punct::DotDotDot) {
             let last = kinds.pop();
-            Ok((kinds, last))
+            Ok(Seq { head: kinds, tail: last })
         } else {
-            Ok((kinds, None))
+            Ok(Seq { head: kinds, tail: None })
         }
     }
 
     // may contain ellipsis, the caller is expected to error on unwanted cases
     fn parse_kailua_namekindlist(&mut self)
-            -> diag::Result<(Vec<Spanned<TypeSpec<Spanned<Name>>>>,
-                             Option<Spanned<Option<Spanned<Kind>>>>)> {
+            -> diag::Result<Seq<Spanned<TypeSpec<Spanned<Name>>>,
+                                Spanned<Option<Spanned<Kind>>>>> {
         let mut variadic = None;
         let mut specs = Vec::new();
         let begin = self.pos();
@@ -1233,7 +1235,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         } else { // NAME ":" KIND {"," NAME ":" KIND} ["," "..." [":" KIND]] or empty
             let name = match try!(self.try_parse_name()) {
                 Some(name) => name,
-                None => return Ok((specs, None)),
+                None => return Ok(Seq { head: specs, tail: None }),
             };
             try!(self.expect(Punct::Colon));
             let modf = try!(self.parse_kailua_mod());
@@ -1262,16 +1264,16 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             } else {
                 None
             };
-            Ok((specs, Some(varargs.with_loc(begin..self.last_pos()))))
+            Ok(Seq { head: specs, tail: Some(varargs.with_loc(begin..self.last_pos())) })
         } else {
-            Ok((specs, None))
+            Ok(Seq { head: specs, tail: None })
         }
     }
 
     fn parse_kailua_funckind(&mut self) -> diag::Result<Spanned<FuncKind>> {
         let begin = self.pos();
         try!(self.expect(Punct::LParen));
-        let (args, varargs) = try!(self.parse_kailua_kindlist());
+        let args = try!(self.parse_kailua_kindlist());
         try!(self.expect(Punct::RParen));
         let returns = if self.may_expect(Punct::DashGt) {
             // "(" ... ")" "->" ...
@@ -1281,7 +1283,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             Vec::new()
         };
         let span = begin..self.last_pos();
-        Ok(FuncKind { args: args, varargs: varargs, returns: returns }.with_loc(span))
+        Ok(FuncKind { args: args, returns: Seq { head: returns, tail: None } }.with_loc(span))
     }
 
     fn try_parse_kailua_atomic_kind_seq(&mut self) -> diag::Result<Option<Vec<Spanned<Kind>>>> {
@@ -1305,19 +1307,19 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             }
 
             (_, Spanned { base: Tok::Punct(Punct::LParen), .. }) => {
-                let (mut args, varargs) = try!(self.parse_kailua_kindlist());
+                let mut args = try!(self.parse_kailua_kindlist());
                 try!(self.expect(Punct::RParen));
-                if let Some(ref varargs) = varargs {
+                if let Some(ref varargs) = args.tail {
                     try!(self.report.error(varargs.span,
                                            "Variadic argument can only be used \
                                             as a function argument")
                                     .done());
                     self.dummy_kind()
-                } else if args.len() != 1 {
+                } else if args.head.len() != 1 {
                     // cannot be followed by postfix operators - XXX really?
-                    return Ok(Some(args));
+                    return Ok(Some(args.head));
                 } else {
-                    args.pop().unwrap()
+                    args.head.pop().unwrap()
                 }
             }
 
@@ -1613,17 +1615,17 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             // "(" [NAME ":" KIND] {"," NAME ":" KIND} ["," "..."] ")" ["->" KIND]
             self.begin_meta_comment(Punct::DashDashV);
             try!(self.expect(Punct::LParen));
-            let (args, varargs) = try!(self.parse_kailua_namekindlist());
+            let args = try!(self.parse_kailua_namekindlist());
             try!(self.expect(Punct::RParen));
             let returns = if self.may_expect(Punct::DashGt) {
-                Some(try!(self.parse_kailua_kind_seq()))
+                try!(self.parse_kailua_kind_seq())
             } else {
-                Some(Vec::new())
+                Vec::new()
             };
             let end = self.last_pos();
             try!(self.end_meta_comment(Punct::DashDashV));
 
-            let sig = Presig { args: args, varargs: varargs, returns: returns };
+            let sig = Presig { args: args, returns: Some(Seq { head: returns, tail: None }) };
             Ok(Some(sig.with_loc(begin..end)))
         } else {
             Ok(None)

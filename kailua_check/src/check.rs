@@ -653,7 +653,7 @@ impl<'env> Checker<'env> {
 
     fn visit_func_body(&mut self, selfinfo: Option<TyInfo>, sig: &Sig,
                        block: &Spanned<Vec<Spanned<Stmt>>>) -> CheckResult<TyInfo> {
-        let vatype = match sig.varargs {
+        let vatype = match sig.args.tail {
             None => None,
             // varargs present but types are unspecified
             Some(None) => Some(Box::new(TyWithNil::from(T::TVar(self.context().gen_tvar())))),
@@ -667,12 +667,7 @@ impl<'env> Checker<'env> {
         // TODO the exception should be made to the recursive usage;
         // we probably need to put a type variable that is later equated to the actual returns
         let frame = if let Some(ref returns) = sig.returns {
-            let returns = TySeq {
-                head: try!(returns.iter()
-                                  .map(|k| T::from(k, &mut self.env).map(Box::new))
-                                  .collect()),
-                tail: None,
-            };
+            let returns = try!(TySeq::from_kind_seq(returns, &mut self.env));
             Frame { vararg: vainfo, returns: Some(returns), returns_exact: true }
         } else {
             Frame { vararg: vainfo, returns: None, returns_exact: false }
@@ -684,7 +679,7 @@ impl<'env> Checker<'env> {
         }
 
         let mut argshead = Vec::new();
-        for param in &sig.args {
+        for param in &sig.args.head {
             let ty;
             let sty;
             if let Some(ref kind) = param.kind {
