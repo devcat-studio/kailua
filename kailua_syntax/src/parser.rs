@@ -55,6 +55,8 @@ impl Expectable for EOF {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct ElidedTokens(bool);
 
+enum AtomicKind { One(Spanned<Kind>), Seq(Seq<Spanned<Kind>>) }
+
 impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     pub fn new(iter: T, report: &'a Report) -> Parser<'a, T> {
         let mut parser = Parser {
@@ -669,8 +671,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 head: args.into_iter().map(|(n,s)| self.make_kailua_typespec(n, s)).collect(),
                 tail: varargs.map(|tt| tt.base),
             };
-            let returns = returns.map(|returns| Seq { head: returns.base, tail: None });
-            sig = Sig { args: args, returns: returns };
+            sig = Sig { args: args, returns: returns.map(|ret| ret.base) };
         }
 
         let block = try!(self.parse_block());
@@ -1280,13 +1281,14 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             try!(self.parse_kailua_kind_seq())
         } else {
             // "(" ... ")"
-            Vec::new()
+            Seq { head: Vec::new(), tail: None }
         };
         let span = begin..self.last_pos();
-        Ok(FuncKind { args: args, returns: Seq { head: returns, tail: None } }.with_loc(span))
+        Ok(FuncKind { args: args, returns: returns }.with_loc(span))
     }
 
-    fn try_parse_kailua_atomic_kind_seq(&mut self) -> diag::Result<Option<Vec<Spanned<Kind>>>> {
+    // returns true if it can be followed by postfix operators
+    fn try_parse_kailua_atomic_kind_seq(&mut self) -> diag::Result<Option<AtomicKind>> {
         let begin = self.pos();
 
         let mut kind = match try!(self.read()) {
@@ -1299,8 +1301,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         funcs.push(try!(self.parse_kailua_funckind()));
                     }
                     // cannot be followed by postfix operators
-                    let span = begin..self.last_pos();
-                    return Ok(Some(vec![Box::new(K::Func(funcs)).with_loc(span)]));
+                    let kind = Box::new(K::Func(funcs)).with_loc(begin..self.last_pos());
+                    return Ok(Some(AtomicKind::Seq(Seq { head: vec![kind], tail: None })));
                 } else {
                     Box::new(K::Function).with_loc(span)
                 }
@@ -1309,15 +1311,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             (_, Spanned { base: Tok::Punct(Punct::LParen), .. }) => {
                 let mut args = try!(self.parse_kailua_kindlist());
                 try!(self.expect(Punct::RParen));
-                if let Some(ref varargs) = args.tail {
-                    try!(self.report.error(varargs.span,
-                                           "Variadic argument can only be used \
-                                            as a function argument")
-                                    .done());
-                    self.dummy_kind()
-                } else if args.head.len() != 1 {
+                if args.head.len() != 1 || args.tail.is_some() {
                     // cannot be followed by postfix operators - XXX really?
-                    return Ok(Some(args.head));
+                    return Ok(Some(AtomicKind::Seq(args)));
                 } else {
                     args.head.pop().unwrap()
                 }
@@ -1476,50 +1472,53 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             let nil = Box::new(K::Nil).with_loc(Span::dummy());
             kind = Box::new(K::Union(vec![kind, nil])).with_loc(begin..self.last_pos());
         }
-        Ok(Some(vec![kind]))
+        Ok(Some(AtomicKind::One(kind)))
     }
 
-    fn try_parse_kailua_kind_seq(&mut self) -> diag::Result<Option<Spanned<Vec<Spanned<Kind>>>>> {
+    fn try_parse_kailua_kind_seq(&mut self) -> diag::Result<Option<Spanned<Seq<Spanned<Kind>>>>> {
         let begin = self.pos();
-        if let Some(mut kindseq) = try!(self.try_parse_kailua_atomic_kind_seq()) {
-            if kindseq.len() != 1 {
-                return Ok(Some(kindseq.with_loc(begin..self.last_pos())));
+        match try!(self.try_parse_kailua_atomic_kind_seq()) {
+            None => Ok(None),
+            Some(AtomicKind::Seq(kindseq)) => {
+                Ok(Some(kindseq.with_loc(begin..self.last_pos())))
             }
-            let mut kind = kindseq.pop().unwrap();
-            if self.lookahead(Punct::Pipe) { // A | B | ...
-                // TODO the current parser is massively ambiguous about pipes in atomic types
-                let mut kinds = vec![kind];
-                while self.may_expect(Punct::Pipe) {
-                    let begin = self.pos();
-                    if let Some(mut kindseq2) = try!(self.try_parse_kailua_atomic_kind_seq()) {
-                        if kindseq2.len() != 1 {
-                            try!(self.report.error(begin..self.last_pos(),
-                                                   "A sequence of types cannot be \
-                                                    inside a union")
-                                            .done());
-                            kinds.push(self.dummy_kind());
-                        } else {
-                            kinds.push(kindseq2.pop().unwrap());
+            Some(AtomicKind::One(mut kind)) => {
+                if self.lookahead(Punct::Pipe) { // A | B | ...
+                    // TODO the current parser is massively ambiguous about pipes in atomic types
+                    let mut kinds = vec![kind];
+                    while self.may_expect(Punct::Pipe) {
+                        let begin = self.pos();
+                        match try!(self.try_parse_kailua_atomic_kind_seq()) {
+                            Some(AtomicKind::One(kind2)) => {
+                                kinds.push(kind2);
+                            }
+                            Some(AtomicKind::Seq(..)) => {
+                                try!(self.report.error(begin..self.last_pos(),
+                                                       "A sequence of types cannot be \
+                                                        inside a union")
+                                                .done());
+                                kinds.push(self.dummy_kind());
+                            }
+                            None => {
+                                let tok = try!(self.read()).1;
+                                return self.report.fatal(tok.span, format!("Expected a type, \
+                                                                            got {}", tok.base))
+                                                  .done();
+                            }
                         }
-                    } else {
-                        let tok = try!(self.read()).1;
-                        return self.report.fatal(tok.span,
-                                                 format!("Expected a type, got {}", tok.base))
-                                          .done();
                     }
+                    kind = Box::new(K::Union(kinds)).with_loc(begin..self.last_pos());
                 }
-                kind = Box::new(K::Union(kinds)).with_loc(begin..self.last_pos());
+                let kindseq = Seq { head: vec![kind], tail: None };
+                Ok(Some(kindseq.with_loc(begin..self.last_pos())))
             }
-            Ok(Some(vec![kind].with_loc(begin..self.last_pos())))
-        } else {
-            Ok(None)
         }
     }
 
     fn try_parse_kailua_kind(&mut self) -> diag::Result<Option<Spanned<Kind>>> {
         if let Some(mut kindseq) = try!(self.try_parse_kailua_kind_seq()) {
-            if kindseq.base.len() == 1 {
-                let first = kindseq.base.pop().unwrap();
+            if kindseq.base.head.len() == 1 && kindseq.base.tail.is_none() {
+                let first = kindseq.base.head.pop().unwrap();
                 let span = kindseq.span | first.span; // overwrite the span
                 Ok(Some(first.base.with_loc(span)))
             } else {
@@ -1533,7 +1532,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn parse_kailua_kind_seq(&mut self) -> diag::Result<Vec<Spanned<Kind>>> {
+    fn parse_kailua_kind_seq(&mut self) -> diag::Result<Seq<Spanned<Kind>>> {
         if let Some(kindseq) = try!(self.try_parse_kailua_kind_seq()) {
             Ok(kindseq.base)
         } else {
@@ -1542,7 +1541,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                    format!("Expected a single type or type sequence, \
                                             got {}", tok.base))
                             .done());
-            Ok(vec![self.dummy_kind()])
+            Ok(Seq { head: vec![self.dummy_kind()], tail: None })
         }
     }
 
@@ -1595,7 +1594,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn try_parse_kailua_rettype_spec(&mut self)
-            -> diag::Result<Option<Spanned<Vec<Spanned<Kind>>>>> {
+            -> diag::Result<Option<Spanned<Seq<Spanned<Kind>>>>> {
         let begin = self.pos();
         if self.may_expect(Punct::DashDashGt) {
             self.begin_meta_comment(Punct::DashDashGt);
@@ -1620,12 +1619,12 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             let returns = if self.may_expect(Punct::DashGt) {
                 try!(self.parse_kailua_kind_seq())
             } else {
-                Vec::new()
+                Seq { head: Vec::new(), tail: None }
             };
             let end = self.last_pos();
             try!(self.end_meta_comment(Punct::DashDashV));
 
-            let sig = Presig { args: args, returns: Some(Seq { head: returns, tail: None }) };
+            let sig = Presig { args: args, returns: Some(returns) };
             Ok(Some(sig.with_loc(begin..end)))
         } else {
             Ok(None)

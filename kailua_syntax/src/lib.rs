@@ -281,6 +281,9 @@ fn test_parse() {
     test!("local x --: function";
           "[Local([`x`: _ Function], [])]");
 
+    test!("local x --: function | string?";
+          "[Local([`x`: _ Union([Function, Union([String, Nil])])], [])]");
+
     test!("local x --: function()";
           "[Local([`x`: _ Func([() -> ()])], [])]");
 
@@ -291,7 +294,20 @@ fn test_parse() {
           "[Local([`x`: _ Func([() -> (), \
                                 (Integer, Boolean...) -> Union([String, Nil])])], [])]");
 
+    test!("local x --: function () -> (integer...) & (integer, boolean...)->(string?, ?...)";
+          "[Local([`x`: _ Func([() -> (Integer...), \
+                                (Integer, Boolean...) -> (Union([String, Nil]), Dynamic...)\
+                               ])], [])]");
+
+    test!("local x --: function () -> integer...";
+          "error";
+          1: "[Error] Expected a newline, got `...`");
+
     test!("local x --: function (boolean...) | string?";
+          "error";
+          1: "[Error] Expected a newline, got `|`");
+
+    test!("local x --: (function (boolean...)) | string?";
           "[Local([`x`: _ Union([Func([(Boolean...) -> ()]), Union([String, Nil])])], [])]");
 
     test!("local x --: `function`";
@@ -428,11 +444,39 @@ fn test_parse() {
            local function foo(a) end";
           "[FuncDecl(Local, `foo`, [`a`: _ Integer], [])]");
 
+    test!("--v (a: integer) -> (?...)
+           local function foo(a) end";
+          "[FuncDecl(Local, `foo`, [`a`: _ Integer] -> [Dynamic...], [])]");
+
+    test!("--v (a: integer) -> (string, ?...)
+           local function foo(a) end";
+          "[FuncDecl(Local, `foo`, [`a`: _ Integer] -> [String, Dynamic...], [])]");
+
     test!("(--v (a: const integer,
             --v  ...)
             --v -> string
             function(a, ...) end)()";
           "[Void(Func([`a`: Const Integer, ...: _] -> String, [])())]");
+
+    test!("function foo() --> ()
+           end";
+          "[FuncDecl(Global, `foo`, [], [])]");
+
+    test!("function foo() --> string
+           end";
+          "[FuncDecl(Global, `foo`, [] -> String, [])]");
+
+    test!("function foo() --> ((((string))))
+           end";
+          "[FuncDecl(Global, `foo`, [] -> String, [])]");
+
+    test!("function foo() --> (?...)
+           end";
+          "[FuncDecl(Global, `foo`, [] -> [Dynamic...], [])]");
+
+    test!("function foo() --> (string, ?...)
+           end";
+          "[FuncDecl(Global, `foo`, [] -> [String, Dynamic...], [])]");
 
     test!("--v ()
            function foo() --> string
@@ -677,16 +721,16 @@ fn test_parse() {
     test!("--# assume x: (...)";
           "error";
           1: "[Error] `...` should be preceded with a kind in the ordinary kinds";
-          1: "[Error] Variadic argument can only be used as a function argument");
+          1: "[Error] Expected a single type, not type sequence");
 
     test!("--# assume x: (string...)";
           "error";
-          1: "[Error] Variadic argument can only be used as a function argument");
+          1: "[Error] Expected a single type, not type sequence");
 
     test!("--# assume x: (integer, ...)";
           "error";
           1: "[Error] `...` should be preceded with a kind in the ordinary kinds";
-          1: "[Error] Variadic argument can only be used as a function argument");
+          1: "[Error] Expected a single type, not type sequence");
 
     test!("--# assume x: (integer, string)";
           "error";
@@ -694,7 +738,7 @@ fn test_parse() {
 
     test!("--# assume x: (integer, string...)";
           "error";
-          1: "[Error] Variadic argument can only be used as a function argument");
+          1: "[Error] Expected a single type, not type sequence");
 
     test!("--# assume x: (integer, #)";
           "error";
