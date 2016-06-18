@@ -9,8 +9,7 @@ use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, NameScope
 use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
 use ty::{T, TySeq, Lattice, TypeContext, Tables, Function, Functions, TyWithNil};
-use ty::{S, Slot, SlotSeq, SlotWithNil};
-use ty::{Builtin, Flags};
+use ty::{S, Slot, SlotSeq, SlotWithNil, Builtin};
 use ty::flags::*;
 use env::{TyInfo, Env, Frame, Scope, Context};
 use options::Options;
@@ -807,7 +806,7 @@ impl<'env> Checker<'env> {
                 let funcinfo = funcinfo.borrow();
                 let funcinfo = funcinfo.unlift();
                 if !self.get_type_bounds(&funcinfo).1.is_callable() {
-                    return Err(format!("tried to index the non-function {:?}", funcinfo));
+                    return Err(format!("tried to call the non-function {:?}", funcinfo));
                 }
                 if funcinfo.is_dynamic() {
                     return Ok(SlotSeq::from(T::Dynamic));

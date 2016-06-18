@@ -94,7 +94,6 @@
 --# assume global `xpcall`:
 --#     const function(function, function) -> (boolean, any...)
 --#
---# type thread = ? -- TODO
 --# assume global `coroutine`:
 --#     const {
 --#         -- TODO genericity

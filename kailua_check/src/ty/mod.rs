@@ -248,76 +248,80 @@ impl Lattice for TVar {
     }
 }
 
-bitflags! {
-    flags Flags: u16 {
-        const T_NONE       = 0b0_0000_0000,
-        const T_DYNAMIC    = 0b0_0000_0001,
-        const T_NIL        = 0b0_0000_0010,
-        const T_TRUE       = 0b0_0000_0100,
-        const T_FALSE      = 0b0_0000_1000,
-        const T_BOOLEAN    = 0b0_0000_1100,
-        const T_NONINTEGER = 0b0_0001_0000,
-        const T_INTEGER    = 0b0_0010_0000,
-        const T_NUMBER     = 0b0_0011_0000,
-        const T_STRING     = 0b0_0100_0000,
-        const T_TABLE      = 0b0_1000_0000,
-        const T_FUNCTION   = 0b1_0000_0000,
-        const T_ALL        = 0b1_1111_1110,
-
-        const T_INTEGRAL   = T_DYNAMIC.bits | T_INTEGER.bits,
-        // strings can be also used in place of numbers in Lua but omitted here
-        const T_NUMERIC    = T_DYNAMIC.bits | T_NUMBER.bits,
-        const T_STRINGY    = T_DYNAMIC.bits | T_NUMBER.bits | T_STRING.bits,
-        const T_TABULAR    = T_DYNAMIC.bits | T_STRING.bits | T_TABLE.bits,
-        // "default" types that metatables are set or can be set
-        // XXX shouldn't this be customizable?
-        const T_CALLABLE   = T_DYNAMIC.bits | T_FUNCTION.bits,
-        const T_TRUTHY     = T_TRUE.bits | T_NONINTEGER.bits | T_INTEGER.bits | T_NUMBER.bits |
-                             T_STRING.bits | T_TABLE.bits | T_FUNCTION.bits,
-        const T_FALSY      = T_NIL.bits | T_FALSE.bits,
-    }
-}
-
-impl Flags {
-    pub fn is_dynamic(&self) -> bool { *self & T_DYNAMIC != T_NONE }
-
-    pub fn is_integral(&self) -> bool {
-        (*self & T_DYNAMIC != T_NONE) || ((*self & T_INTEGRAL != T_NONE) &&
-                                          (*self & !T_INTEGRAL == T_NONE))
-    }
-
-    pub fn is_numeric(&self) -> bool {
-        (*self & T_DYNAMIC != T_NONE) || ((*self & T_NUMERIC != T_NONE) &&
-                                          (*self & !T_NUMERIC == T_NONE))
-    }
-
-    pub fn is_stringy(&self) -> bool {
-        (*self & T_DYNAMIC != T_NONE) || ((*self & T_STRINGY != T_NONE) &&
-                                          (*self & !T_STRINGY == T_NONE))
-    }
-
-    pub fn is_tabular(&self) -> bool {
-        (*self & T_DYNAMIC != T_NONE) || ((*self & T_TABULAR != T_NONE) &&
-                                          (*self & !T_TABULAR == T_NONE))
-    }
-
-    pub fn is_callable(&self) -> bool {
-        (*self & T_DYNAMIC != T_NONE) || ((*self & T_CALLABLE != T_NONE) &&
-                                          (*self & !T_CALLABLE == T_NONE))
-    }
-
-    pub fn is_truthy(&self) -> bool {
-        (*self & T_TRUTHY != T_NONE) && (*self & !T_TRUTHY == T_NONE)
-    }
-
-    pub fn is_falsy(&self) -> bool {
-        (*self & T_FALSY != T_NONE) && (*self & !T_FALSY == T_NONE)
-    }
-}
-
 pub mod flags {
-    pub use super::{T_NONE, T_DYNAMIC, T_NIL, T_TRUE, T_FALSE, T_BOOLEAN,
-                    T_NONINTEGER, T_INTEGER, T_NUMBER, T_STRING, T_TABLE, T_FUNCTION, T_ALL,
-                    T_INTEGRAL, T_NUMERIC, T_STRINGY, T_TABULAR, T_CALLABLE, T_TRUTHY, T_FALSY};
+    bitflags! {
+        pub flags Flags: u16 {
+            const T_NONE       = 0b000_0000_0000,
+            const T_DYNAMIC    = 0b000_0000_0001,
+            const T_NIL        = 0b000_0000_0010,
+            const T_TRUE       = 0b000_0000_0100,
+            const T_FALSE      = 0b000_0000_1000,
+            const T_BOOLEAN    = 0b000_0000_1100,
+            const T_NONINTEGER = 0b000_0001_0000,
+            const T_INTEGER    = 0b000_0010_0000,
+            const T_NUMBER     = 0b000_0011_0000,
+            const T_STRING     = 0b000_0100_0000,
+            const T_TABLE      = 0b000_1000_0000,
+            const T_FUNCTION   = 0b001_0000_0000,
+            const T_THREAD     = 0b010_0000_0000,
+            const T_USERDATA   = 0b100_0000_0000,
+            const T_ALL        = 0b111_1111_1110,
+
+            const T_INTEGRAL   = T_DYNAMIC.bits | T_INTEGER.bits,
+            // strings can be also used in place of numbers in Lua but omitted here
+            const T_NUMERIC    = T_DYNAMIC.bits | T_NUMBER.bits,
+            const T_STRINGY    = T_DYNAMIC.bits | T_NUMBER.bits | T_STRING.bits,
+            const T_TABULAR    = T_DYNAMIC.bits | T_STRING.bits | T_TABLE.bits,
+            // "default" types that metatables are set or can be set
+            // XXX shouldn't this be customizable?
+            const T_CALLABLE   = T_DYNAMIC.bits | T_FUNCTION.bits,
+            const T_FALSY      = T_NIL.bits | T_FALSE.bits,
+            const T_TRUTHY     = T_ALL.bits ^ T_FALSY.bits,
+        }
+    }
+
+    impl Flags {
+        pub fn is_dynamic(&self) -> bool { self.contains(T_DYNAMIC) }
+
+        pub fn is_integral(&self) -> bool {
+            self.is_dynamic() || (self.intersects(T_INTEGRAL) && !self.intersects(!T_INTEGRAL))
+        }
+
+        pub fn is_numeric(&self) -> bool {
+            self.is_dynamic() || (self.intersects(T_NUMERIC) && !self.intersects(!T_NUMERIC))
+        }
+
+        pub fn is_stringy(&self) -> bool {
+            self.is_dynamic() || (self.intersects(T_STRINGY) && !self.intersects(!T_STRINGY))
+        }
+
+        pub fn is_tabular(&self) -> bool {
+            self.is_dynamic() || (self.intersects(T_TABULAR) && !self.intersects(!T_TABULAR))
+        }
+
+        pub fn is_callable(&self) -> bool {
+            self.is_dynamic() || (self.intersects(T_CALLABLE) && !self.intersects(!T_CALLABLE))
+        }
+
+        pub fn is_truthy(&self) -> bool {
+            self.intersects(T_TRUTHY) && !self.intersects(!T_TRUTHY)
+        }
+
+        pub fn is_falsy(&self) -> bool {
+            self.intersects(T_FALSY) && !self.intersects(!T_FALSY)
+        }
+    }
+
+    bitflags! {
+        pub flags SimpleUnion: u16 {
+            const U_NONE     = T_NONE.bits,
+            const U_NIL      = T_NIL.bits,
+            const U_TRUE     = T_TRUE.bits,
+            const U_FALSE    = T_FALSE.bits,
+            const U_BOOLEAN  = T_BOOLEAN.bits,
+            const U_THREAD   = T_THREAD.bits,
+            const U_USERDATA = T_USERDATA.bits,
+        }
+    }
 }
 

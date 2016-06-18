@@ -2,16 +2,14 @@ use std::fmt;
 use std::borrow::Cow;
 
 use diag::CheckResult;
-use super::{T, TypeContext, Lattice, Flags, Numbers, Strings, Tables, Functions, TVar};
+use super::{T, TypeContext, Lattice, Numbers, Strings, Tables, Functions, TVar};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 
 // expanded value types for unions
 #[derive(Clone, PartialEq)]
 pub struct Union {
-    pub has_nil: bool,
-    pub has_true: bool,
-    pub has_false: bool,
+    pub simple: SimpleUnion,
     pub numbers: Option<Numbers>,
     pub strings: Option<Strings>,
     pub tables: Option<Tables>,
@@ -21,19 +19,19 @@ pub struct Union {
 
 impl Union {
     pub fn from<'a>(ty: &T<'a>) -> Union {
-        let mut u = Union {
-            has_nil: false, has_true: false, has_false: false,
-            numbers: None, strings: None, tables: None, functions: None, tvar: None,
-        };
+        let mut u = Union { simple: U_NONE, numbers: None, strings: None,
+                            tables: None, functions: None, tvar: None };
 
         match ty.as_base() {
             &T::Dynamic | &T::All => panic!("Union::from called with T::Dynamic or T::All"),
 
-            &T::None    => {}
-            &T::Nil     => { u.has_nil = true; }
-            &T::Boolean => { u.has_true = true; u.has_false = true; }
-            &T::True    => { u.has_true = true; }
-            &T::False   => { u.has_false = true; }
+            &T::None     => {}
+            &T::Nil      => { u.simple = U_NIL; }
+            &T::Boolean  => { u.simple = U_BOOLEAN; }
+            &T::True     => { u.simple = U_TRUE; }
+            &T::False    => { u.simple = U_FALSE; }
+            &T::Thread   => { u.simple = U_THREAD; }
+            &T::UserData => { u.simple = U_USERDATA; }
 
             &T::Numbers(ref num)    => { u.numbers = Some(num.clone().into_owned()); }
             &T::Strings(ref str)    => { u.strings = Some(str.clone().into_owned()); }
@@ -49,29 +47,28 @@ impl Union {
     }
 
     pub fn flags(&self) -> Flags {
-        let mut flags = T_NONE;
-        if self.has_nil   { flags = flags | T_NIL; }
-        if self.has_true  { flags = flags | T_TRUE; }
-        if self.has_false { flags = flags | T_FALSE; }
+        let mut flags = Flags::from_bits_truncate(self.simple.bits());
         match self.numbers {
             None => {}
-            Some(Numbers::All) => { flags = flags | T_NUMBER; }
-            Some(_)  => { flags = flags | T_INTEGER; }
+            Some(Numbers::All) => { flags.insert(T_NUMBER); }
+            Some(_)  => { flags.insert(T_INTEGER); }
         }
-        if self.strings.is_some()   { flags = flags | T_STRING; }
-        if self.tables.is_some()    { flags = flags | T_TABLE; }
-        if self.functions.is_some() { flags = flags | T_FUNCTION; }
+        if self.strings.is_some()   { flags.insert(T_STRING); }
+        if self.tables.is_some()    { flags.insert(T_TABLE); }
+        if self.functions.is_some() { flags.insert(T_FUNCTION); }
         flags
     }
 
     pub fn visit<'a, E, F>(&'a self, mut f: F) -> Result<(), E>
             where F: FnMut(T<'a>) -> Result<(), E> {
-        if self.has_nil { try!(f(T::Nil)); }
-        if self.has_true {
-            if self.has_false { try!(f(T::Boolean)); } else { try!(f(T::True)); }
-        } else if self.has_false {
+        if self.simple.contains(U_NIL) { try!(f(T::Nil)); }
+        if self.simple.contains(U_TRUE) {
+            if self.simple.contains(U_FALSE) { try!(f(T::Boolean)); } else { try!(f(T::True)); }
+        } else if self.simple.contains(U_FALSE) {
             try!(f(T::False));
         }
+        if self.simple.contains(U_THREAD) { try!(f(T::Thread)); }
+        if self.simple.contains(U_USERDATA) { try!(f(T::UserData)); }
         if let Some(ref num) = self.numbers { try!(f(T::Numbers(Cow::Borrowed(num)))) }
         if let Some(ref str) = self.strings { try!(f(T::Strings(Cow::Borrowed(str)))) }
         if let Some(ref tab) = self.tables { try!(f(T::Tables(Cow::Borrowed(tab)))) }
@@ -102,10 +99,7 @@ impl Lattice for Union {
     type Output = Union;
 
     fn do_union(&self, other: &Union, ctx: &mut TypeContext) -> Union {
-        let has_nil   = self.has_nil   | other.has_nil;
-        let has_true  = self.has_true  | other.has_true;
-        let has_false = self.has_false | other.has_false;
-
+        let simple    = self.simple | other.simple;
         let numbers   = self.numbers.union(&other.numbers, ctx);
         let strings   = self.strings.union(&other.strings, ctx);
         let tables    = self.tables.union(&other.tables, ctx);
@@ -116,15 +110,12 @@ impl Lattice for Union {
             (a, b) => a.or(b),
         };
 
-        Union {
-            has_nil: has_nil, has_true: has_true, has_false: has_false,
-            numbers: numbers, strings: strings, tables: tables, functions: functions, tvar: tvar,
-        }
+        Union { simple: simple, numbers: numbers, strings: strings,
+                tables: tables, functions: functions, tvar: tvar }
     }
 
     fn do_assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
-        if (self.has_nil && !other.has_nil) || (self.has_true && !other.has_true) ||
-                                               (self.has_false && !other.has_false) {
+        if self.simple.intersects(!other.simple) {
             return error_not_sub(self, other);
         }
 
@@ -168,8 +159,7 @@ impl Lattice for Union {
             (None, _, None, _) => {}
         }
 
-        if self.has_nil != other.has_nil || self.has_true != other.has_true ||
-                                            self.has_false != other.has_false {
+        if self.simple != other.simple {
             return error_not_eq(self, other);
         }
 

@@ -8,7 +8,7 @@ use vec_map::VecMap;
 use kailua_diag::{Spanned, Report};
 use kailua_syntax::{Name, parse_chunk};
 use diag::CheckResult;
-use ty::{Ty, TySeq, T, Slot, S, TVar, Mark, Lattice, TypeContext, TypeResolver, Flags};
+use ty::{Ty, TySeq, T, Slot, S, TVar, Mark, Lattice, TypeContext, TypeResolver};
 use ty::flags::*;
 use defs::get_defs;
 use options::Options;

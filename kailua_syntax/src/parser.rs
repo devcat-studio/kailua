@@ -252,6 +252,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             b"string"   => Some(K::String),
             b"table"    => Some(K::Table),
             b"function" => Some(K::Function), // allow for quoted `function` too
+            b"thread"   => Some(K::Thread),
+            b"userdata" => Some(K::UserData),
             _ => None,
         }
     }

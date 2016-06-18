@@ -319,6 +319,12 @@ fn test_parse() {
           1: "[Error] Expected a newline, got `(`";
           2: "[Fatal] Expected a name or `function` after `local`"); // recoverable
 
+    test!("local x --: thread";
+          "[Local([`x`: _ Thread], [])]");
+
+    test!("local x --: userdata";
+          "[Local([`x`: _ UserData], [])]");
+
     test!("local x --: (integer, string)";
           "error";
           1: "[Error] Expected a single type, not type sequence");

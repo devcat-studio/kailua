@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use kailua_syntax::{K, SlotKind, Str, M};
 use diag::CheckResult;
-use super::{S, Slot, SlotWithNil, TypeContext, TypeResolver, Lattice, Flags, TySeq};
+use super::{S, Slot, SlotWithNil, TypeContext, TypeResolver, Lattice, TySeq};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Union, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
@@ -20,6 +20,8 @@ pub enum T<'a> {
     Boolean,                            // boolean
     True,                               // true
     False,                              // false
+    Thread,                             // thread
+    UserData,                           // userdata
     Numbers(Cow<'a, Numbers>),          // number, ...
     Strings(Cow<'a, Strings>),          // string, ...
     Tables(Cow<'a, Tables>),            // table, ...
@@ -91,6 +93,8 @@ impl<'a> T<'a> {
             K::Table             => Ok(T::Tables(Cow::Owned(Tables::All))),
             K::EmptyTable        => Ok(T::Tables(Cow::Owned(Tables::Empty))),
             K::Function          => Ok(T::Functions(Cow::Owned(Functions::All))),
+            K::Thread            => Ok(T::Thread),
+            K::UserData          => Ok(T::UserData),
             K::Named(ref name)   => resolv.ty_from_name(name),
             K::Error(..)         => Err(format!("error type not yet supported in checker")),
 
@@ -151,13 +155,15 @@ impl<'a> T<'a> {
 
     pub fn flags(&self) -> Flags {
         match *self {
-            T::Dynamic => T_ALL | T_DYNAMIC,
-            T::All     => T_ALL,
-            T::None    => T_NONE,
-            T::Nil     => T_NIL,
-            T::Boolean => T_BOOLEAN,
-            T::True    => T_TRUE,
-            T::False   => T_FALSE,
+            T::Dynamic  => T_ALL | T_DYNAMIC,
+            T::All      => T_ALL,
+            T::None     => T_NONE,
+            T::Nil      => T_NIL,
+            T::Boolean  => T_BOOLEAN,
+            T::True     => T_TRUE,
+            T::False    => T_FALSE,
+            T::Thread   => T_THREAD,
+            T::UserData => T_USERDATA,
 
             T::Numbers(ref num) => match &**num {
                 &Numbers::One(..) | &Numbers::Some(..) | &Numbers::Int => T_INTEGER,
@@ -175,13 +181,15 @@ impl<'a> T<'a> {
 
     pub fn to_ref<'b: 'a>(&'b self) -> T<'b> {
         match *self {
-            T::Dynamic => T::Dynamic,
-            T::All     => T::All,
-            T::None    => T::None,
-            T::Nil     => T::Nil,
-            T::Boolean => T::Boolean,
-            T::True    => T::True,
-            T::False   => T::False,
+            T::Dynamic  => T::Dynamic,
+            T::All      => T::All,
+            T::None     => T::None,
+            T::Nil      => T::Nil,
+            T::Boolean  => T::Boolean,
+            T::True     => T::True,
+            T::False    => T::False,
+            T::Thread   => T::Thread,
+            T::UserData => T::UserData,
 
             T::Numbers(ref num) => T::Numbers(Cow::Borrowed(&**num)),
             T::Strings(ref str) => T::Strings(Cow::Borrowed(&**str)),
@@ -197,9 +205,9 @@ impl<'a> T<'a> {
     pub fn to_ref_without_nil<'b: 'a>(&'b self) -> T<'b> {
         match *self {
             T::Nil => T::None,
-            T::Union(ref u) if u.has_nil => {
+            T::Union(ref u) if u.simple.contains(U_NIL) => {
                 let mut u = u.clone().into_owned();
-                u.has_nil = false;
+                u.simple.remove(U_NIL);
                 u.simplify()
             },
             _ => self.to_ref(),
@@ -211,9 +219,9 @@ impl<'a> T<'a> {
         match self {
             T::Nil => T::None,
             T::Union(u) => {
-                if u.has_nil {
+                if u.simple.contains(U_NIL) {
                     let mut u = u.into_owned();
-                    u.has_nil = false;
+                    u.simple.remove(U_NIL);
                     u.simplify()
                 } else {
                     T::Union(u)
@@ -239,7 +247,7 @@ impl<'a> T<'a> {
         match *self {
             T::Nil => true,
             T::Builtin(_, ref t) => t.has_nil(),
-            T::Union(ref u) => u.has_nil,
+            T::Union(ref u) => u.simple.contains(U_NIL),
             _ => false,
         }
     }
@@ -248,7 +256,7 @@ impl<'a> T<'a> {
         match *self {
             T::Boolean | T::True => true,
             T::Builtin(_, ref t) => t.has_true(),
-            T::Union(ref u) => u.has_true,
+            T::Union(ref u) => u.simple.contains(U_TRUE),
             _ => false,
         }
     }
@@ -257,7 +265,25 @@ impl<'a> T<'a> {
         match *self {
             T::Boolean | T::False => true,
             T::Builtin(_, ref t) => t.has_false(),
-            T::Union(ref u) => u.has_false,
+            T::Union(ref u) => u.simple.contains(U_FALSE),
+            _ => false,
+        }
+    }
+
+    pub fn has_thread(&self) -> bool {
+        match *self {
+            T::Thread => true,
+            T::Builtin(_, ref t) => t.has_thread(),
+            T::Union(ref u) => u.simple.contains(U_THREAD),
+            _ => false,
+        }
+    }
+
+    pub fn has_userdata(&self) -> bool {
+        match *self {
+            T::UserData => true,
+            T::Builtin(_, ref t) => t.has_userdata(),
+            T::Union(ref u) => u.simple.contains(U_USERDATA),
             _ => false,
         }
     }
@@ -376,6 +402,8 @@ impl<'a> T<'a> {
             T::Boolean    => T::Boolean,
             T::True       => T::True,
             T::False      => T::False,
+            T::Thread     => T::Thread,
+            T::UserData   => T::UserData,
 
             T::Numbers(num)    => T::Numbers(Cow::Owned(num.into_owned())),
             T::Strings(str)    => T::Strings(Cow::Owned(str.into_owned())),
@@ -412,16 +440,18 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::None, ty) => ty.clone().into_send(),
             (ty, &T::None) => ty.clone().into_send(),
 
-            (&T::Nil,     &T::Nil)     => T::Nil,
-            (&T::Boolean, &T::Boolean) => T::Boolean,
-            (&T::Boolean, &T::True)    => T::Boolean,
-            (&T::Boolean, &T::False)   => T::Boolean,
-            (&T::True,    &T::Boolean) => T::Boolean,
-            (&T::False,   &T::Boolean) => T::Boolean,
-            (&T::True,    &T::True)    => T::True,
-            (&T::True,    &T::False)   => T::Boolean,
-            (&T::False,   &T::True)    => T::Boolean,
-            (&T::False,   &T::False)   => T::False,
+            (&T::Nil,      &T::Nil)      => T::Nil,
+            (&T::Boolean,  &T::Boolean)  => T::Boolean,
+            (&T::Boolean,  &T::True)     => T::Boolean,
+            (&T::Boolean,  &T::False)    => T::Boolean,
+            (&T::True,     &T::Boolean)  => T::Boolean,
+            (&T::False,    &T::Boolean)  => T::Boolean,
+            (&T::True,     &T::True)     => T::True,
+            (&T::True,     &T::False)    => T::Boolean,
+            (&T::False,    &T::True)     => T::Boolean,
+            (&T::False,    &T::False)    => T::False,
+            (&T::Thread,   &T::Thread)   => T::Thread,
+            (&T::UserData, &T::UserData) => T::UserData,
 
             (&T::Numbers(ref a), &T::Numbers(ref b)) =>
                 T::Numbers(Cow::Owned(a.union(b, ctx))),
@@ -456,12 +486,14 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::None, _) => true,
             (_, &T::None) => false,
 
-            (&T::Nil,     &T::Nil)     => true,
-            (&T::Boolean, &T::Boolean) => true,
-            (&T::True,    &T::Boolean) => true,
-            (&T::True,    &T::True)    => true,
-            (&T::False,   &T::Boolean) => true,
-            (&T::False,   &T::False)   => true,
+            (&T::Nil,      &T::Nil)      => true,
+            (&T::Boolean,  &T::Boolean)  => true,
+            (&T::True,     &T::Boolean)  => true,
+            (&T::True,     &T::True)     => true,
+            (&T::False,    &T::Boolean)  => true,
+            (&T::False,    &T::False)    => true,
+            (&T::Thread,   &T::Thread)   => true,
+            (&T::UserData, &T::UserData) => true,
 
             (&T::Numbers(ref a),   &T::Numbers(ref b))   => return a.assert_sub(b, ctx),
             (&T::Strings(ref a),   &T::Strings(ref b))   => return a.assert_sub(b, ctx),
@@ -475,10 +507,12 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             },
 
             // a <: b1 \/ b2 === a <: b1 OR a <: b2
-            (&T::Nil,     &T::Union(ref b)) => b.has_nil,
-            (&T::Boolean, &T::Union(ref b)) => b.has_true && b.has_false,
-            (&T::True,    &T::Union(ref b)) => b.has_true,
-            (&T::False,   &T::Union(ref b)) => b.has_false,
+            (&T::Nil,      &T::Union(ref b)) => b.simple.contains(U_NIL),
+            (&T::Boolean,  &T::Union(ref b)) => b.simple.contains(U_BOOLEAN),
+            (&T::True,     &T::Union(ref b)) => b.simple.contains(U_TRUE),
+            (&T::False,    &T::Union(ref b)) => b.simple.contains(U_FALSE),
+            (&T::Thread,   &T::Union(ref b)) => b.simple.contains(U_THREAD),
+            (&T::UserData, &T::Union(ref b)) => b.simple.contains(U_USERDATA),
 
             (&T::Numbers(ref a), &T::Union(ref b)) => {
                 if let Some(ref num) = b.numbers { return a.assert_sub(num, ctx); }
@@ -527,10 +561,12 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::None, _) => true,
             (_, &T::None) => false,
 
-            (&T::Nil,     &T::Nil)     => true,
-            (&T::Boolean, &T::Boolean) => true,
-            (&T::True,    &T::True)    => true,
-            (&T::False,   &T::False)   => true,
+            (&T::Nil,      &T::Nil)      => true,
+            (&T::Boolean,  &T::Boolean)  => true,
+            (&T::True,     &T::True)     => true,
+            (&T::False,    &T::False)    => true,
+            (&T::Thread,   &T::Thread)   => true,
+            (&T::UserData, &T::UserData) => true,
 
             (&T::Numbers(ref a),   &T::Numbers(ref b))   => return a.assert_eq(b, ctx),
             (&T::Strings(ref a),   &T::Strings(ref b))   => return a.assert_eq(b, ctx),
@@ -561,13 +597,15 @@ impl<'a, 'b> ops::BitOr<T<'b>> for T<'a> {
 impl<'a, 'b> PartialEq<T<'b>> for T<'a> {
     fn eq(&self, other: &T<'b>) -> bool {
         match (self, other) {
-            (&T::Dynamic, &T::Dynamic) => true,
-            (&T::All,     &T::All)     => true,
-            (&T::None,    &T::None)    => true,
-            (&T::Nil,     &T::Nil)     => true,
-            (&T::Boolean, &T::Boolean) => true,
-            (&T::True,    &T::True)    => true,
-            (&T::False,   &T::False)   => true,
+            (&T::Dynamic,  &T::Dynamic)  => true,
+            (&T::All,      &T::All)      => true,
+            (&T::None,     &T::None)     => true,
+            (&T::Nil,      &T::Nil)      => true,
+            (&T::Boolean,  &T::Boolean)  => true,
+            (&T::True,     &T::True)     => true,
+            (&T::False,    &T::False)    => true,
+            (&T::Thread,   &T::Thread)   => true,
+            (&T::UserData, &T::UserData) => true,
 
             (&T::Numbers(ref a),   &T::Numbers(ref b))   => *a == *b,
             (&T::Strings(ref a),   &T::Strings(ref b))   => *a == *b,
@@ -585,13 +623,15 @@ impl<'a, 'b> PartialEq<T<'b>> for T<'a> {
 impl<'a> fmt::Debug for T<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            T::Dynamic => write!(f, "?"),
-            T::All     => write!(f, "any"),
-            T::None    => write!(f, "<bottom>"),
-            T::Nil     => write!(f, "nil"),
-            T::Boolean => write!(f, "boolean"),
-            T::True    => write!(f, "true"),
-            T::False   => write!(f, "false"),
+            T::Dynamic  => write!(f, "?"),
+            T::All      => write!(f, "any"),
+            T::None     => write!(f, "<bottom>"),
+            T::Nil      => write!(f, "nil"),
+            T::Boolean  => write!(f, "boolean"),
+            T::True     => write!(f, "true"),
+            T::False    => write!(f, "false"),
+            T::Thread   => write!(f, "thread"),
+            T::UserData => write!(f, "userdata"),
 
             T::Numbers(ref num)    => fmt::Debug::fmt(num, f),
             T::Strings(ref str)    => fmt::Debug::fmt(str, f),
@@ -760,10 +800,18 @@ mod tests {
         check!(T::empty_table(), T::array(just(T::integer()));
                T::array(just(T::integer())));
 
+        // others
+        check!(T::Thread, T::Thread; T::Thread);
+        check!(T::UserData, T::UserData; T::UserData);
+        check!(T::All, T::UserData; T::All);
+        check!(T::Thread, T::Dynamic; T::Dynamic);
+
         // general unions
         check!(T::True, T::False; T::Boolean);
         check!(T::int(3) | T::Nil, T::int(4) | T::Nil;
                T::ints(vec![3, 4]) | T::Nil);
+        check!(T::int(3) | T::UserData | T::Nil, T::Nil | T::Thread | T::int(4);
+               T::Thread | T::ints(vec![3, 4]) | T::UserData | T::Nil);
         check!(T::ints(vec![3, 5]) | T::Nil, T::int(4) | T::string();
                T::string() | T::ints(vec![3, 4, 5]) | T::Nil);
         check!(T::int(3) | T::string(), T::str(s("wat")) | T::int(4);

@@ -386,6 +386,8 @@ pub enum K {
     Map(Spanned<Kind>, Spanned<SlotKind>),
     Function,
     Func(Vec<Spanned<FuncKind>>),
+    Thread,
+    UserData,
     Named(Spanned<Name>),
     Union(Vec<Spanned<Kind>>),
     Error(Option<Spanned<Str>>),
@@ -411,6 +413,8 @@ impl fmt::Debug for K {
             K::Map(ref k, ref v)  => write!(f, "Map({:?}, {:?})", *k, *v),
             K::Function           => write!(f, "Function"),
             K::Named(ref name)    => write!(f, "{:?}", *name),
+            K::Thread             => write!(f, "Thread"),
+            K::UserData           => write!(f, "UserData"),
             K::Error(None)        => write!(f, "Error"),
             K::Error(Some(ref s)) => write!(f, "Error({:?})", *s),
 
