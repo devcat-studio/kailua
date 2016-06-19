@@ -498,7 +498,7 @@ impl TypeContext for Context {
     }
 
     fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
-        println!("adding a constraint {:?} <: {:?}", lhs, *rhs);
+        debug!("adding a constraint {:?} <: {:?}", lhs, *rhs);
         if let Some(eb) = self.tvar_eq.get_bound(lhs).and_then(|b| b.bound.clone()) {
             try!((*eb).assert_sub(rhs, self));
         } else {
@@ -518,7 +518,7 @@ impl TypeContext for Context {
     }
 
     fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
-        println!("adding a constraint {:?} :> {:?}", lhs, *rhs);
+        debug!("adding a constraint {:?} :> {:?}", lhs, *rhs);
         if let Some(eb) = self.tvar_eq.get_bound(lhs).and_then(|b| b.bound.clone()) {
             try!(rhs.assert_sub(&eb, self));
         } else {
@@ -538,7 +538,7 @@ impl TypeContext for Context {
     }
 
     fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
-        println!("adding a constraint {:?} = {:?}", lhs, *rhs);
+        debug!("adding a constraint {:?} = {:?}", lhs, *rhs);
         if let Some(eb) = self.tvar_eq.add_bound(lhs, rhs).map(|b| b.clone().into_send()) {
             // the original bound is not consistent, bound = rhs still has to hold
             if let Err(e) = eb.assert_eq(rhs, self) {
@@ -558,7 +558,7 @@ impl TypeContext for Context {
     }
 
     fn assert_tvar_sub_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()> {
-        println!("adding a constraint {:?} <: {:?}", lhs, rhs);
+        debug!("adding a constraint {:?} <: {:?}", lhs, rhs);
         if !self.tvar_eq.is(lhs, rhs) {
             try!(self.tvar_sub.add_relation(lhs, rhs));
             try!(self.tvar_sup.add_relation(rhs, lhs));
@@ -567,7 +567,7 @@ impl TypeContext for Context {
     }
 
     fn assert_tvar_eq_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()> {
-        println!("adding a constraint {:?} = {:?}", lhs, rhs);
+        debug!("adding a constraint {:?} = {:?}", lhs, rhs);
         // do not update tvar_sub & tvar_sup, tvar_eq will be consulted first
         self.tvar_eq.add_relation(lhs, rhs)
     }
@@ -579,7 +579,7 @@ impl TypeContext for Context {
     }
 
     fn assert_mark_true(&mut self, mark: Mark) -> CheckResult<()> {
-        println!("asserting {:?} is true", mark);
+        debug!("asserting {:?} is true", mark);
         let mark_ = self.mark_infos.find(mark.0 as usize);
         let value = {
             // take the value out of the mapping. even if the mark is somehow recursively consulted
@@ -591,7 +591,7 @@ impl TypeContext for Context {
     }
 
     fn assert_mark_false(&mut self, mark: Mark) -> CheckResult<()> {
-        println!("asserting {:?} is false", mark);
+        debug!("asserting {:?} is false", mark);
         let mark_ = self.mark_infos.find(mark.0 as usize);
         let value = {
             // same as above, but it's false instead
@@ -602,7 +602,7 @@ impl TypeContext for Context {
     }
 
     fn assert_mark_eq(&mut self, lhs: Mark, rhs: Mark) -> CheckResult<()> {
-        println!("asserting {:?} and {:?} are same", lhs, rhs);
+        debug!("asserting {:?} and {:?} are same", lhs, rhs);
 
         if lhs == rhs { return Ok(()); }
 
@@ -709,7 +709,7 @@ impl TypeContext for Context {
     }
 
     fn assert_mark_imply(&mut self, lhs: Mark, rhs: Mark) -> CheckResult<()> {
-        println!("asserting {:?} implies {:?}", lhs, rhs);
+        debug!("asserting {:?} implies {:?}", lhs, rhs);
 
         if lhs == rhs { return Ok(()); }
 
@@ -796,12 +796,12 @@ impl TypeContext for Context {
     }
 
     fn assert_mark_require_eq(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()> {
-        println!("asserting {:?} requires {:?} = {:?}", mark, *base, *ty);
+        debug!("asserting {:?} requires {:?} = {:?}", mark, *base, *ty);
         self.assert_mark_require(mark, base, Rel::Eq, ty)
     }
 
     fn assert_mark_require_sup(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()> {
-        println!("asserting {:?} requires {:?} :> {:?}", mark, *base, *ty);
+        debug!("asserting {:?} requires {:?} :> {:?}", mark, *base, *ty);
         self.assert_mark_require(mark, base, Rel::Sup, ty)
     }
 }
@@ -908,13 +908,13 @@ impl<'ctx> Env<'ctx> {
             info = newinfo;
         }
 
-        println!("adding a local variable {:?} as {:?}", *name, info);
+        debug!("adding a local variable {:?} as {:?}", *name, info);
         self.current_scope_mut().put(name.to_owned(), info);
     }
 
     pub fn assign_to_var(&mut self, name: &Name, info: TyInfo) -> CheckResult<()> {
         if let Some(previnfo) = self.get_var_mut(name).map(|info| info.clone()) {
-            println!("assigning {:?} to a variable {:?} with type {:?}",
+            debug!("assigning {:?} to a variable {:?} with type {:?}",
                      info, *name, previnfo);
             if let Err(e) = previnfo.accept(&info, self.context()) {
                 return Err(format!("cannot assign {:?} to the variable {:?} with type {:?}: {}",
@@ -924,7 +924,7 @@ impl<'ctx> Env<'ctx> {
             }
         }
 
-        println!("adding a global variable {:?} as {:?}", *name, info);
+        debug!("adding a global variable {:?} as {:?}", *name, info);
         let newinfo = Slot::new(S::VarOrCurrently(T::Nil, self.context().gen_mark()));
         newinfo.accept(&info, self.context()).unwrap();
         self.context.global_scope_mut().put(name.to_owned(), newinfo);
@@ -933,7 +933,7 @@ impl<'ctx> Env<'ctx> {
 
     pub fn assume_var(&mut self, name: &Name, info: TyInfo) -> CheckResult<()> {
         if let Some(previnfo) = self.get_local_var_mut(name) {
-            println!("(force) adding a local variable {:?} as {:?}", *name, info);
+            debug!("(force) adding a local variable {:?} as {:?}", *name, info);
             *previnfo = info;
             return Ok(());
         }
@@ -941,7 +941,7 @@ impl<'ctx> Env<'ctx> {
     }
 
     pub fn assume_global_var(&mut self, name: &Name, info: TyInfo) -> CheckResult<()> {
-        println!("(force) adding a global variable {:?} as {:?}", *name, info);
+        debug!("(force) adding a global variable {:?} as {:?}", *name, info);
         self.context.global_scope_mut().put(name.to_owned(), info);
         Ok(())
     }

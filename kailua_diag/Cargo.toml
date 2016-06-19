@@ -2,6 +2,7 @@
 name = "kailua_diag"
 version = "0.1.0"
 authors = ["Kang Seonghoon <public+git@mearie.org>"]
+publish = false
 
 [dependencies]
 term = "0.4.4"

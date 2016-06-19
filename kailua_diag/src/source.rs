@@ -181,7 +181,11 @@ impl<T> ops::DerefMut for Spanned<T> {
 
 impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}{:?}", self.base, self.span)
+        try!(fmt::Debug::fmt(&self.base, f));
+        if f.alternate() {
+            try!(fmt::Debug::fmt(&self.span, f));
+        }
+        Ok(())
     }
 }
 

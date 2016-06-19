@@ -565,7 +565,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
     }
 
     fn do_assert_sub(&self, other: &T<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
-        println!("asserting a constraint {:?} <: {:?}", *self, *other);
+        debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
         let ok = match (self, other) {
             // built-in types are destructured first
@@ -640,7 +640,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
     }
 
     fn do_assert_eq(&self, other: &T<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
-        println!("asserting a constraint {:?} = {:?}", *self, *other);
+        debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
         let ok = match (self, other) {
             // built-in types are destructured first

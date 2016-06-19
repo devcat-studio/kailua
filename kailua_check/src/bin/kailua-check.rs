@@ -1,6 +1,8 @@
 extern crate kailua_diag;
 extern crate kailua_syntax;
 extern crate kailua_check;
+#[macro_use] extern crate log;
+extern crate env_logger;
 
 use std::str;
 use std::env;
@@ -39,7 +41,7 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
                 // dummy: they should not affect anything here
                 Ok(Vec::new().with_loc(Span::dummy()))
             } else {
-                println!("requiring {:?}", kailua_syntax::Str::from(path));
+                info!("requiring {:?}", kailua_syntax::Str::from(path));
 
                 let path = try!(str::from_utf8(path).map_err(|e| e.to_string()));
                 let path = if path.ends_with(".lua") {
@@ -69,10 +71,13 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
 }
 
 pub fn main() {
+    env_logger::init().unwrap();
     for path in env::args().skip(1) {
         println!("--== {} ==--", path);
         if let Err(e) = parse_and_check(&Path::new(&path)) {
             println!("error: {}", e);
+        } else {
+            println!("done.");
         }
         println!("");
     }

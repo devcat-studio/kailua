@@ -147,7 +147,7 @@ impl<'a> S<'a> {
     }
 
     pub fn assert_sub<'b>(&self, other: &S<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
-        println!("asserting a constraint {:?} <: {:?}", *self, *other);
+        debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
         macro_rules! m {
             ($(; true, $tm:expr)*
@@ -209,7 +209,7 @@ impl<'a> S<'a> {
     }
 
     pub fn assert_eq<'b>(&self, other: &S<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
-        println!("asserting a constraint {:?} = {:?}", *self, *other);
+        debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
         macro_rules! m {
             ($(; true, $tm:expr)*

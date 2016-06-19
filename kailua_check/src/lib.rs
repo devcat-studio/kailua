@@ -1,6 +1,7 @@
 extern crate kailua_diag;
 extern crate kailua_syntax;
 #[macro_use] extern crate bitflags;
+#[macro_use] extern crate log;
 extern crate vec_map;
 
 pub use diag::{Error, CheckResult};

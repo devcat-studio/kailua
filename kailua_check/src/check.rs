@@ -460,7 +460,7 @@ impl<'env> Checker<'env> {
     }
 
     fn visit_stmt(&mut self, stmt: &Spanned<Stmt>) -> CheckResult<Exit> {
-        println!("visiting stmt {:?}", *stmt);
+        debug!("visiting stmt {:?}", *stmt);
         match *stmt.base {
             St::Void(ref exp) => {
                 try!(self.visit_exp(exp));
@@ -690,8 +690,7 @@ impl<'env> Checker<'env> {
                     if let Some(builtin) = Builtin::from_name(bname) {
                         ty = T::Builtin(builtin, Box::new(ty));
                     } else {
-                        println!("unrecognized builtin name {:?} for {:?} ignored",
-                                 *bname, *name);
+                        warn!("unrecognized builtin name {:?} for {:?} ignored", *bname, *name);
                     }
                 }
                 let sty = match kindm {
@@ -882,7 +881,7 @@ impl<'env> Checker<'env> {
     }
 
     fn visit_exp(&mut self, exp: &Spanned<Exp>) -> CheckResult<SlotSeq> {
-        println!("visiting exp {:?}", *exp);
+        debug!("visiting exp {:?}", *exp);
         match *exp.base {
             Ex::Nil => Ok(SlotSeq::from(T::Nil)),
             Ex::False => Ok(SlotSeq::from(T::False)),
@@ -1041,7 +1040,7 @@ impl<'env> Checker<'env> {
     // similar to visit_exp but also tries to collect Cond
     fn collect_conds_from_exp(&mut self,
                               exp: &Spanned<Exp>) -> CheckResult<(Option<Cond>, SlotSeq)> {
-        println!("collecting conditions from exp {:?}", *exp);
+        debug!("collecting conditions from exp {:?}", *exp);
         match *exp.base {
             Ex::Un(Spanned { base: UnOp::Not, .. }, ref e) => {
                 let (cond, seq) = try!(self.collect_conds_from_exp(e));
@@ -1154,7 +1153,7 @@ impl<'env> Checker<'env> {
     }
 
     fn assert_cond(&mut self, cond: Cond, negated: bool) -> CheckResult<()> {
-        println!("asserting condition {:?} (negated {:?})", cond, negated);
+        debug!("asserting condition {:?} (negated {:?})", cond, negated);
         match cond {
             Cond::Flags(info, flags) => {
                 let flags = if negated { !flags } else { flags };

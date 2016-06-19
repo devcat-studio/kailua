@@ -101,7 +101,7 @@ impl Lattice for TySeq {
     }
 
     fn do_assert_sub(&self, other: &TySeq, ctx: &mut TypeContext) -> CheckResult<()> {
-        println!("asserting a constraint {:?} <: {:?}", *self, *other);
+        debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
         let mut selfhead = self.head.iter().fuse();
         let mut otherhead = other.head.iter().fuse();
@@ -118,7 +118,7 @@ impl Lattice for TySeq {
     }
 
     fn do_assert_eq(&self, other: &TySeq, ctx: &mut TypeContext) -> CheckResult<()> {
-        println!("asserting a constraint {:?} = {:?}", *self, *other);
+        debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
         let mut selfhead = self.head.iter().fuse();
         let mut otherhead = other.head.iter().fuse();
@@ -244,7 +244,7 @@ impl Lattice for SlotSeq {
     }
 
     fn do_assert_sub(&self, other: &SlotSeq, ctx: &mut TypeContext) -> CheckResult<()> {
-        println!("asserting a constraint {:?} <: {:?}", *self, *other);
+        debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
         let mut selfhead = self.head.iter().fuse();
         let mut otherhead = other.head.iter().fuse();
@@ -261,7 +261,7 @@ impl Lattice for SlotSeq {
     }
 
     fn do_assert_eq(&self, other: &SlotSeq, ctx: &mut TypeContext) -> CheckResult<()> {
-        println!("asserting a constraint {:?} = {:?}", *self, *other);
+        debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
         let mut selfhead = self.head.iter().fuse();
         let mut otherhead = other.head.iter().fuse();
