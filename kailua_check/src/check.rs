@@ -41,6 +41,64 @@ impl<'chk, 'env> Drop for ScopedChecker<'chk, 'env> {
     fn drop(&mut self) { self.0.env.leave(); }
 }
 
+// conditions out of boolean expression, used for assertion and branch typing
+#[derive(Clone, Debug)]
+enum Cond {
+    Flags(TyInfo, Flags),
+    And(Box<Cond>, Box<Cond>),
+    Or(Box<Cond>, Box<Cond>),
+    Not(Box<Cond>),
+}
+
+fn literal_ty_to_flags(info: &TyInfo) -> CheckResult<Option<Flags>> {
+    let slot = info.borrow();
+    if let Some(s) = slot.unlift().as_string() {
+        let tyname = &***s;
+        let flags = match tyname {
+            b"nil" => T_NIL,
+            b"number" => T_NUMBER,
+            b"string" => T_STRING,
+            b"boolean" => T_BOOLEAN,
+            b"table" => T_TABLE,
+            b"function" => T_FUNCTION,
+            b"thread" => T_THREAD,
+            b"userdata" => T_USERDATA,
+            s => return Err(format!("unknown type name {:?}", s)),
+        };
+        Ok(Some(flags))
+    } else {
+        Ok(None)
+    }
+}
+
+// AssertType built-in accepts more strings than Type
+fn ext_literal_ty_to_flags(info: &TyInfo) -> CheckResult<Option<Flags>> {
+    let slot = info.borrow();
+    if let Some(s) = slot.unlift().as_string() {
+        let tyname = &***s;
+        let (tyname, nilflags) = if tyname.ends_with(b"?") {
+            (&tyname[..tyname.len()-1], T_NIL)
+        } else {
+            (tyname, T_NONE)
+        };
+        let flags = match tyname {
+            b"nil" => T_NIL,
+            b"int" | b"integer" => T_INTEGER, // XXX the real impl should follow
+            b"number" => T_NUMBER,
+            b"string" => T_STRING,
+            b"boolean" => T_BOOLEAN,
+            b"table" => T_TABLE,
+            b"function" => T_FUNCTION,
+            b"thread" => T_THREAD,
+            b"userdata" => T_USERDATA,
+            s => return Err(format!("unknown type name {:?}", s)),
+        };
+        Ok(Some(nilflags | flags))
+    } else {
+        Ok(None)
+    }
+}
+
 pub struct Checker<'env> {
     env: &'env mut Env<'env>,
     opts: &'env mut Options,
@@ -60,7 +118,7 @@ impl<'env> Checker<'env> {
     // returns a pair of type flags that is an exact lower and upper bound for that type
     // used as an approximate type bound testing like arithmetics;
     // better be replaced with a non-instantiating assertion though.
-    fn get_type_bounds(&self, ty: &T) -> (Flags, Flags) {
+    fn get_type_bounds(&self, ty: &T) -> (/*lb*/ Flags, /*ub*/ Flags) {
         let flags = ty.flags();
         let (lb, ub) = ty.has_tvar().map_or((T_NONE, T_NONE), |v| self.env.get_tvar_bounds(v));
         (flags | lb, flags | ub)
@@ -220,6 +278,10 @@ impl<'env> Checker<'env> {
             }
 
             BinOp::And => {
+                if lty.is_dynamic() || rty.is_dynamic() {
+                    return Ok(TyInfo::from(T::Dynamic));
+                }
+
                 if lty.has_tvar().is_none() {
                     // True and T => T
                     if lty.is_truthy() { return Ok(TyInfo::from(rty.clone())); }
@@ -231,10 +293,14 @@ impl<'env> Checker<'env> {
             }
 
             BinOp::Or => {
+                if lty.is_dynamic() || rty.is_dynamic() {
+                    return Ok(TyInfo::from(T::Dynamic));
+                }
+
                 if lty.has_tvar().is_none() {
                     // True or T => True
                     if lty.is_truthy() { return Ok(TyInfo::from(lty.clone())); }
-                    // False and T => T
+                    // False or T => T
                     if lty.is_falsy() { return Ok(TyInfo::from(rty.clone())); }
                 }
                 // unsure, both can be possible
@@ -619,23 +685,15 @@ impl<'env> Checker<'env> {
             }
 
             St::KailuaAssume(scope, ref name, kindm, ref kind, ref builtin) => {
-                let builtin = if let Some(ref builtin) = *builtin {
-                    match &****builtin {
-                        b"require" => Some(Builtin::Require),
-                        _ => {
-                            println!("unrecognized builtin name {:?} for {:?} ignored",
-                                     *builtin, *name);
-                            None
-                        }
+                let mut ty = try!(T::from(kind, &mut self.env));
+                if let Some(ref bname) = *builtin {
+                    if let Some(builtin) = Builtin::from_name(bname) {
+                        ty = T::Builtin(builtin, Box::new(ty));
+                    } else {
+                        println!("unrecognized builtin name {:?} for {:?} ignored",
+                                 *bname, *name);
                     }
-                } else {
-                    None
-                };
-                let ty = if let Some(builtin) = builtin {
-                    T::Builtin(builtin, Box::new(try!(T::from(kind, &mut self.env))))
-                } else {
-                    try!(T::from(kind, &mut self.env))
-                };
+                }
                 let sty = match kindm {
                     M::None => S::VarOrCurrently(ty, self.context().gen_mark()),
                     M::Var => S::Var(ty),
@@ -728,6 +786,77 @@ impl<'env> Checker<'env> {
         }
     }
 
+    fn visit_func_call(&mut self, funcinfo: &T, args: &[Spanned<Exp>]) -> CheckResult<SlotSeq> {
+        if !self.get_type_bounds(funcinfo).1.is_callable() {
+            return Err(format!("tried to call the non-function {:?}", funcinfo));
+        }
+        if funcinfo.is_dynamic() {
+            return Ok(SlotSeq::from(T::Dynamic));
+        }
+        let funcinfo = if let Some(ty) = self.resolve_exact_type(&funcinfo) {
+            ty
+        } else {
+            return Err(format!("the type {:?} is callable but not known enough to call",
+                               funcinfo));
+        };
+
+        macro_rules! check {
+            ($sub:expr) => {
+                if let Err(e) = $sub {
+                    return Err(format!("failed to call {:?}: {}", funcinfo, e));
+                }
+            }
+        }
+
+        let argtys = try!(self.visit_explist(args)).unlift();
+
+        // check if funcinfo.args :> argtys
+        let returns = match *funcinfo.has_functions().unwrap() {
+            Functions::Simple(ref func) => {
+                check!(argtys.assert_sub(&func.args, self.context()));
+                func.returns.clone()
+            }
+            Functions::Multi(ref _funcs) => unimplemented!(), // XXX
+            Functions::All => {
+                return Err(format!("cannot call {:?} without downcasting", funcinfo));
+            }
+        };
+
+        match funcinfo.builtin() {
+            // require("foo")
+            Some(Builtin::Require) => {
+                if args.len() < 1 {
+                    return Err(format!("`require` needs at least one argument"));
+                }
+                if let Ex::Str(ref path) = *args[0].base {
+                    let block = match self.opts.require_block(path) {
+                        Ok(block) => block,
+                        Err(e) => return Err(format!("failed to require {:?}: {}",
+                                                     *path, e)),
+                    };
+                    let mut env = Env::new(self.env.context());
+                    let mut sub = Checker::new(&mut env, self.opts, self.report);
+                    try!(sub.visit_block(&block));
+                }
+                Ok(SlotSeq::from(T::Dynamic)) // XXX
+            },
+
+            // assert(expr)
+            Some(Builtin::Assert) => {
+                if args.len() < 1 {
+                    return Err(format!("`assert` needs at least one argument"));
+                }
+                let (cond, _seq) = try!(self.collect_conds_from_exp(&args[0]));
+                if let Some(cond) = cond {
+                    try!(self.assert_cond(cond, false));
+                }
+                Ok(SlotSeq::from_seq(returns))
+            }
+
+            _ => Ok(SlotSeq::from_seq(returns)),
+        }
+    }
+
     fn visit_exp(&mut self, exp: &Spanned<Exp>) -> CheckResult<SlotSeq> {
         println!("visiting exp {:?}", *exp);
         match *exp.base {
@@ -802,62 +931,9 @@ impl<'env> Checker<'env> {
 
             Ex::FuncCall(ref func, ref args) => {
                 let funcinfo = try!(self.visit_exp(func)).into_first();
-
                 let funcinfo = funcinfo.borrow();
                 let funcinfo = funcinfo.unlift();
-                if !self.get_type_bounds(&funcinfo).1.is_callable() {
-                    return Err(format!("tried to call the non-function {:?}", funcinfo));
-                }
-                if funcinfo.is_dynamic() {
-                    return Ok(SlotSeq::from(T::Dynamic));
-                }
-                let funcinfo = if let Some(ty) = self.resolve_exact_type(&funcinfo) {
-                    ty
-                } else {
-                    return Err(format!("the type {:?} is callable but not known enough to call",
-                                       funcinfo));
-                };
-
-                macro_rules! check {
-                    ($sub:expr) => {
-                        if let Err(e) = $sub {
-                            return Err(format!("failed to call {:?}: {}", funcinfo, e));
-                        }
-                    }
-                }
-
-                let argtys = try!(self.visit_explist(args)).unlift();
-
-                // check if funcinfo.args :> argtys
-                let returns = match *funcinfo.has_functions().unwrap() {
-                    Functions::Simple(ref func) => {
-                        check!(argtys.assert_sub(&func.args, self.context()));
-                        func.returns.clone()
-                    }
-                    Functions::Multi(ref _funcs) => unimplemented!(), // XXX
-                    Functions::All => {
-                        return Err(format!("cannot call {:?} without downcasting", funcinfo));
-                    }
-                };
-
-                match funcinfo.builtin() {
-                    // require("foo")
-                    Some(Builtin::Require) if args.len() >= 1 => {
-                        if let Ex::Str(ref path) = *args[0].base {
-                            let block = match self.opts.require_block(path) {
-                                Ok(block) => block,
-                                Err(e) => return Err(format!("failed to require {:?}: {}",
-                                                             *path, e)),
-                            };
-                            let mut env = Env::new(self.env.context());
-                            let mut sub = Checker::new(&mut env, self.opts, self.report);
-                            try!(sub.visit_block(&block));
-                        }
-                        Ok(SlotSeq::from(T::Dynamic)) // XXX
-                    },
-
-                    _ => Ok(SlotSeq::from_seq(returns)),
-                }
+                self.visit_func_call(funcinfo, args)
             },
 
             Ex::MethodCall(ref e, ref _method, ref args) => {
@@ -911,6 +987,179 @@ impl<'env> Checker<'env> {
             seq.tail = last.tail;
         }
         Ok(seq)
+    }
+
+    fn collect_type_from_exp(&mut self,
+                             exp: &Spanned<Exp>) -> CheckResult<(Option<TyInfo>, SlotSeq)> {
+        if let Ex::FuncCall(ref func, ref args) = *exp.base {
+            let funcinfo = try!(self.visit_exp(func)).into_first();
+            let funcinfo = funcinfo.borrow();
+            let funcinfo = funcinfo.unlift();
+            let typeofexp = if funcinfo.builtin() == Some(Builtin::Type) {
+                // there should be a single argument there
+                if args.len() != 1 {
+                    return Err(format!("{:?} should be called with one argument, received {:?}",
+                                       *func, *args));
+                }
+                let arg = try!(self.visit_exp(&args[0])).into_first();
+                Some(arg)
+            } else {
+                None
+            };
+            let seq = try!(self.visit_func_call(funcinfo, args));
+            Ok((typeofexp, seq))
+        } else {
+            let seq = try!(self.visit_exp(exp));
+            Ok((None, seq))
+        }
+    }
+
+    // similar to visit_exp but also tries to collect Cond
+    fn collect_conds_from_exp(&mut self,
+                              exp: &Spanned<Exp>) -> CheckResult<(Option<Cond>, SlotSeq)> {
+        println!("collecting conditions from exp {:?}", *exp);
+        match *exp.base {
+            Ex::Un(Spanned { base: UnOp::Not, .. }, ref e) => {
+                let (cond, seq) = try!(self.collect_conds_from_exp(e));
+                let cond = match cond {
+                    Some(Cond::Not(cond)) => match *cond {
+                        Cond::Not(cond) => Some(*cond),
+                        cond => Some(Cond::Not(Box::new(cond))),
+                    },
+                    Some(Cond::Flags(info, flags)) => Some(Cond::Flags(info, !flags)),
+                    Some(cond) => Some(Cond::Not(Box::new(cond))),
+                    None => None,
+                };
+                let info = seq.into_first();
+                let info = try!(self.check_un_op(UnOp::Not, &info));
+                Ok((cond, SlotSeq::from_slot(info)))
+            }
+
+            Ex::Bin(ref l, Spanned { base: BinOp::Eq, .. }, ref r) => {
+                let (lty, linfo) = try!(self.collect_type_from_exp(l));
+                let (rty, rinfo) = try!(self.collect_type_from_exp(r));
+
+                let linfo = linfo.into_first();
+                let rinfo = rinfo.into_first();
+
+                // detect an expression of the form `type(x) == y`.
+                // it is technically possible to detect `type(x) == type(y)` as well,
+                // but it is not common and results in a very subtle semi-equivalence condition
+                // that we cannot readily handle.
+                let cond = match (lty, rty) {
+                    (Some(ty), None) => {
+                        if let Some(flags) = try!(literal_ty_to_flags(&rinfo)) {
+                            Some(Cond::Flags(ty, flags))
+                        } else {
+                            None // the rhs is not a literal, so we don't what it is
+                        }
+                    },
+                    (None, Some(ty)) => {
+                        if let Some(flags) = try!(literal_ty_to_flags(&linfo)) {
+                            Some(Cond::Flags(ty, flags))
+                        } else {
+                            None
+                        }
+                    },
+                    (_, _) => None,
+                };
+                Ok((cond, SlotSeq::from(T::Boolean)))
+            }
+
+            Ex::Bin(ref l, Spanned { base: BinOp::And, .. }, ref r) => {
+                let (lcond, lseq) = try!(self.collect_conds_from_exp(l));
+                let (rcond, rseq) = try!(self.collect_conds_from_exp(r));
+
+                let cond = match (lcond, rcond) {
+                    (None, cond) | (cond, None) => cond,
+                    (Some(Cond::Flags(lty, lflags)), Some(Cond::Flags(rty, rflags))) => {
+                        let identical = &*lty.borrow() as *const _ == &*rty.borrow() as *const _;
+                        if identical {
+                            Some(Cond::Flags(lty, lflags & rflags))
+                        } else {
+                            Some(Cond::And(Box::new(Cond::Flags(lty, lflags)),
+                                           Box::new(Cond::Flags(rty, rflags))))
+                        }
+                    },
+                    (Some(lcond), Some(rcond)) => {
+                        Some(Cond::And(Box::new(lcond), Box::new(rcond)))
+                    },
+                };
+
+                let linfo = lseq.into_first();
+                let rinfo = rseq.into_first();
+                let info = try!(self.check_bin_op(&linfo, BinOp::And, &rinfo));
+                Ok((cond, SlotSeq::from_slot(info)))
+            }
+
+            Ex::Bin(ref l, Spanned { base: BinOp::Or, .. }, ref r) => {
+                let (lcond, lseq) = try!(self.collect_conds_from_exp(l));
+                let (rcond, rseq) = try!(self.collect_conds_from_exp(r));
+
+                let cond = match (lcond, rcond) {
+                    (None, cond) | (cond, None) => cond,
+                    (Some(Cond::Flags(lty, lflags)), Some(Cond::Flags(rty, rflags))) => {
+                        let identical = &*lty.borrow() as *const _ == &*rty.borrow() as *const _;
+                        if identical {
+                            Some(Cond::Flags(lty, lflags | rflags))
+                        } else {
+                            Some(Cond::Or(Box::new(Cond::Flags(lty, lflags)),
+                                          Box::new(Cond::Flags(rty, rflags))))
+                        }
+                    },
+                    (Some(lcond), Some(rcond)) => {
+                        Some(Cond::Or(Box::new(lcond), Box::new(rcond)))
+                    },
+                };
+
+                let linfo = lseq.into_first();
+                let rinfo = rseq.into_first();
+                let info = try!(self.check_bin_op(&linfo, BinOp::Or, &rinfo));
+                Ok((cond, SlotSeq::from_slot(info)))
+            }
+
+            _ => {
+                let seq = try!(self.visit_exp(exp));
+                let info = seq.clone().into_first();
+                Ok((Some(Cond::Flags(info, T_TRUTHY)), seq))
+            }
+        }
+    }
+
+    fn assert_cond(&mut self, cond: Cond, negated: bool) -> CheckResult<()> {
+        println!("asserting condition {:?} (negated {:?})", cond, negated);
+        match cond {
+            Cond::Flags(info, flags) => {
+                let flags = if negated { !flags } else { flags };
+                let filtered = {
+                    let slot = info.borrow();
+                    let ty = slot.unlift().clone().into_send();
+                    try!(ty.filter_by_flags(flags, self.context()))
+                };
+                // TODO: won't work well with `var` slots
+                try!(info.accept(&TyInfo::from(filtered), self.context()));
+            }
+
+            Cond::And(lcond, rcond) => {
+                if !negated {
+                    try!(self.assert_cond(*lcond, negated));
+                    try!(self.assert_cond(*rcond, negated));
+                }
+            }
+
+            Cond::Or(lcond, rcond) => {
+                if negated {
+                    try!(self.assert_cond(*lcond, negated));
+                    try!(self.assert_cond(*rcond, negated));
+                }
+            }
+
+            Cond::Not(cond) => {
+                try!(self.assert_cond(*cond, !negated));
+            }
+        }
+
+        Ok(())
     }
 }
 

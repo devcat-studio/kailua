@@ -119,6 +119,14 @@ fn test_check() {
     assert_ok!("local a = (53 or nil) + 42");
     assert_err!("local a = (nil or 'string') + 42");
     assert_ok!("local a = (nil or 53) + 42");
+    assert_ok!("--# assume p: ?
+                local a = (p and 'foo') + 54");
+    assert_ok!("--# assume p: ?
+                local a = ('foo' and p) + 54");
+    assert_ok!("--# assume p: ?
+                local a = (p or 'foo') + 54");
+    assert_ok!("--# assume p: ?
+                local a = ('foo' or p) + 54");
     assert_ok!("--# assume p: string | number
                 local q = p .. 3");
     assert_err!("--# assume p: string | number
@@ -427,4 +435,34 @@ fn test_check() {
     assert_err!("print('hello')");
     assert_ok!("--# open lua51
                 print('hello')");
+    assert_ok!("--# open lua51
+                --# assume p: integer|nil
+                assert(p)
+                print(p + 5)");
+    assert_err!("--# open lua51
+                 --# assume p: integer|nil
+                 --# assume q: integer|nil
+                 assert(p or q)
+                 print(p + 5)");
+    assert_ok!("--# open lua51
+                --# assume p: integer|nil
+                --# assume q: integer|nil
+                assert(p and q)
+                print(p + q)");
+    assert_ok!("--# open lua51
+                --# assume p: integer|nil
+                --# assume q: integer|nil
+                assert(p and not q)
+                print(p + 5)");
+    assert_err!("--# open lua51
+                 --# assume p: integer|nil
+                 --# assume q: integer|nil
+                 assert(p and not q)
+                 print(q + 5)");
+    assert_ok!("--# open lua51
+                --# assume p: ?
+                --# assume q: ?
+                assert(p and not q)
+                print(p + 5)
+                print(q + 5)"); // should not alter dynamic types
 }

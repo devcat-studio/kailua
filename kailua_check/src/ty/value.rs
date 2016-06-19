@@ -415,6 +415,102 @@ impl<'a> T<'a> {
             T::Union(u) => T::Union(Cow::Owned(u.into_owned())),
         }
     }
+
+    pub fn filter_by_flags(self, flags: Flags, ctx: &mut TypeContext) -> CheckResult<T<'a>> {
+        fn flags_to_ubound(flags: Flags) -> T<'static> {
+            if flags.contains(T_DYNAMIC) {
+                T::Dynamic
+            } else {
+                let mut t = T::None;
+                if flags.contains(T_NIL)        { t = t | T::Nil; }
+                if flags.contains(T_TRUE)       { t = t | T::True; }
+                if flags.contains(T_FALSE)      { t = t | T::False; }
+                if flags.contains(T_NONINTEGER) { t = t | T::number(); }
+                if flags.contains(T_INTEGER)    { t = t | T::integer(); }
+                if flags.contains(T_STRING)     { t = t | T::string(); }
+                if flags.contains(T_TABLE)      { t = t | T::table(); }
+                if flags.contains(T_FUNCTION)   { t = t | T::function(); }
+                if flags.contains(T_THREAD)     { t = t | T::Thread; }
+                if flags.contains(T_USERDATA)   { t = t | T::UserData; }
+                t
+            }
+        }
+
+        fn narrow_numbers<'a>(num: Cow<'a, Numbers>, flags: Flags) -> Option<Cow<'a, Numbers>> {
+            let is_all = match num.as_ref() { &Numbers::All => true, _ => false };
+            match (flags & T_NUMBER, is_all) {
+                (T_NONINTEGER, false) => None,
+                (T_INTEGER, true) => Some(Cow::Owned(Numbers::Int)),
+                (T_NONE, _) => None,
+                (_, _) => Some(num),
+            }
+        }
+
+        fn narrow_tvar(tvar: TVar, flags: Flags, ctx: &mut TypeContext) -> CheckResult<TVar> {
+            let ubound = flags_to_ubound(flags);
+
+            // make a type variable i such that i <: ubound and i <: tvar
+            let i = ctx.gen_tvar();
+            try!(ctx.assert_tvar_sub_tvar(tvar, i));
+            try!(ctx.assert_tvar_sub(tvar, &ubound));
+
+            Ok(i)
+        }
+
+        let flags_or_none = |bit, t| if flags.contains(bit) { t } else { T::None };
+
+        match self {
+            T::Dynamic => Ok(T::Dynamic),
+            T::None => Ok(T::None),
+            T::All => Ok(flags_to_ubound(flags)),
+            T::Boolean => match flags & T_BOOLEAN {
+                T_BOOLEAN => Ok(T::Boolean),
+                T_TRUE => Ok(T::True),
+                T_FALSE => Ok(T::False),
+                _ => Ok(T::None),
+            },
+            T::Numbers(num) => {
+                if let Some(num) = narrow_numbers(num, flags) {
+                    Ok(T::Numbers(num))
+                } else {
+                    Ok(T::None)
+                }
+            },
+
+            T::Nil             => Ok(flags_or_none(T_NIL,      T::Nil)),
+            T::True            => Ok(flags_or_none(T_TRUE,     T::True)),
+            T::False           => Ok(flags_or_none(T_FALSE,    T::False)),
+            T::Thread          => Ok(flags_or_none(T_THREAD,   T::Thread)),
+            T::UserData        => Ok(flags_or_none(T_USERDATA, T::UserData)),
+            T::Strings(str)    => Ok(flags_or_none(T_STRING,   T::Strings(str))),
+            T::Tables(tab)     => Ok(flags_or_none(T_TABLE,    T::Tables(tab))),
+            T::Functions(func) => Ok(flags_or_none(T_FUNCTION, T::Functions(func))),
+
+            T::TVar(tv) => {
+                Ok(T::TVar(try!(narrow_tvar(tv, flags, ctx))))
+            },
+            T::Builtin(b, t) => {
+                Ok(T::Builtin(b, Box::new(try!((*t).filter_by_flags(flags, ctx)))))
+            },
+            T::Union(u) => {
+                // compile a list of flags to remove, and only alter if there is any removal
+                let removed = !flags & u.flags();
+                if removed.is_empty() { return Ok(T::Union(u)); }
+
+                let mut u = u.into_owned();
+                let removed_simple = SimpleUnion::from_bits_truncate(removed.bits());
+                if !removed_simple.is_empty() { u.simple &= !removed_simple; }
+                if removed.intersects(T_NUMBER) {
+                    let num = Cow::Owned(u.numbers.unwrap());
+                    u.numbers = narrow_numbers(num, flags).map(|num| num.into_owned());
+                }
+                if removed.contains(T_STRING)   { u.strings   = None; }
+                if removed.contains(T_TABLE)    { u.tables    = None; }
+                if removed.contains(T_FUNCTION) { u.functions = None; }
+                Ok(u.simplify())
+            },
+        }
+    }
 }
 
 impl<'a, 'b> Lattice<T<'b>> for T<'a> {
