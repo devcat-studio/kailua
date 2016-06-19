@@ -808,20 +808,9 @@ impl<'env> Checker<'env> {
             }
         }
 
-        let argtys = try!(self.visit_explist(args)).unlift();
+        let argtys = try!(self.visit_explist(args));
 
-        // check if funcinfo.args :> argtys
-        let returns = match *funcinfo.has_functions().unwrap() {
-            Functions::Simple(ref func) => {
-                check!(argtys.assert_sub(&func.args, self.context()));
-                func.returns.clone()
-            }
-            Functions::Multi(ref _funcs) => unimplemented!(), // XXX
-            Functions::All => {
-                return Err(format!("cannot call {:?} without downcasting", funcinfo));
-            }
-        };
-
+        // handle builtins, which may return different things from the function signature
         match funcinfo.builtin() {
             // require("foo")
             Some(Builtin::Require) => {
@@ -838,23 +827,58 @@ impl<'env> Checker<'env> {
                     let mut sub = Checker::new(&mut env, self.opts, self.report);
                     try!(sub.visit_block(&block));
                 }
-                Ok(SlotSeq::from(T::Dynamic)) // XXX
+                return Ok(SlotSeq::from(T::Dynamic)); // XXX
             },
 
             // assert(expr)
             Some(Builtin::Assert) => {
                 if args.len() < 1 {
-                    return Err(format!("`assert` needs at least one argument"));
+                    return Err(format!("`assert` built-in needs at least one argument"));
                 }
                 let (cond, _seq) = try!(self.collect_conds_from_exp(&args[0]));
                 if let Some(cond) = cond {
                     try!(self.assert_cond(cond, false));
                 }
-                Ok(SlotSeq::from_seq(returns))
-            }
+            },
 
-            _ => Ok(SlotSeq::from_seq(returns)),
+            // assert_not(expr)
+            Some(Builtin::AssertNot) => {
+                if args.len() < 1 {
+                    return Err(format!("`assert-not` built-in needs at least one argument"));
+                }
+                let (cond, _seq) = try!(self.collect_conds_from_exp(&args[0]));
+                if let Some(cond) = cond {
+                    try!(self.assert_cond(cond, true));
+                }
+            },
+
+            // assert_type(expr)
+            Some(Builtin::AssertType) => {
+                if args.len() < 2 {
+                    return Err(format!("`assert-type` built-in needs at least two arguments"));
+                }
+                if let Some(flags) = try!(ext_literal_ty_to_flags(&argtys.head[1])) {
+                    let cond = Cond::Flags(argtys.head[0].clone(), flags);
+                    try!(self.assert_cond(cond, false));
+                }
+            },
+
+            _ => {}
         }
+
+        // check if funcinfo.args :> argtys
+        let returns = match *funcinfo.has_functions().unwrap() {
+            Functions::Simple(ref func) => {
+                check!(argtys.unlift().assert_sub(&func.args, self.context()));
+                func.returns.clone()
+            }
+            Functions::Multi(ref _funcs) => unimplemented!(), // XXX
+            Functions::All => {
+                return Err(format!("cannot call {:?} without downcasting", funcinfo));
+            }
+        };
+
+        Ok(SlotSeq::from_seq(returns))
     }
 
     fn visit_exp(&mut self, exp: &Spanned<Exp>) -> CheckResult<SlotSeq> {
@@ -1063,6 +1087,9 @@ impl<'env> Checker<'env> {
                     },
                     (_, _) => None,
                 };
+
+                // TODO when cond is None try to assert the type equivalence;
+                // it is currently not implemented due to bad interaction with sub-literal types
                 Ok((cond, SlotSeq::from(T::Boolean)))
             }
 

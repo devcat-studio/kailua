@@ -465,4 +465,34 @@ fn test_check() {
                 assert(p and not q)
                 print(p + 5)
                 print(q + 5)"); // should not alter dynamic types
+    assert_ok!("--# open lua51
+                --# assume p: integer|string
+                assert(type(p) == 'number')
+                print(p + 5)");
+    assert_ok!("--# open lua51
+                --# assume p: integer|string
+                assert('number' == type(p))
+                print(p + 5)");
+    assert_err!("--# open lua51
+                 --# assume p: integer|string
+                 assert(type(p) == 'integer')"); // no such type in Lua 5.1
+    assert_ok!("--# open lua51
+                assert(type(13) == type('string'))"); // no-op
+    assert_ok!("--# open lua51
+                --# assume assert_not: const function(any) = 'assert-not'
+                --# assume p: integer|nil
+                --# assume q: integer|nil
+                assert_not(p or not q) -- i.e. assert(not p and q)
+                print(q + 5)");
+    assert_err!("--# open lua51
+                 --# assume assert_not: const function(any) = 'assert-not'
+                 --# assume p: integer|nil
+                 --# assume q: integer|nil
+                 assert_not(p or not q) -- i.e. assert(not p and q)
+                 print(p + 5)");
+    assert_ok!("--# open lua51
+                --# assume assert_type: const function(any, string) = 'assert-type'
+                --# assume p: integer|string
+                assert_type(p, 'integer')
+                print(p + 5)");
 }
