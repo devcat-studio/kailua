@@ -1,0 +1,37 @@
+-- definitions for Lua 5.1 math library
+
+--# assume global `math`:
+--#     const {
+--#         `abs` = const function(number) -> number;
+--#         `acos` = const function(number) -> number;
+--#         `asin` = const function(number) -> number;
+--#         `atan` = const function(number) -> number;
+--#         `atan2` = const function(number, number) -> number;
+--#         `ceil` = const function(number) -> number;
+--#         `cos` = const function(number) -> number;
+--#         `cosh` = const function(number) -> number;
+--#         `deg` = const function(number) -> number;
+--#         `exp` = const function(number) -> number;
+--#         `floor` = const function(number) -> number;
+--#         `fmod` = const function(number, number) -> number;
+--#         `frexp` = const function(number) -> (number, integer);
+--#         `huge` = const number;
+--#         `ldexp` = const function(number, integer) -> number;
+--#         `log` = const function(number) -> number;
+--#         `log10` = const function(number) -> number;
+--#         `max` = const function(number...) -> number;
+--#         `min` = const function(number...) -> number;
+--#         `modf` = const function(number) -> (integer, number);
+--#         `pi` = const number;
+--#         `pow` = const function(number, number) -> number;
+--#         `rad` = const function(number) -> number;
+--#         -- TODO should really be `function() -> number & function(integer, integer?) -> integer`
+--#         `random` = const function(integer?, integer?) -> number;
+--#         `randomseed` = const function(integer);
+--#         `sin` = const function(number) -> number;
+--#         `sinh` = const function(number) -> number;
+--#         `sqrt` = const function(number) -> number;
+--#         `tan` = const function(number) -> number;
+--#         `tanh` = const function(number) -> number;
+--#     }
+

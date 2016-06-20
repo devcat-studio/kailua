@@ -1,0 +1,21 @@
+-- definitions for Lua 5.1 debug library
+
+--# -- TODO many of them will interfere with Kailua's own reasoning, so the support is minimal
+--# assume global `debug`:
+--#     const {
+--#         `debug` = const function();
+--#         `getfenv` = const function;
+--#         `gethook` = const function;
+--#         `getinfo` = const function;
+--#         `getlocal` = const function;
+--#         `getmetatable` = const function;
+--#         `getregistry` = const function;
+--#         `getupvalue` = const function;
+--#         `setfenv` = const function;
+--#         `sethook` = const function;
+--#         `setlocal` = const function;
+--#         `setmetatable` = const function;
+--#         `setupvalue` = const function;
+--#         `traceback` = const function;
+--#     }
+

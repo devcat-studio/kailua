@@ -1,0 +1,28 @@
+-- definitions for Lua 5.1 os library
+
+--# type tm = {
+--#     year = integer, month = integer, day = integer,
+--#     hour = integer?, min = integer?, sec = integer?, isdst = boolean?
+--# }
+--#
+--# assume global `os`:
+--#     const {
+--#         `clock` = const function() -> number;
+--#         -- TODO it is very hard to recognize '*t'|'!*t' from other string types, ugh
+--#         `date` = const function(string?, tm?) -> string | {
+--#             year = integer, month = integer, day = integer,
+--#             hour = integer, min = integer, sec = integer,
+--#             wday = integer, yday = integer, isdst = boolean
+--#         };
+--#         `difftime` = const function(number, number) -> number;
+--#         `execute` = const function(string?) -> integer;
+--#         -- TODO diverging function signature
+--#         `exit` = const function(integer?);
+--#         `getenv` = const function(string) -> string?;
+--#         `remove` = const function(string) -> (boolean?, string?);
+--#         `rename` = const function(string, string) -> (boolean?, string?);
+--#         `setlocale` = const function(string?, string?) -> string?;
+--#         `time` = const function(tm?) -> number;
+--#         `tmpname` = const function() -> string;
+--#     }
+

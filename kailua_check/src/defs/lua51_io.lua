@@ -1,0 +1,35 @@
+-- definitions for Lua 5.1 io library
+
+--# type file = {
+--#     -- TODO method receivers and recursive types are generally not implemented yet
+--#     `close` = const function(?);
+--#     `flush` = const function(?);
+--#     `lines` = const function(?) -> function() -> string?;
+--#     -- TODO should be:
+--#     -- const function(self, '*n') -> number? &
+--#     --       function(self, '*a') -> string &
+--#     --       function(self, '*l'|integer?) -> string?
+--#     -- for now, let's ignore *n (which is most useless)
+--#     `read` = const function(?, '*a'|'*l'|integer?) -> string?;
+--#     `seek` = const function(?, 'set'|'cur'|'end'?, integer?);
+--#     -- TODO again, 'no' does not accept an integer
+--#     `setvbuf` = const function(?, 'no'|'full'|'line', integer?);
+--#     `write` = const function(?, string|number);
+--# }
+--#
+--# assume global `io`:
+--#     const {
+--#         `close` = const function(file?);
+--#         `flush` = const function();
+--#         -- TODO should be separated
+--#         `input` = const function(string|file?) -> file?;
+--#         `lines` = const function(string?) -> function() -> string?;
+--#         `open` = const function(string, string?) -> (file?, string?);
+--#         `output` = const function(string|file?) -> file?;
+--#         `popen` = const function(string, string?) -> file?;
+--#         `read` = const function('*a'|'*l'|integer?) -> string?;
+--#         `tmpfile` = const function() -> file;
+--#         `type` = const function(any) -> 'file'|'closed file'?;
+--#         `write` = const function(string|number);
+--#     }
+
