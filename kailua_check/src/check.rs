@@ -120,7 +120,7 @@ impl<'env> Checker<'env> {
     // better be replaced with a non-instantiating assertion though.
     fn get_type_bounds(&self, ty: &T) -> (/*lb*/ Flags, /*ub*/ Flags) {
         let flags = ty.flags();
-        let (lb, ub) = ty.has_tvar().map_or((T_NONE, T_NONE), |v| self.env.get_tvar_bounds(v));
+        let (lb, ub) = ty.get_tvar().map_or((T_NONE, T_NONE), |v| self.env.get_tvar_bounds(v));
         (flags | lb, flags | ub)
     }
 
@@ -147,27 +147,24 @@ impl<'env> Checker<'env> {
     }
 
     fn check_un_op(&mut self, op: UnOp, info: &Slot) -> CheckResult<Slot> {
-        let slot = info.borrow();
-        let ty = slot.unlift();
-
         macro_rules! check_op {
             ($sub:expr) => {
                 if let Err(e) = $sub {
-                    return Err(format!("tried to apply {} operator to {:?}: {}",
-                                       op.symbol(), ty, e));
+                    return Err(format!("tried to apply {} operator to {:-?}: {}",
+                                       op.symbol(), info, e));
                 }
             }
         }
 
         match op {
             UnOp::Neg => {
-                check_op!(ty.assert_sub(&T::number(), self.context()));
+                check_op!(info.assert_sub(&T::number(), self.context()));
 
                 // it is possible to be more accurate here.
                 // e.g. if ty = `v1 \/ integer` and it is known that `v1 <: integer`,
                 // then `ty <: integer` and we can safely return an integer.
                 // we don't do that though, since probing for <: risks the instantiation.
-                if ty.has_tvar().is_none() && ty.flags() == T_INTEGER {
+                if info.get_tvar().is_none() && info.flags() == T_INTEGER {
                     Ok(Slot::just(T::integer()))
                 } else {
                     Ok(Slot::just(T::number()))
@@ -179,23 +176,18 @@ impl<'env> Checker<'env> {
             }
 
             UnOp::Len => {
-                check_op!(ty.assert_sub(&(T::table() | T::string()), self.context()));
+                check_op!(info.assert_sub(&(T::table() | T::string()), self.context()));
                 Ok(Slot::just(T::integer()))
             }
         }
     }
 
     fn check_bin_op(&mut self, lhs: &Slot, op: BinOp, rhs: &Slot) -> CheckResult<Slot> {
-        let lslot = lhs.borrow();
-        let rslot = rhs.borrow();
-        let lty = lslot.unlift();
-        let rty = rslot.unlift();
-
         macro_rules! check_op {
             ($sub:expr) => {
                 if let Err(e) = $sub {
-                    return Err(format!("tried to apply {} operator to {:?} and {:?}: {}",
-                                       op.symbol(), lty, rty, e));
+                    return Err(format!("tried to apply {} operator to {:-?} and {:-?}: {}",
+                                       op.symbol(), lhs, rhs, e));
                 }
             }
         }
@@ -204,33 +196,33 @@ impl<'env> Checker<'env> {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Mod => {
                 // ? + integer = integer, ? + number = ? + ? = number, number + integer = number
                 // see UnOp::Neg comment for the rationale
-                let lflags = self.get_type_bounds(lty).1;
-                let rflags = self.get_type_bounds(rty).1;
+                let lflags = self.get_type_bounds(lhs.borrow().unlift()).1;
+                let rflags = self.get_type_bounds(rhs.borrow().unlift()).1;
                 if lflags.is_integral() && rflags.is_integral() &&
                    !(lflags.is_dynamic() && rflags.is_dynamic()) {
                     // we are definitely sure that it will be an integer
-                    check_op!(lty.assert_sub(&T::integer(), self.context()));
-                    check_op!(rty.assert_sub(&T::integer(), self.context()));
+                    check_op!(lhs.assert_sub(&T::integer(), self.context()));
+                    check_op!(rhs.assert_sub(&T::integer(), self.context()));
                     Ok(Slot::just(T::integer()))
                 } else {
                     // technically speaking they coerce strings to numbers,
                     // but that's probably not what you want
-                    check_op!(lty.assert_sub(&T::number(), self.context()));
-                    check_op!(rty.assert_sub(&T::number(), self.context()));
+                    check_op!(lhs.assert_sub(&T::number(), self.context()));
+                    check_op!(rhs.assert_sub(&T::number(), self.context()));
                     Ok(Slot::just(T::number()))
                 }
             }
 
             BinOp::Div | BinOp::Pow => {
-                check_op!(lty.assert_sub(&T::number(), self.context()));
-                check_op!(rty.assert_sub(&T::number(), self.context()));
+                check_op!(lhs.assert_sub(&T::number(), self.context()));
+                check_op!(rhs.assert_sub(&T::number(), self.context()));
                 Ok(Slot::just(T::number()))
             }
 
             BinOp::Cat => {
                 let stringy = T::number() | T::string();
-                check_op!(lty.assert_sub(&stringy, self.context()));
-                check_op!(rty.assert_sub(&stringy, self.context()));
+                check_op!(lhs.assert_sub(&stringy, self.context()));
+                check_op!(rhs.assert_sub(&stringy, self.context()));
                 Ok(Slot::just(T::string()))
             }
 
@@ -242,34 +234,37 @@ impl<'env> Checker<'env> {
                 // subsets of numbers and strings. for now we try to detect if operands are
                 // definitely numbers or strings, and bail out when it is not possible.
 
+                let lflags = lhs.flags();
+                let rflags = rhs.flags();
+
                 // filter any non-strings and non-numbers
                 // avoid using assert_sub here, it is not accurate enough
-                if !lty.is_stringy() || !rty.is_stringy() {
-                    return Err(format!("tried to apply {} operator to {:?} and {:?}",
-                                       op.symbol(), lty, rty));
+                if !lflags.is_stringy() || !rflags.is_stringy() {
+                    return Err(format!("tried to apply {} operator to {:-?} and {:-?}",
+                                       op.symbol(), lhs, rhs));
                 }
 
-                let lnum = lty.has_numbers().is_some();
-                let lstr = lty.has_strings().is_some();
-                let rnum = rty.has_numbers().is_some();
-                let rstr = rty.has_strings().is_some();
+                let lnum = lflags.intersects(T_NUMBER);
+                let lstr = lflags.intersects(T_STRING);
+                let rnum = rflags.intersects(T_NUMBER);
+                let rstr = rflags.intersects(T_STRING);
                 if (lnum && lstr) || (rnum && rstr) {
-                    Err(format!("operands {:?} and {:?} to operator {} should be \
-                                 numbers or strings but not both", lty, rty, op.symbol()))
+                    Err(format!("operands {:-?} and {:-?} to operator {} should be \
+                                 numbers or strings but not both", lhs, rhs, op.symbol()))
                 } else if (lnum && rstr) || (lstr && rnum) {
-                    Err(format!("operands {:?} and {:?} to operator {} should be \
-                                 both numbers or both strings", lty, rty, op.symbol()))
+                    Err(format!("operands {:-?} and {:-?} to operator {} should be \
+                                 both numbers or both strings", lhs, rhs, op.symbol()))
                 } else if lnum || rnum { // operands are definitely numbers
-                    check_op!(lty.assert_sub(&T::number(), self.context()));
-                    check_op!(rty.assert_sub(&T::number(), self.context()));
+                    check_op!(lhs.assert_sub(&T::number(), self.context()));
+                    check_op!(rhs.assert_sub(&T::number(), self.context()));
                     Ok(Slot::just(T::Boolean))
                 } else if lstr || rstr { // operands are definitely strings
-                    check_op!(lty.assert_sub(&T::string(), self.context()));
-                    check_op!(rty.assert_sub(&T::string(), self.context()));
+                    check_op!(lhs.assert_sub(&T::string(), self.context()));
+                    check_op!(rhs.assert_sub(&T::string(), self.context()));
                     Ok(Slot::just(T::Boolean))
                 } else { // XXX
-                    Err(format!("cannot deduce if operands {:?} and {:?} to operator {} are \
-                                 either numbers or strings", lty, rty, op.symbol()))
+                    Err(format!("cannot deduce if operands {:-?} and {:-?} to operator {} are \
+                                 either numbers or strings", lhs, rhs, op.symbol()))
                 }
             }
 
@@ -278,33 +273,33 @@ impl<'env> Checker<'env> {
             }
 
             BinOp::And => {
-                if lty.is_dynamic() || rty.is_dynamic() {
+                if lhs.is_dynamic() || rhs.is_dynamic() {
                     return Ok(Slot::just(T::Dynamic));
                 }
 
-                if lty.has_tvar().is_none() {
+                if lhs.get_tvar().is_none() {
                     // True and T => T
-                    if lty.is_truthy() { return Ok(Slot::just(rty.clone())); }
+                    if lhs.is_truthy() { return Ok(Slot::just(rhs.borrow().unlift().clone())); }
                     // False and T => False
-                    if lty.is_falsy() { return Ok(Slot::just(lty.clone())); }
+                    if lhs.is_falsy() { return Ok(Slot::just(lhs.borrow().unlift().clone())); }
                 }
                 // unsure, both can be possible
-                Ok(Slot::just(lty.union(&rty, self.context())))
+                Ok(Slot::just(lhs.borrow().unlift().union(&rhs.borrow().unlift(), self.context())))
             }
 
             BinOp::Or => {
-                if lty.is_dynamic() || rty.is_dynamic() {
+                if lhs.is_dynamic() || rhs.is_dynamic() {
                     return Ok(Slot::just(T::Dynamic));
                 }
 
-                if lty.has_tvar().is_none() {
+                if lhs.get_tvar().is_none() {
                     // True or T => True
-                    if lty.is_truthy() { return Ok(Slot::just(lty.clone())); }
+                    if lhs.is_truthy() { return Ok(Slot::just(lhs.borrow().unlift().clone())); }
                     // False or T => T
-                    if lty.is_falsy() { return Ok(Slot::just(rty.clone())); }
+                    if lhs.is_falsy() { return Ok(Slot::just(rhs.borrow().unlift().clone())); }
                 }
                 // unsure, both can be possible
-                Ok(Slot::just(lty.union(&rty, self.context())))
+                Ok(Slot::just(lhs.borrow().unlift().union(&rhs.borrow().unlift(), self.context())))
             }
         }
     }
@@ -354,7 +349,7 @@ impl<'env> Checker<'env> {
                 None
             };
         if let Some(litkey) = litkey {
-            match (ety.has_tables(), lval) {
+            match (ety.get_tables(), lval) {
                 (Some(&Tables::Empty), true) => {
                     let vslot = new_slot(self.context(), true);
                     let fields = Some((litkey, vslot.clone())).into_iter().collect();
@@ -385,7 +380,7 @@ impl<'env> Checker<'env> {
         // try to adapt arrays and mappings otherwise.
         // XXX this is severely limited right now, due to the difficulty of union with type vars
         let intkey = self.get_type_bounds(&kty).1.is_integral();
-        match (ety.has_tables(), lval) {
+        match (ety.get_tables(), lval) {
             // possible! this occurs when the ety was Dynamic.
             (None, _) => Ok(Some(Slot::just(T::Dynamic))),
 
@@ -431,7 +426,7 @@ impl<'env> Checker<'env> {
 
                 // reborrow ety0 to check against the final mapping type
                 if let Some(&Tables::Map(ref key, ref value)) =
-                        ety0.borrow().unlift().has_tables() {
+                        ety0.borrow().unlift().get_tables() {
                     check!(kty.assert_sub(key, self.context()));
                     Ok(Some((**value).clone()))
                 } else {
@@ -486,8 +481,6 @@ impl<'env> Checker<'env> {
 
             St::While(ref cond, ref block) => {
                 let ty = try!(self.visit_exp(cond)).into_first();
-                let slot = ty.borrow();
-                let ty = slot.unlift();
                 if ty.is_truthy() {
                     // infinite loop
                     let exit = try!(self.visit_block(block));
@@ -505,8 +498,6 @@ impl<'env> Checker<'env> {
                 let exit = try!(self.visit_block(block)); // TODO scope merger
                 let ty = try!(self.visit_exp(cond)).into_first();
                 if exit == Exit::None {
-                    let slot = ty.borrow();
-                    let ty = slot.unlift();
                     if ty.is_truthy() {
                         Ok(Exit::Stop)
                     } else if ty.is_falsy() {
@@ -529,8 +520,6 @@ impl<'env> Checker<'env> {
                         continue;
                     }
                     let ty = try!(self.visit_exp(cond)).into_first();
-                    let slot = ty.borrow();
-                    let ty = slot.unlift();
                     if ty.is_truthy() {
                         ignoreelse = true;
                         exit = exit.or(try!(self.visit_block(block)));
@@ -559,29 +548,21 @@ impl<'env> Checker<'env> {
                     Slot::just(T::integer()) // to simplify the matter
                 };
 
-                let startslot = start.borrow();
-                let endslot = end.borrow();
-                let stepslot = step.borrow();
-
-                let startty = startslot.unlift();
-                let endty = endslot.unlift();
-                let stepty = stepslot.unlift();
-
                 // the similar logic is also present in check_bin_op
-                let startflags = self.get_type_bounds(startty).1;
-                let endflags = self.get_type_bounds(endty).1;
-                let stepflags = self.get_type_bounds(stepty).1;
+                let startflags = self.get_type_bounds(start.borrow().unlift()).1;
+                let endflags = self.get_type_bounds(end.borrow().unlift()).1;
+                let stepflags = self.get_type_bounds(step.borrow().unlift()).1;
                 let indty;
                 if startflags.is_integral() && endflags.is_integral() && stepflags.is_integral() &&
                    !(startflags.is_dynamic() && endflags.is_dynamic() && stepflags.is_dynamic()) {
-                    try!(startty.assert_sub(&T::integer(), self.context()));
-                    try!(endty.assert_sub(&T::integer(), self.context()));
-                    try!(stepty.assert_sub(&T::integer(), self.context()));
+                    try!(start.assert_sub(&T::integer(), self.context()));
+                    try!(end.assert_sub(&T::integer(), self.context()));
+                    try!(step.assert_sub(&T::integer(), self.context()));
                     indty = T::integer();
                 } else {
-                    try!(startty.assert_sub(&T::number(), self.context()));
-                    try!(endty.assert_sub(&T::number(), self.context()));
-                    try!(stepty.assert_sub(&T::number(), self.context()));
+                    try!(start.assert_sub(&T::number(), self.context()));
+                    try!(end.assert_sub(&T::number(), self.context()));
+                    try!(step.assert_sub(&T::number(), self.context()));
                     indty = T::number();
                 }
 
@@ -866,7 +847,7 @@ impl<'env> Checker<'env> {
         }
 
         // check if funcinfo.args :> argtys
-        let returns = match *funcinfo.has_functions().unwrap() {
+        let returns = match *funcinfo.get_functions().unwrap() {
             Functions::Simple(ref func) => {
                 check!(argtys.unlift().assert_sub(&func.args, self.context()));
                 func.returns.clone()

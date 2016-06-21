@@ -5,8 +5,9 @@ use std::rc::Rc;
 use std::cell::{Ref, RefMut, RefCell};
 
 use diag::CheckResult;
-use super::{T, TypeContext, Lattice, Mark};
+use super::{T, TypeContext, Lattice, Mark, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
+use super::flags::Flags;
 
 // slot types
 #[derive(Clone)]
@@ -308,16 +309,6 @@ impl Slot {
     pub fn borrow<'a>(&'a self) -> Ref<'a, S<'static>> { self.0.borrow() }
     pub fn borrow_mut<'a>(&'a mut self) -> RefMut<'a, S<'static>> { self.0.borrow_mut() }
 
-    pub fn without_nil(&self) -> Slot {
-        let s = self.0.borrow();
-        Slot::new(s.clone().into_send().without_nil())
-    }
-
-    pub fn weaken(&self, ctx: &mut TypeContext) -> CheckResult<Slot> {
-        let s = self.0.borrow();
-        Ok(Slot::new(try!(s.weaken(ctx))))
-    }
-
     pub fn accept(&self, rhs: &Slot, ctx: &mut TypeContext) -> CheckResult<()> {
         // accepting itself is always fine and has no effect,
         // but it has to be filtered since it will borrow twice otherwise
@@ -390,6 +381,32 @@ impl Slot {
         Ok(())
     }
 
+    // following methods are direct analogues to value type's ones, whenever applicable
+
+    pub fn flags(&self) -> Flags { self.0.borrow().unlift().flags() }
+
+    pub fn is_dynamic(&self)  -> bool { self.flags().is_dynamic() }
+    pub fn is_integral(&self) -> bool { self.flags().is_integral() }
+    pub fn is_numeric(&self)  -> bool { self.flags().is_numeric() }
+    pub fn is_stringy(&self)  -> bool { self.flags().is_stringy() }
+    pub fn is_tabular(&self)  -> bool { self.flags().is_tabular() }
+    pub fn is_callable(&self) -> bool { self.flags().is_callable() }
+    pub fn is_truthy(&self)   -> bool { self.flags().is_truthy() }
+    pub fn is_falsy(&self)    -> bool { self.flags().is_falsy() }
+
+    pub fn get_tvar(&self) -> Option<TVar> { self.borrow().unlift().get_tvar() }
+    pub fn builtin(&self) -> Option<Builtin> { self.borrow().unlift().builtin() }
+
+    pub fn without_nil(&self) -> Slot {
+        let s = self.0.borrow();
+        Slot::new(s.clone().into_send().without_nil())
+    }
+
+    pub fn weaken(&self, ctx: &mut TypeContext) -> CheckResult<Slot> {
+        let s = self.0.borrow();
+        Ok(Slot::new(try!(s.weaken(ctx))))
+    }
+
     pub fn is_linear(&self) -> bool { self.0.borrow().is_linear() }
 }
 
@@ -413,9 +430,31 @@ impl Lattice for Slot {
     }
 }
 
+// when the RHS is a normal type the LHS is automatically unlifted; useful for rvalue-only ops.
+// note that this makes a big difference from lifting the RHS.
+impl<'a> Lattice<T<'a>> for Slot {
+    type Output = Slot;
+
+    fn do_union(&self, _other: &T<'a>, _ctx: &mut TypeContext) -> Slot {
+        panic!("Lattice::union(Slot, T) is not supported")
+    }
+
+    fn do_assert_sub(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
+        self.0.borrow().unlift().assert_sub(other, ctx)
+    }
+
+    fn do_assert_eq(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
+        self.0.borrow().unlift().assert_eq(other, ctx)
+    }
+}
+
 impl fmt::Debug for Slot {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(&self.0.borrow(), f)
+        if f.sign_minus() {
+            fmt::Debug::fmt(&self.0.borrow().unlift(), f)
+        } else {
+            fmt::Debug::fmt(&self.0.borrow(), f)
+        }
     }
 }
 

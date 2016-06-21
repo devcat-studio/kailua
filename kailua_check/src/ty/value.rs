@@ -243,91 +243,46 @@ impl<'a> T<'a> {
     // XXX for now
     pub fn is_referential(&self) -> bool { self.flags().is_tabular() }
 
-    pub fn has_nil(&self) -> bool {
-        match *self {
-            T::Nil => true,
-            T::Builtin(_, ref t) => t.has_nil(),
-            T::Union(ref u) => u.simple.contains(U_NIL),
-            _ => false,
-        }
-    }
-
-    pub fn has_true(&self) -> bool {
-        match *self {
-            T::Boolean | T::True => true,
-            T::Builtin(_, ref t) => t.has_true(),
-            T::Union(ref u) => u.simple.contains(U_TRUE),
-            _ => false,
-        }
-    }
-
-    pub fn has_false(&self) -> bool {
-        match *self {
-            T::Boolean | T::False => true,
-            T::Builtin(_, ref t) => t.has_false(),
-            T::Union(ref u) => u.simple.contains(U_FALSE),
-            _ => false,
-        }
-    }
-
-    pub fn has_thread(&self) -> bool {
-        match *self {
-            T::Thread => true,
-            T::Builtin(_, ref t) => t.has_thread(),
-            T::Union(ref u) => u.simple.contains(U_THREAD),
-            _ => false,
-        }
-    }
-
-    pub fn has_userdata(&self) -> bool {
-        match *self {
-            T::UserData => true,
-            T::Builtin(_, ref t) => t.has_userdata(),
-            T::Union(ref u) => u.simple.contains(U_USERDATA),
-            _ => false,
-        }
-    }
-
-    pub fn has_numbers(&self) -> Option<&Numbers> {
+    pub fn get_numbers(&self) -> Option<&Numbers> {
         match *self {
             T::Numbers(ref num) => Some(num),
-            T::Builtin(_, ref t) => t.has_numbers(),
+            T::Builtin(_, ref t) => t.get_numbers(),
             T::Union(ref u) => u.numbers.as_ref(),
             _ => None,
         }
     }
 
-    pub fn has_strings(&self) -> Option<&Strings> {
+    pub fn get_strings(&self) -> Option<&Strings> {
         match *self {
             T::Strings(ref str) => Some(str),
-            T::Builtin(_, ref t) => t.has_strings(),
+            T::Builtin(_, ref t) => t.get_strings(),
             T::Union(ref u) => u.strings.as_ref(),
             _ => None,
         }
     }
 
-    pub fn has_tables(&self) -> Option<&Tables> {
+    pub fn get_tables(&self) -> Option<&Tables> {
         match *self {
             T::Tables(ref tab) => Some(tab),
-            T::Builtin(_, ref t) => t.has_tables(),
+            T::Builtin(_, ref t) => t.get_tables(),
             T::Union(ref u) => u.tables.as_ref(),
             _ => None,
         }
     }
 
-    pub fn has_functions(&self) -> Option<&Functions> {
+    pub fn get_functions(&self) -> Option<&Functions> {
         match *self {
             T::Functions(ref func) => Some(func),
-            T::Builtin(_, ref t) => t.has_functions(),
+            T::Builtin(_, ref t) => t.get_functions(),
             T::Union(ref u) => u.functions.as_ref(),
             _ => None,
         }
     }
 
-    pub fn has_tvar(&self) -> Option<TVar> {
+    pub fn get_tvar(&self) -> Option<TVar> {
         match *self {
             T::TVar(tv) => Some(tv),
-            T::Builtin(_, ref t) => t.has_tvar(),
+            T::Builtin(_, ref t) => t.get_tvar(),
             T::Union(ref u) => u.tvar,
             _ => None,
         }

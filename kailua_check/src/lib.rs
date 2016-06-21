@@ -498,4 +498,20 @@ fn test_check() {
                 --# assume p: integer|string
                 assert_type(p, 'integer')
                 print(p + 5)");
+    assert_ok!("--# assume x: ?
+                x = x");
+    assert_ok!("--# assume x: ?
+                x(x)");
+    assert_ok!("--# assume x: ?
+                x[x]()");
+    assert_ok!("--# assume x: ?
+                if x then x = 42 end");
+    assert_ok!("--# assume x: ?
+                while x do x = 42 end");
+    assert_ok!("--# assume x: ?
+                for i = 1, x do x = 42 end");
+    assert_ok!("--# assume x: ?
+                for i = x, x do end");
+    assert_ok!("--# assume x: 'hello'
+                local p = {[x] = x}");
 }

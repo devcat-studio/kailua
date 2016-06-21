@@ -64,7 +64,7 @@ fn lift_fields_to_map(fields: &BTreeMap<Key, Slot>, ctx: &mut TypeContext)
     let mut value = Slot::just(T::None);
     for (key, ty) in fields {
         if key.is_int() { hasint = true; } else { hasstr = true; }
-        value = value.union(&ty, ctx);
+        value = value.union(ty, ctx);
     }
     assert!(!value.is_linear(), "Slot::union should have destroyed Currently slots");
     let key = match (hasint, hasstr) {
@@ -203,7 +203,7 @@ impl Lattice for Tables {
             (&Tables::Fields(ref a), &Tables::Fields(ref b)) => {
                 for (k, av) in a {
                     if let Some(ref bv) = b.get(k) {
-                        try!(av.assert_sub(bv, ctx));
+                        try!(av.assert_sub(*bv, ctx));
                     } else {
                         return error_not_sub(self, other);
                     }
