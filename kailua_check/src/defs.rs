@@ -17,6 +17,7 @@ defs! {
     LUA51_TABLE_DEFS,   LUA51_TABLE_DEF   = "lua51_table",   "defs/lua51_table.lua";
     LUA51_MATH_DEFS,    LUA51_MATH_DEF    = "lua51_math",    "defs/lua51_math.lua";
     LUA51_IO_DEFS,      LUA51_IO_DEF      = "lua51_io",      "defs/lua51_io.lua";
+    LUA51_OS_DEFS,      LUA51_OS_DEF      = "lua51_os",      "defs/lua51_os.lua";
     LUA51_DEBUG_DEFS,   LUA51_DEBUG_DEF   = "lua51_debug",   "defs/lua51_debug.lua";
 }
 
@@ -27,6 +28,7 @@ const LUA51_DEFS: &'static [Def] = &[
     LUA51_TABLE_DEF,
     LUA51_MATH_DEF,
     LUA51_IO_DEF,
+    LUA51_OS_DEF,
     LUA51_DEBUG_DEF,
 ];
 
@@ -39,6 +41,7 @@ pub fn get_defs(name: &str) -> Option<&'static [Def]> {
         "lua51_table"   => Some(LUA51_TABLE_DEFS),
         "lua51_math"    => Some(LUA51_MATH_DEFS),
         "lua51_io"      => Some(LUA51_IO_DEFS),
+        "lua51_os"      => Some(LUA51_OS_DEFS),
         "lua51_debug"   => Some(LUA51_DEBUG_DEFS),
         _ => None,
     }
