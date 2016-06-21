@@ -7,7 +7,7 @@ extern crate vec_map;
 pub use diag::{Error, CheckResult};
 pub use ty::*;
 pub use options::Options;
-pub use env::{TyInfo, Context};
+pub use env::Context;
 pub use check::Checker;
 
 mod diag;
@@ -37,13 +37,15 @@ pub fn check_from_chunk(context: &mut Context,
 
 #[test]
 fn test_check() {
+    extern crate env_logger;
+    env_logger::init().unwrap();
+
     fn check(s: &str) -> CheckResult<()> {
         use std::cell::RefCell;
         use kailua_diag::{Source, CollectedReport};
         use kailua_syntax::parse_chunk;
 
-        println!("");
-        println!("checking `{}`", s);
+        info!("checking `{}`", s);
         let mut source = Source::new();
         let filespan = source.add_string("<test>", s.as_bytes());
         let report = CollectedReport::new();

@@ -180,7 +180,7 @@ impl SlotSeq {
     }
 
     pub fn from(t: T) -> SlotSeq {
-        SlotSeq::from_slot(Slot::from(t))
+        SlotSeq::from_slot(Slot::just(t))
     }
 
     pub fn from_slot(s: Slot) -> SlotSeq {

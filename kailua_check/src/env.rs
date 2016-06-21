@@ -14,8 +14,6 @@ use defs::get_defs;
 use options::Options;
 use check::Checker;
 
-pub type TyInfo = Slot;
-
 pub struct Frame {
     pub vararg: Option<TySeq>,
     pub returns: Option<TySeq>, // None represents the bottom (TySeq does not have it)
@@ -23,7 +21,7 @@ pub struct Frame {
 }
 
 pub struct Scope {
-    names: HashMap<Name, TyInfo>,
+    names: HashMap<Name, Slot>,
     frame: Option<Frame>,
     types: HashMap<Name, Ty>,
 }
@@ -37,11 +35,11 @@ impl Scope {
         Scope { names: HashMap::new(), frame: Some(frame), types: HashMap::new() }
     }
 
-    pub fn get<'a>(&'a self, name: &Name) -> Option<&'a TyInfo> {
+    pub fn get<'a>(&'a self, name: &Name) -> Option<&'a Slot> {
         self.names.get(name)
     }
 
-    pub fn get_mut<'a>(&'a mut self, name: &Name) -> Option<&'a mut TyInfo> {
+    pub fn get_mut<'a>(&'a mut self, name: &Name) -> Option<&'a mut Slot> {
         self.names.get_mut(name)
     }
 
@@ -57,7 +55,7 @@ impl Scope {
         self.types.get(name).map(|t| &**t)
     }
 
-    pub fn put(&mut self, name: Name, info: TyInfo) {
+    pub fn put(&mut self, name: Name, info: Slot) {
         self.names.insert(name, info);
     }
 
@@ -853,28 +851,28 @@ impl<'ctx> Env<'ctx> {
         self.scopes.last_mut().unwrap()
     }
 
-    pub fn get_var<'a>(&'a self, name: &Name) -> Option<&'a TyInfo> {
+    pub fn get_var<'a>(&'a self, name: &Name) -> Option<&'a Slot> {
         for scope in self.scopes.iter().rev() {
             if let Some(info) = scope.get(name) { return Some(info); }
         }
         self.context.global_scope().get(name)
     }
 
-    pub fn get_var_mut<'a>(&'a mut self, name: &Name) -> Option<&'a mut TyInfo> {
+    pub fn get_var_mut<'a>(&'a mut self, name: &Name) -> Option<&'a mut Slot> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(info) = scope.get_mut(name) { return Some(info); }
         }
         self.context.global_scope_mut().get_mut(name)
     }
 
-    pub fn get_local_var<'a>(&'a self, name: &Name) -> Option<&'a TyInfo> {
+    pub fn get_local_var<'a>(&'a self, name: &Name) -> Option<&'a Slot> {
         for scope in self.scopes.iter().rev() {
             if let Some(info) = scope.get(name) { return Some(info); }
         }
         None
     }
 
-    pub fn get_local_var_mut<'a>(&'a mut self, name: &Name) -> Option<&'a mut TyInfo> {
+    pub fn get_local_var_mut<'a>(&'a mut self, name: &Name) -> Option<&'a mut Slot> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(info) = scope.get_mut(name) { return Some(info); }
         }
@@ -901,7 +899,7 @@ impl<'ctx> Env<'ctx> {
 
     // adapt is used when the info didn't come from the type specification
     // and should be considered identical to the assignment
-    pub fn add_local_var(&mut self, name: &Name, mut info: TyInfo, adapt: bool) {
+    pub fn add_local_var(&mut self, name: &Name, mut info: Slot, adapt: bool) {
         if adapt {
             let newinfo = Slot::new(S::VarOrCurrently(T::Nil, self.context().gen_mark()));
             newinfo.accept(&info, self.context()).unwrap();
@@ -912,7 +910,7 @@ impl<'ctx> Env<'ctx> {
         self.current_scope_mut().put(name.to_owned(), info);
     }
 
-    pub fn assign_to_var(&mut self, name: &Name, info: TyInfo) -> CheckResult<()> {
+    pub fn assign_to_var(&mut self, name: &Name, info: Slot) -> CheckResult<()> {
         if let Some(previnfo) = self.get_var_mut(name).map(|info| info.clone()) {
             debug!("assigning {:?} to a variable {:?} with type {:?}",
                      info, *name, previnfo);
@@ -931,7 +929,7 @@ impl<'ctx> Env<'ctx> {
         Ok(())
     }
 
-    pub fn assume_var(&mut self, name: &Name, info: TyInfo) -> CheckResult<()> {
+    pub fn assume_var(&mut self, name: &Name, info: Slot) -> CheckResult<()> {
         if let Some(previnfo) = self.get_local_var_mut(name) {
             debug!("(force) adding a local variable {:?} as {:?}", *name, info);
             *previnfo = info;
@@ -940,7 +938,7 @@ impl<'ctx> Env<'ctx> {
         self.assume_global_var(name, info)
     }
 
-    pub fn assume_global_var(&mut self, name: &Name, info: TyInfo) -> CheckResult<()> {
+    pub fn assume_global_var(&mut self, name: &Name, info: Slot) -> CheckResult<()> {
         debug!("(force) adding a global variable {:?} as {:?}", *name, info);
         self.context.global_scope_mut().put(name.to_owned(), info);
         Ok(())

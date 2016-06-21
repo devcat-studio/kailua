@@ -305,8 +305,6 @@ impl Slot {
         Slot::new(S::Just(t.into_send()))
     }
 
-    pub fn from<'a>(t: T<'a>) -> Slot { Slot::just(t) } // compatibility with TyInfo
-
     pub fn borrow<'a>(&'a self) -> Ref<'a, S<'static>> { self.0.borrow() }
     pub fn borrow_mut<'a>(&'a mut self) -> RefMut<'a, S<'static>> { self.0.borrow_mut() }
 

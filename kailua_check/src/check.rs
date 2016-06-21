@@ -11,7 +11,7 @@ use diag::CheckResult;
 use ty::{T, TySeq, Lattice, TypeContext, Tables, Function, Functions, TyWithNil};
 use ty::{S, Slot, SlotSeq, SlotWithNil, Builtin};
 use ty::flags::*;
-use env::{TyInfo, Env, Frame, Scope, Context};
+use env::{Env, Frame, Scope, Context};
 use options::Options;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -44,13 +44,13 @@ impl<'chk, 'env> Drop for ScopedChecker<'chk, 'env> {
 // conditions out of boolean expression, used for assertion and branch typing
 #[derive(Clone, Debug)]
 enum Cond {
-    Flags(TyInfo, Flags),
+    Flags(Slot, Flags),
     And(Box<Cond>, Box<Cond>),
     Or(Box<Cond>, Box<Cond>),
     Not(Box<Cond>),
 }
 
-fn literal_ty_to_flags(info: &TyInfo) -> CheckResult<Option<Flags>> {
+fn literal_ty_to_flags(info: &Slot) -> CheckResult<Option<Flags>> {
     let slot = info.borrow();
     if let Some(s) = slot.unlift().as_string() {
         let tyname = &***s;
@@ -72,7 +72,7 @@ fn literal_ty_to_flags(info: &TyInfo) -> CheckResult<Option<Flags>> {
 }
 
 // AssertType built-in accepts more strings than Type
-fn ext_literal_ty_to_flags(info: &TyInfo) -> CheckResult<Option<Flags>> {
+fn ext_literal_ty_to_flags(info: &Slot) -> CheckResult<Option<Flags>> {
     let slot = info.borrow();
     if let Some(s) = slot.unlift().as_string() {
         let tyname = &***s;
@@ -146,7 +146,7 @@ impl<'env> Checker<'env> {
         ScopedChecker(self)
     }
 
-    fn check_un_op(&mut self, op: UnOp, info: &TyInfo) -> CheckResult<TyInfo> {
+    fn check_un_op(&mut self, op: UnOp, info: &Slot) -> CheckResult<Slot> {
         let slot = info.borrow();
         let ty = slot.unlift();
 
@@ -168,24 +168,24 @@ impl<'env> Checker<'env> {
                 // then `ty <: integer` and we can safely return an integer.
                 // we don't do that though, since probing for <: risks the instantiation.
                 if ty.has_tvar().is_none() && ty.flags() == T_INTEGER {
-                    Ok(TyInfo::from(T::integer()))
+                    Ok(Slot::just(T::integer()))
                 } else {
-                    Ok(TyInfo::from(T::number()))
+                    Ok(Slot::just(T::number()))
                 }
             }
 
             UnOp::Not => {
-                Ok(TyInfo::from(T::Boolean))
+                Ok(Slot::just(T::Boolean))
             }
 
             UnOp::Len => {
                 check_op!(ty.assert_sub(&(T::table() | T::string()), self.context()));
-                Ok(TyInfo::from(T::integer()))
+                Ok(Slot::just(T::integer()))
             }
         }
     }
 
-    fn check_bin_op(&mut self, lhs: &TyInfo, op: BinOp, rhs: &TyInfo) -> CheckResult<TyInfo> {
+    fn check_bin_op(&mut self, lhs: &Slot, op: BinOp, rhs: &Slot) -> CheckResult<Slot> {
         let lslot = lhs.borrow();
         let rslot = rhs.borrow();
         let lty = lslot.unlift();
@@ -211,27 +211,27 @@ impl<'env> Checker<'env> {
                     // we are definitely sure that it will be an integer
                     check_op!(lty.assert_sub(&T::integer(), self.context()));
                     check_op!(rty.assert_sub(&T::integer(), self.context()));
-                    Ok(TyInfo::from(T::integer()))
+                    Ok(Slot::just(T::integer()))
                 } else {
                     // technically speaking they coerce strings to numbers,
                     // but that's probably not what you want
                     check_op!(lty.assert_sub(&T::number(), self.context()));
                     check_op!(rty.assert_sub(&T::number(), self.context()));
-                    Ok(TyInfo::from(T::number()))
+                    Ok(Slot::just(T::number()))
                 }
             }
 
             BinOp::Div | BinOp::Pow => {
                 check_op!(lty.assert_sub(&T::number(), self.context()));
                 check_op!(rty.assert_sub(&T::number(), self.context()));
-                Ok(TyInfo::from(T::number()))
+                Ok(Slot::just(T::number()))
             }
 
             BinOp::Cat => {
                 let stringy = T::number() | T::string();
                 check_op!(lty.assert_sub(&stringy, self.context()));
                 check_op!(rty.assert_sub(&stringy, self.context()));
-                Ok(TyInfo::from(T::string()))
+                Ok(Slot::just(T::string()))
             }
 
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
@@ -262,11 +262,11 @@ impl<'env> Checker<'env> {
                 } else if lnum || rnum { // operands are definitely numbers
                     check_op!(lty.assert_sub(&T::number(), self.context()));
                     check_op!(rty.assert_sub(&T::number(), self.context()));
-                    Ok(TyInfo::from(T::Boolean))
+                    Ok(Slot::just(T::Boolean))
                 } else if lstr || rstr { // operands are definitely strings
                     check_op!(lty.assert_sub(&T::string(), self.context()));
                     check_op!(rty.assert_sub(&T::string(), self.context()));
-                    Ok(TyInfo::from(T::Boolean))
+                    Ok(Slot::just(T::Boolean))
                 } else { // XXX
                     Err(format!("cannot deduce if operands {:?} and {:?} to operator {} are \
                                  either numbers or strings", lty, rty, op.symbol()))
@@ -274,43 +274,43 @@ impl<'env> Checker<'env> {
             }
 
             BinOp::Eq | BinOp::Ne => { // works for any types
-                Ok(TyInfo::from(T::Boolean))
+                Ok(Slot::just(T::Boolean))
             }
 
             BinOp::And => {
                 if lty.is_dynamic() || rty.is_dynamic() {
-                    return Ok(TyInfo::from(T::Dynamic));
+                    return Ok(Slot::just(T::Dynamic));
                 }
 
                 if lty.has_tvar().is_none() {
                     // True and T => T
-                    if lty.is_truthy() { return Ok(TyInfo::from(rty.clone())); }
+                    if lty.is_truthy() { return Ok(Slot::just(rty.clone())); }
                     // False and T => False
-                    if lty.is_falsy() { return Ok(TyInfo::from(lty.clone())); }
+                    if lty.is_falsy() { return Ok(Slot::just(lty.clone())); }
                 }
                 // unsure, both can be possible
-                Ok(TyInfo::from(lty.union(&rty, self.context())))
+                Ok(Slot::just(lty.union(&rty, self.context())))
             }
 
             BinOp::Or => {
                 if lty.is_dynamic() || rty.is_dynamic() {
-                    return Ok(TyInfo::from(T::Dynamic));
+                    return Ok(Slot::just(T::Dynamic));
                 }
 
                 if lty.has_tvar().is_none() {
                     // True or T => True
-                    if lty.is_truthy() { return Ok(TyInfo::from(lty.clone())); }
+                    if lty.is_truthy() { return Ok(Slot::just(lty.clone())); }
                     // False or T => T
-                    if lty.is_falsy() { return Ok(TyInfo::from(rty.clone())); }
+                    if lty.is_falsy() { return Ok(Slot::just(rty.clone())); }
                 }
                 // unsure, both can be possible
-                Ok(TyInfo::from(lty.union(&rty, self.context())))
+                Ok(Slot::just(lty.union(&rty, self.context())))
             }
         }
     }
 
-    fn check_index(&mut self, ety0: &TyInfo, kty0: &TyInfo,
-                   lval: bool) -> CheckResult<Option<TyInfo>> {
+    fn check_index(&mut self, ety0: &Slot, kty0: &Slot,
+                   lval: bool) -> CheckResult<Option<Slot>> {
         let ety = ety0.borrow().unlift().clone();
         let kty = kty0.borrow().unlift().clone();
 
@@ -341,7 +341,7 @@ impl<'env> Checker<'env> {
             } else {
                 S::Var(tvar)
             };
-            TyInfo::new(slot)
+            Slot::new(slot)
         };
 
         // try fields first if the key is a string or integer determined in the compile time.
@@ -359,7 +359,7 @@ impl<'env> Checker<'env> {
                     let vslot = new_slot(self.context(), true);
                     let fields = Some((litkey, vslot.clone())).into_iter().collect();
                     let adapted = T::Tables(Cow::Owned(Tables::Fields(fields)));
-                    check!(ety0.accept(&TyInfo::from(adapted), self.context()));
+                    check!(ety0.accept(&Slot::just(adapted), self.context()));
                     return Ok(Some(vslot));
                 }
 
@@ -369,7 +369,7 @@ impl<'env> Checker<'env> {
                                       .or_insert_with(|| new_slot(self.context(), true))
                                       .clone();
                     let adapted = T::Tables(Cow::Owned(Tables::Fields(fields)));
-                    check!(ety0.accept(&TyInfo::from(adapted), self.context()));
+                    check!(ety0.accept(&Slot::just(adapted), self.context()));
                     return Ok(Some(vslot));
                 }
 
@@ -387,7 +387,7 @@ impl<'env> Checker<'env> {
         let intkey = self.get_type_bounds(&kty).1.is_integral();
         match (ety.has_tables(), lval) {
             // possible! this occurs when the ety was Dynamic.
-            (None, _) => Ok(Some(TyInfo::from(T::Dynamic))),
+            (None, _) => Ok(Some(Slot::just(T::Dynamic))),
 
             (Some(&Tables::Fields(..)), false) =>
                 Err(format!("cannot index {:?} with index {:?} that cannot be resolved \
@@ -402,7 +402,7 @@ impl<'env> Checker<'env> {
                                 SlotWithNil::from_slot(vslot.clone()))
                 };
                 let adapted = T::Tables(Cow::Owned(tab));
-                check!(ety0.accept(&TyInfo::from(adapted), self.context()));
+                check!(ety0.accept(&Slot::just(adapted), self.context()));
                 Ok(Some(vslot))
             },
 
@@ -427,7 +427,7 @@ impl<'env> Checker<'env> {
                 // we cannot keep the specialized table type, lift and adapt to a mapping
                 let tab = tab.clone().lift_to_map(self.context());
                 let adapted = T::Tables(Cow::Owned(tab));
-                check!(ety0.accept(&TyInfo::from(adapted), self.context()));
+                check!(ety0.accept(&Slot::just(adapted), self.context()));
 
                 // reborrow ety0 to check against the final mapping type
                 if let Some(&Tables::Map(ref key, ref value)) =
@@ -472,7 +472,7 @@ impl<'env> Checker<'env> {
                     try!(self.visit_var_with_spec(varspec));
                 }
                 let infos = try!(self.visit_explist(exps));
-                let infos = infos.into_iter().chain(iter::repeat(Slot::from(T::Nil)));
+                let infos = infos.into_iter().chain(iter::repeat(Slot::just(T::Nil)));
                 for (var, info) in vars.iter().zip(infos) {
                     // TODO unify with visit_var_with_spec
                     if let Var::Name(ref name) = var.base.base {
@@ -586,7 +586,7 @@ impl<'env> Checker<'env> {
                 }
 
                 let mut scope = self.scoped(Scope::new());
-                scope.env.add_local_var(name, TyInfo::from(indty), true);
+                scope.env.add_local_var(name, Slot::just(indty), true);
                 let exit = try!(scope.visit_block(block));
                 if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
             }
@@ -598,7 +598,7 @@ impl<'env> Checker<'env> {
 
                 let mut scope = self.scoped(Scope::new());
                 for name in names {
-                    scope.env.add_local_var(name, TyInfo::from(T::Dynamic), true);
+                    scope.env.add_local_var(name, Slot::just(T::Dynamic), true);
                 }
                 let exit = try!(scope.visit_block(block));
                 if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
@@ -607,7 +607,7 @@ impl<'env> Checker<'env> {
             St::FuncDecl(scope, ref name, ref sig, ref block) => {
                 // `name` itself is available to the inner scope
                 let funcv = self.context().gen_tvar();
-                let info = TyInfo::from(T::TVar(funcv));
+                let info = Slot::just(T::TVar(funcv));
                 match scope {
                     NameScope::Local => self.env.add_local_var(name, info, true),
                     NameScope::Global => try!(self.env.assign_to_var(name, info)),
@@ -620,7 +620,7 @@ impl<'env> Checker<'env> {
             St::MethodDecl(ref names, selfparam, ref sig, ref block) => {
                 // TODO verify names
                 let selfinfo = match selfparam {
-                    Some(_) => Some(TyInfo::from(T::Dynamic)),
+                    Some(_) => Some(Slot::just(T::Dynamic)),
                     None => None,
                 };
                 try!(self.visit_func_body(selfinfo, sig, block));
@@ -630,7 +630,7 @@ impl<'env> Checker<'env> {
             St::Local(ref names, ref exps) => {
                 let add_local_var = |env: &mut Env,
                                      namespec: &TypeSpec<Spanned<Name>>,
-                                     info: TyInfo| {
+                                     info: Slot| {
                     if let Some(ref kind) = namespec.kind {
                         let ty = try!(T::from(kind, env));
                         let newinfo = match namespec.modf {
@@ -647,7 +647,7 @@ impl<'env> Checker<'env> {
                 };
 
                 let infos = try!(self.visit_explist(exps));
-                let infos = infos.into_iter().chain(iter::repeat(Slot::from(T::Nil)));
+                let infos = infos.into_iter().chain(iter::repeat(Slot::just(T::Nil)));
                 for (namespec, info) in names.iter().zip(infos) {
                     try!(add_local_var(&mut self.env, namespec, info));
                 }
@@ -707,8 +707,8 @@ impl<'env> Checker<'env> {
         }
     }
 
-    fn visit_func_body(&mut self, selfinfo: Option<TyInfo>, sig: &Sig,
-                       block: &Spanned<Vec<Spanned<Stmt>>>) -> CheckResult<TyInfo> {
+    fn visit_func_body(&mut self, selfinfo: Option<Slot>, sig: &Sig,
+                       block: &Spanned<Vec<Spanned<Stmt>>>) -> CheckResult<Slot> {
         let vatype = match sig.args.tail {
             None => None,
             // varargs present but types are unspecified
@@ -761,11 +761,11 @@ impl<'env> Checker<'env> {
         }
 
         let returns = scope.env.get_frame_mut().returns.take().unwrap();
-        Ok(TyInfo::from(T::func(Function { args: args, returns: returns })))
+        Ok(Slot::just(T::func(Function { args: args, returns: returns })))
     }
 
     fn visit_var_with_spec(&mut self,
-                           varspec: &TypeSpec<Spanned<Var>>) -> CheckResult<Option<TyInfo>> {
+                           varspec: &TypeSpec<Spanned<Var>>) -> CheckResult<Option<Slot>> {
         // TODO fully process varspec
         match varspec.base.base {
             Var::Name(ref name) => {
@@ -1013,7 +1013,7 @@ impl<'env> Checker<'env> {
     }
 
     fn collect_type_from_exp(&mut self,
-                             exp: &Spanned<Exp>) -> CheckResult<(Option<TyInfo>, SlotSeq)> {
+                             exp: &Spanned<Exp>) -> CheckResult<(Option<Slot>, SlotSeq)> {
         if let Ex::FuncCall(ref func, ref args) = *exp.base {
             let funcinfo = try!(self.visit_exp(func)).into_first();
             let funcinfo = funcinfo.borrow();
@@ -1163,7 +1163,7 @@ impl<'env> Checker<'env> {
                     try!(ty.filter_by_flags(flags, self.context()))
                 };
                 // TODO: won't work well with `var` slots
-                try!(info.accept(&TyInfo::from(filtered), self.context()));
+                try!(info.accept(&Slot::just(filtered), self.context()));
             }
 
             Cond::And(lcond, rcond) => {
