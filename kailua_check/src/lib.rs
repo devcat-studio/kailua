@@ -82,9 +82,9 @@ fn test_check() {
     //             if c then p = 4 end
     //             p()");
     assert_err!("p()");
-    assert_ok!("--# assume p: ?
+    assert_ok!("--# assume p: WHATEVER
                 p()");
-    assert_ok!("--# assume s: ?
+    assert_ok!("--# assume s: WHATEVER
                 local p = s:find('hello')");
     assert_ok!("--# assume p: number
                 local x = p + 3");
@@ -122,13 +122,13 @@ fn test_check() {
     assert_ok!("local a = (53 or nil) + 42");
     assert_err!("local a = (nil or 'string') + 42");
     assert_ok!("local a = (nil or 53) + 42");
-    assert_ok!("--# assume p: ?
+    assert_ok!("--# assume p: WHATEVER
                 local a = (p and 'foo') + 54");
-    assert_ok!("--# assume p: ?
+    assert_ok!("--# assume p: WHATEVER
                 local a = ('foo' and p) + 54");
-    assert_ok!("--# assume p: ?
+    assert_ok!("--# assume p: WHATEVER
                 local a = (p or 'foo') + 54");
-    assert_ok!("--# assume p: ?
+    assert_ok!("--# assume p: WHATEVER
                 local a = ('foo' or p) + 54");
     assert_ok!("--# assume p: string | number
                 local q = p .. 3");
@@ -165,23 +165,23 @@ fn test_check() {
                  --# assume p: var integer
                  p = 3.1 + 4");
     assert_ok!("local p, q
-                --# assume p: ?
+                --# assume p: WHATEVER
                 --# assume q: var integer
                 q = p + 3");
     assert_err!("local p, q
-                 --# assume p: ?
+                 --# assume p: WHATEVER
                  --# assume q: var integer
                  q = p + 3.5");
     assert_ok!("local p, q
-                --# assume p: ?
+                --# assume p: WHATEVER
                 --# assume q: var number
                 q = p + 3.5");
     assert_ok!("local p, q
-                --# assume p: ?
+                --# assume p: WHATEVER
                 --# assume q: var number
                 q = p + p");
     assert_err!("local p, q
-                 --# assume p: ?
+                 --# assume p: WHATEVER
                  --# assume q: var integer
                  q = p + p");
     assert_ok!("local a = true
@@ -463,8 +463,8 @@ fn test_check() {
                  assert(p and not q)
                  print(q + 5)");
     assert_ok!("--# open lua51
-                --# assume p: ?
-                --# assume q: ?
+                --# assume p: WHATEVER
+                --# assume q: WHATEVER
                 assert(p and not q)
                 print(p + 5)
                 print(q + 5)"); // should not alter dynamic types
@@ -498,19 +498,19 @@ fn test_check() {
                 --# assume p: integer|string
                 assert_type(p, 'integer')
                 print(p + 5)");
-    assert_ok!("--# assume x: ?
+    assert_ok!("--# assume x: WHATEVER
                 x = x");
-    assert_ok!("--# assume x: ?
+    assert_ok!("--# assume x: WHATEVER
                 x(x)");
-    assert_ok!("--# assume x: ?
+    assert_ok!("--# assume x: WHATEVER
                 x[x]()");
-    assert_ok!("--# assume x: ?
+    assert_ok!("--# assume x: WHATEVER
                 if x then x = 42 end");
-    assert_ok!("--# assume x: ?
+    assert_ok!("--# assume x: WHATEVER
                 while x do x = 42 end");
-    assert_ok!("--# assume x: ?
+    assert_ok!("--# assume x: WHATEVER
                 for i = 1, x do x = 42 end");
-    assert_ok!("--# assume x: ?
+    assert_ok!("--# assume x: WHATEVER
                 for i = x, x do end");
     assert_ok!("--# assume x: 'hello'
                 local p = {[x] = x}");

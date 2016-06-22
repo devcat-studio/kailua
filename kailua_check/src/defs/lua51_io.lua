@@ -2,19 +2,19 @@
 
 --# type file = {
 --#     -- TODO method receivers and recursive types are generally not implemented yet
---#     `close` = const function(?);
---#     `flush` = const function(?);
---#     `lines` = const function(?) -> function() -> string?;
+--#     `close` = const function(WHATEVER);
+--#     `flush` = const function(WHATEVER);
+--#     `lines` = const function(WHATEVER) -> function() -> string?;
 --#     -- TODO should be:
 --#     -- const function(self, '*n') -> number? &
 --#     --       function(self, '*a') -> string &
 --#     --       function(self, '*l'|integer?) -> string?
 --#     -- for now, let's ignore *n (which is most useless)
---#     `read` = const function(?, '*a'|'*l'|integer?) -> string?;
---#     `seek` = const function(?, 'set'|'cur'|'end'?, integer?);
+--#     `read` = const function(WHATEVER, '*a'|'*l'|integer?) -> string?;
+--#     `seek` = const function(WHATEVER, 'set'|'cur'|'end'?, integer?);
 --#     -- TODO again, 'no' does not accept an integer
---#     `setvbuf` = const function(?, 'no'|'full'|'line', integer?);
---#     `write` = const function(?, string|number);
+--#     `setvbuf` = const function(WHATEVER, 'no'|'full'|'line', integer?);
+--#     `write` = const function(WHATEVER, string|number);
 --# }
 --#
 --# assume global `io`:

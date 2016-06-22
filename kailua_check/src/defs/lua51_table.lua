@@ -8,6 +8,6 @@
 --#         `insert` = const function({var any}, any);
 --#         `maxn` = const function({const any}) -> integer;
 --#         `remove` = const function({var any}, integer?) -> any?;
---#         `sort` = const function({var any}, (function(?, ?) -> boolean)?);
+--#         `sort` = const function({var any}, (function(WHATEVER, WHATEVER) -> boolean)?);
 --#     }
 

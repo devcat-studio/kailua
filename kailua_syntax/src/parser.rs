@@ -245,6 +245,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
     fn builtin_kind(&self, name: &[u8]) -> Option<K> {
         match name {
+            b"WHATEVER" => Some(K::Dynamic),
             b"any"      => Some(K::Any),
             b"boolean"  => Some(K::Boolean),
             b"number"   => Some(K::Number),
@@ -1419,8 +1420,6 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 kind.with_loc(begin..self.last_pos())
             }
 
-            (_, Spanned { base: Tok::Punct(Punct::Ques), span }) =>
-                Box::new(K::Dynamic).with_loc(span),
             (_, Spanned { base: Tok::Keyword(Keyword::Nil), span }) =>
                 Box::new(K::Nil).with_loc(span),
             (_, Spanned { base: Tok::Keyword(Keyword::True), span }) =>

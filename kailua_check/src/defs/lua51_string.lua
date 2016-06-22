@@ -11,7 +11,7 @@
 --#         `gmatch` = const function(string, string) -> function() -> string?;
 --#         -- TODO have to constrain the function argument, but not easy
 --#         `gsub` = const function(string, string,
---#                                 string | { [string] = string } | (function(?...) -> string),
+--#                                 string | { [string] = string } | (function(WHATEVER...) -> string),
 --#                                 integer?) -> string;
 --#         `len` = const function(string) -> integer;
 --#         `lower` = const function(string) -> string;

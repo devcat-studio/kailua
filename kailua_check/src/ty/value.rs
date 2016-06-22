@@ -13,7 +13,7 @@ use super::flags::*;
 // basic value types, also used for enumeration and construction
 #[derive(Clone)]
 pub enum T<'a> {
-    Dynamic,                            // ?
+    Dynamic,                            // WHATEVER
     All,                                // any (top)
     None,                               // (bottom)
     Nil,                                // nil
@@ -674,7 +674,7 @@ impl<'a, 'b> PartialEq<T<'b>> for T<'a> {
 impl<'a> fmt::Debug for T<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            T::Dynamic  => write!(f, "?"),
+            T::Dynamic  => write!(f, "WHATEVER"),
             T::All      => write!(f, "any"),
             T::None     => write!(f, "<bottom>"),
             T::Nil      => write!(f, "nil"),

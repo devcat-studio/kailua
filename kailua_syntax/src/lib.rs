@@ -142,7 +142,7 @@ fn test_parse() {
     test!("local a, b";
           "[Local([`a`, `b`], [])]");
 
-    test!("local a --: integer\n, b --: var ?";
+    test!("local a --: integer\n, b --: var WHATEVER";
           "[Local([`a`: _ Integer, `b`: Var Dynamic], [])]");
 
     test!("local a, --: const table\nb";
@@ -258,19 +258,19 @@ fn test_parse() {
           "[KailuaAssume(Global, `a`, _, Record([\"x\": _ String]), None), \
             KailuaAssume(Local, `b`, _, Record([\"y\": _ String]), None)]");
 
-    test!("--# assume assume: ?";
+    test!("--# assume assume: WHATEVER";
           "error";
           1: "[Fatal] Expected a name, got a keyword `assume`");
 
-    test!("--# assume `assume`: ?";
+    test!("--# assume `assume`: WHATEVER";
           "[KailuaAssume(Local, `assume`, _, Dynamic, None)]");
 
-    test!("--# `assume` `assume`: ?";
+    test!("--# `assume` `assume`: WHATEVER";
           "error";
           1: "[Error] Expected a newline, got a name");
 
-    test!("--# assume a: ? = \"foo\"
-           --# assume b: ?";
+    test!("--# assume a: WHATEVER = \"foo\"
+           --# assume b: WHATEVER";
           "[KailuaAssume(Local, `a`, _, Dynamic, Some(\"foo\")), \
             KailuaAssume(Local, `b`, _, Dynamic, None)]");
 
@@ -294,7 +294,7 @@ fn test_parse() {
           "[Local([`x`: _ Func([() -> (), \
                                 (Integer, Boolean...) -> Union([String, Nil])])], [])]");
 
-    test!("local x --: function () -> (integer...) & (integer, boolean...)->(string?, ?...)";
+    test!("local x --: function () -> (integer...) & (integer, boolean...)->(string?, WHATEVER...)";
           "[Local([`x`: _ Func([() -> (Integer...), \
                                 (Integer, Boolean...) -> (Union([String, Nil]), Dynamic...)\
                                ])], [])]");
@@ -371,16 +371,16 @@ fn test_parse() {
                                                     (String, Integer) -> Number])\
                                        ]), Nil])], [])]");
 
-    test!("local x --: {?}";
+    test!("local x --: {WHATEVER}";
           "[Local([`x`: _ Array(_ Dynamic)], [])]");
 
-    test!("local x --: {?,}";
+    test!("local x --: {WHATEVER,}";
           "[Local([`x`: _ Tuple([_ Dynamic])], [])]");
 
-    test!("local x --: {?,?}";
+    test!("local x --: {WHATEVER,WHATEVER}";
           "[Local([`x`: _ Tuple([_ Dynamic, _ Dynamic])], [])]");
 
-    test!("local x --: {?;?;}";
+    test!("local x --: {WHATEVER;WHATEVER;}";
           "[Local([`x`: _ Tuple([_ Dynamic, _ Dynamic])], [])]");
 
     test!("local x --: {var integer}";
@@ -450,11 +450,11 @@ fn test_parse() {
            local function foo(a) end";
           "[FuncDecl(Local, `foo`, [`a`: _ Integer], [])]");
 
-    test!("--v (a: integer) -> (?...)
+    test!("--v (a: integer) -> (WHATEVER...)
            local function foo(a) end";
           "[FuncDecl(Local, `foo`, [`a`: _ Integer] -> [Dynamic...], [])]");
 
-    test!("--v (a: integer) -> (string, ?...)
+    test!("--v (a: integer) -> (string, WHATEVER...)
            local function foo(a) end";
           "[FuncDecl(Local, `foo`, [`a`: _ Integer] -> [String, Dynamic...], [])]");
 
@@ -476,11 +476,11 @@ fn test_parse() {
            end";
           "[FuncDecl(Global, `foo`, [] -> String, [])]");
 
-    test!("function foo() --> (?...)
+    test!("function foo() --> (WHATEVER...)
            end";
           "[FuncDecl(Global, `foo`, [] -> [Dynamic...], [])]");
 
-    test!("function foo() --> (string, ?...)
+    test!("function foo() --> (string, WHATEVER...)
            end";
           "[FuncDecl(Global, `foo`, [] -> [String, Dynamic...], [])]");
 
@@ -783,7 +783,7 @@ fn test_parse() {
           5: "[Error] Duplicate record field `y` in the type specification";
           3: "[Note] The first duplicate appeared here");
 
-    test!("--# assume x: ? = hello
+    test!("--# assume x: WHATEVER = hello
            --# assume y: \"bo\\gus\"
            f(";
           "error";
