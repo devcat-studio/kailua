@@ -5,9 +5,10 @@ extern crate kailua_check;
 extern crate env_logger;
 
 use std::str;
+use std::io;
 use std::env;
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use kailua_diag::{Span, Spanned, WithLoc, Source, Report, ConsoleReport};
 use kailua_syntax::{parse_chunk, Block};
@@ -15,7 +16,7 @@ use kailua_syntax::{parse_chunk, Block};
 fn parse_and_check(mainpath: &Path) -> Result<(), String> {
     struct Options<'a> {
         source: &'a RefCell<Source>,
-        mainpath: &'a Path,
+        root: PathBuf,
         report: &'a Report,
     }
 
@@ -34,18 +35,34 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
                 Ok(Vec::new().with_loc(Span::dummy()))
             } else {
                 let path = try!(str::from_utf8(path).map_err(|e| e.to_string()));
-                let path = if path.ends_with(".lua") {
-                    path.to_owned()
-                } else {
-                    format!("{}.lua", path)
+
+                let try = |opts: &mut Options, path: &Path| {
+                    let path = opts.root.join(path);
+                    let span = match opts.source.borrow_mut().add_file(&path) {
+                        Ok(span) => span,
+                        Err(e) => {
+                            if e.kind() == io::ErrorKind::NotFound { return Ok(None); }
+                            return Err(e.to_string());
+                        }
+                    };
+                    let chunk = try!(parse_chunk(&opts.source.borrow(), span,
+                                                 opts.report).map_err(|_| format!("parse error")));
+                    Ok(Some(chunk))
                 };
-                let maindir = self.mainpath.parent().unwrap_or(&Path::new("."));
-                let mut reqpath = maindir.join("..");
-                reqpath.push(&path);
-                let span = try!(self.source.borrow_mut().add_file(&reqpath)
-                                                        .map_err(|e| e.to_string()));
-                parse_chunk(&self.source.borrow(), span, self.report)
-                    .map_err(|_| format!("parse error"))
+
+                macro_rules! try_path {
+                    ($e:expr) => ({
+                        if let Some(chunk) = try!(try(self, Path::new(&$e))) { return Ok(chunk); }
+                    })
+                }
+
+                if !path.ends_with(".lua") {
+                    try_path!(format!("{}.lua.kailua", path));
+                    try_path!(format!("{}.lua", path));
+                }
+                try_path!(format!("{}.kailua", path));
+                try_path!(path);
+                Err(format!("module not found"))
             }
         }
     }
@@ -55,7 +72,8 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
     let source = RefCell::new(source);
     let report = ConsoleReport::new(&source);
     let mut context = kailua_check::Context::new();
-    let mut opts = Options { source: &source, mainpath: mainpath, report: &report };
+    let root = mainpath.parent().unwrap_or(&Path::new(".."));
+    let mut opts = Options { source: &source, root: root.to_owned(), report: &report };
     kailua_check::check_from_span(&mut context, filespan, &mut opts, &report)
 }
 
