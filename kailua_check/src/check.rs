@@ -26,18 +26,18 @@ impl Exit {
     fn or(self, other: Exit) -> Exit { cmp::min(self, other) }
 }
 
-struct ScopedChecker<'chk, 'env: 'chk>(&'chk mut Checker<'env>);
+struct ScopedChecker<'chk, 'envr: 'chk, 'env: 'envr>(&'chk mut Checker<'envr, 'env>);
 
-impl<'chk, 'env> Deref for ScopedChecker<'chk, 'env> {
-    type Target = &'chk mut Checker<'env>;
-    fn deref(&self) -> &&'chk mut Checker<'env> { &self.0 }
+impl<'chk, 'envr, 'env> Deref for ScopedChecker<'chk, 'envr, 'env> {
+    type Target = &'chk mut Checker<'envr, 'env>;
+    fn deref(&self) -> &&'chk mut Checker<'envr, 'env> { &self.0 }
 }
 
-impl<'chk, 'env> DerefMut for ScopedChecker<'chk, 'env> {
-    fn deref_mut(&mut self) -> &mut &'chk mut Checker<'env> { &mut self.0 }
+impl<'chk, 'envr, 'env> DerefMut for ScopedChecker<'chk, 'envr, 'env> {
+    fn deref_mut(&mut self) -> &mut &'chk mut Checker<'envr, 'env> { &mut self.0 }
 }
 
-impl<'chk, 'env> Drop for ScopedChecker<'chk, 'env> {
+impl<'chk, 'envr, 'env> Drop for ScopedChecker<'chk, 'envr, 'env> {
     fn drop(&mut self) { self.0.env.leave(); }
 }
 
@@ -99,15 +99,16 @@ fn ext_literal_ty_to_flags(info: &Slot) -> CheckResult<Option<Flags>> {
     }
 }
 
-pub struct Checker<'env> {
-    env: &'env mut Env<'env>,
+pub struct Checker<'envr, 'env: 'envr> {
+    env: &'envr mut Env<'env>,
     opts: &'env mut Options,
     report: &'env Report,
 }
 
-impl<'env> Checker<'env> {
-    pub fn new(env: &'env mut Env<'env>, opts: &'env mut Options,
-               report: &'env Report) -> Checker<'env> {
+impl<'envr, 'env> Checker<'envr, 'env> {
+    pub fn new(env: &'envr mut Env<'env>,
+               opts: &'env mut Options,
+               report: &'env Report) -> Checker<'envr, 'env> {
         Checker { env: env, opts: opts, report: report }
     }
 
@@ -115,33 +116,7 @@ impl<'env> Checker<'env> {
         self.env.context()
     }
 
-    // returns a pair of type flags that is an exact lower and upper bound for that type
-    // used as an approximate type bound testing like arithmetics;
-    // better be replaced with a non-instantiating assertion though.
-    fn get_type_bounds(&self, ty: &T) -> (/*lb*/ Flags, /*ub*/ Flags) {
-        let flags = ty.flags();
-        let (lb, ub) = ty.get_tvar().map_or((T_NONE, T_NONE), |v| self.env.get_tvar_bounds(v));
-        (flags | lb, flags | ub)
-    }
-
-    // exactly resolves the type variable inside `ty` if possible
-    // this is a requirement for table indexing and function calls
-    fn resolve_exact_type<'a>(&mut self, ty: &T<'a>) -> Option<T<'a>> {
-        match ty.split_tvar() {
-            (None, None) => unreachable!(),
-            (None, Some(t)) => Some(t),
-            (Some(tv), None) => self.env.get_tvar_exact_type(tv),
-            (Some(tv), Some(t)) => {
-                if let Some(t_) = self.env.get_tvar_exact_type(tv) {
-                    Some(t.union(&t_, self.env.context()))
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    fn scoped<'chk>(&'chk mut self, scope: Scope) -> ScopedChecker<'chk, 'env> {
+    fn scoped<'chk>(&'chk mut self, scope: Scope) -> ScopedChecker<'chk, 'envr, 'env> {
         self.env.enter(scope);
         ScopedChecker(self)
     }
@@ -196,8 +171,8 @@ impl<'env> Checker<'env> {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Mod => {
                 // ? + integer = integer, ? + number = ? + ? = number, number + integer = number
                 // see UnOp::Neg comment for the rationale
-                let lflags = self.get_type_bounds(lhs.borrow().unlift()).1;
-                let rflags = self.get_type_bounds(rhs.borrow().unlift()).1;
+                let lflags = self.env.get_type_bounds(lhs.borrow().unlift()).1;
+                let rflags = self.env.get_type_bounds(rhs.borrow().unlift()).1;
                 if lflags.is_integral() && rflags.is_integral() &&
                    !(lflags.is_dynamic() && rflags.is_dynamic()) {
                     // we are definitely sure that it will be an integer
@@ -309,10 +284,10 @@ impl<'env> Checker<'env> {
         let ety = ety0.borrow().unlift().clone();
         let kty = kty0.borrow().unlift().clone();
 
-        if !self.get_type_bounds(&ety).1.is_tabular() {
+        if !self.env.get_type_bounds(&ety).1.is_tabular() {
             return Err(format!("tried to index the non-table {:?}", ety));
         }
-        let ety = if let Some(ety) = self.resolve_exact_type(&ety) {
+        let ety = if let Some(ety) = self.env.resolve_exact_type(&ety) {
             ety
         } else {
             return Err(format!("the type {:?} is tabular but not known enough to index", ety));
@@ -379,7 +354,7 @@ impl<'env> Checker<'env> {
 
         // try to adapt arrays and mappings otherwise.
         // XXX this is severely limited right now, due to the difficulty of union with type vars
-        let intkey = self.get_type_bounds(&kty).1.is_integral();
+        let intkey = self.env.get_type_bounds(&kty).1.is_integral();
         match (ety.get_tables(), lval) {
             // possible! this occurs when the ety was Dynamic.
             (None, _) => Ok(Some(Slot::just(T::Dynamic))),
@@ -549,9 +524,9 @@ impl<'env> Checker<'env> {
                 };
 
                 // the similar logic is also present in check_bin_op
-                let startflags = self.get_type_bounds(start.borrow().unlift()).1;
-                let endflags = self.get_type_bounds(end.borrow().unlift()).1;
-                let stepflags = self.get_type_bounds(step.borrow().unlift()).1;
+                let startflags = self.env.get_type_bounds(start.borrow().unlift()).1;
+                let endflags = self.env.get_type_bounds(end.borrow().unlift()).1;
+                let stepflags = self.env.get_type_bounds(step.borrow().unlift()).1;
                 let indty;
                 if startflags.is_integral() && endflags.is_integral() && stepflags.is_integral() &&
                    !(startflags.is_dynamic() && endflags.is_dynamic() && stepflags.is_dynamic()) {
@@ -767,13 +742,13 @@ impl<'env> Checker<'env> {
     }
 
     fn visit_func_call(&mut self, funcinfo: &T, args: &[Spanned<Exp>]) -> CheckResult<SlotSeq> {
-        if !self.get_type_bounds(funcinfo).1.is_callable() {
+        if !self.env.get_type_bounds(funcinfo).1.is_callable() {
             return Err(format!("tried to call the non-function {:?}", funcinfo));
         }
         if funcinfo.is_dynamic() {
             return Ok(SlotSeq::from(T::Dynamic));
         }
-        let funcinfo = if let Some(ty) = self.resolve_exact_type(&funcinfo) {
+        let funcinfo = if let Some(ty) = self.env.resolve_exact_type(&funcinfo) {
             ty
         } else {
             return Err(format!("the type {:?} is callable but not known enough to call",
@@ -797,17 +772,31 @@ impl<'env> Checker<'env> {
                 if args.len() < 1 {
                     return Err(format!("`require` needs at least one argument"));
                 }
-                if let Ex::Str(ref path) = *args[0].base {
-                    let block = match self.opts.require_block(path) {
+
+                if let Ex::Str(ref modname) = *args[0].base {
+                    if let Some(slot) = try!(self.context().get_loaded_module(modname)) {
+                        info!("requiring {:?} (cached)", modname);
+                        return Ok(SlotSeq::from_slot(slot));
+                    }
+                    self.context().mark_module_as_loading(modname);
+
+                    info!("requiring {:?}", modname);
+                    let block = match self.opts.require_block(modname) {
                         Ok(block) => block,
-                        Err(e) => return Err(format!("failed to require {:?}: {}",
-                                                     *path, e)),
+                        Err(e) => {
+                            // TODO warn
+                            return Ok(SlotSeq::from(T::All));
+                        }
                     };
                     let mut env = Env::new(self.env.context());
-                    let mut sub = Checker::new(&mut env, self.opts, self.report);
-                    try!(sub.visit_block(&block));
+                    {
+                        let mut sub = Checker::new(&mut env, self.opts, self.report);
+                        try!(sub.visit_block(&block));
+                    }
+                    return Ok(SlotSeq::from_slot(try!(env.return_from_module(modname))));
+                } else {
+                    return Ok(SlotSeq::from(T::All));
                 }
-                return Ok(SlotSeq::from(T::Dynamic)); // XXX
             },
 
             // assert(expr)

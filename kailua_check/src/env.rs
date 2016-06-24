@@ -375,6 +375,7 @@ pub struct Context {
     next_mark: Cell<Mark>,
     mark_infos: Partitions<Box<MarkInfo>>,
     opened: HashSet<String>,
+    loaded: HashMap<Vec<u8>, Option<Slot>>, // corresponds to `package.loaded`
 }
 
 impl Context {
@@ -388,6 +389,7 @@ impl Context {
             next_mark: Cell::new(Mark(0)),
             mark_infos: Partitions::new(),
             opened: HashSet::new(),
+            loaded: HashMap::new(),
         };
 
         // it is fine to return from the top-level, so we treat it as like a function frame
@@ -442,6 +444,20 @@ impl Context {
 
     pub fn get_tvar_exact_type(&self, tvar: TVar) -> Option<T<'static>> {
         self.tvar_eq.get_bound(tvar).and_then(|b| b.bound.as_ref()).map(|t| t.clone().into_send())
+    }
+
+    pub fn get_loaded_module(&self, name: &[u8]) -> CheckResult<Option<Slot>> {
+        match self.loaded.get(name) {
+            Some(&Some(ref slot)) => Ok(Some(slot.clone())),
+            None => Ok(None),
+
+            // this is allowed in Lua 5.2 and later, but will result in a loop anyway.
+            Some(&None) => Err(format!("recursive `require` requested")),
+        }
+    }
+
+    pub fn mark_module_as_loading(&mut self, name: &[u8]) {
+        self.loaded.entry(name.to_owned()).or_insert(None);
     }
 
     // used by assert_mark_require_{eq,sup}
@@ -812,10 +828,11 @@ pub struct Env<'ctx> {
 
 impl<'ctx> Env<'ctx> {
     pub fn new(context: &'ctx mut Context) -> Env<'ctx> {
+        let global_frame = Frame { vararg: None, returns: None, returns_exact: false };
         Env {
             context: context,
             // we have local variables even at the global position, so we need at least one Scope
-            scopes: vec![Scope::new()],
+            scopes: vec![Scope::new_function(global_frame)],
         }
     }
 
@@ -831,6 +848,67 @@ impl<'ctx> Env<'ctx> {
     pub fn leave(&mut self) {
         assert!(self.scopes.len() > 1);
         self.scopes.pop();
+    }
+
+    // returns a pair of type flags that is an exact lower and upper bound for that type
+    // used as an approximate type bound testing like arithmetics;
+    // better be replaced with a non-instantiating assertion though.
+    pub fn get_type_bounds(&self, ty: &T) -> (/*lb*/ Flags, /*ub*/ Flags) {
+        let flags = ty.flags();
+        let (lb, ub) = ty.get_tvar().map_or((T_NONE, T_NONE), |v| self.get_tvar_bounds(v));
+        (flags | lb, flags | ub)
+    }
+
+    // exactly resolves the type variable inside `ty` if possible
+    // this is a requirement for table indexing and function calls
+    pub fn resolve_exact_type<'a>(&mut self, ty: &T<'a>) -> Option<T<'a>> {
+        match ty.split_tvar() {
+            (None, None) => unreachable!(),
+            (None, Some(t)) => Some(t),
+            (Some(tv), None) => self.get_tvar_exact_type(tv),
+            (Some(tv), Some(t)) => {
+                if let Some(t_) = self.get_tvar_exact_type(tv) {
+                    Some(t.union(&t_, self.context))
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    pub fn return_from_module(mut self, modname: &[u8]) -> CheckResult<Slot> {
+        // note that this scope is distinct from the global scope
+        let top_scope = self.scopes.drain(..).next().unwrap();
+        let returns = if let Some(returns) = top_scope.frame.unwrap().returns {
+            *returns.into_first()
+        } else {
+            T::Nil
+        };
+
+        if let Some(ty) = self.resolve_exact_type(&returns) {
+            let flags = ty.flags();
+
+            // prepare for the worse
+            if flags.contains(T_FALSE) {
+                return Err(format!("returning `false` from the module disables Lua's protection \
+                                    against multiple `require` calls and is heavily discouraged"));
+            }
+
+            // simulate `require` behavior, i.e. nil translates to true
+            let ty = if flags.contains(T_NIL) {
+                ty.without_nil() | T::True
+            } else {
+                ty
+            };
+
+            // this has to be Var since the module is shared across the entire program
+            let slot = Slot::new(S::Var(ty.into_send()));
+            self.context.loaded.insert(modname.to_owned(), Some(slot.clone()));
+            Ok(slot)
+        } else {
+            // TODO ideally we would want to resolve type variables in this type
+            Err(format!("the module has returned not yet fully resolved type"))
+        }
     }
 
     // not to be called internally; it intentionally reduces the lifetime

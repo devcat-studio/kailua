@@ -40,10 +40,10 @@ fn test_check() {
     extern crate env_logger;
     env_logger::init().unwrap();
 
-    fn check(s: &str) -> CheckResult<()> {
+    fn check(s: &str, files: &[(&str, &str)]) -> CheckResult<()> {
         use std::cell::RefCell;
-        use kailua_diag::{Source, CollectedReport};
-        use kailua_syntax::parse_chunk;
+        use kailua_diag::{Spanned, Source, CollectedReport};
+        use kailua_syntax::{Block, parse_chunk};
 
         info!("checking `{}`", s);
         let mut source = Source::new();
@@ -51,16 +51,38 @@ fn test_check() {
         let report = CollectedReport::new();
         let chunk = parse_chunk(&source, filespan, &report).expect("parse error");
 
-        struct Opts(RefCell<Source>);
-        impl Options for Opts {
-            fn source(&self) -> &RefCell<Source> { &self.0 }
+        struct Opts<'a> {
+            source: RefCell<Source>,
+            files: Vec<(&'a str, &'a str)>,
+            report: &'a CollectedReport,
         }
-        let mut opts = Opts(RefCell::new(source));
+        impl<'a> Options for Opts<'a> {
+            fn source(&self) -> &RefCell<Source> { &self.source }
+            fn require_block(&mut self, path: &[u8]) -> CheckResult<Spanned<Block>> {
+                for &(modname, code) in &self.files {
+                    if path == modname.as_bytes() {
+                        let span = self.source.borrow_mut().add_string(modname,
+                                                                       code.as_bytes());
+                        return parse_chunk(&self.source.borrow(), span, self.report)
+                            .map_err(|_| format!("parse error"));
+                    }
+                }
+                Err(format!("no such module"))
+            }
+        }
+        let mut opts = Opts { source: RefCell::new(source),
+                              files: files.to_owned(), report: &report };
         check_from_chunk(&mut Context::new(), &chunk, &mut opts, &report)
     }
 
-    macro_rules! assert_ok { ($e:expr) => (assert_eq!(check($e), Ok(()))) }
-    macro_rules! assert_err { ($e:expr) => (assert!(check($e).is_err())) }
+    macro_rules! assert_ok {
+        ($e:expr $(; $name:tt = $code:expr)* $(;)*) =>
+            (assert_eq!(check($e, &[$(($name, $code)),*]), Ok(())))
+    }
+    macro_rules! assert_err {
+        ($e:expr $(; $name:tt = $code:expr)* $(;)*) =>
+            (assert!(check($e, &[$(($name, $code)),*]).is_err()))
+    }
 
     assert_err!("local p
                  p()");
@@ -514,4 +536,50 @@ fn test_check() {
                 for i = x, x do end");
     assert_ok!("--# assume x: 'hello'
                 local p = {[x] = x}");
+    assert_ok!("--# open lua51
+                x = require 'a'"); // only warning
+    assert_err!("--# open lua51
+                x = require 'a'
+                print(x + 4)");
+    assert_err!("--# open lua51
+                 --# assume x: var integer
+                 x = require 'A'";
+                "a" = "return 42"); // `require 'A'` returns any instead
+    assert_ok!("--# open lua51
+                --# assume x: var integer
+                x = require 'a'";
+               "a" = "return 42");
+    assert_err!("--# open lua51
+                 require 'a'";
+                "a" = "return false"); // false triggers a Lua bug, so it is prohibited
+    assert_ok!("--# open lua51
+                --# assume x: var string
+                x = require 'a'";
+               "a" = "local function p() return 'hello' end
+                      return p()");
+    assert_ok!("--# open lua51
+                print((require 'a')() + 5)";
+               "a" = "local function p() return 42 end
+                      return p");
+    assert_err!("--# open lua51
+                 require 'a'";
+                "a" = "local function p(...) return ... end
+                       return p()"); // this doesn't (yet) resolve fully (no generics)
+    assert_ok!("--# open lua51
+                require 'a'";
+               "a" = "require 'b'";
+               "b" = "return true");
+    assert_ok!("--# open lua51
+                require 'a'
+                require 'b'
+                require 'a'";
+               "a" = "require 'b'";
+               "b" = "return true");
+    assert_err!("--# open lua51
+                 require 'a'";
+                "a" = "require 'b'";
+                "b" = "require 'a'");
+    assert_ok!("--# open lua51";
+               "a" = "require 'b'";
+               "b" = "require 'a'"); // check is dynamic
 }

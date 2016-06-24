@@ -8,7 +8,6 @@ use std::str;
 use std::env;
 use std::cell::RefCell;
 use std::path::Path;
-use std::collections::HashSet;
 
 use kailua_diag::{Span, Spanned, WithLoc, Source, Report, ConsoleReport};
 use kailua_syntax::{parse_chunk, Block};
@@ -18,19 +17,12 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
         source: &'a RefCell<Source>,
         mainpath: &'a Path,
         report: &'a Report,
-        required: HashSet<Vec<u8>>,
     }
 
     impl<'a> kailua_check::Options for Options<'a> {
         fn source(&self) -> &RefCell<Source> { self.source }
 
         fn require_block(&mut self, path: &[u8]) -> Result<Spanned<Block>, String> {
-            // require only runs once per path
-            if self.required.contains(path) {
-                return Ok(Vec::new().with_loc(Span::dummy()));
-            }
-            self.required.insert(path.to_owned());
-
             const BUILTIN_MODS: &'static [&'static str] = &[
                 "cjson",
                 "url",
@@ -41,8 +33,6 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
                 // dummy: they should not affect anything here
                 Ok(Vec::new().with_loc(Span::dummy()))
             } else {
-                info!("requiring {:?}", kailua_syntax::Str::from(path));
-
                 let path = try!(str::from_utf8(path).map_err(|e| e.to_string()));
                 let path = if path.ends_with(".lua") {
                     path.to_owned()
@@ -65,8 +55,7 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
     let source = RefCell::new(source);
     let report = ConsoleReport::new(&source);
     let mut context = kailua_check::Context::new();
-    let mut opts = Options { source: &source, mainpath: mainpath,
-                             report: &report, required: HashSet::new() };
+    let mut opts = Options { source: &source, mainpath: mainpath, report: &report };
     kailua_check::check_from_span(&mut context, filespan, &mut opts, &report)
 }
 
