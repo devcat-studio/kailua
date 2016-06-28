@@ -1,8 +1,10 @@
+extern crate env_logger;
 extern crate regex;
 extern crate kailua_test;
 extern crate kailua_diag;
 extern crate kailua_syntax;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use kailua_diag::{Source, Span, Report};
 
@@ -19,9 +21,9 @@ impl Testing {
 }
 
 impl kailua_test::Testing for Testing {
-    fn run(&self, source: &Source, span: Span, _filespans: &HashMap<String, Span>,
+    fn run(&self, source: &RefCell<Source>, span: Span, _filespans: &HashMap<String, Span>,
            report: &Report) -> String {
-        match kailua_syntax::parse_chunk(source, span, report) {
+        match kailua_syntax::parse_chunk(&source.borrow(), span, report) {
             Ok(chunk) => self.span_pattern.replace_all(&format!("{:?}", chunk), ""),
             Err(_) => String::from("error"),
         }
@@ -29,6 +31,7 @@ impl kailua_test::Testing for Testing {
 }
 
 fn main() {
+    env_logger::init().unwrap();
     kailua_test::Tester::new(Testing::new()).scan("src/tests").done();
 }
 

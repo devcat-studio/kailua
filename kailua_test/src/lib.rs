@@ -23,7 +23,7 @@ use term::{Terminal, StderrTerminal};
 use kailua_diag::{Source, Kind, Span, Report, CollectedReport};
 
 pub trait Testing {
-    fn run(&self, source: &Source, span: Span, filespans: &HashMap<String, Span>,
+    fn run(&self, source: &RefCell<Source>, span: Span, filespans: &HashMap<String, Span>,
            report: &Report) -> String;
 }
 
@@ -211,6 +211,7 @@ pub struct Test {
     pub files: HashMap<String, Vec<String>>,
     pub output: Vec<String>,
     pub reports: Vec<Expected<'static>>,
+    pub ignored: bool,
 }
 
 fn extract_tests(path: &Path) -> Result<Vec<Test>, TestError> {
@@ -253,12 +254,13 @@ fn extract_tests(path: &Path) -> Result<Vec<Test>, TestError> {
                                                        `--8<--` at line {}", lineno));
 
         // try to look at the divider (`-*--8<---* <test name> -*`)
-        if let Some(pos) = line.find("--8<--") {
+        if let Some(pos) = line.find("--8<--").or_else(|| line.find("-->8--")) {
             if line[..pos].chars().all(|c| c == '-') {
                 // we've found a divider, flush the current test
                 flush!(lineno);
 
                 let name = line[pos+6..].trim_matches(|c: char| c == '-' || c.is_whitespace());
+                let ignored = &line[pos..pos+6] == "-->8--";
                 test = Some(Test {
                     file: path.to_owned(),
                     first_line: next_lineno,
@@ -267,6 +269,7 @@ fn extract_tests(path: &Path) -> Result<Vec<Test>, TestError> {
                     files: HashMap::new(),
                     output: Vec::new(),
                     reports: Vec::new(),
+                    ignored: ignored,
                 });
                 current_file = None;
                 current_lines = Vec::new();
@@ -358,6 +361,8 @@ pub struct Tester<T> {
 
 const MAIN_PATH: &'static str = "<test main>";
 
+enum TestResult { Passed, Failed, Ignored }
+
 impl<T: Testing> Tester<T> {
     pub fn new(testing: T) -> Tester<T> {
         let args: Vec<_> = env::args().skip(1).collect();
@@ -385,7 +390,11 @@ impl<T: Testing> Tester<T> {
                 if let Some(ref filter) = self.filter {
                     if !filter.is_match(&test.name) { continue; }
                 }
-                self.test(test);
+                if test.ignored {
+                    self.note_test(&test, TestResult::Ignored);
+                } else {
+                    self.test(test);
+                }
             }
         }
 
@@ -415,8 +424,10 @@ impl<T: Testing> Tester<T> {
             filespans.insert(file.to_owned(), source.add_string(file, text.join("\n").as_bytes()));
         }
 
+        let source = RefCell::new(source);
         let collected = CollectedReport::new();
         let output = self.testing.run(&source, inputspan, &filespans, &collected);
+        let source = source.into_inner();
         let collected = collected.into_reports();
         self.num_tested += 1;
 
@@ -451,10 +462,10 @@ impl<T: Testing> Tester<T> {
         }
 
         if failed {
-            self.note_test(&test, false);
+            self.note_test(&test, TestResult::Failed);
             self.failed_logs.push((test, source, output, collected));
         } else {
-            self.note_test(&test, true);
+            self.note_test(&test, TestResult::Passed);
             self.num_passed += 1;
         }
     }
@@ -467,17 +478,19 @@ impl<T: Testing> Tester<T> {
         let _ = writeln!(self.term, "");
     }
 
-    fn note_test(&mut self, test: &Test, passed: bool) {
-        if passed {
-            let _ = self.term.fg(term::color::BRIGHT_GREEN);
-            let _ = write!(self.term, "  PASSED  ");
-        } else {
-            let _ = self.term.fg(term::color::BRIGHT_RED);
-            let _ = write!(self.term, "  FAILED  ");
-        }
+    fn note_test(&mut self, test: &Test, result: TestResult) {
+        let (color, text) = match result {
+            TestResult::Passed => (term::color::BRIGHT_GREEN, "PASSED"),
+            TestResult::Failed => (term::color::BRIGHT_RED, "FAILED"),
+            TestResult::Ignored => (term::color::BRIGHT_BLACK, "IGNORE"),
+        };
+        let _ = self.term.fg(color);
+        let _ = write!(self.term, "  {}  ", text);
         let _ = self.term.fg(term::color::BRIGHT_WHITE);
         if !test.name.is_empty() {
-            let _ = write!(self.term, "{} ", test.name);
+            let _ = write!(self.term, "{}", test.name);
+        } else {
+            let _ = write!(self.term, "<anonymous test at line {}>", test.first_line);
         }
         let _ = self.term.reset();
         let _ = writeln!(self.term, "");

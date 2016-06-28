@@ -4,6 +4,13 @@ version = "0.1.0"
 authors = ["Kang Seonghoon <public+git@mearie.org>"]
 publish = false
 
+[[bin]]
+name = "kailua-check"
+
+[[test]]
+name = "kailua-check-test"
+harness = false
+
 [dependencies]
 log = "0.3"
 env_logger = "0.3"
@@ -11,3 +18,6 @@ bitflags = "0.7"
 vec_map = "0.4"
 kailua_diag = { path = "../kailua_diag" }
 kailua_syntax = { path = "../kailua_syntax" }
+
+[dev-dependencies]
+kailua_test = { path = "../kailua_test" }
