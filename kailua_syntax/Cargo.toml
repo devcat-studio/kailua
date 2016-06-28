@@ -7,6 +7,10 @@ publish = false
 [[bin]]
 name = "kailua-parse"
 
+[[test]]
+name = "kailua-parse-test"
+harness = false
+
 [dependencies]
 custom_derive = "0.1.2"
 newtype_derive = "0.1.2"
@@ -14,3 +18,4 @@ kailua_diag = { path = "../kailua_diag" }
 
 [dev-dependencies]
 regex = "0.1"
+kailua_test = { path = "../kailua_test" }

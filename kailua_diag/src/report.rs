@@ -15,6 +15,17 @@ pub enum Kind {
     Fatal,
 }
 
+impl Kind {
+    pub fn colors(&self) -> (/*dim*/ color::Color, /*bright*/ color::Color) {
+        match *self {
+            Kind::Fatal => (color::RED, color::BRIGHT_RED),
+            Kind::Error => (color::RED, color::BRIGHT_RED),
+            Kind::Warning => (color::YELLOW, color::BRIGHT_YELLOW),
+            Kind::Note => (color::CYAN, color::BRIGHT_CYAN),
+        }
+    }
+}
+
 // used to stop the further parsing or type checking
 #[must_use]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -188,16 +199,11 @@ impl<'a> Report for ConsoleReport<'a> {
             }
         }
 
-        let (dim, bright, text) = match kind {
-            Kind::Fatal => (color::RED, color::BRIGHT_RED, "Fatal"),
-            Kind::Error => (color::RED, color::BRIGHT_RED, "Error"),
-            Kind::Warning => (color::YELLOW, color::BRIGHT_YELLOW, "Warning"),
-            Kind::Note => (color::CYAN, color::BRIGHT_CYAN, "Note"),
-        };
+        let (dim, bright) = kind.colors();
         let _ = term.fg(dim);
         let _ = write!(term, "[");
         let _ = term.fg(bright);
-        let _ = write!(term, "{}", text);
+        let _ = write!(term, "{:?}", kind);
         let _ = term.fg(dim);
         let _ = write!(term, "] ");
         let _ = term.fg(color::BRIGHT_WHITE);

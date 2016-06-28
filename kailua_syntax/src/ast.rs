@@ -9,7 +9,7 @@ fn format_ascii_vec(f: &mut fmt::Formatter, s: &[u8]) -> fmt::Result {
             b'\r' => try!(write!(f, "\\r")),
             b'"' | b'\'' | b'`' | b'\\' => try!(write!(f, "\\{}", c as char)),
             b'\x20'...b'\x7e' => try!(write!(f, "{}", c as char)),
-            _ => try!(write!(f, "\\x{:02}", c)),
+            _ => try!(write!(f, "\\x{:02x}", c)),
         }
     }
     Ok(())
