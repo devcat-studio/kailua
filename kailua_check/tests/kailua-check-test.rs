@@ -1,3 +1,4 @@
+#[macro_use] extern crate log;
 extern crate env_logger;
 extern crate kailua_test;
 extern crate kailua_diag;
@@ -40,7 +41,10 @@ impl kailua_test::Testing for Testing {
         let mut opts = Opts { source: source, filespans: filespans, report: report };
         match check_from_chunk(&mut Context::new(), &chunk, &mut opts, report) {
             Ok(()) => format!("ok"),
-            Err(_) => format!("error"),
+            Err(e) => {
+                info!("check failed: {:?}", e);
+                format!("error")
+            },
         }
     }
 }

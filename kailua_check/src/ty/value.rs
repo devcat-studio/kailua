@@ -531,7 +531,6 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::Dynamic, _) => true,
             (_, &T::Dynamic) => true,
 
-            (&T::All, _) => false,
             (_, &T::All) => true,
 
             (&T::None, _) => true,

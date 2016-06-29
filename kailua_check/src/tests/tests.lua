@@ -1000,3 +1000,14 @@ require 'a'
 -- check is dynamic
 --! ok
 
+--8<-- index-assign-typed
+local p --: var {x=number, y=number}
+      = {x = 5, y = 6}
+p.x = 'string'
+--! error
+
+--8<-- index-assign-whatever
+--# assume p: WHATEVER
+p[1] = 42
+--! ok
+

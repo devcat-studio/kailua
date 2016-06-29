@@ -338,6 +338,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     let vslot = fields.entry(litkey)
                                       .or_insert_with(|| new_slot(self.context(), true))
                                       .clone();
+                    check!(vslot.adapt(ety0, self.context()));
                     let adapted = T::Tables(Cow::Owned(Tables::Fields(fields)));
                     check!(ety0.accept(&Slot::just(adapted), self.context()));
                     return Ok(Some(vslot));
@@ -357,7 +358,11 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         let intkey = self.env.get_type_bounds(&kty).1.is_integral();
         match (ety.get_tables(), lval) {
             // possible! this occurs when the ety was Dynamic.
-            (None, _) => Ok(Some(Slot::just(T::Dynamic))),
+            (None, _) => {
+                let value = Slot::just(T::Dynamic);
+                if lval { check!(value.adapt(ety0, self.context())); }
+                Ok(Some(value))
+            },
 
             (Some(&Tables::Fields(..)), false) =>
                 Err(format!("cannot index {:?} with index {:?} that cannot be resolved \
@@ -378,15 +383,17 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             (Some(&Tables::Empty), false) => Ok(None),
 
-            (Some(&Tables::Array(ref value)), _) if intkey =>
-                Ok(Some((**value).clone())),
+            (Some(&Tables::Array(ref value)), _) if intkey => {
+                if lval { check!(value.adapt(ety0, self.context())); }
+                Ok(Some((*value).clone().into_slot()))
+            },
 
             (Some(&Tables::Array(..)), false) =>
                 Err(format!("cannot index an array {:?} with a non-integral index {:?}", ety, kty)),
 
             (Some(&Tables::Map(ref key, ref value)), false) => {
                 check!(kty.assert_sub(key, self.context()));
-                Ok(Some((**value).clone()))
+                Ok(Some((*value).clone().into_slot()))
             },
 
             (Some(&Tables::All), _) =>
@@ -403,7 +410,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if let Some(&Tables::Map(ref key, ref value)) =
                         ety0.borrow().unlift().get_tables() {
                     check!(kty.assert_sub(key, self.context()));
-                    Ok(Some((**value).clone()))
+                    check!(value.adapt(ety0, self.context()));
+                    Ok(Some((*value).clone().into_slot()))
                 } else {
                     unreachable!()
                 }
@@ -438,16 +446,13 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             St::Assign(ref vars, ref exps) => {
-                for varspec in vars {
-                    try!(self.visit_var_with_spec(varspec));
-                }
+                let varinfos: Vec<_> = try!(vars.into_iter()
+                                                .map(|varspec| self.visit_var_with_spec(varspec))
+                                                .collect());
                 let infos = try!(self.visit_explist(exps));
                 let infos = infos.into_iter().chain(iter::repeat(Slot::just(T::Nil)));
-                for (var, info) in vars.iter().zip(infos) {
-                    // TODO unify with visit_var_with_spec
-                    if let Var::Name(ref name) = var.base.base {
-                        try!(self.env.assign_to_var(name, info));
-                    }
+                for (varinfo, info) in varinfos.into_iter().zip(infos) {
+                    try!(varinfo.accept(&info, self.context()));
                 }
                 Ok(Exit::None)
             }
@@ -721,22 +726,43 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     }
 
     fn visit_var_with_spec(&mut self,
-                           varspec: &TypeSpec<Spanned<Var>>) -> CheckResult<Option<Slot>> {
-        // TODO fully process varspec
+                           varspec: &TypeSpec<Spanned<Var>>) -> CheckResult<Slot> {
+        let specslot = if let Some(ref kind) = varspec.kind {
+            let ty = try!(T::from(kind, &mut self.env));
+            match varspec.modf {
+                M::None => Some(Slot::new(S::VarOrCurrently(ty, self.context().gen_mark()))),
+                M::Var => Some(Slot::new(S::Var(ty))),
+                M::Const => Some(Slot::new(S::Const(ty))),
+            }
+        } else {
+            None
+        };
+
         match varspec.base.base {
             Var::Name(ref name) => {
                 // may refer to the global variable yet to be defined!
-                if let Some(info) = self.env.get_var(name) {
-                    Ok(Some(info.to_owned()))
+                if let Some(info) = self.env.get_var(name).cloned() {
+                    if let Some(ref slot) = specslot {
+                        try!(info.accept(slot, self.context()));
+                    }
+                    Ok(info.to_owned())
                 } else {
-                    Ok(None)
+                    // we need a type to initialize the variable with.
+                    // if we have the type spec, use it. otherwise use a type variable.
+                    let slot = specslot.unwrap_or_else(|| {
+                        Slot::new(S::Var(T::TVar(self.context().gen_tvar())))
+                    });
+                    try!(self.env.assign_to_var(name, slot.clone()));
+                    Ok(slot)
                 }
             },
 
             Var::Index(ref e, ref key) => {
                 let ty = try!(self.visit_exp(e)).into_first();
                 let kty = try!(self.visit_exp(key)).into_first();
-                self.check_index(&ty, &kty, true)
+                let slot = try!(self.check_index(&ty, &kty, true));
+                // since we've requested a lvalue it would never return None
+                Ok(slot.unwrap())
             },
         }
     }

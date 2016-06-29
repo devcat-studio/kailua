@@ -54,7 +54,9 @@ impl<'a> S<'a> {
     pub fn weaken<'b: 'a>(&'b self, ctx: &mut TypeContext) -> CheckResult<S<'b>> {
         match self {
             &S::Any                  => Ok(S::Any),
-            // TODO recursive weaken for Just w/ Tables
+            // if the Just slot contains a table it should be recursively weakened.
+            // this is not handled here, but via `Slot::adapt` which gets called
+            // whenever the Just slot is returned from the lvalue table (`Checker::check_index`).
             &S::Just(ref t)          => Ok(S::VarOrCurrently(t.to_ref(), ctx.gen_mark())),
             &S::Const(ref t)         => Ok(S::Const(t.to_ref())),
             &S::Var(ref t)           => Ok(S::VarOrConst(t.to_ref(), ctx.gen_mark())),
@@ -309,6 +311,33 @@ impl Slot {
     pub fn borrow<'a>(&'a self) -> Ref<'a, S<'static>> { self.0.borrow() }
     pub fn borrow_mut<'a>(&'a mut self) -> RefMut<'a, S<'static>> { self.0.borrow_mut() }
 
+    // one tries to assign to `self` through `parent`. how should `self` change?
+    // (only makes sense when `self` is a Just slot, otherwise no-op)
+    pub fn adapt(&self, parent: &Slot, ctx: &mut TypeContext) -> CheckResult<()> {
+        // Just slot in Just table doesn't change, so it has no effect
+        if self.0.deref() as *const _ == parent.0.deref() as *const _ { return Ok(()); }
+
+        let mut slot = self.0.borrow_mut();
+        if let S::Just(_) = *slot {
+            let ty = match mem::replace(&mut *slot, S::Any) {
+                S::Just(ty) => ty,
+                _ => unreachable!(),
+            };
+
+            *slot = match *parent.0.borrow() {
+                S::Const(_) => S::Const(ty),
+                S::Var(_) => S::Var(ty),
+                S::Currently(_) => S::VarOrCurrently(ty, ctx.gen_mark()),
+                S::VarOrConst(_, m) => S::VarOrConst(ty, m),
+                S::VarOrCurrently(_, m) => S::VarOrCurrently(ty, m),
+                _ => S::Just(ty),
+            };
+        }
+
+        Ok(())
+    }
+
+    // one tries to assign `rhs` to `self`. is it *accepted*, and if so how should they change?
     pub fn accept(&self, rhs: &Slot, ctx: &mut TypeContext) -> CheckResult<()> {
         // accepting itself is always fine and has no effect,
         // but it has to be filtered since it will borrow twice otherwise
