@@ -551,6 +551,10 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::Functions(ref a), &T::Functions(ref b)) => return a.assert_sub(b, ctx),
 
             (&T::Union(ref a), &T::Union(ref b)) => return a.assert_sub(b, ctx),
+            (&T::Union(ref a), &T::TVar(b)) if a.tvar.is_none() => {
+                // do NOT try to split `T|U <: x` into `T <: x AND U <: x` if possible
+                return ctx.assert_tvar_sup(b, self);
+            },
             (&T::Union(ref a), b) => {
                 // a1 \/ a2 <: b === a1 <: b AND a2 <: b
                 return a.visit(|i| i.assert_sub(b, ctx));

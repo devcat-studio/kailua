@@ -1,8 +1,8 @@
 use std::i32;
 use std::cmp;
-use std::iter;
 use std::ops::{Deref, DerefMut};
 use std::borrow::Cow;
+use take_mut::take;
 
 use kailua_diag::{Span, Spanned, WithLoc, Report};
 use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, NameScope};
@@ -279,6 +279,30 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         }
     }
 
+    fn check_callable(&mut self, func: &T, args: &TySeq) -> CheckResult<TySeq> {
+        let func = try!(self.env.resolve_exact_type(&func).ok_or_else(|| {
+            format!("the type {:?} is callable but not known enough to call", func)
+        }));
+
+        // check if func.args :> args
+        let returns = match *func.get_functions().unwrap() {
+            Functions::Simple(ref f) => {
+                if let Err(e) = args.assert_sub(&f.args, self.context()) {
+                    return Err(format!("failed to call {:?}: {}", func, e));
+                }
+                f.returns.clone()
+            }
+            Functions::Multi(ref _funcs) => { // TODO
+                return Err(format!("overloaded function {:?} is not yet supported", func));
+            }
+            Functions::All => {
+                return Err(format!("cannot call {:?} without downcasting", func));
+            }
+        };
+
+        Ok(returns)
+    }
+
     fn check_index(&mut self, ety0: &Slot, kty0: &Slot,
                    lval: bool) -> CheckResult<Option<Slot>> {
         let ety = ety0.borrow().unlift().clone();
@@ -450,8 +474,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                                 .map(|varspec| self.visit_var_with_spec(varspec))
                                                 .collect());
                 let infos = try!(self.visit_explist(exps));
-                let infos = infos.into_iter().chain(iter::repeat(Slot::just(T::Nil)));
-                for (varinfo, info) in varinfos.into_iter().zip(infos) {
+                for (varinfo, info) in varinfos.into_iter().zip(infos.into_iter()) {
                     try!(varinfo.accept(&info, self.context()));
                 }
                 Ok(Exit::None)
@@ -553,13 +576,57 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             St::ForIn(ref names, ref exps, ref block) => {
-                for exp in exps {
-                    try!(self.visit_exp(exp));
+                let mut infos = try!(self.visit_explist(exps)).into_iter();
+                let func = infos.next().unwrap(); // iterator function
+                let state = infos.next().unwrap(); // immutable state to the iterator
+                let last = infos.next().unwrap(); // last value returned from the iterator
+
+                // `func` is subject to similar constraints to `self.visit_func_call`
+                let func = func.borrow();
+                let func = func.unlift();
+                if !self.env.get_type_bounds(&func).1.is_callable() {
+                    return Err(format!("the iterator returned the non-function {:?}", func));
+                }
+
+                let indtys;
+                if func.is_dynamic() {
+                    // can't determine what func will return
+                    indtys = TySeq { head: vec![],
+                                     tail: Some(Box::new(TyWithNil::from(T::Dynamic))) };
+                } else {
+                    // last can be updated, so one should assume that its type can be much wider.
+                    let indvar = T::TVar(self.context().gen_tvar());
+
+                    // func <: function(state, last) -> (last, ...)
+                    //
+                    // note that this sets hard (and possibly tight) bounds to `indvar`.
+                    // while the proper constraint solver should be able to deal with them
+                    // in any order, our current half-baked solver requires them to be ordered
+                    // in the decreasing order of size. since the initial `last` type is likely
+                    // to be a subtype of function's own bounds, we assert function types first.
+                    let state = state.borrow().unlift().clone().into_send();
+                    let args = TySeq { head: vec![Box::new(state), Box::new(indvar.clone())],
+                                       tail: None };
+                    let mut returns = try!(self.check_callable(func, &args));
+                    try!(last.assert_sub(&indvar, self.context()));
+
+                    // note that we ignore indvar here. it is only kept internally and
+                    // not visible outside; returns is what we should assign to variables!
+                    // we should still account for the fact that the first value cannot be nil.
+                    if returns.head.is_empty() {
+                        let first = returns.tail.clone().map_or(T::None,
+                                                                |t| t.into_type_without_nil());
+                        returns.head.push(Box::new(first));
+                    } else {
+                        take(&mut returns.head[0], |t| Box::new(t.without_nil()));
+                    }
+
+                    indtys = returns;
                 }
 
                 let mut scope = self.scoped(Scope::new());
-                for name in names {
-                    scope.env.add_local_var(name, Slot::just(T::Dynamic), true);
+                for (name, ty) in names.iter().zip(indtys.into_iter()) {
+                    scope.env.add_local_var(name, Slot::new(S::Var(*ty)), true);
                 }
                 let exit = try!(scope.visit_block(block));
                 if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
@@ -608,8 +675,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 };
 
                 let infos = try!(self.visit_explist(exps));
-                let infos = infos.into_iter().chain(iter::repeat(Slot::just(T::Nil)));
-                for (namespec, info) in names.iter().zip(infos) {
+                for (namespec, info) in names.iter().zip(infos.into_iter()) {
                     try!(add_local_var(&mut self.env, namespec, info));
                 }
                 Ok(Exit::None)
@@ -774,20 +840,6 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         if funcinfo.is_dynamic() {
             return Ok(SlotSeq::from(T::Dynamic));
         }
-        let funcinfo = if let Some(ty) = self.env.resolve_exact_type(&funcinfo) {
-            ty
-        } else {
-            return Err(format!("the type {:?} is callable but not known enough to call",
-                               funcinfo));
-        };
-
-        macro_rules! check {
-            ($sub:expr) => {
-                if let Err(e) = $sub {
-                    return Err(format!("failed to call {:?}: {}", funcinfo, e));
-                }
-            }
-        }
 
         let argtys = try!(self.visit_explist(args));
 
@@ -861,18 +913,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             _ => {}
         }
 
-        // check if funcinfo.args :> argtys
-        let returns = match *funcinfo.get_functions().unwrap() {
-            Functions::Simple(ref func) => {
-                check!(argtys.unlift().assert_sub(&func.args, self.context()));
-                func.returns.clone()
-            }
-            Functions::Multi(ref _funcs) => unimplemented!(), // XXX
-            Functions::All => {
-                return Err(format!("cannot call {:?} without downcasting", funcinfo));
-            }
-        };
-
+        let returns = try!(self.check_callable(funcinfo, &argtys.unlift()));
         Ok(SlotSeq::from_seq(returns))
     }
 

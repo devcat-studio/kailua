@@ -18,6 +18,10 @@ impl TyWithNil {
         TyWithNil { ty: t.into_send().without_nil() }
     }
 
+    pub fn into_type_without_nil(self) -> T<'static> {
+        self.ty
+    }
+
     pub fn into_type(self) -> T<'static> {
         self.ty | T::Nil
     }

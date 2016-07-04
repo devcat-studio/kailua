@@ -3,6 +3,7 @@ extern crate kailua_syntax;
 #[macro_use] extern crate bitflags;
 #[macro_use] extern crate log;
 extern crate vec_map;
+extern crate take_mut;
 
 pub use diag::{Error, CheckResult};
 pub use ty::*;

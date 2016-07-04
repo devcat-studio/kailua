@@ -16,6 +16,7 @@ log = "0.3"
 env_logger = "0.3"
 bitflags = "0.7"
 vec_map = "0.4"
+take_mut = "0.1"
 kailua_diag = { path = "../kailua_diag" }
 kailua_syntax = { path = "../kailua_syntax" }
 

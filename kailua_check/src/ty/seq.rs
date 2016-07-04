@@ -153,19 +153,17 @@ impl fmt::Debug for TySeq {
 
 pub struct SlotSeqIter {
     head: vec::IntoIter<Slot>,
-    tail: Option<Slot>,
+    tail: Slot,
 }
 
 impl Iterator for SlotSeqIter {
     type Item = Slot;
 
     fn next(&mut self) -> Option<Slot> {
-        self.head.next().or_else(|| self.tail.clone())
+        Some(self.head.next().unwrap_or_else(|| self.tail.clone()))
     }
 
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        if self.tail.is_some() { (usize::MAX, None) } else { self.head.size_hint() }
-    }
+    fn size_hint(&self) -> (usize, Option<usize>) { (usize::MAX, None) }
 }
 
 #[derive(Clone, PartialEq)]
@@ -193,8 +191,10 @@ impl SlotSeq {
     }
 
     pub fn into_iter(self) -> SlotSeqIter {
-        SlotSeqIter { head: self.head.into_iter(),
-                      tail: self.tail.map(|s| s.into_slot()) }
+        SlotSeqIter {
+            head: self.head.into_iter(),
+            tail: self.tail.map(|s| s.into_slot()).unwrap_or_else(|| Slot::just(T::Nil)),
+        }
     }
 
     pub fn into_first(self) -> Slot {

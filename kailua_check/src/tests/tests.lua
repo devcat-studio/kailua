@@ -879,6 +879,18 @@ for i = x, x do end
 local p = {[x] = x}
 --! ok
 
+--8<-- assign-table-to-table
+--# assume x: var table
+--# assume y: var table
+x = y
+--! ok
+
+--8<-- assign-function-to-function
+--# assume x: var function
+--# assume y: var function
+x = y
+--! ok
+
 --8<-- require-unknown
 --# open lua51
 x = require 'a' -- only warning
@@ -1010,4 +1022,63 @@ p.x = 'string'
 --# assume p: WHATEVER
 p[1] = 42
 --! ok
+
+--8<-- for-in-simple-iter-1
+--# assume func: const function() -> number?
+for x in func do
+    local a = x * 3
+end
+--! ok
+
+--8<-- for-in-simple-iter-2
+--# assume func: const function() -> number    -- technically infinite loop
+for x in func do
+    local a = x * 3
+end
+--! ok
+
+--8<-- for-in-simple-iter-3
+--# assume func: const function() -> number|string
+for x in func do
+    local a = x * 3
+end
+--! error
+
+--8<-- for-in-stateful-iter-1
+--# assume func: const function({const integer}, integer?) -> integer?
+--# assume state: const {const integer}
+--# assume first: const integer?
+for x in func, state, first do
+    local a = x * 3
+end
+--! ok
+
+--8<-- for-in-stateful-iter-2
+--# assume func: const function({const integer}, integer|string?) -> integer?
+--# assume state: const {const integer}
+--# assume first: const integer|string     -- the first value is silently discard
+for x in func, state, first do
+    local a = x * 3
+end
+--! ok
+
+--8<-- for-in-multi-1
+--# assume func: const function({const integer}, integer|string?) -> (integer?, string)
+--# assume state: const {const integer}
+--# assume first: const integer?
+for x, y in func, state, first do
+    local a = x * 3
+    local b = y .. 'a'
+end
+--! ok
+
+--8<-- for-in-multi-2
+--# assume func: const function({const integer}, integer|string?) -> (integer?, string?)
+--# assume state: const {const integer}
+--# assume first: const integer?
+for x, y in func, state, first do
+    local a = x * 3
+    local b = y .. 'a'    -- y can be nil
+end
+--! error
 

@@ -197,8 +197,8 @@ impl Lattice for Tables {
             (&Tables::Empty, _) => true,
             (_, &Tables::Empty) => false,
 
-            (&Tables::All, _) => false,
             (_, &Tables::All) => true,
+            (&Tables::All, _) => false,
 
             (&Tables::Fields(ref a), &Tables::Fields(ref b)) => {
                 for (k, av) in a {

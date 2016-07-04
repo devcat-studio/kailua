@@ -60,8 +60,8 @@ impl Lattice for Functions {
 
     fn do_assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
-            (&Functions::All, _) => false,
             (_, &Functions::All) => true,
+            (&Functions::All, _) => false,
 
             (&Functions::Simple(ref a), &Functions::Simple(ref b)) => return a.assert_sub(b, ctx),
             (&Functions::Simple(ref a), &Functions::Multi(ref b)) => {
