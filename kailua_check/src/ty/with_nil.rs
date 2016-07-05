@@ -72,6 +72,10 @@ impl SlotWithNil {
         SlotWithNil { slot: Slot::just(t.ty) }
     }
 
+    pub fn into_type_without_nil(self) -> Slot {
+        self.slot.clone()
+    }
+
     pub fn into_slot(self) -> Slot {
         let s = match *self.slot.borrow() {
             S::Any                      => S::Any,

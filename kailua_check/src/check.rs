@@ -285,7 +285,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         }));
 
         // check if func.args :> args
-        let returns = match *func.get_functions().unwrap() {
+        let mut returns = match *func.get_functions().unwrap() {
             Functions::Simple(ref f) => {
                 if let Err(e) = args.assert_sub(&f.args, self.context()) {
                     return Err(format!("failed to call {:?}: {}", func, e));
@@ -299,6 +299,36 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 return Err(format!("cannot call {:?} without downcasting", func));
             }
         };
+
+        // XXX hack to allow generics for some significant functions
+        if func.builtin() == Some(Builtin::GenericPairs) {
+            (|| {
+                let mut args = args.to_owned();
+                let tab = match self.env.resolve_exact_type(args.ensure_at(0)) {
+                    Some(tab) => tab,
+                    None => return,
+                };
+
+                if !tab.is_tabular() { return; }
+                let map = match tab.get_tables() {
+                    Some(tab) => tab.clone().lift_to_map(self.context()),
+                    None => return,
+                };
+
+                if let Tables::Map(k, v) = map {
+                    // fix `returns` in place
+                    let knil = (*k).clone() | T::Nil;
+                    let v = v.into_type_without_nil();
+                    let v = v.borrow().unlift().clone().into_send();
+                    *returns.ensure_at_mut(0) = Box::new(T::func(Function {
+                        args: TySeq { head: vec![Box::new(tab.clone()), k.clone()], tail: None },
+                        returns: TySeq { head: vec![Box::new(knil), Box::new(v)], tail: None },
+                    }));
+                    *returns.ensure_at_mut(1) = Box::new(tab);
+                    *returns.ensure_at_mut(2) = k;
+                }
+            })();
+        }
 
         Ok(returns)
     }
@@ -613,13 +643,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     // note that we ignore indvar here. it is only kept internally and
                     // not visible outside; returns is what we should assign to variables!
                     // we should still account for the fact that the first value cannot be nil.
-                    if returns.head.is_empty() {
-                        let first = returns.tail.clone().map_or(T::None,
-                                                                |t| t.into_type_without_nil());
-                        returns.head.push(Box::new(first));
-                    } else {
-                        take(&mut returns.head[0], |t| Box::new(t.without_nil()));
-                    }
+                    take(returns.ensure_at_mut(0), |t| Box::new(t.without_nil()));
 
                     indtys = returns;
                 }

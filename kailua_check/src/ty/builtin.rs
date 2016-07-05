@@ -26,16 +26,23 @@ pub enum Builtin {
     // also accepts additional string literals:
     // - `"integer"` for an integer.
     AssertType,
+
+    // (table, ...) -> (function(table, any) -> (any?, any), table, any, ...)
+    // the first argument is exactly resolved first and the return values are updated
+    // to fit the following generic signature if possible (not yet directly supported):
+    //     ({T => U}, ...) -> (function({T => U}, T) -> (T?, U), {T => U}, T, ...)
+    GenericPairs,
 }
 
 impl Builtin {
     pub fn from_name(name: &[u8]) -> Option<Builtin> {
         match name {
-            b"require"     => Some(Builtin::Require),
-            b"type"        => Some(Builtin::Type),
-            b"assert"      => Some(Builtin::Assert),
-            b"assert-not"  => Some(Builtin::AssertNot),
-            b"assert-type" => Some(Builtin::AssertType),
+            b"require"       => Some(Builtin::Require),
+            b"type"          => Some(Builtin::Type),
+            b"assert"        => Some(Builtin::Assert),
+            b"assert-not"    => Some(Builtin::AssertNot),
+            b"assert-type"   => Some(Builtin::AssertType),
+            b"generic-pairs" => Some(Builtin::GenericPairs),
             _ => None,
         }
     }
@@ -47,6 +54,7 @@ impl Builtin {
             Builtin::Assert => "assert",
             Builtin::AssertNot => "assert-not",
             Builtin::AssertType => "assert-type",
+            Builtin::GenericPairs => "generic-pairs",
         }
     }
 }

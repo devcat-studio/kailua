@@ -60,6 +60,23 @@ impl TySeq {
         Ok(TySeq { head: head, tail: tail })
     }
 
+    fn ensure_index(&mut self, i: usize) {
+        while self.head.len() <= i {
+            let new = Box::new(self.tail.as_ref().map_or(T::Nil, |t| t.clone().into_type()));
+            self.head.push(new);
+        }
+    }
+
+    pub fn ensure_at(&mut self, i: usize) -> &Ty {
+        self.ensure_index(i);
+        &self.head[i]
+    }
+
+    pub fn ensure_at_mut(&mut self, i: usize) -> &mut Ty {
+        self.ensure_index(i);
+        &mut self.head[i]
+    }
+
     pub fn into_iter(self) -> TySeqIter {
         TySeqIter { head: self.head.into_iter(),
                     tail: Box::new(self.tail.map_or(T::Nil, |t| t.into_type())) }
@@ -188,6 +205,24 @@ impl SlotSeq {
     pub fn from_seq(seq: TySeq) -> SlotSeq {
         SlotSeq { head: seq.head.into_iter().map(|t| Slot::just(*t)).collect(),
                   tail: seq.tail.map(|t| SlotWithNil::from_ty_with_nil(*t)) }
+    }
+
+    fn ensure_index(&mut self, i: usize) {
+        while self.head.len() <= i {
+            let new = self.tail.as_ref().map(|s| s.clone().into_slot())
+                                        .unwrap_or_else(|| Slot::just(T::Nil));
+            self.head.push(new);
+        }
+    }
+
+    pub fn ensure_at(&mut self, i: usize) -> &Slot {
+        self.ensure_index(i);
+        &self.head[i]
+    }
+
+    pub fn ensure_at_mut(&mut self, i: usize) -> &mut Slot {
+        self.ensure_index(i);
+        &mut self.head[i]
     }
 
     pub fn into_iter(self) -> SlotSeqIter {

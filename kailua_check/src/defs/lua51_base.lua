@@ -24,7 +24,8 @@
 --#     const function(any) -> table?
 --#
 --# assume global `ipairs`:
---#     const function(table) -> (function(table, integer) -> (integer?, any), table, integer)
+--#     const function({const WHATEVER}) -> (function({const WHATEVER}, integer) -> (integer?, any),
+--#                                          {const WHATEVER}, integer) = "generic-pairs"
 --#
 --# -- TODO sequence conditional union
 --# assume global `load`:
@@ -43,7 +44,8 @@
 --#     const function(table, any?) -> (integer, any)
 --#
 --# assume global `pairs`:
---#     const function(table) -> (function(table, any) -> (any?, any), table, any)
+--#     const function(table) -> (function(table, any) -> (any?, any),
+--#                               table, any) = "generic-pairs"
 --#
 --# -- TODO `f` should be once function
 --# -- TODO genericity

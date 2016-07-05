@@ -1082,3 +1082,141 @@ for x, y in func, state, first do
 end
 --! error
 
+--8<-- lua51-ipairs-integer-array
+--# open lua51
+--# assume p: var {var integer}
+for x, y in ipairs(p) do
+    local a = x * 3
+    local b = y * 4
+end
+--! ok
+
+--8<-- lua51-ipairs-string-array-1
+--# open lua51
+--# assume p: var {var string}
+for x, y in ipairs(p) do
+    local a = x * 3
+    local b = y .. 'a'
+end
+--! ok
+
+--8<-- lua51-ipairs-string-array-2
+--# open lua51
+--# assume p: var {var string}
+for x, y in ipairs(p) do
+    local b = y * 4
+end
+--! error
+
+--8<-- lua51-ipairs-no-map
+--# open lua51
+--# assume p: var {[integer] = var string}
+for x, y in ipairs(p) do
+end
+--! error
+
+--8<-- lua51-ipairs-no-table
+--# open lua51
+--# assume p: var table
+for x, y in ipairs(p) do
+end
+--! error
+
+--8<-- lua51-ipairs-no-non-table
+--# open lua51
+--# assume p: var string
+for x, y in ipairs(p) do
+end
+--! error
+
+--8<-- lua51-pairs-integer-array
+--# open lua51
+--# assume p: var {var integer}
+for x, y in pairs(p) do
+    local a = x * 3
+    local b = y * 4
+end
+--! ok
+
+--8<-- lua51-pairs-string-array-1
+--# open lua51
+--# assume p: var {var string}
+for x, y in pairs(p) do
+    local a = x * 3
+    local b = y .. 'a'
+end
+--! ok
+
+--8<-- lua51-pairs-string-array-2
+--# open lua51
+--# assume p: var {var string}
+for x, y in pairs(p) do
+    local b = y * 4
+end
+--! error
+
+--8<-- lua51-pairs-integer-integer-map
+--# open lua51
+--# assume p: var {[integer] = var integer}
+for x, y in pairs(p) do
+    local a = x * 3
+    local b = y * 4
+end
+--! ok
+
+--8<-- lua51-pairs-integer-string-map-1
+--# open lua51
+--# assume p: var {[integer] = var string}
+for x, y in pairs(p) do
+    local a = x * 3
+    local b = y .. 'a'
+end
+--! ok
+
+--8<-- lua51-pairs-integer-string-map-2
+--# open lua51
+--# assume p: var {[integer] = var string}
+for x, y in pairs(p) do
+    local b = y * 4
+end
+--! error
+
+--8<-- lua51-pairs-string-integer-map-1
+--# open lua51
+--# assume p: var {[string] = var integer}
+for x, y in pairs(p) do
+    local a = x .. 'a'
+    local b = y * 4
+end
+--! ok
+
+--8<-- lua51-pairs-string-integer-map-2
+--# open lua51
+--# assume p: var {[string] = var integer}
+for x, y in pairs(p) do
+    local a = x * 3
+end
+--! error
+
+--8<-- lua51-ipairs-table
+--# open lua51
+--# assume p: var table
+for x, y in pairs(p) do
+end
+--! ok
+
+--8<-- lua51-ipairs-table-any
+--# open lua51
+--# assume p: var table
+for x, y in pairs(p) do
+    print(p .. 3)
+end
+--! error
+
+--8<-- lua51-ipairs-no-non-table
+--# open lua51
+--# assume p: var string
+for x, y in pairs(p) do
+end
+--! error
+
