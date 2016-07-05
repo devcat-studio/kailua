@@ -893,19 +893,19 @@ x = y
 
 --8<-- require-unknown
 --# open lua51
-x = require 'a' -- only warning
+x = require 'a' --@< Warning: Cannot resolve the module name given to `require`
 --! ok
 
 --8<-- require-unknown-returns-1
 --# open lua51
-x = require 'a'
+x = require 'a' --@< Warning: Cannot resolve the module name given to `require`
 print(x + 4)
 --! error
 
 --8<-- require-unknown-returns-2
 --# open lua51
 --# assume x: var integer
-x = require 'A' -- `require 'A'` returns any instead
+x = require 'A' --@< Warning: Cannot resolve the module name given to `require`
 
 --& a
 return 42

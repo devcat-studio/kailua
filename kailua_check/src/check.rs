@@ -4,7 +4,7 @@ use std::ops::{Deref, DerefMut};
 use std::borrow::Cow;
 use take_mut::take;
 
-use kailua_diag::{Span, Spanned, WithLoc, Report};
+use kailua_diag::{Span, Spanned, WithLoc, Report, Reporter};
 use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, NameScope};
 use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
@@ -886,7 +886,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     let block = match self.opts.require_block(modname) {
                         Ok(block) => block,
                         Err(e) => {
-                            // TODO warn
+                            try!(self.report.warn(args[0].span, "Cannot resolve the module name \
+                                                                 given to `require`").done());
                             return Ok(SlotSeq::from(T::All));
                         }
                     };

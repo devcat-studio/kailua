@@ -31,6 +31,11 @@ impl Kind {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Stop;
 
+// XXX stop gap to aid kailua_check's transition to Stop type
+impl From<Stop> for String {
+    fn from(_: Stop) -> String { format!("stop requested") }
+}
+
 pub type Result<T> = result::Result<T, Stop>;
 
 pub trait Report {
