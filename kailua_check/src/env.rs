@@ -4,7 +4,6 @@ use std::str;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::collections::{HashMap, HashSet};
-use std::ops::Deref;
 use vec_map::VecMap;
 
 use kailua_diag::{self, Kind, Span, Spanned, Report};
