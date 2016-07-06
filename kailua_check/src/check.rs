@@ -614,7 +614,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             St::ForIn(ref names, ref exps, ref block) => {
-                let mut infos = try!(self.visit_explist(exps)).base.into_iter();
+                let Spanned { base: infos, span: expspan } = try!(self.visit_explist(exps));
+                let mut infos = infos.into_iter();
                 let func = infos.next().unwrap(); // iterator function
                 let state = infos.next().unwrap(); // immutable state to the iterator
                 let last = infos.next().unwrap(); // last value returned from the iterator
@@ -622,14 +623,13 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 // `func` is subject to similar constraints to `self.visit_func_call`
                 let func = func.borrow();
                 let func = func.unlift();
-                if !self.env.get_type_bounds(&func).1.is_callable() {
-                    try!(self.env.error(stmt, format!("The iterator returned a non-function \
-                                                       {:?}", func)).done());
-                    return Ok(Exit::None);
-                }
-
                 let indtys;
-                if func.is_dynamic() {
+                if !self.env.get_type_bounds(&func).1.is_callable() {
+                    try!(self.env.error(expspan, format!("The iterator returned a non-function \
+                                                          {:?}", func)).done());
+                    indtys = TySeq { head: vec![],
+                                     tail: Some(Box::new(TyWithNil::from(T::Dynamic))) };
+                } else if func.is_dynamic() {
                     // can't determine what func will return
                     indtys = TySeq { head: vec![],
                                      tail: Some(Box::new(TyWithNil::from(T::Dynamic))) };
@@ -1101,7 +1101,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     fn collect_type_from_exp(&mut self, exp: &Spanned<Exp>)
             -> CheckResult<(Option<Spanned<Slot>>, Spanned<SlotSeq>)> {
         if let Ex::FuncCall(ref func, ref args) = *exp.base {
-            let Spanned { base: funcseq, span } = try!(self.visit_exp(func));
+            let Spanned { base: funcseq, span: funcspan } = try!(self.visit_exp(func));
             let funcinfo = funcseq.into_first();
             let funcinfo = funcinfo.borrow();
             let funcinfo = funcinfo.unlift();
@@ -1118,7 +1118,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             } else {
                 None
             };
-            let seq = try!(self.visit_func_call(&funcinfo.to_ref().with_loc(span), args));
+            let seq = try!(self.visit_func_call(&funcinfo.to_ref().with_loc(funcspan), args));
             Ok((typeofexp, seq.with_loc(exp)))
         } else {
             let seq = try!(self.visit_exp(exp));

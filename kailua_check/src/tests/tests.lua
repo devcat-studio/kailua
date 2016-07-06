@@ -1084,6 +1084,18 @@ for x, y in func, state, first do
 end
 --! error
 
+--8<-- for-in-non-func
+for x in 'hello' do --@< Error: The iterator returned a non-function "hello"
+end
+--! error
+
+--8<-- for-in-non-func-recover
+for x in 'hello' do --@< Error: The iterator returned a non-function "hello"
+    x()
+    y() --@< Error: Global or local variable `y` is not defined
+end
+--! error
+
 --8<-- lua51-ipairs-integer-array
 --# open lua51
 --# assume p: var {var integer}
