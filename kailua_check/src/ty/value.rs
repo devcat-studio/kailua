@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use kailua_syntax::{K, SlotKind, Str, M};
 use diag::CheckResult;
-use super::{S, Slot, SlotWithNil, TypeContext, NoTypeContext, TypeResolver, Lattice, TySeq};
+use super::{F, Slot, SlotWithNil, TypeContext, NoTypeContext, TypeResolver, Lattice, TySeq};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Union, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
@@ -48,34 +48,33 @@ impl<'a> T<'a> {
     pub fn strs<I: IntoIterator<Item=Str>>(i: I) -> T<'a> {
         T::Strings(Cow::Owned(Strings::Some(i.into_iter().collect())))
     }
-    pub fn tuple<'b, I: IntoIterator<Item=S<'b>>>(i: I) -> T<'a> {
+    pub fn tuple<'b, I: IntoIterator<Item=Slot>>(i: I) -> T<'a> {
         let i = i.into_iter().enumerate();
-        let fields = i.map(|(i,v)| ((i as i32 + 1).into(), Slot::new(v.into_send())));
+        let fields = i.map(|(i,v)| ((i as i32 + 1).into(), v));
         T::Tables(Cow::Owned(Tables::Fields(fields.collect())))
     }
-    pub fn record<'b, I: IntoIterator<Item=(Str,S<'b>)>>(i: I) -> T<'a> {
+    pub fn record<'b, I: IntoIterator<Item=(Str,Slot)>>(i: I) -> T<'a> {
         let i = i.into_iter();
-        let fields = i.map(|(k,v)| (k.into(), Slot::new(v.into_send())));
+        let fields = i.map(|(k,v)| (k.into(), v));
         T::Tables(Cow::Owned(Tables::Fields(fields.collect())))
     }
-    pub fn array(v: S) -> T<'a> {
-        T::Tables(Cow::Owned(Tables::Array(SlotWithNil::new(v.into_send()))))
+    pub fn array(v: Slot) -> T<'a> {
+        T::Tables(Cow::Owned(Tables::Array(SlotWithNil::from_slot(v))))
     }
-    pub fn map(k: T, v: S) -> T<'a> {
-        T::Tables(Cow::Owned(Tables::Map(Box::new(k.into_send()),
-                                         SlotWithNil::new(v.into_send()))))
+    pub fn map(k: T, v: Slot) -> T<'a> {
+        T::Tables(Cow::Owned(Tables::Map(Box::new(k.into_send()), SlotWithNil::from_slot(v))))
     }
 
     pub fn from(kind: &K, resolv: &mut TypeResolver) -> CheckResult<T<'a>> {
         let slot_from_slotkind = |slotkind: &SlotKind,
                                   resolv: &mut TypeResolver| -> CheckResult<Slot> {
             let ty = try!(T::from(&slotkind.kind.base, resolv));
-            let sty = match slotkind.modf {
-                M::None => S::Just(ty), // XXX
-                M::Var => S::Var(ty),
-                M::Const => S::Const(ty),
+            let flex = match slotkind.modf {
+                M::None => F::Just, // XXX
+                M::Var => F::Var,
+                M::Const => F::Const,
             };
-            Ok(Slot::new(sty))
+            Ok(Slot::new(flex, ty))
         };
 
         match *kind {
@@ -707,11 +706,12 @@ impl<'a> From<T<'a>> for Union {
 pub type Ty = Box<T<'static>>;
 
 #[cfg(test)] 
+#[allow(unused_variables, dead_code)]
 mod tests {
     use kailua_diag::NoReport;
     use kailua_syntax::Str;
     use std::rc::Rc;
-    use ty::{Lattice, TypeContext, NoTypeContext, S, Mark};
+    use ty::{Lattice, TypeContext, NoTypeContext, F, Slot, Mark};
     use env::Context;
     use super::*;
 
@@ -720,12 +720,12 @@ mod tests {
     }
 
     fn s(x: &str) -> Str { Str::from(x.as_bytes().to_owned()) }
-    fn just(t: T) -> S<'static> { S::Just(t.into_send()) }
-    fn var(t: T) -> S<'static> { S::Var(t.into_send()) }
-    fn cnst(t: T) -> S<'static> { S::Const(t.into_send()) }
-    fn curr(t: T) -> S<'static> { S::Currently(t.into_send()) }
-    fn varcnst(t: T) -> S<'static> { S::VarOrConst(t.into_send(), Mark::any()) }
-    fn varcurr(t: T) -> S<'static> { S::VarOrCurrently(t.into_send(), Mark::any()) }
+    fn just(t: T) -> Slot { Slot::new(F::Just, t.into_send()) }
+    fn var(t: T) -> Slot { Slot::new(F::Var, t.into_send()) }
+    fn cnst(t: T) -> Slot { Slot::new(F::Const, t.into_send()) }
+    fn curr(t: T) -> Slot { Slot::new(F::Currently, t.into_send()) }
+    fn varcnst(t: T) -> Slot { Slot::new(F::VarOrConst(Mark::any()), t.into_send()) }
+    fn varcurr(t: T) -> Slot { Slot::new(F::VarOrCurrently(Mark::any()), t.into_send()) }
 
     #[test]
     fn test_lattice() {

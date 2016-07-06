@@ -9,7 +9,7 @@ use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, NameScope
 use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
 use ty::{T, TySeq, Lattice, TypeContext, Tables, Function, Functions, TyWithNil};
-use ty::{S, Slot, SlotSeq, SlotWithNil, Builtin};
+use ty::{F, Slot, SlotSeq, SlotWithNil, Builtin};
 use ty::flags::*;
 use env::{Env, Frame, Scope, Context};
 use options::Options;
@@ -52,7 +52,7 @@ enum Cond {
 
 fn literal_ty_to_flags(info: &Slot) -> CheckResult<Option<Flags>> {
     let slot = info.borrow();
-    if let Some(s) = slot.unlift().as_string() {
+    if let Some(s) = slot.as_string() {
         let tyname = &***s;
         let flags = match tyname {
             b"nil" => T_NIL,
@@ -74,7 +74,7 @@ fn literal_ty_to_flags(info: &Slot) -> CheckResult<Option<Flags>> {
 // AssertType built-in accepts more strings than Type
 fn ext_literal_ty_to_flags(info: &Slot) -> CheckResult<Option<Flags>> {
     let slot = info.borrow();
-    if let Some(s) = slot.unlift().as_string() {
+    if let Some(s) = slot.as_string() {
         let tyname = &***s;
         let (tyname, nilflags) = if tyname.ends_with(b"?") {
             (&tyname[..tyname.len()-1], T_NIL)
@@ -363,12 +363,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         // and try to adapt to a table containing that variable.
         let new_slot = |context: &mut Context, linear: bool| {
             let tvar = T::TVar(context.gen_tvar());
-            let slot = if linear {
-                S::VarOrCurrently(tvar, context.gen_mark())
+            let flex = if linear {
+                F::VarOrCurrently(context.gen_mark())
             } else {
-                S::Var(tvar)
+                F::Var
             };
-            Slot::new(slot)
+            Slot::new(flex, tvar)
         };
 
         // try fields first if the key is a string or integer determined in the compile time.
@@ -395,7 +395,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     let vslot = fields.entry(litkey)
                                       .or_insert_with(|| new_slot(self.context(), true))
                                       .clone();
-                    check!(vslot.adapt(ety0, self.context()));
+                    check!(vslot.adapt(ety0.flex(), self.context()));
                     let adapted = T::Tables(Cow::Owned(Tables::Fields(fields)));
                     check!(ety0.accept(&Slot::just(adapted), self.context()));
                     return Ok(Some(vslot));
@@ -417,7 +417,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             // possible! this occurs when the ety was Dynamic.
             (None, _) => {
                 let value = Slot::just(T::Dynamic);
-                if lval { check!(value.adapt(ety0, self.context())); }
+                if lval { check!(value.adapt(ety0.flex(), self.context())); }
                 Ok(Some(value))
             },
 
@@ -441,7 +441,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             (Some(&Tables::Empty), false) => Ok(None),
 
             (Some(&Tables::Array(ref value)), _) if intkey => {
-                if lval { check!(value.adapt(ety0, self.context())); }
+                if lval { check!(value.adapt(ety0.flex(), self.context())); }
                 Ok(Some((*value).clone().into_slot()))
             },
 
@@ -467,7 +467,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if let Some(&Tables::Map(ref key, ref value)) =
                         ety0.borrow().unlift().get_tables() {
                     check!(kty.assert_sub(key, self.context()));
-                    check!(value.adapt(ety0, self.context()));
+                    check!(value.adapt(ety0.flex(), self.context()));
                     Ok(Some((*value).clone().into_slot()))
                 } else {
                     unreachable!()
@@ -660,7 +660,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 let mut scope = self.scoped(Scope::new());
                 for (name, ty) in names.iter().zip(indtys.into_iter()) {
-                    scope.env.add_local_var(name, Slot::new(S::Var(*ty)), true);
+                    scope.env.add_local_var(name, Slot::new(F::Var, *ty), true);
                 }
                 let exit = try!(scope.visit_block(block));
                 if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
@@ -695,12 +695,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                      info: Slot| {
                     if let Some(ref kind) = namespec.kind {
                         let ty = try!(T::from(kind, env));
-                        let newinfo = match namespec.modf {
-                            M::None => Slot::new(S::VarOrCurrently(ty, env.context().gen_mark())),
-                            M::Var => Slot::new(S::Var(ty)),
-                            M::Const => Slot::new(S::Const(ty)),
+                        let flex = match namespec.modf {
+                            M::None => F::VarOrCurrently(env.context().gen_mark()),
+                            M::Var => F::Var,
+                            M::Const => F::Const,
                         };
-                        env.add_local_var(&namespec.base.base, newinfo, false);
+                        env.add_local_var(&namespec.base.base, Slot::new(flex, ty), false);
                         env.assign_to_var(&namespec.base.base, info)
                     } else {
                         env.add_local_var(&namespec.base.base, info, true);
@@ -754,14 +754,15 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         warn!("unrecognized builtin name {:?} for {:?} ignored", *bname, *name);
                     }
                 }
-                let sty = match kindm {
-                    M::None => S::VarOrCurrently(ty, self.context().gen_mark()),
-                    M::Var => S::Var(ty),
-                    M::Const => S::Const(ty),
+                let flex = match kindm {
+                    M::None => F::VarOrCurrently(self.context().gen_mark()),
+                    M::Var => F::Var,
+                    M::Const => F::Const,
                 };
+                let slot = Slot::new(flex, ty);
                 match scope {
-                    NameScope::Local => try!(self.env.assume_var(name, Slot::new(sty))),
-                    NameScope::Global => try!(self.env.assume_global_var(name, Slot::new(sty))),
+                    NameScope::Local => try!(self.env.assume_var(name, slot)),
+                    NameScope::Global => try!(self.env.assume_global_var(name, slot)),
                 }
                 Ok(Exit::None)
             }
@@ -801,14 +802,15 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             let sty;
             if let Some(ref kind) = param.kind {
                 ty = try!(T::from(kind, &mut scope.env));
-                sty = match param.modf {
-                    M::None | M::Var => Slot::new(S::Var(ty.clone())),
-                    M::Const => Slot::new(S::Const(ty.clone())),
+                let flex = match param.modf {
+                    M::None | M::Var => F::Var,
+                    M::Const => F::Const,
                 };
+                sty = Slot::new(flex, ty.clone());
             } else {
                 let argv = scope.context().gen_tvar();
                 ty = T::TVar(argv);
-                sty = Slot::new(S::Var(T::TVar(argv)));
+                sty = Slot::new(F::Var, T::TVar(argv));
             }
             scope.env.add_local_var(&param.base, sty, false);
             argshead.push(Box::new(ty));
@@ -829,11 +831,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                            varspec: &TypeSpec<Spanned<Var>>) -> CheckResult<Slot> {
         let specslot = if let Some(ref kind) = varspec.kind {
             let ty = try!(T::from(kind, &mut self.env));
-            match varspec.modf {
-                M::None => Some(Slot::new(S::VarOrCurrently(ty, self.context().gen_mark()))),
-                M::Var => Some(Slot::new(S::Var(ty))),
-                M::Const => Some(Slot::new(S::Const(ty))),
-            }
+            let flex = match varspec.modf {
+                M::None => F::VarOrCurrently(self.context().gen_mark()),
+                M::Var => F::Var,
+                M::Const => F::Const,
+            };
+            Some(Slot::new(flex, ty))
         } else {
             None
         };
@@ -850,7 +853,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     // we need a type to initialize the variable with.
                     // if we have the type spec, use it. otherwise use a type variable.
                     let slot = specslot.unwrap_or_else(|| {
-                        Slot::new(S::Var(T::TVar(self.context().gen_tvar())))
+                        Slot::new(F::Var, T::TVar(self.context().gen_tvar()))
                     });
                     try!(self.env.assign_to_var(name, slot.clone()));
                     Ok(slot)

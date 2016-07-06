@@ -9,7 +9,7 @@ use vec_map::VecMap;
 use kailua_diag::{self, Kind, Span, Spanned, Report};
 use kailua_syntax::{Name, parse_chunk};
 use diag::CheckResult;
-use ty::{Ty, TySeq, T, Slot, S, TVar, Mark, Lattice, TypeContext, TypeResolver};
+use ty::{Ty, TySeq, T, Slot, F, TVar, Mark, Lattice, TypeContext, TypeResolver};
 use ty::flags::*;
 use defs::get_defs;
 use options::Options;
@@ -915,7 +915,7 @@ impl<'ctx> Env<'ctx> {
             };
 
             // this has to be Var since the module is shared across the entire program
-            let slot = Slot::new(S::Var(ty.into_send()));
+            let slot = Slot::new(F::Var, ty.into_send());
             self.context.loaded.insert(modname.to_owned(), Some(slot.clone()));
             Ok(slot)
         } else {
@@ -992,7 +992,7 @@ impl<'ctx> Env<'ctx> {
     // and should be considered identical to the assignment
     pub fn add_local_var(&mut self, name: &Name, mut info: Slot, adapt: bool) {
         if adapt {
-            let newinfo = Slot::new(S::VarOrCurrently(T::Nil, self.context().gen_mark()));
+            let newinfo = Slot::new(F::VarOrCurrently(self.context().gen_mark()), T::Nil);
             newinfo.accept(&info, self.context()).unwrap();
             info = newinfo;
         }
@@ -1014,7 +1014,7 @@ impl<'ctx> Env<'ctx> {
         }
 
         debug!("adding a global variable {:?} as {:?}", *name, info);
-        let newinfo = Slot::new(S::VarOrCurrently(T::Nil, self.context().gen_mark()));
+        let newinfo = Slot::new(F::VarOrCurrently(self.context().gen_mark()), T::Nil);
         newinfo.accept(&info, self.context()).unwrap();
         self.context.global_scope_mut().put(name.to_owned(), newinfo);
         Ok(())

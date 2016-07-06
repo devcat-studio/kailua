@@ -66,7 +66,7 @@ fn lift_fields_to_map(fields: &BTreeMap<Key, Slot>, ctx: &mut TypeContext)
         if key.is_int() { hasint = true; } else { hasstr = true; }
         value = value.union(ty, ctx);
     }
-    assert!(!value.is_linear(), "Slot::union should have destroyed Currently slots");
+    assert!(!value.flex().is_linear(), "Slot::union should have destroyed Currently slots");
     let key = match (hasint, hasstr) {
         (false, false) => T::None,
         (false, true) => T::string(),

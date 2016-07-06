@@ -61,7 +61,7 @@ impl SlotWithNil {
     }
 
     pub fn new<'a>(s: S<'a>) -> SlotWithNil {
-        SlotWithNil { slot: Slot::new(s.into_send().without_nil()) }
+        SlotWithNil { slot: Slot::from(s.into_send().without_nil()) }
     }
 
     pub fn from<'a>(t: T<'a>) -> SlotWithNil {
@@ -77,16 +77,9 @@ impl SlotWithNil {
     }
 
     pub fn into_slot(self) -> Slot {
-        let s = match *self.slot.borrow() {
-            S::Any                      => S::Any,
-            S::Just(ref t)              => S::Just(t.clone().into_send() | T::Nil),
-            S::Const(ref t)             => S::Const(t.clone().into_send() | T::Nil),
-            S::Var(ref t)               => S::Var(t.clone().into_send() | T::Nil),
-            S::Currently(ref t)         => S::Currently(t.clone().into_send() | T::Nil),
-            S::VarOrConst(ref t, m)     => S::VarOrConst(t.clone().into_send() | T::Nil, m),
-            S::VarOrCurrently(ref t, m) => S::VarOrCurrently(t.clone().into_send() | T::Nil, m),
-        };
-        Slot::new(s)
+        let s = self.slot.borrow();
+        let t: &T = &*s;
+        Slot::new(s.flex(), t.clone().into_send() | T::Nil)
     }
 }
 

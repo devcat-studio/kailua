@@ -9,7 +9,7 @@ pub use self::tables::{Key, Tables};
 pub use self::functions::{Function, Functions};
 pub use self::union::Union;
 pub use self::value::{T, Ty};
-pub use self::slot::{S, Slot};
+pub use self::slot::{F, S, Slot};
 pub use self::with_nil::{TyWithNil, SlotWithNil};
 pub use self::seq::{TySeq, TySeqIter, SlotSeq, SlotSeqIter};
 pub use self::builtin::Builtin;
