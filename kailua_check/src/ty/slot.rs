@@ -489,14 +489,16 @@ impl fmt::Debug for Slot {
 
 #[cfg(test)] 
 mod tests {
-    use ty::{T, Lattice, TypeContext};
+    use kailua_diag::NoReport;
+    use std::rc::Rc;
+    use ty::{T, Lattice, TypeContext, NoTypeContext};
     use super::*;
 
     #[test]
     fn test_sub() {
         use env::Context;
 
-        let mut ctx = Context::new();
+        let mut ctx = Context::new(Rc::new(NoReport));
 
         let just = |t| Slot::new(S::Just(t));
         let cnst = |t| Slot::new(S::Const(t));
@@ -505,21 +507,21 @@ mod tests {
         let varcnst = |ctx: &mut TypeContext, t| Slot::new(S::VarOrConst(t, ctx.gen_mark()));
         let varcurr = |ctx: &mut TypeContext, t| Slot::new(S::VarOrCurrently(t, ctx.gen_mark()));
 
-        assert_eq!(just(T::integer()).assert_sub(&just(T::integer()), &mut ()), Ok(()));
-        assert_eq!(just(T::integer()).assert_sub(&just(T::number()), &mut ()), Ok(()));
-        assert!(just(T::number()).assert_sub(&just(T::integer()), &mut ()).is_err());
+        assert_eq!(just(T::integer()).assert_sub(&just(T::integer()), &mut NoTypeContext), Ok(()));
+        assert_eq!(just(T::integer()).assert_sub(&just(T::number()), &mut NoTypeContext), Ok(()));
+        assert!(just(T::number()).assert_sub(&just(T::integer()), &mut NoTypeContext).is_err());
 
-        assert_eq!(var(T::integer()).assert_sub(&var(T::integer()), &mut ()), Ok(()));
-        assert!(var(T::integer()).assert_sub(&var(T::number()), &mut ()).is_err());
-        assert!(var(T::number()).assert_sub(&var(T::integer()), &mut ()).is_err());
+        assert_eq!(var(T::integer()).assert_sub(&var(T::integer()), &mut NoTypeContext), Ok(()));
+        assert!(var(T::integer()).assert_sub(&var(T::number()), &mut NoTypeContext).is_err());
+        assert!(var(T::number()).assert_sub(&var(T::integer()), &mut NoTypeContext).is_err());
 
-        assert_eq!(cnst(T::integer()).assert_sub(&cnst(T::integer()), &mut ()), Ok(()));
-        assert_eq!(cnst(T::integer()).assert_sub(&cnst(T::number()), &mut ()), Ok(()));
-        assert!(cnst(T::number()).assert_sub(&cnst(T::integer()), &mut ()).is_err());
+        assert_eq!(cnst(T::integer()).assert_sub(&cnst(T::integer()), &mut NoTypeContext), Ok(()));
+        assert_eq!(cnst(T::integer()).assert_sub(&cnst(T::number()), &mut NoTypeContext), Ok(()));
+        assert!(cnst(T::number()).assert_sub(&cnst(T::integer()), &mut NoTypeContext).is_err());
 
-        assert_eq!(curr(T::integer()).assert_sub(&curr(T::integer()), &mut ()), Ok(()));
-        assert!(curr(T::integer()).assert_sub(&curr(T::number()), &mut ()).is_err());
-        assert!(curr(T::number()).assert_sub(&curr(T::integer()), &mut ()).is_err());
+        assert_eq!(curr(T::integer()).assert_sub(&curr(T::integer()), &mut NoTypeContext), Ok(()));
+        assert!(curr(T::integer()).assert_sub(&curr(T::number()), &mut NoTypeContext).is_err());
+        assert!(curr(T::number()).assert_sub(&curr(T::integer()), &mut NoTypeContext).is_err());
 
         {
             let v1 = ctx.gen_tvar();

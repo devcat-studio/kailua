@@ -20,19 +20,17 @@ mod check;
 
 pub fn check_from_span(context: &mut Context,
                        span: kailua_diag::Span,
-                       opts: &mut Options,
-                       report: &kailua_diag::Report) -> CheckResult<()> {
-    let chunk = kailua_syntax::parse_chunk(&opts.source().borrow(), span, report);
+                       opts: &mut Options) -> CheckResult<()> {
+    let chunk = kailua_syntax::parse_chunk(&opts.source().borrow(), span, context.report());
     let chunk = try!(chunk.map_err(|_| format!("parse error")));
-    check_from_chunk(context, &chunk, opts, report)
+    check_from_chunk(context, &chunk, opts)
 }
 
 pub fn check_from_chunk(context: &mut Context,
                         chunk: &kailua_diag::Spanned<kailua_syntax::Block>,
-                        opts: &mut Options,
-                        report: &kailua_diag::Report) -> CheckResult<()> {
+                        opts: &mut Options) -> CheckResult<()> {
     let mut env = env::Env::new(context);
-    let mut checker = check::Checker::new(&mut env, opts, report);
+    let mut checker = check::Checker::new(&mut env, opts);
     checker.visit(chunk)
 }
 

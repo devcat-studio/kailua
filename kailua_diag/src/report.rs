@@ -2,6 +2,7 @@ use std::str;
 use std::cmp;
 use std::result;
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use source::{Source, Span, Pos};
 use dummy_term::{stderr_or_dummy};
@@ -44,6 +45,11 @@ pub trait Report {
 }
 
 impl<'a, R: Report> Report for &'a R {
+    fn add_span(&self, k: Kind, s: Span, m: String) -> Result<()> { (**self).add_span(k, s, m) }
+    fn can_continue(&self) -> bool { (**self).can_continue() }
+}
+
+impl<'a, R: Report> Report for &'a mut R {
     fn add_span(&self, k: Kind, s: Span, m: String) -> Result<()> { (**self).add_span(k, s, m) }
     fn can_continue(&self) -> bool { (**self).can_continue() }
 }
@@ -125,14 +131,14 @@ fn strip_newline(mut s: &[u8]) -> &[u8] {
     }
 }
 
-pub struct ConsoleReport<'a> {
-    source: &'a RefCell<Source>,
+pub struct ConsoleReport {
+    source: Rc<RefCell<Source>>,
     term: RefCell<Box<StderrTerminal>>,
     maxkind: Cell<Option<Kind>>,
 }
 
-impl<'a> ConsoleReport<'a> {
-    pub fn new(source: &'a RefCell<Source>) -> ConsoleReport<'a> {
+impl ConsoleReport {
+    pub fn new(source: Rc<RefCell<Source>>) -> ConsoleReport {
         ConsoleReport {
             source: source,
             term: RefCell::new(stderr_or_dummy()),
@@ -183,7 +189,7 @@ impl<'a> ConsoleReport<'a> {
     }
 }
 
-impl<'a> Report for ConsoleReport<'a> {
+impl Report for ConsoleReport {
     fn add_span(&self, kind: Kind, span: Span, msg: String) -> Result<()> {
         let mut term = self.term.borrow_mut();
         let term = &mut *term;

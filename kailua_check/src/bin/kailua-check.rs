@@ -8,20 +8,21 @@ use std::str;
 use std::io;
 use std::env;
 use std::cell::RefCell;
+use std::rc::Rc;
 use std::path::{Path, PathBuf};
 
 use kailua_diag::{Span, Spanned, WithLoc, Source, Report, ConsoleReport};
 use kailua_syntax::{parse_chunk, Block};
 
 fn parse_and_check(mainpath: &Path) -> Result<(), String> {
-    struct Options<'a> {
-        source: &'a RefCell<Source>,
+    struct Options {
+        source: Rc<RefCell<Source>>,
         root: PathBuf,
-        report: &'a Report,
+        report: Rc<Report>,
     }
 
-    impl<'a> kailua_check::Options for Options<'a> {
-        fn source(&self) -> &RefCell<Source> { self.source }
+    impl kailua_check::Options for Options {
+        fn source(&self) -> &RefCell<Source> { &*self.source }
 
         fn require_block(&mut self, path: &[u8]) -> Result<Spanned<Block>, String> {
             const BUILTIN_MODS: &'static [&'static str] = &[
@@ -46,7 +47,7 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
                         }
                     };
                     let chunk = try!(parse_chunk(&opts.source.borrow(), span,
-                                                 opts.report).map_err(|_| format!("parse error")));
+                                                 &*opts.report).map_err(|_| format!("parse error")));
                     Ok(Some(chunk))
                 };
 
@@ -69,12 +70,12 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
 
     let mut source = Source::new();
     let filespan = try!(source.add_file(mainpath).map_err(|e| e.to_string()));
-    let source = RefCell::new(source);
-    let report = ConsoleReport::new(&source);
-    let mut context = kailua_check::Context::new();
+    let source = Rc::new(RefCell::new(source));
+    let report = Rc::new(ConsoleReport::new(source.clone()));
+    let mut context = kailua_check::Context::new(report.clone());
     let root = mainpath.parent().unwrap_or(&Path::new(".."));
-    let mut opts = Options { source: &source, root: root.to_owned(), report: &report };
-    kailua_check::check_from_span(&mut context, filespan, &mut opts, &report)
+    let mut opts = Options { source: source, root: root.to_owned(), report: report };
+    kailua_check::check_from_span(&mut context, filespan, &mut opts)
 }
 
 pub fn main() {

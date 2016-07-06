@@ -15,6 +15,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::rc::Rc;
 use std::fs::File;
 use std::error::Error;
 use std::collections::HashMap;
@@ -23,8 +24,8 @@ use term::{Terminal, StderrTerminal};
 use kailua_diag::{Source, Kind, Span, Report, CollectedReport};
 
 pub trait Testing {
-    fn run(&self, source: &RefCell<Source>, span: Span, filespans: &HashMap<String, Span>,
-           report: &Report) -> String;
+    fn run(&self, source: Rc<RefCell<Source>>, span: Span, filespans: &HashMap<String, Span>,
+           report: Rc<Report>) -> String;
 }
 
 #[derive(Debug)]
@@ -424,11 +425,17 @@ impl<T: Testing> Tester<T> {
             filespans.insert(file.to_owned(), source.add_string(file, text.join("\n").as_bytes()));
         }
 
-        let source = RefCell::new(source);
-        let collected = CollectedReport::new();
-        let output = self.testing.run(&source, inputspan, &filespans, &collected);
-        let source = source.into_inner();
-        let collected = collected.into_reports();
+        let source = Rc::new(RefCell::new(source));
+        let collected = Rc::new(CollectedReport::new());
+        let output = self.testing.run(source.clone(), inputspan, &filespans, collected.clone());
+        let source = match Rc::try_unwrap(source) {
+            Ok(src) => src.into_inner(),
+            Err(_) => panic!("Testing::run should not own Source"),
+        };
+        let collected = match Rc::try_unwrap(collected) {
+            Ok(rep) => rep.into_reports(),
+            Err(_) => panic!("Testing::run should not own Report"),
+        };
         self.num_tested += 1;
 
         // fail on a mismatching output
@@ -547,8 +554,8 @@ impl<T: Testing> Tester<T> {
         let _ = self.term.reset();
         if !collected.is_empty() {
             let _ = writeln!(self.term, "");
-            let source = RefCell::new(source);
-            let display = kailua_diag::ConsoleReport::new(&source);
+            let source = Rc::new(RefCell::new(source));
+            let display = kailua_diag::ConsoleReport::new(source);
             for (kind, span, msg) in collected {
                 let _ = display.add_span(kind, span, msg.clone());
             }

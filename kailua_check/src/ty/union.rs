@@ -2,7 +2,7 @@ use std::fmt;
 use std::borrow::Cow;
 
 use diag::CheckResult;
-use super::{T, TypeContext, Lattice, Numbers, Strings, Tables, Functions, TVar};
+use super::{T, TypeContext, NoTypeContext, Lattice, Numbers, Strings, Tables, Functions, TVar};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 
@@ -119,8 +119,8 @@ impl Lattice for Union {
             return error_not_sub(self, other);
         }
 
-        try!(self.numbers.assert_sub(&other.numbers, &mut ()));
-        try!(self.strings.assert_sub(&other.strings, &mut ()));
+        try!(self.numbers.assert_sub(&other.numbers, &mut NoTypeContext));
+        try!(self.strings.assert_sub(&other.strings, &mut NoTypeContext));
 
         // XXX err on unions with possible overlapping instantiation for now
         let count = if self.tables.is_some() { 1 } else { 0 } +
@@ -163,8 +163,8 @@ impl Lattice for Union {
             return error_not_eq(self, other);
         }
 
-        try!(self.numbers.assert_eq(&other.numbers, &mut ()));
-        try!(self.strings.assert_eq(&other.strings, &mut ()));
+        try!(self.numbers.assert_eq(&other.numbers, &mut NoTypeContext));
+        try!(self.strings.assert_eq(&other.strings, &mut NoTypeContext));
         try!(self.tables.assert_eq(&other.tables, ctx));
         try!(self.functions.assert_eq(&other.functions, ctx));
         Ok(())

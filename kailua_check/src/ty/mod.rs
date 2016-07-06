@@ -1,6 +1,7 @@
 use std::fmt;
 use std::borrow::Borrow;
 use diag::CheckResult;
+use kailua_diag::{self, Kind, Span, Report};
 use kailua_syntax::Name;
 
 pub use self::literals::{Numbers, Strings};
@@ -82,7 +83,7 @@ impl fmt::Debug for Mark {
     }
 }
 
-pub trait TypeResolver {
+pub trait TypeResolver: Report {
     fn ty_from_name(&self, name: &Name) -> CheckResult<T<'static>>;
 }
 
@@ -94,7 +95,7 @@ impl<'a, R: TypeResolver> TypeResolver for &'a mut R {
     fn ty_from_name(&self, name: &Name) -> CheckResult<T<'static>> { (**self).ty_from_name(name) }
 }
 
-pub trait TypeContext {
+pub trait TypeContext: Report {
     fn last_tvar(&self) -> Option<TVar>;
     fn gen_tvar(&mut self) -> TVar;
     fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()>;
@@ -163,7 +164,18 @@ impl<T: Lattice<Output=T> + fmt::Debug + Clone> Lattice for Option<T> {
 }
 
 // used when operands should not have any type variables
-impl TypeContext for () {
+struct NoTypeContext;
+
+impl Report for NoTypeContext {
+    fn add_span(&self, kind: Kind, span: Span, msg: String) -> kailua_diag::Result<()> {
+        panic!("add_span({:?}, {:?}, {:?}) is not supposed to be called here", kind, span, msg);
+    }
+    fn can_continue(&self) -> bool {
+        panic!("can_continue() is not supposed to be called here");
+    }
+}
+
+impl TypeContext for NoTypeContext {
     fn last_tvar(&self) -> Option<TVar> {
         None
     }

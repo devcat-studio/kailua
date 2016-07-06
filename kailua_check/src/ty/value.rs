@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use kailua_syntax::{K, SlotKind, Str, M};
 use diag::CheckResult;
-use super::{S, Slot, SlotWithNil, TypeContext, TypeResolver, Lattice, TySeq};
+use super::{S, Slot, SlotWithNil, TypeContext, NoTypeContext, TypeResolver, Lattice, TySeq};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Union, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
@@ -644,7 +644,9 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
 
 impl<'a, 'b> ops::BitOr<T<'b>> for T<'a> {
     type Output = T<'static>;
-    fn bitor(self, rhs: T<'b>) -> T<'static> { self.union(&rhs, &mut ()) }
+    fn bitor(self, rhs: T<'b>) -> T<'static> {
+        self.union(&rhs, &mut NoTypeContext)
+    }
 }
 
 // not intended to be complete equality, but enough for testing
@@ -706,8 +708,10 @@ pub type Ty = Box<T<'static>>;
 
 #[cfg(test)] 
 mod tests {
+    use kailua_diag::NoReport;
     use kailua_syntax::Str;
-    use ty::{Lattice, TypeContext, S, Mark};
+    use std::rc::Rc;
+    use ty::{Lattice, TypeContext, NoTypeContext, S, Mark};
     use env::Context;
     use super::*;
 
@@ -730,7 +734,7 @@ mod tests {
                 let left = $l;
                 let right = $r;
                 let union = $u;
-                let mut ctx = Context::new();
+                let mut ctx = Context::new(Rc::new(NoReport));
                 let actualunion = left.union(&right, &mut ctx);
                 if actualunion != union {
                     panic!("{:?} | {:?} = expected {:?}, actual {:?}",
@@ -878,10 +882,10 @@ mod tests {
     fn test_sub() {
         assert_eq!(T::record(hash![foo=just(T::int(3)), bar=just(T::integer())]).assert_sub(
                        &T::map(T::str(s("foo")) | T::str(s("bar")), just(T::number())),
-                       &mut ()),
+                       &mut NoTypeContext),
                    Ok(()));
 
-        let mut ctx = Context::new();
+        let mut ctx = Context::new(Rc::new(NoReport));
 
         {
             let v1 = ctx.gen_tvar();

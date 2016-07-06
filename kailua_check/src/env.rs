@@ -2,10 +2,12 @@ use std::mem;
 use std::ops;
 use std::str;
 use std::cell::Cell;
+use std::rc::Rc;
 use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
 use vec_map::VecMap;
 
-use kailua_diag::{Spanned, Report};
+use kailua_diag::{self, Kind, Span, Spanned, Report};
 use kailua_syntax::{Name, parse_chunk};
 use diag::CheckResult;
 use ty::{Ty, TySeq, T, Slot, S, TVar, Mark, Lattice, TypeContext, TypeResolver};
@@ -367,6 +369,7 @@ impl Partition for Box<MarkInfo> {
 // global context (also acts as a type context).
 // anything has to be retained across multiple files should be here
 pub struct Context {
+    report: Rc<Report>,
     global_scope: Scope,
     next_tvar: Cell<TVar>,
     tvar_sub: Constraints, // upper bound
@@ -379,8 +382,9 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new() -> Context {
+    pub fn new(report: Rc<Report>) -> Context {
         let mut ctx = Context {
+            report: report,
             global_scope: Scope::new(),
             next_tvar: Cell::new(TVar(1)), // TVar(0) for the top-level return
             tvar_sub: Constraints::new("<:"),
@@ -398,6 +402,10 @@ impl Context {
         ctx
     }
 
+    pub fn report(&self) -> &Report {
+        &*self.report
+    }
+
     pub fn global_scope(&self) -> &Scope {
         &self.global_scope
     }
@@ -406,8 +414,7 @@ impl Context {
         &mut self.global_scope
     }
 
-    pub fn open_library(&mut self, name: &Spanned<Name>,
-                        opts: &mut Options, report: &Report) -> CheckResult<()> {
+    pub fn open_library(&mut self, name: &Spanned<Name>, opts: &mut Options) -> CheckResult<()> {
         let name_ = try!(str::from_utf8(&name.base).map_err(|e| e.to_string()));
         if let Some(defs) = get_defs(name_) {
             // one library may consist of multiple files, so we defer duplicate check
@@ -415,10 +422,10 @@ impl Context {
                 if self.opened.insert(def.name.to_owned()) {
                     let name = format!("<internal: {}>", def.name);
                     let span = opts.source().borrow_mut().add_string(&name, def.code);
-                    let chunk = parse_chunk(&opts.source().borrow(), span, report);
+                    let chunk = parse_chunk(&opts.source().borrow(), span, &*self.report);
                     let chunk = try!(chunk.map_err(|_| format!("parse error")));
                     let mut env = Env::new(self);
-                    let mut checker = Checker::new(&mut env, opts, report);
+                    let mut checker = Checker::new(&mut env, opts);
                     try!(checker.visit(&chunk))
                 }
             }
@@ -497,6 +504,13 @@ impl Context {
         self.mark_infos.get_mut(&mark_).unwrap().value = value;
         ret
     }
+}
+
+impl Report for Context {
+    fn add_span(&self, k: Kind, s: Span, m: String) -> kailua_diag::Result<()> {
+        self.report.add_span(k, s, m)
+    }
+    fn can_continue(&self) -> bool { self.report.can_continue() }
 }
 
 impl TypeContext for Context {
@@ -1051,6 +1065,15 @@ impl<'ctx> Env<'ctx> {
     }
 }
 
+impl<'ctx> Report for Env<'ctx> {
+    fn add_span(&self, k: Kind, s: Span, m: String) -> kailua_diag::Result<()> {
+        self.context.report.add_span(k, s, m)
+    }
+    fn can_continue(&self) -> bool {
+        self.context.report.can_continue()
+    }
+}
+
 impl<'ctx> TypeResolver for Env<'ctx> {
     fn ty_from_name(&self, name: &Name) -> CheckResult<T<'static>> {
         if let Some(t) = self.get_named_type(name) {
@@ -1063,7 +1086,9 @@ impl<'ctx> TypeResolver for Env<'ctx> {
 
 #[test]
 fn test_context_tvar() {
-    let mut ctx = Context::new();
+    use kailua_diag::NoReport;
+
+    let mut ctx = Context::new(Rc::new(NoReport));
 
     { // idempotency of bounds
         let v1 = ctx.gen_tvar();

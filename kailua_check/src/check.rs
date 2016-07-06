@@ -4,7 +4,7 @@ use std::ops::{Deref, DerefMut};
 use std::borrow::Cow;
 use take_mut::take;
 
-use kailua_diag::{Span, Spanned, WithLoc, Report, Reporter};
+use kailua_diag::{Span, Spanned, WithLoc, Reporter};
 use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, NameScope};
 use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
@@ -102,14 +102,11 @@ fn ext_literal_ty_to_flags(info: &Slot) -> CheckResult<Option<Flags>> {
 pub struct Checker<'envr, 'env: 'envr> {
     env: &'envr mut Env<'env>,
     opts: &'env mut Options,
-    report: &'env Report,
 }
 
 impl<'envr, 'env> Checker<'envr, 'env> {
-    pub fn new(env: &'envr mut Env<'env>,
-               opts: &'env mut Options,
-               report: &'env Report) -> Checker<'envr, 'env> {
-        Checker { env: env, opts: opts, report: report }
+    pub fn new(env: &'envr mut Env<'env>, opts: &'env mut Options) -> Checker<'envr, 'env> {
+        Checker { env: env, opts: opts }
     }
 
     fn context(&mut self) -> &mut Context {
@@ -725,7 +722,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             St::Break => Ok(Exit::Break),
 
             St::KailuaOpen(ref name) => {
-                try!(self.env.context().open_library(name, self.opts, self.report));
+                try!(self.env.context().open_library(name, self.opts));
                 Ok(Exit::None)
             }
 
@@ -886,14 +883,14 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     let block = match self.opts.require_block(modname) {
                         Ok(block) => block,
                         Err(e) => {
-                            try!(self.report.warn(args[0].span, "Cannot resolve the module name \
-                                                                 given to `require`").done());
+                            try!(self.env.warn(args[0].span, "Cannot resolve the module name \
+                                                              given to `require`").done());
                             return Ok(SlotSeq::from(T::All));
                         }
                     };
                     let mut env = Env::new(self.env.context());
                     {
-                        let mut sub = Checker::new(&mut env, self.opts, self.report);
+                        let mut sub = Checker::new(&mut env, self.opts);
                         try!(sub.visit_block(&block));
                     }
                     return Ok(SlotSeq::from_slot(try!(env.return_from_module(modname))));
