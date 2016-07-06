@@ -13,25 +13,25 @@ p()
 --8<-- funccall-var-outside-of-scope-1
 local c
 if c then local p end
-p()
+p() --@< Error: Global or local variable `p` is not defined
 --! error
 
 --8<-- funccall-var-outside-of-scope-2
 local c = true
 if c then local p end
-p()
+p() --@< Error: Global or local variable `p` is not defined
 --! error
 
 --8<-- funccall-var-outside-of-scope-3
 local c = false
 if c then local p end
-p()
+p() --@< Error: Global or local variable `p` is not defined
 --! error
 
 --8<-- funccall-var-outside-of-scope-4
 local c --: boolean
 if c then local p end
-p()
+p() --@< Error: Global or local variable `p` is not defined
 --! error
 
 -->8-- funccall-integer-or-nil
@@ -41,7 +41,7 @@ p()
 --! error
 
 --8<-- funccall-undefined
-p()
+p() --@< Error: Global or local variable `p` is not defined
 --! error
 
 --8<-- funccall-dynamic
@@ -337,13 +337,15 @@ end
 
 --8<-- func-no-varargs
 function a()
-    return ...
+    return ... --@< Error: Variadic arguments do not exist in the innermost function
 end
 --! error
 
 --8<-- func-nested-varargs
 function a(...)
-    return function() return ... end
+    return function()
+        return ... --@< Error: Variadic arguments do not exist in the innermost function
+    end
 end
 --! error
 
@@ -732,7 +734,7 @@ local q = p * 3
 --! error
 
 --8<-- lua51-no-implicit
-print('hello')
+print('hello') --@< Error: Global or local variable `print` is not defined
 --! error
 
 --8<-- lua51-print

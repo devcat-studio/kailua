@@ -26,6 +26,8 @@ use kailua_diag::{Source, Kind, Span, Report, CollectedReport};
 pub trait Testing {
     fn run(&self, source: Rc<RefCell<Source>>, span: Span, filespans: &HashMap<String, Span>,
            report: Rc<Report>) -> String;
+
+    fn check_output(&self, actual: &str, expected: &str) -> bool { actual == expected }
 }
 
 #[derive(Debug)]
@@ -355,6 +357,7 @@ pub struct Tester<T> {
     testing: T,
     filter: Option<Regex>,
     term: Box<StderrTerminal>,
+    exact_diags: bool,
     failed_logs: Vec<(Test, Source, String, Vec<(Kind, Span, String)>)>,
     num_tested: usize,
     num_passed: usize,
@@ -373,7 +376,11 @@ impl<T: Testing> Tester<T> {
         } else {
             None
         };
-        Tester { testing: testing, filter: filter, term: term,
+        let exact_diags = match env::var("KAILUA_TEST_EXACT_DIAGS") {
+            Ok(s) => !s.is_empty(),
+            Err(_) => false,
+        };
+        Tester { testing: testing, filter: filter, term: term, exact_diags: exact_diags,
                  failed_logs: Vec::new(), num_tested: 0, num_passed: 0 }
     }
 
@@ -441,12 +448,12 @@ impl<T: Testing> Tester<T> {
         // fail on a mismatching output
         let mut failed = false;
         let expected_output = test.output.join("\n");
-        if output != expected_output {
+        if !self.testing.check_output(&output, &expected_output) {
             failed = true;
         }
 
         // check if test.reports are all included in collected reports (multiset inclusion)
-        // do not check if collected reports have some others, though
+        // do not check if collected reports have some others, though (unless exact_diags is set)
         if !failed {
             let mut reportset = HashMap::new();
             for expected in &test.reports {
@@ -463,9 +470,19 @@ impl<T: Testing> Tester<T> {
                     })
                 });
                 let key = (pos, kind, &msg[..]);
-                if let Some(value) = reportset.get_mut(&key) { *value -= 1; }
+                if let Some(value) = reportset.get_mut(&key) {
+                    *value -= 1;
+                } else if self.exact_diags {
+                    failed = true; // seen a note we haven't expected
+                }
             }
-            failed = reportset.values().any(|&v| v > 0);
+            if !failed {
+                failed = if self.exact_diags {
+                    reportset.values().any(|&v| v != 0)
+                } else {
+                    reportset.values().any(|&v| v > 0)
+                };
+            }
         }
 
         if failed {
