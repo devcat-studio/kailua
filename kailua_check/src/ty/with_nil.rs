@@ -79,8 +79,7 @@ impl SlotWithNil {
     }
 
     pub fn into_slot(self) -> Slot {
-        let s = self.slot.borrow();
-        Slot::new(s.flex(), s.unlift().clone().into_send() | T::Nil)
+        Slot::new(self.slot.flex(), self.slot.unlift().clone().into_send() | T::Nil)
     }
 }
 

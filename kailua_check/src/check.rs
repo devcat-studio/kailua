@@ -1187,7 +1187,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let cond = match (lcond, rcond) {
                     (None, cond) | (cond, None) => cond,
                     (Some(Cond::Flags(lty, lflags)), Some(Cond::Flags(rty, rflags))) => {
-                        let identical = &*lty.borrow() as *const _ == &*rty.borrow() as *const _;
+                        let identical = &*lty.unlift() as *const _ == &*rty.unlift() as *const _;
                         if identical {
                             Some(Cond::Flags(lty, lflags & rflags))
                         } else {
@@ -1213,7 +1213,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let cond = match (lcond, rcond) {
                     (None, cond) | (cond, None) => cond,
                     (Some(Cond::Flags(lty, lflags)), Some(Cond::Flags(rty, rflags))) => {
-                        let identical = &*lty.borrow() as *const _ == &*rty.borrow() as *const _;
+                        let identical = &*lty.unlift() as *const _ == &*rty.unlift() as *const _;
                         if identical {
                             Some(Cond::Flags(lty, lflags | rflags))
                         } else {

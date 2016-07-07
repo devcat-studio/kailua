@@ -1,7 +1,7 @@
 use std::fmt;
 use std::ops::Deref;
 use std::rc::Rc;
-use std::cell::{Ref, RefMut, RefCell};
+use std::cell::{Ref, RefCell};
 
 use diag::CheckResult;
 use super::{T, TypeContext, Lattice, Mark, TVar, Builtin};
@@ -308,9 +308,6 @@ impl Slot {
     pub fn just<'a>(t: T<'a>) -> Slot {
         Slot::new(F::Just, t.into_send())
     }
-
-    pub fn borrow<'a>(&'a self) -> Ref<'a, S<'static>> { self.0.borrow() }
-    pub fn borrow_mut<'a>(&'a mut self) -> RefMut<'a, S<'static>> { self.0.borrow_mut() }
 
     pub fn unlift<'a>(&'a self) -> Ref<'a, T<'static>> {
         Ref::map(self.0.borrow(), |s| s.unlift())
