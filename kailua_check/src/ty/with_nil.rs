@@ -1,5 +1,4 @@
 use std::fmt;
-use std::ops::Deref;
 use diag::CheckResult;
 use super::{T, S, Slot, Lattice, TypeContext};
 
@@ -18,6 +17,10 @@ impl TyWithNil {
         TyWithNil { ty: t.into_send().without_nil() }
     }
 
+    pub fn as_type_without_nil(&self) -> &T<'static> {
+        &self.ty
+    }
+
     pub fn into_type_without_nil(self) -> T<'static> {
         self.ty
     }
@@ -25,11 +28,6 @@ impl TyWithNil {
     pub fn into_type(self) -> T<'static> {
         self.ty | T::Nil
     }
-}
-
-impl Deref for TyWithNil {
-    type Target = T<'static>;
-    fn deref(&self) -> &T<'static> { &self.ty }
 }
 
 impl Lattice for TyWithNil {
@@ -72,20 +70,18 @@ impl SlotWithNil {
         SlotWithNil { slot: Slot::just(t.ty) }
     }
 
-    pub fn into_type_without_nil(self) -> Slot {
-        self.slot.clone()
+    pub fn as_slot_without_nil(&self) -> &Slot {
+        &self.slot
+    }
+
+    pub fn into_slot_without_nil(self) -> Slot {
+        self.slot
     }
 
     pub fn into_slot(self) -> Slot {
         let s = self.slot.borrow();
-        let t: &T = &*s;
-        Slot::new(s.flex(), t.clone().into_send() | T::Nil)
+        Slot::new(s.flex(), s.unlift().clone().into_send() | T::Nil)
     }
-}
-
-impl Deref for SlotWithNil {
-    type Target = Slot;
-    fn deref(&self) -> &Slot { &self.slot }
 }
 
 impl Lattice for SlotWithNil {

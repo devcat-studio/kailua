@@ -51,8 +51,7 @@ enum Cond {
 }
 
 fn literal_ty_to_flags(info: &Slot) -> CheckResult<Option<Flags>> {
-    let slot = info.borrow();
-    if let Some(s) = slot.as_string() {
+    if let Some(s) = info.unlift().as_string() {
         let tyname = &***s;
         let flags = match tyname {
             b"nil" => T_NIL,
@@ -73,8 +72,7 @@ fn literal_ty_to_flags(info: &Slot) -> CheckResult<Option<Flags>> {
 
 // AssertType built-in accepts more strings than Type
 fn ext_literal_ty_to_flags(info: &Slot) -> CheckResult<Option<Flags>> {
-    let slot = info.borrow();
-    if let Some(s) = slot.as_string() {
+    if let Some(s) = info.unlift().as_string() {
         let tyname = &***s;
         let (tyname, nilflags) = if tyname.ends_with(b"?") {
             (&tyname[..tyname.len()-1], T_NIL)
@@ -174,8 +172,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Mod => {
                 // ? + integer = integer, ? + number = ? + ? = number, number + integer = number
                 // see UnOp::Neg comment for the rationale
-                let lflags = self.env.get_type_bounds(lhs.borrow().unlift()).1;
-                let rflags = self.env.get_type_bounds(rhs.borrow().unlift()).1;
+                let lflags = self.env.get_type_bounds(&lhs.unlift()).1;
+                let rflags = self.env.get_type_bounds(&rhs.unlift()).1;
                 if lflags.is_integral() && rflags.is_integral() &&
                    !(lflags.is_dynamic() && rflags.is_dynamic()) {
                     // we are definitely sure that it will be an integer
@@ -257,12 +255,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 if lhs.get_tvar().is_none() {
                     // True and T => T
-                    if lhs.is_truthy() { return Ok(Slot::just(rhs.borrow().unlift().clone())); }
+                    if lhs.is_truthy() { return Ok(Slot::just(rhs.unlift().clone())); }
                     // False and T => False
-                    if lhs.is_falsy() { return Ok(Slot::just(lhs.borrow().unlift().clone())); }
+                    if lhs.is_falsy() { return Ok(Slot::just(lhs.unlift().clone())); }
                 }
                 // unsure, both can be possible
-                Ok(Slot::just(lhs.borrow().unlift().union(&rhs.borrow().unlift(), self.context())))
+                Ok(Slot::just((*lhs.unlift()).union(&*rhs.unlift(), self.context())))
             }
 
             BinOp::Or => {
@@ -272,12 +270,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 if lhs.get_tvar().is_none() {
                     // True or T => True
-                    if lhs.is_truthy() { return Ok(Slot::just(lhs.borrow().unlift().clone())); }
+                    if lhs.is_truthy() { return Ok(Slot::just(lhs.unlift().clone())); }
                     // False or T => T
-                    if lhs.is_falsy() { return Ok(Slot::just(rhs.borrow().unlift().clone())); }
+                    if lhs.is_falsy() { return Ok(Slot::just(rhs.unlift().clone())); }
                 }
                 // unsure, both can be possible
-                Ok(Slot::just(lhs.borrow().unlift().union(&rhs.borrow().unlift(), self.context())))
+                Ok(Slot::just((*lhs.unlift()).union(&*rhs.unlift(), self.context())))
             }
         }
     }
@@ -321,8 +319,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if let Tables::Map(k, v) = map {
                     // fix `returns` in place
                     let knil = (*k).clone() | T::Nil;
-                    let v = v.into_type_without_nil();
-                    let v = v.borrow().unlift().clone().into_send();
+                    let v = v.into_slot_without_nil();
+                    let v = v.unlift().clone().into_send();
                     *returns.ensure_at_mut(0) = Box::new(T::func(Function {
                         args: TySeq { head: vec![Box::new(tab.clone()), k.clone()], tail: None },
                         returns: TySeq { head: vec![Box::new(knil), Box::new(v)], tail: None },
@@ -338,8 +336,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
     fn check_index(&mut self, ety0: &Spanned<Slot>, kty0: &Spanned<Slot>,
                    lval: bool) -> CheckResult<Option<Slot>> {
-        let ety = ety0.borrow().unlift().clone();
-        let kty = kty0.borrow().unlift().clone();
+        let ety = ety0.unlift().clone();
+        let kty = kty0.unlift().clone();
 
         if !self.env.get_type_bounds(&ety).1.is_tabular() {
             return Err(format!("tried to index the non-table {:?}", ety));
@@ -441,7 +439,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             (Some(&Tables::Empty), false) => Ok(None),
 
             (Some(&Tables::Array(ref value)), _) if intkey => {
-                if lval { check!(value.adapt(ety0.flex(), self.context())); }
+                if lval {
+                    check!(value.as_slot_without_nil().adapt(ety0.flex(), self.context()));
+                }
                 Ok(Some((*value).clone().into_slot()))
             },
 
@@ -464,10 +464,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 check!(ety0.accept(&Slot::just(adapted), self.context()));
 
                 // reborrow ety0 to check against the final mapping type
-                if let Some(&Tables::Map(ref key, ref value)) =
-                        ety0.borrow().unlift().get_tables() {
+                if let Some(&Tables::Map(ref key, ref value)) = ety0.unlift().get_tables() {
                     check!(kty.assert_sub(key, self.context()));
-                    check!(value.adapt(ety0.flex(), self.context()));
+                    check!(value.as_slot_without_nil().adapt(ety0.flex(), self.context()));
                     Ok(Some((*value).clone().into_slot()))
                 } else {
                     unreachable!()
@@ -590,9 +589,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 };
 
                 // the similar logic is also present in check_bin_op
-                let startflags = self.env.get_type_bounds(start.borrow().unlift()).1;
-                let endflags = self.env.get_type_bounds(end.borrow().unlift()).1;
-                let stepflags = self.env.get_type_bounds(step.borrow().unlift()).1;
+                let startflags = self.env.get_type_bounds(&start.unlift()).1;
+                let endflags = self.env.get_type_bounds(&end.unlift()).1;
+                let stepflags = self.env.get_type_bounds(&step.unlift()).1;
                 let indty;
                 if startflags.is_integral() && endflags.is_integral() && stepflags.is_integral() &&
                    !(startflags.is_dynamic() && endflags.is_dynamic() && stepflags.is_dynamic()) {
@@ -621,7 +620,6 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let last = infos.next().unwrap(); // last value returned from the iterator
 
                 // `func` is subject to similar constraints to `self.visit_func_call`
-                let func = func.borrow();
                 let func = func.unlift();
                 let indtys;
                 if !self.env.get_type_bounds(&func).1.is_callable() {
@@ -644,10 +642,10 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     // in any order, our current half-baked solver requires them to be ordered
                     // in the decreasing order of size. since the initial `last` type is likely
                     // to be a subtype of function's own bounds, we assert function types first.
-                    let state = state.borrow().unlift().clone().into_send();
+                    let state = state.unlift().clone().into_send();
                     let args = TySeq { head: vec![Box::new(state), Box::new(indvar.clone())],
                                        tail: None };
-                    let mut returns = try!(self.check_callable(func, &args));
+                    let mut returns = try!(self.check_callable(&func, &args));
                     try!(last.assert_sub(&indvar, self.context()));
 
                     // note that we ignore indvar here. it is only kept internally and
@@ -675,7 +673,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     NameScope::Global => try!(self.env.assign_to_var(name, info)),
                 }
                 let functy = try!(self.visit_func_body(None, sig, block));
-                try!(T::TVar(funcv).assert_eq(functy.borrow().unlift(), self.context()));
+                try!(T::TVar(funcv).assert_eq(&*functy.unlift(), self.context()));
                 Ok(Exit::None)
             }
 
@@ -1002,20 +1000,20 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     if idx == fields.len() - 1 && key.is_none() {
                         let vty = try!(self.visit_exp(value)).base;
                         for ty in &vty.head {
-                            let ty = ty.borrow().unlift().clone();
+                            let ty = ty.unlift().clone();
                             len += 1;
                             tab = tab.insert(T::int(len), ty, self.context());
                         }
                         if let Some(ty) = vty.tail {
                             // a simple array is no longer sufficient now
-                            let ty = ty.borrow().unlift().clone();
+                            let ty = ty.as_slot_without_nil().unlift().clone();
                             tab = tab.insert(T::integer(), ty, self.context());
                         }
                     } else {
                         let kty = if let Some(ref key) = *key {
                             let key = try!(self.visit_exp(key)).base.into_first();
-                            let key = key.borrow();
-                            key.unlift().clone().into_send()
+                            let key = key.unlift();
+                            key.clone().into_send()
                         } else {
                             len += 1;
                             T::int(len)
@@ -1023,7 +1021,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                         // update the table type according to new field
                         let vty = try!(self.visit_exp(value)).base.into_first();
-                        let vty = vty.borrow().unlift().clone();
+                        let vty = vty.unlift().clone();
                         tab = tab.insert(kty, vty, self.context());
                     }
                 }
@@ -1035,7 +1033,6 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Ex::FuncCall(ref func, ref args) => {
                 let Spanned { base: funcseq, span } = try!(self.visit_exp(func));
                 let funcinfo = funcseq.into_first();
-                let funcinfo = funcinfo.borrow();
                 let funcinfo = funcinfo.unlift();
                 let info = try!(self.visit_func_call(&funcinfo.to_ref().with_loc(span), args));
                 Ok(info.with_loc(exp))
@@ -1043,7 +1040,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             Ex::MethodCall(ref e, ref _method, ref args) => {
                 let info = try!(self.visit_exp(e)).map(|seq| seq.into_first());
-                if !info.borrow().unlift().is_tabular() {
+                if !info.unlift().is_tabular() {
                     try!(self.env.error(exp, format!("Tried to index a non-table type \
                                                       {:?}", info)).done());
                     return Ok(self.dummy_slotseq());
@@ -1106,7 +1103,6 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         if let Ex::FuncCall(ref func, ref args) = *exp.base {
             let Spanned { base: funcseq, span: funcspan } = try!(self.visit_exp(func));
             let funcinfo = funcseq.into_first();
-            let funcinfo = funcinfo.borrow();
             let funcinfo = funcinfo.unlift();
             let typeofexp = if funcinfo.builtin() == Some(Builtin::Type) {
                 // there should be a single argument there
@@ -1250,8 +1246,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Cond::Flags(info, flags) => {
                 let flags = if negated { !flags } else { flags };
                 let filtered = {
-                    let slot = info.borrow();
-                    let ty = slot.unlift().clone().into_send();
+                    let ty = info.unlift().clone().into_send();
                     try!(ty.filter_by_flags(flags, self.context()))
                 };
                 // TODO: won't work well with `var` slots

@@ -240,9 +240,9 @@ impl SlotSeq {
 
     pub fn unlift(self) -> TySeq {
         let head =
-            self.head.into_iter().map(|s| Box::new(s.borrow().unlift().clone().into_send()));
+            self.head.into_iter().map(|s| Box::new(s.unlift().clone().into_send()));
         let tail = if let Some(tail) = self.tail {
-            Some(Box::new(TyWithNil::from(tail.borrow().unlift().clone().into_send())))
+            Some(Box::new(TyWithNil::from(tail.as_slot_without_nil().unlift().clone())))
         } else {
             None
         };

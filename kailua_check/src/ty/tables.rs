@@ -124,7 +124,8 @@ impl Tables {
             (_, tab) => match tab.lift_to_map(ctx) {
                 Tables::Map(key_, value_) => {
                     let key = key.union(&key_, ctx);
-                    let value = SlotWithNil::from_slot(Slot::just(value).union(&*value_, ctx));
+                    let value = Slot::just(value).union(value_.as_slot_without_nil(), ctx);
+                    let value = SlotWithNil::from_slot(value);
                     Tables::Map(Box::new(key), value)
                 },
                 tab => tab,
@@ -214,7 +215,7 @@ impl Lattice for Tables {
             (&Tables::Fields(ref fields), &Tables::Map(ref key, ref value)) => {
                 for (k, v) in fields {
                     try!(k.clone().into_type().assert_sub(key, ctx));
-                    try!(v.assert_sub(&**value, ctx));
+                    try!(v.assert_sub(value.as_slot_without_nil(), ctx));
                 }
                 true
             },

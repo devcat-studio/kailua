@@ -118,9 +118,8 @@ impl<'a> S<'a> {
         self.flex
     }
 
-    // not designed to work with Any.
     pub fn unlift<'b>(&'b self) -> &'b T<'a> {
-        &self.ty // XXX to be subsumed to Deref
+        &self.ty
     }
 
     pub fn weaken<'b: 'a>(&'b self, ctx: &mut TypeContext) -> CheckResult<S<'b>> {
@@ -288,11 +287,6 @@ impl<'a> S<'a> {
     }
 }
 
-impl<'a> Deref for S<'a> {
-    type Target = T<'a>;
-    fn deref(&self) -> &T<'a> { &self.ty }
-}
-
 impl<'a> fmt::Debug for S<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?} {:?}", self.flex, self.ty)
@@ -317,6 +311,10 @@ impl Slot {
 
     pub fn borrow<'a>(&'a self) -> Ref<'a, S<'static>> { self.0.borrow() }
     pub fn borrow_mut<'a>(&'a mut self) -> RefMut<'a, S<'static>> { self.0.borrow_mut() }
+
+    pub fn unlift<'a>(&'a self) -> Ref<'a, T<'static>> {
+        Ref::map(self.0.borrow(), |s| s.unlift())
+    }
 
     // one tries to assign to `self` through parent with `flex`. how should `self` change?
     // (only makes sense when `self` is a Just slot, otherwise no-op)
@@ -346,7 +344,7 @@ impl Slot {
 
         // assumes that lhs.flex is already known to be linear.
         let is_shared = |lty: &T, rhs: &S|
-            lty.is_referential() && rhs.flex().is_linear() && rhs.is_referential();
+            lty.is_referential() && rhs.flex().is_linear() && rhs.unlift().is_referential();
 
         match (lhs.flex, rhs.flex) {
             (_, F::Any) |
@@ -400,7 +398,7 @@ impl Slot {
     // following methods are direct analogues to value type's ones, whenever applicable
 
     pub fn flex(&self) -> F { self.0.borrow().flex() }
-    pub fn flags(&self) -> Flags { self.0.borrow().flags() }
+    pub fn flags(&self) -> Flags { self.unlift().flags() }
 
     pub fn is_dynamic(&self)  -> bool { self.flags().is_dynamic() }
     pub fn is_integral(&self) -> bool { self.flags().is_integral() }
@@ -411,8 +409,8 @@ impl Slot {
     pub fn is_truthy(&self)   -> bool { self.flags().is_truthy() }
     pub fn is_falsy(&self)    -> bool { self.flags().is_falsy() }
 
-    pub fn get_tvar(&self) -> Option<TVar> { self.borrow().get_tvar() }
-    pub fn builtin(&self) -> Option<Builtin> { self.borrow().builtin() }
+    pub fn get_tvar(&self) -> Option<TVar> { self.unlift().get_tvar() }
+    pub fn builtin(&self) -> Option<Builtin> { self.unlift().builtin() }
 
     pub fn without_nil(&self) -> Slot {
         let s = self.0.borrow();
@@ -455,11 +453,11 @@ impl<'a> Lattice<T<'a>> for Slot {
     }
 
     fn do_assert_sub(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
-        (**self.0.borrow()).assert_sub(other, ctx)
+        self.unlift().assert_sub(other, ctx)
     }
 
     fn do_assert_eq(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
-        (**self.0.borrow()).assert_eq(other, ctx)
+        self.unlift().assert_eq(other, ctx)
     }
 }
 
