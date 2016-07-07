@@ -4,6 +4,7 @@ extern crate kailua_diag;
 
 use kailua_diag::{Source, Span, Spanned, Report};
 
+pub use lex::{Tok, Punct, Keyword, Lexer};
 pub use ast::{Name, Str, Seq, Var, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, NameScope, SelfParam};
 pub use ast::{St, Stmt, Block, M, K, Kind, FuncKind, SlotKind};
 

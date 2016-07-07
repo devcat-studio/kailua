@@ -177,9 +177,7 @@ impl<T: Lattice<Output=T> + fmt::Debug + Clone> Lattice for Option<T> {
 }
 
 impl<A: Display, B: Display> Lattice<Spanned<B>> for Spanned<A>
-        where A: Lattice<B>,
-              for<'a, 'c> Displayed<'a, 'c, A>: fmt::Display,
-              for<'a, 'c> Displayed<'a, 'c, B>: fmt::Display {
+        where A: Lattice<B> {
     type Output = <A as Lattice<B>>::Output;
 
     fn do_union(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> Self::Output {
@@ -316,14 +314,28 @@ impl Lattice for TVar {
 
 // human-readable description of various types requiring the type context.
 // expected to implement fmt::Display.
-pub struct Displayed<'a, 'c, T: 'a> {
-    base: &'a T,
+pub struct Displayed<'b, 'c, T: Display + 'b> {
+    base: &'b T,
     ctx: &'c TypeContext,
 }
 
-pub trait Display: Sized where for<'a, 'c> Displayed<'a, 'c, Self>: fmt::Display {
-    fn display<'a, 'c>(&'a self, ctx: &'c TypeContext) -> Displayed<'a, 'c, Self> {
+pub trait Display: Sized {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result;
+
+    fn display<'b, 'c>(&'b self, ctx: &'c TypeContext) -> Displayed<'b, 'c, Self> {
         Displayed { base: self, ctx: ctx }
+    }
+}
+
+impl<T: Display> Display for Spanned<T> {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
+        self.base.fmt_displayed(f, ctx)
+    }
+}
+
+impl<'b, 'c, T: Display + 'b> fmt::Display for Displayed<'b, 'c, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.base.fmt_displayed(f, self.ctx)
     }
 }
 

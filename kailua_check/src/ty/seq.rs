@@ -6,7 +6,7 @@ use std::usize;
 use kailua_diag::Spanned;
 use kailua_syntax::{Seq, Kind};
 use diag::CheckResult;
-use super::{T, Ty, TyWithNil, Slot, SlotWithNil, Lattice, Displayed, Display};
+use super::{T, Ty, TyWithNil, Slot, SlotWithNil, Lattice, Display};
 use super::{TypeContext, TypeResolver};
 
 pub struct TySeqIter {
@@ -170,11 +170,9 @@ impl Lattice for TySeq {
     }
 }
 
-impl Display for TySeq {}
-
-impl<'b, 'c> fmt::Display for Displayed<'b, 'c, TySeq> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.base.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(self.ctx), f))
+impl Display for TySeq {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
+        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(ctx), f))
     }
 }
 
@@ -346,11 +344,9 @@ impl Lattice for SlotSeq {
     }
 }
 
-impl Display for SlotSeq {}
-
-impl<'b, 'c> fmt::Display for Displayed<'b, 'c, SlotSeq> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.base.fmt_generic(f, |s, f| fmt::Display::fmt(&s.display(self.ctx), f))
+impl Display for SlotSeq {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
+        self.fmt_generic(f, |s, f| fmt::Display::fmt(&s.display(ctx), f))
     }
 }
 

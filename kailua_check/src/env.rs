@@ -1,6 +1,7 @@
 use std::mem;
 use std::ops;
 use std::str;
+use std::fmt;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::collections::{HashMap, HashSet};
@@ -9,7 +10,8 @@ use vec_map::VecMap;
 use kailua_diag::{self, Kind, Span, Spanned, Report};
 use kailua_syntax::{Name, parse_chunk};
 use diag::CheckResult;
-use ty::{Ty, TySeq, T, Slot, F, TVar, Mark, Lattice, TypeContext, TypeResolver};
+use ty::{Ty, TySeq, T, Slot, F, TVar, Mark, Lattice, Displayed, Display};
+use ty::{TypeContext, TypeResolver};
 use ty::flags::*;
 use defs::get_defs;
 use options::Options;
@@ -520,9 +522,9 @@ impl TypeContext for Context {
             if let Some(ub) = self.tvar_sub.add_bound(lhs, rhs).map(|b| b.clone().into_send()) {
                 // the original bound is not consistent, bound <: rhs still has to hold
                 if let Err(e) = ub.assert_sub(rhs, self) {
-                    return Err(format!("variable {:?} cannot have multiple possibly disjoint \
-                                        bounds (original <: {:?}, later <: {:?}): {}",
-                                       lhs, ub, *rhs, e));
+                    info!("variable {:?} cannot have multiple possibly disjoint \
+                           bounds (original <: {:?}, later <: {:?}): {}", lhs, ub, *rhs, e);
+                    return Err(e);
                 }
             }
             if let Some(lb) = self.tvar_sup.get_bound(lhs).and_then(|b| b.bound.clone()) {
@@ -540,9 +542,9 @@ impl TypeContext for Context {
             if let Some(lb) = self.tvar_sup.add_bound(lhs, rhs).map(|b| b.clone().into_send()) {
                 // the original bound is not consistent, bound :> rhs still has to hold
                 if let Err(e) = rhs.assert_sub(&lb, self) {
-                    return Err(format!("variable {:?} cannot have multiple possibly disjoint \
-                                        bounds (original :> {:?}, later :> {:?}): {}",
-                                       lhs, lb, *rhs, e));
+                    info!("variable {:?} cannot have multiple possibly disjoint \
+                           bounds (original :> {:?}, later :> {:?}): {}", lhs, lb, *rhs, e);
+                    return Err(e);
                 }
             }
             if let Some(ub) = self.tvar_sub.get_bound(lhs).and_then(|b| b.bound.clone()) {
@@ -557,9 +559,9 @@ impl TypeContext for Context {
         if let Some(eb) = self.tvar_eq.add_bound(lhs, rhs).map(|b| b.clone().into_send()) {
             // the original bound is not consistent, bound = rhs still has to hold
             if let Err(e) = eb.assert_eq(rhs, self) {
-                return Err(format!("variable {:?} cannot have multiple possibly disjoint \
-                                    bounds (original = {:?}, later = {:?}): {}",
-                                   lhs, eb, *rhs, e));
+                info!("variable {:?} cannot have multiple possibly disjoint \
+                       bounds (original = {:?}, later = {:?}): {}", lhs, eb, *rhs, e);
+                return Err(e);
             }
         } else {
             if let Some(ub) = self.tvar_sub.get_bound(lhs).and_then(|b| b.bound.clone()) {
@@ -858,6 +860,12 @@ impl<'ctx> Env<'ctx> {
     // not to be called internally; it intentionally reduces the lifetime
     pub fn context(&mut self) -> &mut Context {
         self.context
+    }
+
+    // convenience function to avoid mutable references
+    pub fn display<'a, 'c, T: Display>(&'c self, x: &'a T) -> Displayed<'a, 'c, T>
+            where Displayed<'a, 'c, T>: fmt::Display {
+        x.display(self.context)
     }
 
     pub fn enter(&mut self, scope: Scope) {

@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::cell::{Ref, RefCell};
 
 use diag::CheckResult;
-use super::{T, TypeContext, Lattice, Displayed, Display, Mark, TVar, Builtin};
+use super::{T, TypeContext, Lattice, Display, Mark, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::Flags;
 
@@ -458,11 +458,9 @@ impl<'a> Lattice<T<'a>> for Slot {
     }
 }
 
-impl Display for Slot {}
-
-impl<'b, 'c> fmt::Display for Displayed<'b, 'c, Slot> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.base.0.borrow().ty.display(self.ctx), f)
+impl Display for Slot {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
+        fmt::Display::fmt(&self.0.borrow().ty.display(ctx), f)
     }
 }
 

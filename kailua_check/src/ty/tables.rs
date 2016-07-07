@@ -2,9 +2,9 @@ use std::fmt;
 use std::borrow::ToOwned;
 use std::collections::BTreeMap;
 
-use kailua_syntax::Str;
+use kailua_syntax::{Str, Keyword};
 use diag::CheckResult;
-use super::{T, Ty, Slot, SlotWithNil, TypeContext, Lattice, Displayed, Display};
+use super::{T, Ty, Slot, SlotWithNil, TypeContext, Lattice, Display};
 use super::{error_not_sub, error_not_eq};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -28,6 +28,30 @@ impl Key {
 impl From<i32> for Key { fn from(v: i32) -> Key { Key::Int(v) } }
 impl From<Str> for Key { fn from(s: Str) -> Key { Key::Str(s) } }
 impl<'a> From<&'a Str> for Key { fn from(s: &Str) -> Key { Key::Str(s.to_owned()) } }
+
+impl fmt::Display for Key {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fn is_first(c: u8) -> bool {
+            match c { b'_' | b'a'...b'z' | b'A'...b'Z' => true, _ => false }
+        }
+
+        fn is_next(c: u8) -> bool {
+            match c { b'_' | b'a'...b'z' | b'A'...b'Z' | b'0'...b'9' => true, _ => false }
+        }
+
+        fn unquotable_name(s: &[u8]) -> bool {
+            !s.is_empty() && is_first(s[0])
+                          && s[1..].iter().all(|&c| is_next(c))
+                          && Keyword::from(s, true).is_none()
+        }
+
+        match *self {
+            Key::Int(ref v) => write!(f, "[{:?}]", *v),
+            Key::Str(ref s) if unquotable_name(s) => write!(f, "{:-?}", *s),
+            Key::Str(ref s) => write!(f, "[{:?}]", *s),
+        }
+    }
+}
 
 impl fmt::Debug for Key {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -161,7 +185,7 @@ impl Tables {
                         _ => {}
                     }
                     if first { first = false; } else { try!(write!(f, ", ")); }
-                    try!(write!(f, "{:?} = ", name));
+                    try!(write!(f, "{} = ", name));
                     try!(write_slot(t, f));
                 }
                 // put an additional comma if there is a single numeric field (i.e. `{var T,}`)
@@ -351,12 +375,10 @@ impl PartialEq for Tables {
     }
 }
 
-impl Display for Tables {}
-
-impl<'b, 'c> fmt::Display for Displayed<'b, 'c, Tables> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.base.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(self.ctx), f),
-                                 |s, f| fmt::Display::fmt(&s.display(self.ctx), f))
+impl Display for Tables {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
+        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(ctx), f),
+                            |s, f| fmt::Display::fmt(&s.display(ctx), f))
     }
 }
 

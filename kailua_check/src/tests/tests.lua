@@ -2,7 +2,7 @@
 
 --8<-- funccall-nil
 local p
-p()
+p() --@< Error: Tried to index a non-function `nil`
 --! error
 
 --8<-- funccall-func
@@ -69,6 +69,53 @@ local function p() end
 local x = p + 'foo' --@< Error: `function() -> ()` is not a subtype of `number`
 --! error
 
+--8<-- lt-number-integer-1
+--# assume p: number
+local x = p < 3
+--! ok
+
+--8<-- lt-number-integer-2
+--# assume p: integer
+local x = 2.17 < p
+--! ok
+
+--8<-- lt-integer-number-1
+--# assume p: integer
+local x = p < 3.14
+--! ok
+
+--8<-- lt-integer-number-2
+--# assume p: number
+local x = 2 < p
+--! ok
+
+--8<-- lt-string-string
+--# assume p: string
+local x = p < 'string'
+--! ok
+
+--8<-- lt-string-number
+--# assume p: string
+local x = p < 3.14 --@< Error: Operands `string` and `number` to < operator should be both numbers or both strings
+--! error
+
+--8<-- lt-string-or-number
+--# assume p: string|number
+local x = p < 3.14 --@< Error: Operand `(number|string)` to < operator should be either numbers or strings but not both
+--! error
+
+--8<-- lt-string-or-number-both
+--# assume p: 'hello'|number
+--# assume q: string|integer
+local x = p < q --@< Error: Operand `(number|"hello")` to < operator should be either numbers or strings but not both
+                --@^ Error: Operand `(integer|string)` to < operator should be either numbers or strings but not both
+--! error
+
+--8<-- lt-func-number
+local function p() end
+local x = p < 3.14 --@< Error: Cannot apply < operator to `function() -> ()` and `number`
+--! error
+
 --8<-- unknown-type
 --# assume p: unknown_type
 --! error
@@ -86,7 +133,7 @@ local p = true + 7 --@< Error: `true` is not a subtype of `number`
 --! error
 
 --8<-- index-empty-with-integer
-local p = ({})[3]
+local p = ({})[3] --@< Error: Cannot index `{}` with `3`
 --! error
 
 --8<-- index-map-with-integer
@@ -94,11 +141,11 @@ local p = ({[3] = 4})[3]
 --! ok
 
 --8<-- index-map-with-integer-no-key
-local p = ({[2] = 4})[3]
+local p = ({[2] = 4})[3] --@< Error: Cannot index `{[2] = 4}` with `3`
 --! error
 
 --8<-- index-empty-with-name
-local p = ({}).a
+local p = ({}).a --@< Error: Cannot index `{}` with `"a"`
 --! error
 
 --8<-- index-rec-with-name
@@ -106,7 +153,22 @@ local p = ({a = 4}).a
 --! ok
 
 --8<-- index-rec-with-name-no-key
-local p = ({a = 4}).b
+local p = ({a = 4}).b --@< Error: Cannot index `{a = 4}` with `"b"`
+--! error
+
+--8<-- index-rec-with-string
+--# assume x: string
+local p = ({a = 4})[x] --@< Error: Cannot index `{a = 4}` with index `string` that cannot be resolved in compile time
+--! error
+
+--8<-- index-rec-with-weird-string
+--# assume x: 'not ice'
+local p = ({['not ice'] = 4})[x]
+--! ok
+
+--8<-- index-rec-with-weird-string-error
+--# assume x: 'ice'
+local p = ({['not ice'] = 4})[x] --@< Error: Cannot index `{["not ice"] = 4}` with `"ice"`
 --! error
 
 --8<-- methodcall-empty
@@ -114,7 +176,7 @@ local p = ({}):hello() -- XXX
 --! ok
 
 --8<-- methodcall-func
-local p = (function() end)[3] -- XXX
+local p = (function() end)[3] --@< Error: Tried to index a non-table `function() -> ()`
 --! error
 
 --8<-- currently-nil-to-string
@@ -141,7 +203,7 @@ local p = f.index
 --8<-- assume-table
 local f = function() end
 --# assume f: table
-local p = f.index
+local p = f.index --@< Error: Cannot index `table` without downcasting
 --! error
 
 --8<-- conjunctive-lhs-1
@@ -369,11 +431,13 @@ b = a.y
 --8<-- index-rec-with-wrong-name-1
 local a = { x = 3, y = 'foo' }
 local b = a.z + 1 -- z should be nil
+--@^ Error: Cannot index `{x = 3, y = "foo"}` with `"z"`
 --! error
 
 --8<-- index-rec-with-wrong-name-2
 local a = { x = 3, y = 'foo' }
 local b = a.z .. 'bar' -- ditto
+--@^ Error: Cannot index `{x = 3, y = "foo"}` with `"z"`
 --! error
 
 --8<-- table-update
@@ -543,7 +607,14 @@ local x = p().a + 5
 --8<-- func-returns-rec-2
 --v () -> {a=integer}
 local function p() return {a=4} end
-local x = p().a.b
+local x = p().a.b --@< Error: Tried to index a non-table `integer`
+--! error
+
+--8<-- func-returns-rec-2-span
+--v () -> {a=integer}
+local function p() return {a=4} end
+local x = p().a
+local y = x.b --@< Error: Tried to index a non-table `integer`
 --! error
 
 --8<-- func-implicit-returns-rec
@@ -813,6 +884,7 @@ print(p + 5)
 --# open lua51
 --# assume p: integer|string
 assert(type(p) == 'integer') -- no such type in Lua 5.1
+--@^ Error: Unknown type name
 --! error
 
 --8<-- assert-same-type

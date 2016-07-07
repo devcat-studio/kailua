@@ -22,9 +22,9 @@ custom_derive! {
 
 impl fmt::Debug for Name {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "`"));
+        if !f.sign_minus() { try!(write!(f, "`")); }
         try!(format_ascii_vec(f, &self.0));
-        try!(write!(f, "`"));
+        if !f.sign_minus() { try!(write!(f, "`")); }
         Ok(())
     }
 }
@@ -36,9 +36,9 @@ custom_derive! {
 
 impl fmt::Debug for Str {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "\""));
+        if !f.sign_minus() { try!(write!(f, "\"")); }
         try!(format_ascii_vec(f, &self.0));
-        try!(write!(f, "\""));
+        if !f.sign_minus() { try!(write!(f, "\"")); }
         Ok(())
     }
 }

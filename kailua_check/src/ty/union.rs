@@ -2,7 +2,7 @@ use std::fmt;
 use std::borrow::Cow;
 
 use diag::CheckResult;
-use super::{T, TypeContext, NoTypeContext, Lattice, Displayed, Display};
+use super::{T, TypeContext, NoTypeContext, Lattice, Display};
 use super::{Numbers, Strings, Tables, Functions, TVar};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
@@ -187,22 +187,20 @@ impl Lattice for Union {
     }
 }
 
-impl Display for Union {}
-
-impl<'b, 'c> fmt::Display for Displayed<'b, 'c, Union> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Display for Union {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
         // if the type variable can be completely resolved, try that first
-        if let Some(tv) = self.base.tvar {
-            if let Some(t) = self.ctx.get_tvar_exact_type(tv) {
-                let mut u = self.base.clone();
+        if let Some(tv) = self.tvar {
+            if let Some(t) = ctx.get_tvar_exact_type(tv) {
+                let mut u = self.clone();
                 u.tvar = None;
                 let resolved = T::Union(Cow::Owned(u)) | t;
                 assert_eq!(resolved.get_tvar(), None);
-                return fmt::Display::fmt(&resolved.display(self.ctx), f);
+                return fmt::Display::fmt(&resolved.display(ctx), f);
             }
         }
 
-        self.base.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(self.ctx), f))
+        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(ctx), f))
     }
 }
 

@@ -1,7 +1,7 @@
 use std::fmt;
 
 use diag::CheckResult;
-use super::{T, TySeq, TypeContext, Lattice, Displayed, Display};
+use super::{T, TySeq, TypeContext, Lattice, Display};
 use super::{error_not_sub, error_not_eq};
 
 #[derive(Clone, PartialEq)]
@@ -44,12 +44,10 @@ impl Function {
     }
 }
 
-impl Display for Function {}
-
-impl<'b, 'c> fmt::Display for Displayed<'b, 'c, Function> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.base.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(self.ctx), f),
-                                 |s, f| fmt::Display::fmt(&s.display(self.ctx), f))
+impl Display for Function {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
+        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(ctx), f),
+                            |s, f| fmt::Display::fmt(&s.display(ctx), f))
     }
 }
 
@@ -161,11 +159,9 @@ impl PartialEq for Functions {
     }
 }
 
-impl Display for Functions {}
-
-impl<'b, 'c> fmt::Display for Displayed<'b, 'c, Functions> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.base.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(self.ctx), f))
+impl Display for Functions {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
+        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(ctx), f))
     }
 }
 
