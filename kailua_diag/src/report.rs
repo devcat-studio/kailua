@@ -3,6 +3,7 @@ use std::cmp;
 use std::result;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use unicode_width::UnicodeWidthChar;
 
 use source::{Source, Span, Pos};
 use dummy_term::{stderr_or_dummy};
@@ -167,7 +168,6 @@ impl ConsoleReport {
         let line = strip_newline(source.bytes_from_span(linespan));
         if let Ok(line) = str::from_utf8(line) {
             // it is a UTF-8 string, use unicode-width
-            use unicode_width::UnicodeWidthChar;
             let mut lastcol = 0;
             let mut col = 0;
             for (i, c) in line.char_indices() {
@@ -197,6 +197,41 @@ impl ConsoleReport {
             }
             col
         }
+    }
+
+    // similar to calculate_column but expands tab in `line`
+    fn expand_tab_in_str(&self, line: &str, next_col: &mut usize) -> Vec<u8> {
+        let mut col = *next_col;
+        let mut ret = String::new();
+        for c in line.chars() {
+            if c == '\t' {
+                let newcol = (col + 8) & !7;
+                for _ in col..newcol { ret.push(' '); }
+                col = newcol;
+            } else {
+                col += c.width_cjk().unwrap_or(1);
+                ret.push(c);
+            }
+        }
+        *next_col = col;
+        ret.into_bytes()
+    }
+
+    fn expand_tab_in_bytes(&self, line: &[u8], next_col: &mut usize) -> Vec<u8> {
+        let mut col = *next_col;
+        let mut ret = Vec::new();
+        for &c in line.iter() {
+            if c == b'\t' {
+                let newcol = (col + 8) & !7;
+                for _ in col..newcol { ret.push(b' '); }
+                col = newcol;
+            } else {
+                col += 1;
+                ret.push(c);
+            }
+        }
+        *next_col = col;
+        ret
     }
 }
 
@@ -265,14 +300,28 @@ impl Report for ConsoleReport {
             };
 
             let write_bytes = |term: Term, bytes: &[u8], begin, end| {
-                if begin > 0 {
-                    let _ = term.write(&bytes[..begin]);
-                }
-                let _ = term.fg(bright);
-                let _ = term.write(&bytes[begin..end]);
-                let _ = term.reset();
-                if end < bytes.len() {
-                    let _ = term.write(&bytes[end..]);
+                if let Ok(line) = str::from_utf8(bytes) {
+                    let mut col = 0;
+                    if begin > 0 {
+                        let _ = term.write(&self.expand_tab_in_str(&line[..begin], &mut col));
+                    }
+                    let _ = term.fg(bright);
+                    let _ = term.write(&self.expand_tab_in_str(&line[begin..end], &mut col));
+                    let _ = term.reset();
+                    if end < bytes.len() {
+                        let _ = term.write(&self.expand_tab_in_str(&line[end..], &mut col));
+                    }
+                } else {
+                    let mut col = 0;
+                    if begin > 0 {
+                        let _ = term.write(&self.expand_tab_in_bytes(&bytes[..begin], &mut col));
+                    }
+                    let _ = term.fg(bright);
+                    let _ = term.write(&self.expand_tab_in_bytes(&bytes[begin..end], &mut col));
+                    let _ = term.reset();
+                    if end < bytes.len() {
+                        let _ = term.write(&self.expand_tab_in_bytes(&bytes[end..], &mut col));
+                    }
                 }
             };
 

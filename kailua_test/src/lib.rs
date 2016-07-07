@@ -20,7 +20,7 @@ use std::fs::File;
 use std::error::Error;
 use std::collections::HashMap;
 use regex::Regex;
-use term::{Terminal, StderrTerminal};
+use term::StderrTerminal;
 use kailua_diag::{Source, Kind, Span, Report, CollectedReport};
 
 pub trait Testing {
