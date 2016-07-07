@@ -87,6 +87,23 @@ impl TySeq {
         if let Some(tail) = self.tail { return Box::new(tail.into_type()); }
         Box::new(T::Nil)
     }
+
+    fn fmt_generic<WriteTy>(&self, f: &mut fmt::Formatter,
+                            mut write_ty: WriteTy) -> fmt::Result
+            where WriteTy: FnMut(&T, &mut fmt::Formatter) -> fmt::Result {
+        try!(write!(f, "("));
+        let mut first = true;
+        for t in &self.head {
+            if first { first = false; } else { try!(write!(f, ", ")); }
+            try!(write_ty(t, f));
+        }
+        if let Some(ref t) = self.tail {
+            if !first { try!(write!(f, ", ")); }
+            try!(write_ty(t.as_type_without_nil(), f));
+            try!(write!(f, "..."));
+        }
+        write!(f, ")")
+    }
 }
 
 impl Lattice for TySeq {
@@ -152,19 +169,15 @@ impl Lattice for TySeq {
     }
 }
 
+impl fmt::Display for TySeq {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.fmt_generic(f, |t, f| fmt::Display::fmt(t, f))
+    }
+}
+
 impl fmt::Debug for TySeq {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "("));
-        let mut first = true;
-        for t in &self.head {
-            if first { first = false; } else { try!(write!(f, ", ")); }
-            try!(write!(f, "{:?}", t));
-        }
-        if let Some(ref t) = self.tail {
-            if !first { try!(write!(f, ", ")); }
-            try!(write!(f, "{:?}...", t));
-        }
-        write!(f, ")")
+        self.fmt_generic(f, |t, f| fmt::Debug::fmt(t, f))
     }
 }
 
@@ -248,6 +261,23 @@ impl SlotSeq {
         };
         TySeq { head: head.collect(), tail: tail }
     }
+
+    fn fmt_generic<WriteSlot>(&self, f: &mut fmt::Formatter,
+                              mut write_slot: WriteSlot) -> fmt::Result
+            where WriteSlot: FnMut(&Slot, &mut fmt::Formatter) -> fmt::Result {
+        try!(write!(f, "("));
+        let mut first = true;
+        for t in &self.head {
+            if first { first = false; } else { try!(write!(f, ", ")); }
+            try!(write_slot(t, f));
+        }
+        if let Some(ref t) = self.tail {
+            if !first { try!(write!(f, ", ")); }
+            try!(write_slot(t.as_slot_without_nil(), f));
+            try!(write!(f, "..."));
+        }
+        write!(f, ")")
+    }
 }
 
 impl Lattice for SlotSeq {
@@ -313,19 +343,15 @@ impl Lattice for SlotSeq {
     }
 }
 
+impl fmt::Display for SlotSeq {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.fmt_generic(f, fmt::Display::fmt)
+    }
+}
+
 impl fmt::Debug for SlotSeq {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "("));
-        let mut first = true;
-        for t in &self.head {
-            if first { first = false; } else { try!(write!(f, ", ")); }
-            try!(write!(f, "{:?}", t));
-        }
-        if let Some(ref t) = self.tail {
-            if !first { try!(write!(f, ", ")); }
-            try!(write!(f, "{:?}...", t));
-        }
-        write!(f, ")")
+        self.fmt_generic(f, fmt::Debug::fmt)
     }
 }
 

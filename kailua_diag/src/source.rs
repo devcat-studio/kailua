@@ -179,6 +179,12 @@ impl<T> ops::DerefMut for Spanned<T> {
     fn deref_mut(&mut self) -> &mut T { &mut self.base }
 }
 
+impl<T: fmt::Display> fmt::Display for Spanned<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self.base, f)
+    }
+}
+
 impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         try!(fmt::Debug::fmt(&self.base, f));

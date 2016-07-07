@@ -458,6 +458,12 @@ impl<'a> Lattice<T<'a>> for Slot {
     }
 }
 
+impl fmt::Display for Slot {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self.0.borrow().ty, f)
+    }
+}
+
 impl fmt::Debug for Slot {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if f.sign_minus() {

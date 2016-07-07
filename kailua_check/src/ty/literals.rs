@@ -94,6 +94,12 @@ impl PartialEq for Numbers {
     }
 }
 
+impl fmt::Display for Numbers {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
+}
+
 impl fmt::Debug for Numbers {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -190,6 +196,12 @@ impl PartialEq for Strings {
             (&Strings::One(ref a), &Strings::One(ref b)) => *a == *b,
             (_, _) => false,
         }
+    }
+}
+
+impl fmt::Display for Strings {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
     }
 }
 

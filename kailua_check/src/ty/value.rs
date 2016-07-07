@@ -675,6 +675,12 @@ impl<'a, 'b> PartialEq<T<'b>> for T<'a> {
     }
 }
 
+impl<'a> fmt::Display for T<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
+}
+
 impl<'a> fmt::Debug for T<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {

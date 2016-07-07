@@ -132,6 +132,63 @@ impl Tables {
             }
         }
     }
+
+    fn fmt_generic<WriteTy, WriteSlot>(&self, f: &mut fmt::Formatter,
+                                       mut write_ty: WriteTy,
+                                       mut write_slot: WriteSlot) -> fmt::Result
+            where WriteTy: FnMut(&T, &mut fmt::Formatter) -> fmt::Result,
+                  WriteSlot: FnMut(&Slot, &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Tables::All => write!(f, "table"),
+
+            Tables::Empty => write!(f, "{{}}"),
+
+            Tables::Fields(ref fields) => {
+                try!(write!(f, "{{"));
+                let mut first = true;
+                // try consecutive initial integers first
+                let mut nextlen = 1;
+                while let Some(t) = fields.get(&Key::Int(nextlen)) {
+                    if first { first = false; } else { try!(write!(f, ", ")); }
+                    try!(write_slot(t, f));
+                    if nextlen >= 0x10000 { break; } // too much
+                    nextlen += 1;
+                }
+                // print other keys
+                for (name, t) in fields.iter() {
+                    match *name {
+                        Key::Int(v) if 1 <= v && v < nextlen => break, // strip duplicates
+                        _ => {}
+                    }
+                    if first { first = false; } else { try!(write!(f, ", ")); }
+                    try!(write!(f, "{:?} = ", name));
+                    try!(write_slot(t, f));
+                }
+                // put an additional comma if there is a single numeric field (i.e. `{var T,}`)
+                if nextlen == 2 && fields.len() == 1 {
+                    try!(write!(f, ","));
+                }
+                try!(write!(f, "}}"));
+                Ok(())
+            }
+
+            Tables::Array(ref t) => {
+                try!(write!(f, "{{"));
+                try!(write_slot(t.as_slot_without_nil(), f));
+                try!(write!(f, "}}"));
+                Ok(())
+            }
+
+            Tables::Map(ref k, ref v) => {
+                try!(write!(f, "{{["));
+                try!(write_ty(k, f));
+                try!(write!(f, "] = "));
+                try!(write_slot(v.as_slot_without_nil(), f));
+                try!(write!(f, "}}"));
+                Ok(())
+            }
+        }
+    }
 }
 
 impl Lattice for Tables {
@@ -294,40 +351,15 @@ impl PartialEq for Tables {
     }
 }
 
+impl fmt::Display for Tables {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.fmt_generic(f, |t, f| fmt::Display::fmt(t, f), fmt::Display::fmt)
+    }
+}
+
 impl fmt::Debug for Tables {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Tables::All => write!(f, "table"),
-            Tables::Empty => write!(f, "{{}}"),
-            Tables::Fields(ref fields) => {
-                try!(write!(f, "{{"));
-                let mut first = true;
-                // try consecutive initial integers first
-                let mut nextlen = 1;
-                while let Some(t) = fields.get(&Key::Int(nextlen)) {
-                    if first { first = false; } else { try!(write!(f, ", ")); }
-                    try!(write!(f, "{:?}", *t));
-                    if nextlen >= 0x10000 { break; } // too much
-                    nextlen += 1;
-                }
-                // print other keys
-                for (name, t) in fields.iter() {
-                    match *name {
-                        Key::Int(v) if 1 <= v && v < nextlen => break, // strip duplicates
-                        _ => {}
-                    }
-                    if first { first = false; } else { try!(write!(f, ", ")); }
-                    try!(write!(f, "{:?} = {:?}", *name, *t));
-                }
-                // put an additional comma if there is a single numeric field (i.e. `{var T,}`)
-                if nextlen == 2 && fields.len() == 1 {
-                    try!(write!(f, ","));
-                }
-                write!(f, "}}")
-            }
-            Tables::Array(ref t) => write!(f, "{{{:?}}}", *t),
-            Tables::Map(ref k, ref v) => write!(f, "{{[{:?}] = {:?}}}", *k, *v),
-        }
+        self.fmt_generic(f, |t, f| fmt::Debug::fmt(t, f), fmt::Debug::fmt)
     }
 }
 

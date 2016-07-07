@@ -1,7 +1,7 @@
 use std::fmt;
 
 use diag::CheckResult;
-use super::{TySeq, TypeContext, Lattice};
+use super::{T, TySeq, TypeContext, Lattice};
 use super::{error_not_sub, error_not_eq};
 
 #[derive(Clone, PartialEq)]
@@ -22,16 +22,36 @@ impl Function {
         try!(self.returns.assert_eq(&other.returns, ctx));
         Ok(())
     }
+
+    fn fmt_generic<WriteTy, WriteTySeq>(&self, f: &mut fmt::Formatter,
+                                        mut write_ty: WriteTy,
+                                        mut write_tyseq: WriteTySeq) -> fmt::Result
+            where WriteTy: FnMut(&T, &mut fmt::Formatter) -> fmt::Result,
+                  WriteTySeq: FnMut(&TySeq, &mut fmt::Formatter) -> fmt::Result {
+        try!(write_tyseq(&self.args, f));
+        match (self.returns.head.len(), self.returns.tail.is_some()) {
+            (0, false) => write!(f, " -> ()"),
+            (1, false) => {
+                try!(write!(f, " -> "));
+                write_ty(&self.returns.head[0], f)
+            },
+            (_, _) => {
+                try!(write!(f, " -> "));
+                write_tyseq(&self.returns, f)
+            },
+        }
+    }
+}
+
+impl fmt::Display for Function {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.fmt_generic(f, |t, f| fmt::Display::fmt(t, f), fmt::Display::fmt)
+    }
 }
 
 impl fmt::Debug for Function {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "{:?}", self.args));
-        match (self.returns.head.len(), self.returns.tail.is_some()) {
-            (0, false) => write!(f, " -> ()"),
-            (1, false) => write!(f, " -> {:?}", self.returns.head[0]),
-            (_, _) => write!(f, " -> {:?}", self.returns),
-        }
+        self.fmt_generic(f, |t, f| fmt::Debug::fmt(t, f), fmt::Debug::fmt)
     }
 }
 
@@ -40,6 +60,25 @@ pub enum Functions {
     Simple(Function),
     Multi(Vec<Function>), // overloaded functions (i.e. intersection)
     All,
+}
+
+impl Functions {
+    fn fmt_generic<WriteFunc>(&self, f: &mut fmt::Formatter,
+                              mut write_func: WriteFunc) -> fmt::Result
+            where WriteFunc: FnMut(&Function, &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Functions::All => write!(f, "function"),
+            Functions::Simple(ref fty) => write_func(fty, f),
+            Functions::Multi(ref fs) => {
+                let mut first = true;
+                for fty in fs {
+                    if first { first = false; } else { try!(write!(f, "&")); }
+                    try!(write_func(fty, f));
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 impl Lattice for Functions {
@@ -118,20 +157,15 @@ impl PartialEq for Functions {
     }
 }
 
+impl fmt::Display for Functions {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.fmt_generic(f, fmt::Display::fmt)
+    }
+}
+
 impl fmt::Debug for Functions {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Functions::All => write!(f, "function"),
-            Functions::Simple(ref fty) => fmt::Debug::fmt(fty, f),
-            Functions::Multi(ref fs) => {
-                let mut first = true;
-                for fty in fs {
-                    if first { first = false; } else { try!(write!(f, "&")); }
-                    try!(write!(f, "{:?}", *fty));
-                }
-                Ok(())
-            }
-        }
+        self.fmt_generic(f, fmt::Debug::fmt)
     }
 }
 
