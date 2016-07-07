@@ -6,6 +6,7 @@ use std::path::Path;
 use std::ops;
 use std::cmp;
 use std::fmt;
+use std::borrow::Borrow;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Pos {
@@ -125,6 +126,10 @@ pub struct Spanned<T> {
 }
 
 impl<T> Spanned<T> {
+    pub fn as_ref(&self) -> Spanned<&T> {
+        Spanned { span: self.span, base: &self.base }
+    }
+
     pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Spanned<U> {
         Spanned { span: self.span, base: f(self.base) }
     }
@@ -179,6 +184,10 @@ impl<T> ops::DerefMut for Spanned<T> {
     fn deref_mut(&mut self) -> &mut T { &mut self.base }
 }
 
+impl<T> Borrow<T> for Spanned<T> {
+    fn borrow(&self) -> &T { &self.base }
+}
+
 impl<T: fmt::Display> fmt::Display for Spanned<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(&self.base, f)
@@ -198,6 +207,10 @@ impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
 pub trait WithLoc: Sized {
     fn with_loc<Loc: Into<Span>>(self, loc: Loc) -> Spanned<Self> {
         Spanned { span: loc.into(), base: self }
+    }
+
+    fn without_loc(self) -> Spanned<Self> {
+        Spanned { span: Span::dummy(), base: self }
     }
 }
 

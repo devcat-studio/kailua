@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::path::{Path, PathBuf};
 
-use kailua_diag::{Span, Spanned, WithLoc, Source, Report, ConsoleReport};
+use kailua_diag::{Spanned, WithLoc, Source, Report, ConsoleReport};
 use kailua_syntax::{parse_chunk, Block};
 
 fn parse_and_check(mainpath: &Path) -> Result<(), String> {
@@ -33,7 +33,7 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
 
             if BUILTIN_MODS.iter().any(|&name| name.as_bytes() == path) {
                 // dummy: they should not affect anything here
-                Ok(Vec::new().with_loc(Span::dummy()))
+                Ok(Vec::new().without_loc())
             } else {
                 let path = try!(str::from_utf8(path).map_err(|e| e.to_string()));
 

@@ -118,7 +118,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
     fn dummy_slotseq(&self) -> Spanned<SlotSeq> {
         let seq = SlotSeq { head: Vec::new(), tail: Some(SlotWithNil::from(T::Dynamic)) };
-        seq.with_loc(Span::dummy())
+        seq.without_loc()
     }
 
     fn check_un_op(&mut self, op: UnOp, info: &Spanned<Slot>) -> CheckResult<Slot> {
@@ -133,7 +133,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
         match op {
             UnOp::Neg => {
-                check_op!(info.assert_sub(&T::number(), self.context()));
+                check_op!(info.assert_sub(&T::number().without_loc(), self.context()));
 
                 // it is possible to be more accurate here.
                 // e.g. if ty = `v1 \/ integer` and it is known that `v1 <: integer`,
@@ -151,7 +151,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             UnOp::Len => {
-                check_op!(info.assert_sub(&(T::table() | T::string()), self.context()));
+                check_op!(info.assert_sub(&(T::table() | T::string()).without_loc(),
+                                          self.context()));
                 Ok(Slot::just(T::integer()))
             }
         }
@@ -177,26 +178,26 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if lflags.is_integral() && rflags.is_integral() &&
                    !(lflags.is_dynamic() && rflags.is_dynamic()) {
                     // we are definitely sure that it will be an integer
-                    check_op!(lhs.assert_sub(&T::integer(), self.context()));
-                    check_op!(rhs.assert_sub(&T::integer(), self.context()));
+                    check_op!(lhs.assert_sub(&T::integer().without_loc(), self.context()));
+                    check_op!(rhs.assert_sub(&T::integer().without_loc(), self.context()));
                     Ok(Slot::just(T::integer()))
                 } else {
                     // technically speaking they coerce strings to numbers,
                     // but that's probably not what you want
-                    check_op!(lhs.assert_sub(&T::number(), self.context()));
-                    check_op!(rhs.assert_sub(&T::number(), self.context()));
+                    check_op!(lhs.assert_sub(&T::number().without_loc(), self.context()));
+                    check_op!(rhs.assert_sub(&T::number().without_loc(), self.context()));
                     Ok(Slot::just(T::number()))
                 }
             }
 
             BinOp::Div | BinOp::Pow => {
-                check_op!(lhs.assert_sub(&T::number(), self.context()));
-                check_op!(rhs.assert_sub(&T::number(), self.context()));
+                check_op!(lhs.assert_sub(&T::number().without_loc(), self.context()));
+                check_op!(rhs.assert_sub(&T::number().without_loc(), self.context()));
                 Ok(Slot::just(T::number()))
             }
 
             BinOp::Cat => {
-                let stringy = T::number() | T::string();
+                let stringy = (T::number() | T::string()).without_loc();
                 check_op!(lhs.assert_sub(&stringy, self.context()));
                 check_op!(rhs.assert_sub(&stringy, self.context()));
                 Ok(Slot::just(T::string()))
@@ -231,12 +232,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     Err(format!("operands {:-?} and {:-?} to operator {} should be \
                                  both numbers or both strings", lhs, rhs, op.symbol()))
                 } else if lnum || rnum { // operands are definitely numbers
-                    check_op!(lhs.assert_sub(&T::number(), self.context()));
-                    check_op!(rhs.assert_sub(&T::number(), self.context()));
+                    check_op!(lhs.assert_sub(&T::number().without_loc(), self.context()));
+                    check_op!(rhs.assert_sub(&T::number().without_loc(), self.context()));
                     Ok(Slot::just(T::Boolean))
                 } else if lstr || rstr { // operands are definitely strings
-                    check_op!(lhs.assert_sub(&T::string(), self.context()));
-                    check_op!(rhs.assert_sub(&T::string(), self.context()));
+                    check_op!(lhs.assert_sub(&T::string().without_loc(), self.context()));
+                    check_op!(rhs.assert_sub(&T::string().without_loc(), self.context()));
                     Ok(Slot::just(T::Boolean))
                 } else { // XXX
                     Err(format!("cannot deduce if operands {:-?} and {:-?} to operator {} are \
@@ -817,7 +818,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
         if let Exit::None = try!(scope.visit_block(block)) {
             // the last statement is an implicit return
-            let ret = Box::new(St::Return(Vec::new())).with_loc(Span::dummy());
+            let ret = Box::new(St::Return(Vec::new())).without_loc();
             try!(scope.visit_stmt(&ret));
         }
 

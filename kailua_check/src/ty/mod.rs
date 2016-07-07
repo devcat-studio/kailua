@@ -1,7 +1,7 @@
 use std::fmt;
 use std::borrow::Borrow;
 use diag::CheckResult;
-use kailua_diag::{self, Kind, Span, Report};
+use kailua_diag::{self, Kind, Span, Spanned, Report, Reporter};
 use kailua_syntax::Name;
 
 pub use self::literals::{Numbers, Strings};
@@ -96,6 +96,7 @@ impl<'a, R: TypeResolver> TypeResolver for &'a mut R {
 }
 
 pub trait TypeContext: Report {
+    // type variable management
     fn last_tvar(&self) -> Option<TVar>;
     fn gen_tvar(&mut self) -> TVar;
     fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()>;
@@ -103,7 +104,10 @@ pub trait TypeContext: Report {
     fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()>;
     fn assert_tvar_sub_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()>;
     fn assert_tvar_eq_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()>;
+    fn get_tvar_bounds(&self, tvar: TVar) -> (flags::Flags /*lb*/, flags::Flags /*ub*/);
+    fn get_tvar_exact_type(&self, tvar: TVar) -> Option<T<'static>>;
 
+    // flexibility mark management
     fn gen_mark(&mut self) -> Mark;
     fn assert_mark_true(&mut self, mark: Mark) -> CheckResult<()>;
     fn assert_mark_false(&mut self, mark: Mark) -> CheckResult<()>;
@@ -112,6 +116,15 @@ pub trait TypeContext: Report {
     // base should be identical over the subsequent method calls for same mark
     fn assert_mark_require_eq(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()>;
     fn assert_mark_require_sup(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()>;
+}
+
+impl<'a> Report for &'a mut TypeContext {
+    fn add_span(&self, kind: Kind, span: Span, msg: String) -> kailua_diag::Result<()> {
+        (**self).add_span(kind, span, msg)
+    }
+    fn can_continue(&self) -> bool {
+        (**self).can_continue()
+    }
 }
 
 pub trait Lattice<Other = Self> {
@@ -163,12 +176,47 @@ impl<T: Lattice<Output=T> + fmt::Debug + Clone> Lattice for Option<T> {
     }
 }
 
+impl<A: Display, B: Display> Lattice<Spanned<B>> for Spanned<A>
+        where A: Lattice<B>,
+              for<'a, 'c> Displayed<'a, 'c, A>: fmt::Display,
+              for<'a, 'c> Displayed<'a, 'c, B>: fmt::Display {
+    type Output = <A as Lattice<B>>::Output;
+
+    fn do_union(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> Self::Output {
+        self.base.do_union(&other.base, ctx)
+    }
+
+    fn do_assert_sub(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> CheckResult<()> {
+        if let Err(e) = self.base.assert_sub(&other.base, ctx) {
+            try!(ctx.error(self.span, format!("`{}` is not a subtype of `{}`",
+                                              self.display(ctx), other.display(ctx)))
+                    .note_if(other.span, "The right hand side originates here")
+                    .done());
+            Err(e) // XXX not sure if we can recover here
+        } else {
+            Ok(())
+        }
+    }
+
+    fn do_assert_eq(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> CheckResult<()> {
+        if let Err(e) = self.base.assert_eq(&other.base, ctx) {
+            try!(ctx.error(self.span, format!("`{}` does not equal to `{}`",
+                                              self.display(ctx), other.display(ctx)))
+                    .note_if(other.span, "The right hand side originates here")
+                    .done());
+            Err(e) // XXX not sure if we can recover here
+        } else {
+            Ok(())
+        }
+    }
+}
+
 // used when operands should not have any type variables
 struct NoTypeContext;
 
 impl Report for NoTypeContext {
-    fn add_span(&self, kind: Kind, span: Span, msg: String) -> kailua_diag::Result<()> {
-        panic!("add_span({:?}, {:?}, {:?}) is not supposed to be called here", kind, span, msg);
+    fn add_span(&self, _kind: Kind, _span: Span, _msg: String) -> kailua_diag::Result<()> {
+        Ok(()) // ignore any report
     }
     fn can_continue(&self) -> bool {
         panic!("can_continue() is not supposed to be called here");
@@ -196,6 +244,12 @@ impl TypeContext for NoTypeContext {
     }
     fn assert_tvar_eq_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()> {
         panic!("assert_tvar_eq_tvar({:?}, {:?}) is not supposed to be called here", lhs, rhs);
+    }
+    fn get_tvar_bounds(&self, tvar: TVar) -> (flags::Flags /*lb*/, flags::Flags /*ub*/) {
+        panic!("get_tvar_bounds({:?}) is not supposed to be called here", tvar);
+    }
+    fn get_tvar_exact_type(&self, tvar: TVar) -> Option<T<'static>> {
+        panic!("get_tvar_exact_type({:?}) is not supposed to be called here", tvar);
     }
 
     fn gen_mark(&mut self) -> Mark {
@@ -257,6 +311,19 @@ impl Lattice for TVar {
 
     fn do_assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         ctx.assert_tvar_eq_tvar(*self, *other)
+    }
+}
+
+// human-readable description of various types requiring the type context.
+// expected to implement fmt::Display.
+pub struct Displayed<'a, 'c, T: 'a> {
+    base: &'a T,
+    ctx: &'c TypeContext,
+}
+
+pub trait Display: Sized where for<'a, 'c> Displayed<'a, 'c, Self>: fmt::Display {
+    fn display<'a, 'c>(&'a self, ctx: &'c TypeContext) -> Displayed<'a, 'c, Self> {
+        Displayed { base: self, ctx: ctx }
     }
 }
 

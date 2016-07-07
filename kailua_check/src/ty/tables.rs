@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use kailua_syntax::Str;
 use diag::CheckResult;
-use super::{T, Ty, Slot, SlotWithNil, TypeContext, Lattice};
+use super::{T, Ty, Slot, SlotWithNil, TypeContext, Lattice, Displayed, Display};
 use super::{error_not_sub, error_not_eq};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -351,9 +351,12 @@ impl PartialEq for Tables {
     }
 }
 
-impl fmt::Display for Tables {
+impl Display for Tables {}
+
+impl<'b, 'c> fmt::Display for Displayed<'b, 'c, Tables> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.fmt_generic(f, |t, f| fmt::Display::fmt(t, f), fmt::Display::fmt)
+        self.base.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(self.ctx), f),
+                                 |s, f| fmt::Display::fmt(&s.display(self.ctx), f))
     }
 }
 

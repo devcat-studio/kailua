@@ -119,6 +119,17 @@ impl<'a, T> ReportMore<'a, T> {
         ReportMore::new(self.report, if let Err(e) = ret { Err(e) } else { self.result })
     }
 
+    pub fn note_if<Loc: Into<Span>, Msg: Into<String>>(self,
+                                                       loc: Loc, msg: Msg) -> ReportMore<'a, T> {
+        let loc = loc.into();
+        if loc.is_dummy() {
+            self
+        } else {
+            let ret = self.report.note(loc, msg).result;
+            ReportMore::new(self.report, if let Err(e) = ret { Err(e) } else { self.result })
+        }
+    }
+
     pub fn done(self) -> Result<T> { self.result }
 }
 

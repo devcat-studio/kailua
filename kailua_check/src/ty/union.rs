@@ -2,7 +2,8 @@ use std::fmt;
 use std::borrow::Cow;
 
 use diag::CheckResult;
-use super::{T, TypeContext, NoTypeContext, Lattice, Numbers, Strings, Tables, Functions, TVar};
+use super::{T, TypeContext, NoTypeContext, Lattice, Displayed, Display};
+use super::{Numbers, Strings, Tables, Functions, TVar};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 
@@ -93,6 +94,21 @@ impl Union {
         };
         single.unwrap_or_else(|| T::Union(Cow::Owned(self)))
     }
+
+    fn fmt_generic<WriteTy>(&self, f: &mut fmt::Formatter, mut write_ty: WriteTy) -> fmt::Result
+            where WriteTy: FnMut(&T, &mut fmt::Formatter) -> fmt::Result {
+        try!(write!(f, "("));
+        let mut first = true;
+        try!(self.visit(|ty| {
+            if first {
+                first = false;
+            } else {
+                try!(write!(f, "|"));
+            }
+            write_ty(&ty, f)
+        }));
+        write!(f, ")")
+    }
 }
 
 impl Lattice for Union {
@@ -171,19 +187,28 @@ impl Lattice for Union {
     }
 }
 
+impl Display for Union {}
+
+impl<'b, 'c> fmt::Display for Displayed<'b, 'c, Union> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // if the type variable can be completely resolved, try that first
+        if let Some(tv) = self.base.tvar {
+            if let Some(t) = self.ctx.get_tvar_exact_type(tv) {
+                let mut u = self.base.clone();
+                u.tvar = None;
+                let resolved = T::Union(Cow::Owned(u)) | t;
+                assert_eq!(resolved.get_tvar(), None);
+                return fmt::Display::fmt(&resolved.display(self.ctx), f);
+            }
+        }
+
+        self.base.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(self.ctx), f))
+    }
+}
+
 impl fmt::Debug for Union {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "("));
-        let mut first = true;
-        try!(self.visit(|ty| {
-            if first {
-                first = false;
-            } else {
-                try!(write!(f, "|"));
-            }
-            fmt::Debug::fmt(&ty, f)
-        }));
-        write!(f, ")")
+        self.fmt_generic(f, |t, f| fmt::Debug::fmt(t, f))
     }
 }
 

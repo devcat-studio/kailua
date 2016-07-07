@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 
 use kailua_syntax::{K, SlotKind, Str, M};
 use diag::CheckResult;
-use super::{F, Slot, SlotWithNil, TypeContext, NoTypeContext, TypeResolver, Lattice, TySeq};
+use super::{F, Slot, SlotWithNil};
+use super::{TypeContext, NoTypeContext, TypeResolver, Lattice, TySeq, Displayed, Display};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Union, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
@@ -675,9 +676,36 @@ impl<'a, 'b> PartialEq<T<'b>> for T<'a> {
     }
 }
 
-impl<'a> fmt::Display for T<'a> {
+impl<'a> Display for T<'a> {}
+
+impl<'a, 'b, 'c> fmt::Display for Displayed<'b, 'c, T<'a>> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(self, f)
+        match *self.base {
+            T::Dynamic  => write!(f, "WHATEVER"),
+            T::All      => write!(f, "any"),
+            T::None     => write!(f, "<impossible type>"),
+            T::Nil      => write!(f, "nil"),
+            T::Boolean  => write!(f, "boolean"),
+            T::True     => write!(f, "true"),
+            T::False    => write!(f, "false"),
+            T::Thread   => write!(f, "thread"),
+            T::UserData => write!(f, "userdata"),
+
+            T::TVar(tv) => {
+                if let Some(t) = self.ctx.get_tvar_exact_type(tv) {
+                    fmt::Display::fmt(&t.display(self.ctx), f)
+                } else {
+                    write!(f, "<unknown type>")
+                }
+            },
+
+            T::Numbers(ref num)    => fmt::Display::fmt(num, f),
+            T::Strings(ref str)    => fmt::Display::fmt(str, f),
+            T::Tables(ref tab)     => fmt::Display::fmt(&tab.display(self.ctx), f),
+            T::Functions(ref func) => fmt::Display::fmt(&func.display(self.ctx), f),
+            T::Builtin(b, ref t)   => write!(f, "{} (= {})", t.display(self.ctx), b.name()),
+            T::Union(ref u)        => fmt::Display::fmt(&u.display(self.ctx), f),
+        }
     }
 }
 

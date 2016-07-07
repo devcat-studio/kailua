@@ -73,6 +73,7 @@ trait Partition {
     fn increment_rank(&mut self);
 }
 
+#[derive(Debug)]
 struct Partitions<T> {
     map: VecMap<T>,
 }
@@ -135,6 +136,7 @@ impl<T> ops::DerefMut for Partitions<T> {
     fn deref_mut(&mut self) -> &mut VecMap<T> { &mut self.map }
 }
 
+#[derive(Debug)]
 struct Bound {
     parent: Cell<u32>,
     rank: u8,
@@ -142,6 +144,7 @@ struct Bound {
 }
 
 // a set of constraints that can be organized as a tree
+#[derive(Debug)]
 struct Constraints {
     op: &'static str,
     bounds: Partitions<Box<Bound>>,
@@ -245,9 +248,10 @@ impl Constraints {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum Rel { Eq, Sup }
 
+#[derive(Debug)]
 struct MarkDeps {
     // this mark implies the following mark
     follows: Option<Mark>,
@@ -311,6 +315,7 @@ impl MarkDeps {
     }
 }
 
+#[derive(Debug)]
 enum MarkValue {
     Invalid,
     True,
@@ -340,6 +345,7 @@ impl MarkValue {
     }
 }
 
+#[derive(Debug)]
 struct MarkInfo {
     parent: Cell<u32>,
     rank: u8,
@@ -432,24 +438,6 @@ impl Context {
         } else {
             Err(format!("cannot open an unknown library {:?}", name.base))
         }
-    }
-
-    pub fn get_tvar_bounds(&self, tvar: TVar) -> (Flags /*lb*/, Flags /*ub*/) {
-        if let Some(b) = self.tvar_eq.get_bound(tvar).and_then(|b| b.bound.as_ref()) {
-            let flags = b.flags();
-            (flags, flags)
-        } else {
-            let lb = self.tvar_sup.get_bound(tvar).and_then(|b| b.bound.as_ref())
-                                                  .map_or(T_NONE, |b| b.flags());
-            let ub = self.tvar_sub.get_bound(tvar).and_then(|b| b.bound.as_ref())
-                                                  .map_or(!T_NONE, |b| b.flags());
-            assert_eq!(lb & !ub, T_NONE);
-            (lb, ub)
-        }
-    }
-
-    pub fn get_tvar_exact_type(&self, tvar: TVar) -> Option<T<'static>> {
-        self.tvar_eq.get_bound(tvar).and_then(|b| b.bound.as_ref()).map(|t| t.clone().into_send())
     }
 
     pub fn get_loaded_module(&self, name: &[u8]) -> CheckResult<Option<Slot>> {
@@ -597,6 +585,24 @@ impl TypeContext for Context {
         debug!("adding a constraint {:?} = {:?}", lhs, rhs);
         // do not update tvar_sub & tvar_sup, tvar_eq will be consulted first
         self.tvar_eq.add_relation(lhs, rhs)
+    }
+
+    fn get_tvar_bounds(&self, tvar: TVar) -> (Flags /*lb*/, Flags /*ub*/) {
+        if let Some(b) = self.tvar_eq.get_bound(tvar).and_then(|b| b.bound.as_ref()) {
+            let flags = b.flags();
+            (flags, flags)
+        } else {
+            let lb = self.tvar_sup.get_bound(tvar).and_then(|b| b.bound.as_ref())
+                                                  .map_or(T_NONE, |b| b.flags());
+            let ub = self.tvar_sub.get_bound(tvar).and_then(|b| b.bound.as_ref())
+                                                  .map_or(!T_NONE, |b| b.flags());
+            assert_eq!(lb & !ub, T_NONE);
+            (lb, ub)
+        }
+    }
+
+    fn get_tvar_exact_type(&self, tvar: TVar) -> Option<T<'static>> {
+        self.tvar_eq.get_bound(tvar).and_then(|b| b.bound.as_ref()).map(|t| t.clone().into_send())
     }
 
     fn gen_mark(&mut self) -> Mark {

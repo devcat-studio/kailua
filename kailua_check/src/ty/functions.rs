@@ -1,7 +1,7 @@
 use std::fmt;
 
 use diag::CheckResult;
-use super::{T, TySeq, TypeContext, Lattice};
+use super::{T, TySeq, TypeContext, Lattice, Displayed, Display};
 use super::{error_not_sub, error_not_eq};
 
 #[derive(Clone, PartialEq)]
@@ -28,6 +28,7 @@ impl Function {
                                         mut write_tyseq: WriteTySeq) -> fmt::Result
             where WriteTy: FnMut(&T, &mut fmt::Formatter) -> fmt::Result,
                   WriteTySeq: FnMut(&TySeq, &mut fmt::Formatter) -> fmt::Result {
+        try!(write!(f, "function"));
         try!(write_tyseq(&self.args, f));
         match (self.returns.head.len(), self.returns.tail.is_some()) {
             (0, false) => write!(f, " -> ()"),
@@ -43,9 +44,12 @@ impl Function {
     }
 }
 
-impl fmt::Display for Function {
+impl Display for Function {}
+
+impl<'b, 'c> fmt::Display for Displayed<'b, 'c, Function> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.fmt_generic(f, |t, f| fmt::Display::fmt(t, f), fmt::Display::fmt)
+        self.base.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(self.ctx), f),
+                                 |s, f| fmt::Display::fmt(&s.display(self.ctx), f))
     }
 }
 
@@ -157,9 +161,11 @@ impl PartialEq for Functions {
     }
 }
 
-impl fmt::Display for Functions {
+impl Display for Functions {}
+
+impl<'b, 'c> fmt::Display for Displayed<'b, 'c, Functions> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.fmt_generic(f, fmt::Display::fmt)
+        self.base.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(self.ctx), f))
     }
 }
 

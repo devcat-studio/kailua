@@ -61,7 +61,12 @@ local x = p + 3
 
 --8<-- add-number-string
 --# assume p: number
-local x = p + 'foo'
+local x = p + 'foo' --@< Error: `"foo"` is not a subtype of `number`
+--! error
+
+--8<-- add-number-func
+local function p() end
+local x = p + 'foo' --@< Error: `function() -> ()` is not a subtype of `number`
 --! error
 
 --8<-- unknown-type
@@ -73,11 +78,11 @@ local p = 3 + 4
 --! ok
 
 --8<-- add-integer-string
-local p = 3 + 'foo'
+local p = 3 + 'foo' --@< Error: `"foo"` is not a subtype of `number`
 --! error
 
 --8<-- add-boolean-integer
-local p = true + 7
+local p = true + 7 --@< Error: `true` is not a subtype of `number`
 --! error
 
 --8<-- index-empty-with-integer
@@ -144,15 +149,15 @@ local a = ('string' and 53) + 42
 --! ok
 
 --8<-- conjunctive-lhs-1
-local a = (53 and 'string') + 42
+local a = (53 and 'string') + 42 --@< Error: `"string"` is not a subtype of `number`
 --! error
 
 --8<-- conjunctive-rhs-1
-local a = (nil and 'string') + 42
+local a = (nil and 'string') + 42 --@< Error: `nil` is not a subtype of `number`
 --! error
 
 --8<-- conjunctive-rhs-2
-local a = (nil and 53) + 42
+local a = (nil and 53) + 42 --@< Error: `nil` is not a subtype of `number`
 --! error
 
 --8<-- disjunctive-lhs-1
@@ -164,7 +169,7 @@ local a = (53 or nil) + 42
 --! ok
 
 --8<-- disjunctive-rhs-1
-local a = (nil or 'string') + 42
+local a = (nil or 'string') + 42 --@< Error: `"string"` is not a subtype of `number`
 --! error
 
 --8<-- disjunctive-rhs-2
@@ -198,12 +203,12 @@ local q = p .. 3
 
 --8<-- add-string-or-number
 --# assume p: string | number
-local q = p + 3
+local q = p + 3 --@< Error: `(number|string)` is not a subtype of `number`
 --! error
 
 --8<-- cat-string-or-boolean
 --# assume p: string | boolean
-local q = p .. 3
+local q = p .. 3 --@< Error: `(boolean|string)` is not a subtype of `(number|string)`
 --! error
 
 --8<-- var-integer-literal
@@ -306,7 +311,7 @@ local a = 3 + #'heck'
 --! ok
 
 --8<-- len-integer
-local a = 3 + #4
+local a = 3 + #4 --@< Error: `4` is not a subtype of `(string|table)`
 --! error
 
 --8<-- for
@@ -431,7 +436,7 @@ local a = p('foo') .. 'bar'
 function p(x) --: string --> string
     return x
 end
-local a = p('foo') + 3
+local a = p('foo') + 3 --@< Error: `string` is not a subtype of `number`
 --! error
 
 --8<-- table-update-with-integer
@@ -526,7 +531,7 @@ a = 42
 --8<-- var-any-update-and-add
 local a --: var any
 a = 42
-local b = a + 5
+local b = a + 5 --@< Error: `any` is not a subtype of `number`
 --! error
 
 --8<-- func-returns-rec-1
@@ -754,7 +759,7 @@ print(p + 5)
 --# assume p: integer|nil
 --# assume q: integer|nil
 assert(p or q)
-print(p + 5)
+print(p + 5) --@< Error: `(nil|integer)` is not a subtype of `number`
 --! error
 
 --8<-- assert-conjunctive
@@ -778,7 +783,7 @@ print(p + 5)
 --# assume p: integer|nil
 --# assume q: integer|nil
 assert(p and not q)
-print(q + 5)
+print(q + 5) --@< Error: `nil` is not a subtype of `number`
 --! error
 
 --8<-- assert-conjunctive-partial-dynamic
@@ -830,7 +835,7 @@ print(q + 5)
 --# assume p: integer|nil
 --# assume q: integer|nil
 assert_not(p or not q) -- i.e. assert(not p and q)
-print(p + 5)
+print(p + 5) --@< Error: `nil` is not a subtype of `number`
 --! error
 
 --8<-- assert-type
@@ -901,7 +906,7 @@ x = require 'a' --@< Warning: Cannot resolve the module name given to `require`
 --8<-- require-unknown-returns-1
 --# open lua51
 x = require 'a' --@< Warning: Cannot resolve the module name given to `require`
-print(x + 4)
+print(x + 4) --@< Error: `<unknown type>` is not a subtype of `integer`
 --! error
 
 --8<-- require-unknown-returns-2
@@ -1042,7 +1047,7 @@ end
 --8<-- for-in-simple-iter-3
 --# assume func: const function() -> number|string
 for x in func do
-    local a = x * 3
+    local a = x * 3 --@< Error: `(number|string)` is not a subtype of `number`
 end
 --! error
 
@@ -1081,6 +1086,7 @@ end
 for x, y in func, state, first do
     local a = x * 3
     local b = y .. 'a'    -- y can be nil
+    --@^ Error: `(nil|string)` is not a subtype of `(number|string)`
 end
 --! error
 
@@ -1118,7 +1124,7 @@ end
 --# open lua51
 --# assume p: var {var string}
 for x, y in ipairs(p) do
-    local b = y * 4
+    local b = y * 4 --@< Error: `string` is not a subtype of `number`
 end
 --! error
 
@@ -1165,7 +1171,7 @@ end
 --# open lua51
 --# assume p: var {var string}
 for x, y in pairs(p) do
-    local b = y * 4
+    local b = y * 4 --@< Error: `string` is not a subtype of `number`
 end
 --! error
 
@@ -1191,7 +1197,7 @@ end
 --# open lua51
 --# assume p: var {[integer] = var string}
 for x, y in pairs(p) do
-    local b = y * 4
+    local b = y * 4 --@< Error: `string` is not a subtype of `number`
 end
 --! error
 
@@ -1208,7 +1214,7 @@ end
 --# open lua51
 --# assume p: var {[string] = var integer}
 for x, y in pairs(p) do
-    local a = x * 3
+    local a = x * 3 --@< Error: `string` is not a subtype of `number`
 end
 --! error
 
@@ -1223,7 +1229,7 @@ end
 --# open lua51
 --# assume p: var table
 for x, y in pairs(p) do
-    print(p .. 3)
+    print(p .. 3) --@< Error: `table` is not a subtype of `(number|string)`
 end
 --! error
 
