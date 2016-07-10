@@ -37,6 +37,197 @@ local a, --: const table
       b
 --! [Local([`a`: Const Table, `b`], [])]
 
+--8<-- local-assign-1
+local a = --: integer
+          f()
+--! [Local([`a`: _ Integer], [`f`()])]
+
+--8<-- local-assign-2
+local a --: integer
+      = f()
+--! [Local([`a`: _ Integer], [`f`()])]
+
+--8<-- local-type-in-same-line
+local a = f() --: integer
+--! [Local([`a`: _ Integer], [`f`()])]
+
+--8<-- local-type-in-same-line-2
+local a, b = f() --: integer, var string
+--! [Local([`a`: _ Integer, `b`: Var String], [`f`()])]
+
+--8<-- local-type-in-same-line-3
+local a, b, c = f() --: integer, var string, const {}
+--! [Local([`a`: _ Integer, `b`: Var String, `c`: Const EmptyTable], [`f`()])]
+
+--8<-- local-duplicate-types-in-same-line-1
+local a, b, c --: const {}
+              = f() --: integer, var string, const {}
+--@^ Error: The type specification cannot appear both at names and at expressions
+--! error
+
+--8<-- local-duplicate-types-in-same-line-2
+local a, --: integer
+      b, c = f() --: integer, var string, const {}
+--@^ Error: The type specification cannot appear both at names and at expressions
+--! error
+
+--8<-- local-duplicate-types-in-same-line-3
+local a, --: integer
+      b, --: var string
+      c = f() --: const {}
+--@^ Error: The type specification cannot appear both at names and at expressions
+--! error
+
+--8<-- local-less-types-in-same-line-1
+local a, b,
+      c --@< Error: Excess type specifications in the variable names
+      = f() --: integer, var string
+--! error
+
+--8<-- local-less-types-in-same-line-2
+local a,
+      b,
+      c,
+      d --@3-4 Error: Excess type specifications in the variable names
+      = f() --: integer, var string
+--! error
+
+--8<-- local-more-types-in-same-line-1
+local a, b = f() --: integer,
+                 --: var string,
+                 --: const {} --@< Error: Excess type specifications in the initial expressions
+--! error
+
+--8<-- local-more-types-in-same-line-2
+local a = f() --: integer,
+              --: var string,
+              --: const {} --@2-3 Error: Excess type specifications in the initial expressions
+--! error
+
+--8<-- assign-1-1
+a = f()
+--! [Assign([`a`], [`f`()])]
+
+--8<-- assign-1-3
+a = f(), g(), h()
+--! [Assign([`a`], [`f`(), `g`(), `h`()])]
+
+--8<-- assign-2-1
+a, b = f()
+--! [Assign([`a`, `b`], [`f`()])]
+
+--8<-- assign-2-3
+a, b = f(), g(), h()
+--! [Assign([`a`, `b`], [`f`(), `g`(), `h`()])]
+
+--8<-- assign-index-name-1
+ab.cde = f(), g(), h()
+--! [Assign([(`ab`)["cde"]], [`f`(), `g`(), `h`()])]
+
+--8<-- assign-index-name-2
+ab.cde.fg = f(), g(), h()
+--! [Assign([(`ab`["cde"])["fg"]], [`f`(), `g`(), `h`()])]
+
+--8<-- assign-index-name-3
+a, b.cde = f(), g(), h()
+--! [Assign([`a`, (`b`)["cde"]], [`f`(), `g`(), `h`()])]
+
+--8<-- assign-index-name-4
+a, b.cde.fg = f(), g(), h()
+--! [Assign([`a`, (`b`["cde"])["fg"]], [`f`(), `g`(), `h`()])]
+
+--8<-- assign-index-exp-1
+a[a*a] = f(), g(), h()
+--! [Assign([(`a`)[(`a` * `a`)]], [`f`(), `g`(), `h`()])]
+
+--8<-- assign-index-exp-2
+a, b[a*a] = f(), g(), h()
+--! [Assign([`a`, (`b`)[(`a` * `a`)]], [`f`(), `g`(), `h`()])]
+
+--8<-- assign-index-func-exp-1
+x().y[a*a] = f(), g(), h()
+--! [Assign([(`x`()["y"])[(`a` * `a`)]], [`f`(), `g`(), `h`()])]
+
+--8<-- assign-index-func-exp-2
+a, x().y[a*a] = f(), g(), h()
+--! [Assign([`a`, (`x`()["y"])[(`a` * `a`)]], [`f`(), `g`(), `h`()])]
+
+--8<-- assign-type
+a --: integer
+  = f()
+--! [Assign([`a`: _ Integer], [`f`()])]
+
+--8<-- assign-type-2
+a, --: integer
+b  --: const string
+= f(),
+  g()
+--! [Assign([`a`: _ Integer, `b`: Const String], [`f`(), `g`()])]
+
+--8<-- assign-type-3
+a,
+b  --: const string
+= f(),
+  g()
+--! [Assign([`a`, `b`: Const String], [`f`(), `g`()])]
+
+--8<-- assign-type-in-same-line
+a = f() --: integer
+--! [Assign([`a`: _ Integer], [`f`()])]
+
+--8<-- assign-type-in-same-line-2
+a, b = f() --: integer, var string
+--! [Assign([`a`: _ Integer, `b`: Var String], [`f`()])]
+
+--8<-- assign-type-in-same-line-3
+a, b, c = f() --: integer, var string, const {}
+--! [Assign([`a`: _ Integer, `b`: Var String, `c`: Const EmptyTable], [`f`()])]
+
+--8<-- assign-duplicate-types-in-same-line-1
+a, b, c --: const {}
+        = f() --: integer, var string, const {}
+--@^ Error: The type specification cannot appear both at left hand and right hand side
+--! error
+
+--8<-- assign-duplicate-types-in-same-line-2
+a, --: integer
+b, c = f() --: integer, var string, const {}
+--@^ Error: The type specification cannot appear both at left hand and right hand side
+--! error
+
+--8<-- assign-duplicate-types-in-same-line-3
+a, --: integer
+b, --: var string
+c = f() --: const {}
+--@^ Error: The type specification cannot appear both at left hand and right hand side
+--! error
+
+--8<-- assign-less-types-in-same-line-1
+a, b,
+c --@< Error: Excess type specifications in the left hand side
+= f() --: integer, var string
+--! error
+
+--8<-- assign-less-types-in-same-line-2
+a,
+b,
+c,
+d --@3-4 Error: Excess type specifications in the left hand side
+= f() --: integer, var string
+--! error
+
+--8<-- assign-more-types-in-same-line-1
+a, b = f() --: integer,
+           --: var string,
+           --: const {} --@< Error: Excess type specifications in the right hand side
+--! error
+
+--8<-- assign-more-types-in-same-line-2
+a = f() --: integer,
+        --: var string,
+        --: const {} --@2-3 Error: Excess type specifications in the right hand side
+--! error
+
 --8<-- func-argtype
 local function r(p --: integer
                 )

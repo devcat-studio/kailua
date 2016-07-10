@@ -82,10 +82,19 @@ impl<Head: fmt::Debug, Tail: fmt::Debug> fmt::Debug for Seq<Head, Tail> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Var {
     Name(Spanned<Name>),
     Index(Spanned<Exp>, Spanned<Exp>),
+}
+
+impl fmt::Debug for Var {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Var::Name(ref name) => write!(f, "{:?}", name),
+            Var::Index(ref lhs, ref rhs) => write!(f, "({:?})[{:?}]", lhs, rhs),
+        }
+    }
 }
 
 #[derive(Clone, PartialEq)]

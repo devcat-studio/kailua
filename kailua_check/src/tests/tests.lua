@@ -504,84 +504,70 @@ local a = p('foo') + 3 --@< Error: `string` is not a subtype of `number`
 --! error
 
 --8<-- table-update-with-integer
-local a --: {}
-      = {} -- XXX parser bug
+local a = {} --: {}
 a[1] = 42
 a[2] = 54
 --! ok
 
 --8<-- var-table-update-with-integer
-local a --: var {} -- cannot be changed!
-      = {} -- XXX parser bug
+local a = {} --: var {} -- cannot be changed!
 a[1] = 42
 a[2] = 54
 --! error
 
 --8<-- table-update-with-name
-local a --: {}
-      = {} -- XXX parser bug
+local a = {} --: {}
 a.what = 42
 --! ok
 
 --8<-- table-update-with-index-and-name
-local a --: {}
-      = {} -- XXX parser bug
+local a = {} --: {}
 a[1] = 42
 a.what = 54
 --! ok
 
 --8<-- array-update-with-index-and-name
-local a --: {number}
-      = {} -- XXX parser bug
+local a = {} --: {number}
 a[1] = 42
 a.what = 54 -- {number} coerced to {[integer|string] = number} in the slot
 --! ok
 
 --8<-- var-array
-local a --: var {number}
-      = {} -- XXX parser bug
+local a = {} --: var {number}
 --! ok
 
 --8<-- var-array-update-with-integer-and-name
-local a --: var {number}
-      = {} -- XXX parser bug
+local a = {} --: var {number}
 a[1] = 42
 a.what = 54
 --! error
 
 --8<-- var-map-update-and-index
-local a --: var {[number] = number}
-      = {} -- XXX parser bug
+local a = {} --: var {[number] = number}
 a[1] = 42
 a[3] = 54
 a[1] = nil
-local z --: var number?
-      = a[3] -- XXX parser bug
+local z = a[3] --: var number?
 --! ok
 
 --8<-- var-map-update-and-index-subtype
-local a --: var {[number] = number}
-      = {} -- XXX parser bug
+local a = {} --: var {[number] = number}
 a[1] = 42
 a[3] = 54
 a[1] = nil
-local z --: var integer?
-      = a[3] -- XXX parser bug
+local z = a[3] --: var integer?
 --! error
 
 --8<-- var-map-update-and-index-without-nil
-local a --: var {[number] = number}
-      = {} -- XXX parser bug
+local a = {} --: var {[number] = number}
 a[1] = 42
 a[3] = 54
 a[1] = nil
-local z --: var integer
-      = a[3] -- XXX parser bug
+local z = a[3] --: var integer
 --! error
 
 --8<-- const-map-update
-local a --: const {[number] = number}
-      = {} -- XXX parser bug
+local a = {} --: const {[number] = number}
 a[1] = 42
 --! error
 
@@ -661,85 +647,65 @@ end
 local function p()
     return 3, 4, 5
 end
-local a, --: var integer
-      b  --: var integer
-      = p()
+local a, b = p() --: var integer, var integer
 --! ok
 
 --8<-- assign-from-seq-2
 local function p()
     return 3, 4, 'string'
 end
-local a, --: var integer
-      b  --: var integer
-      = p()
+local a, b = p() --: var integer, var integer
 --! ok
 
 --8<-- assign-from-seq-3
 local function p()
     return 3, 'string', 5
 end
-local a, --: var integer
-      b  --: var integer
-      = p()
+local a, b = p() --: var integer, var integer
 --! error
 
 --8<-- assign-from-seq-with-nil-1
 local function p()
     return 3, 4
 end
-local a, --: var integer
-      b, --: var integer
-      c  --: var nil
-      = p()
+local a, b, c = p() --: var integer, var integer, var nil
 --! ok
 
 --8<-- assign-from-seq-with-nil-2
 local function p()
     return 3, 4, nil
 end
-local a, --: var integer
-      b  --: var integer
-      = p()
+local a, b = p() --: var integer, var integer
 --! ok
 
 --8<-- assign-from-seq-union-1
 local function p(n)
     if n then return 'string' else return nil, 'error' end
 end
-local a, --: var string|nil
-      b  --: var string|nil
-      = p(false)
+local a, b = p(false) --: var string|nil, var string|nil
 --! ok
 
 --8<-- assign-from-seq-union-2
 local function p(n)
     if n then return 'string' else return nil, 'error' end
 end
-local a, --: var string
-      b  --: var string|nil
-      = p(false)
+local a, b = p(false) --: var string, var string|nil
 --! error
 
 --8<-- assign-from-seq-union-3
 local function p(n)
     if n then return 'string' else return nil, 'error' end
 end
-local a, --: var string|nil
-      b  --: var string
-      = p(false)
+local a, b = p(false) --: var string|nil, var string
 --! error
 
 --8<-- table-from-seq
 local function p()
     return 1, 2, 3
 end
-local a --: var {integer, integer, integer, integer}
-      = {p(), p()}
-local b --: var {foo = integer}
-      = {foo = p()}
-local c --: var {[integer|string] = integer}
-      = {p(), bar = p()}
+local a = {p(), p()} --: var {integer, integer, integer, integer}
+local b = {foo = p()} --: var {foo = integer}
+local c = {p(), bar = p()} --: var {[integer|string] = integer}
 --! ok
 
 --8<-- funccall-from-seq
@@ -1092,8 +1058,7 @@ require 'a'
 --! ok
 
 --8<-- index-assign-typed
-local p --: var {x=number, y=number}
-      = {x = 5, y = 6}
+local p = {x = 5, y = 6} --: var {x=number, y=number}
 p.x = 'string'
 --! error
 
