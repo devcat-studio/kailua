@@ -15,6 +15,7 @@ use ty::{F, Slot, SlotSeq, SlotWithNil, Builtin};
 use ty::flags::*;
 use env::{Env, Frame, Scope, Context};
 use options::Options;
+use message as m;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Exit {
@@ -181,9 +182,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 // filter any non-strings and non-numbers
                 // avoid using assert_sub here, it is not accurate enough
                 if !lflags.is_stringy() || !rflags.is_stringy() {
-                    try!(self.env.error(expspan,
-                                        format!("Cannot apply {} operator to `{}` and `{}`",
-                                                op.symbol(), self.display(lhs), self.display(rhs)))
+                    try!(self.env.error(expspan, m::WrongOperand { op: op.symbol(),
+                                                                   lhs: self.display(lhs),
+                                                                   rhs: self.display(rhs) })
                                  .done());
                     return Ok(Slot::just(T::Boolean));
                 }
@@ -195,23 +196,21 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if (lnum && lstr) || (rnum && rstr) {
                     if lnum && lstr {
                         try!(self.env.error(lhs,
-                                            format!("Operand `{}` to {} operator should be \
-                                                     either numbers or strings but not both",
-                                                    self.display(lhs), op.symbol()))
+                                            m::OperandIsBothNumOrStr { op: op.symbol(),
+                                                                       operand: self.display(lhs) })
                                      .done());
                     }
                     if rnum && rstr {
                         try!(self.env.error(rhs,
-                                            format!("Operand `{}` to {} operator should be \
-                                                     either numbers or strings but not both",
-                                                    self.display(rhs), op.symbol()))
+                                            m::OperandIsBothNumOrStr { op: op.symbol(),
+                                                                       operand: self.display(rhs) })
                                      .done());
                     }
                 } else if (lnum && rstr) || (lstr && rnum) {
                     try!(self.env.error(expspan,
-                                        format!("Operands `{}` and `{}` to {} operator \
-                                                 should be both numbers or both strings",
-                                                self.display(lhs), self.display(rhs), op.symbol()))
+                                        m::OperandsAreNotBothNumOrStr { op: op.symbol(),
+                                                                        lhs: self.display(lhs),
+                                                                        rhs: self.display(rhs) })
                                  .done());
                 } else if lnum || rnum { // operands are definitely numbers
                     check_op!(lhs.assert_sub(&T::number().without_loc(), self.context()));
@@ -221,9 +220,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     check_op!(rhs.assert_sub(&T::string().without_loc(), self.context()));
                 } else { // XXX
                     try!(self.env.error(expspan,
-                                        format!("Cannot deduce if operands `{}` and `{}` \
-                                                 to {} operator are either numbers or strings",
-                                                self.display(lhs), self.display(rhs), op.symbol()))
+                                        m::CannotDeduceBothNumOrStr { op: op.symbol(),
+                                                                      lhs: self.display(lhs),
+                                                                      rhs: self.display(rhs) })
                                  .done());
                 }
                 Ok(Slot::just(T::Boolean))
@@ -269,9 +268,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         let functy = if let Some(func) = self.env.resolve_exact_type(&func) {
             func
         } else {
-            try!(self.env.error(func, format!("The type `{}` is callable but not known \
-                                               enough to call", self.display(func)))
-                         .done());
+            try!(self.env.error(func, m::CallToInexactType { func: self.display(func) }).done());
             return Ok(self.dummy_tyseq());
         };
 
@@ -284,15 +281,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 f.returns.clone()
             }
             Functions::Multi(ref _funcs) => { // TODO
-                try!(self.env.error(func, format!("Overloaded function `{}` is not yet \
-                                                   supported", self.display(func)))
+                try!(self.env.error(func, m::CallToOverloadedFunc { func: self.display(func) })
                              .done());
                 return Ok(self.dummy_tyseq());
             }
             Functions::All => {
-                try!(self.env.error(func, format!("Cannot call `{}` without downcasting",
-                                                  self.display(func)))
-                             .done());
+                try!(self.env.error(func, m::CallToAnyFunc { func: self.display(func) }).done());
                 return Ok(self.dummy_tyseq());
             }
         };
@@ -336,17 +330,13 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         let kty = kty0.unlift().clone();
 
         if !self.env.get_type_bounds(&ety).1.is_tabular() {
-            try!(self.env.error(ety0, format!("Tried to index a non-table `{}`",
-                                              self.display(&ety)))
-                         .done());
+            try!(self.env.error(ety0, m::IndexToNonTable { tab: self.display(ety0) }).done());
             return Ok(Some(Slot::just(T::Dynamic)));
         }
         let ety = if let Some(ety) = self.env.resolve_exact_type(&ety) {
             ety
         } else {
-            try!(self.env.error(ety0, format!("The type `{}` is tabular but not known \
-                                               enough to index", self.display(&ety)))
-                         .done());
+            try!(self.env.error(ety0, m::IndexToInexactType { tab: self.display(ety0) }).done());
             return Ok(Some(Slot::just(T::Dynamic)));
         };
 
@@ -422,9 +412,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             },
 
             (Some(&Tables::Fields(..)), false) => {
-                try!(self.env.error(expspan, format!("Cannot index `{}` with index `{}` that \
-                                                      cannot be resolved in compile time",
-                                                     self.display(&ety), self.display(&kty)))
+                try!(self.env.error(expspan,
+                                    m::IndexToRecWithInexactStr { tab: self.display(ety0),
+                                                                  key: self.display(&kty) })
                              .done());
                 Ok(Some(Slot::just(T::Dynamic)))
             },
@@ -452,9 +442,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             },
 
             (Some(&Tables::Array(..)), false) => {
-                try!(self.env.error(expspan, format!("Cannot index an array `{}` with \
-                                                      a non-integral index `{}`",
-                                                     self.display(&ety), self.display(&kty)))
+                try!(self.env.error(expspan,
+                                    m::IndexToArrayWithNonInt { tab: self.display(ety0),
+                                                                key: self.display(&kty) })
                              .done());
                 Ok(Some(Slot::just(T::Dynamic)))
             },
@@ -465,9 +455,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             },
 
             (Some(&Tables::All), _) => {
-                try!(self.env.error(ety0, format!("Cannot index `{}` without downcasting",
-                                                  self.display(&ety)))
-                             .done());
+                try!(self.env.error(ety0, m::IndexToAnyTable { tab: self.display(ety0) }).done());
                 Ok(Some(Slot::just(T::Dynamic)))
             },
 
@@ -638,8 +626,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let func = func.unlift();
                 let indtys;
                 if !self.env.get_type_bounds(&func).1.is_callable() {
-                    try!(self.env.error(expspan, format!("The iterator returned a non-function \
-                                                          {:?}", func)).done());
+                    try!(self.env.error(expspan, m::NonFuncIterator { iter: self.display(&func) })
+                                 .done());
                     indtys = TySeq { head: vec![],
                                      tail: Some(Box::new(TyWithNil::from(T::Dynamic))) };
                 } else if func.is_dynamic() {
@@ -887,8 +875,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     fn visit_func_call(&mut self, funcinfo: &Spanned<T>, args: &[Spanned<Exp>],
                        expspan: Span) -> CheckResult<SlotSeq> {
         if !self.env.get_type_bounds(funcinfo).1.is_callable() {
-            try!(self.env.error(funcinfo, format!("Tried to index a non-function `{}`",
-                                                  self.display(funcinfo)))
+            try!(self.env.error(funcinfo, m::CallToNonFunc { func: self.display(funcinfo) })
                          .done());
             return Ok(self.dummy_slotseq());
         }
@@ -903,7 +890,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             // require("foo")
             Some(Builtin::Require) => {
                 if args.len() < 1 {
-                    try!(self.env.error(expspan, "`require` needs at least one argument").done());
+                    try!(self.env.error(expspan,
+                                        m::BuiltinGivenLessArgs { name: "require", nargs: 1 })
+                                 .done());
                     return Ok(self.dummy_slotseq());
                 }
 
@@ -918,8 +907,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     let block = match self.opts.require_block(modname) {
                         Ok(block) => block,
                         Err(_) => {
-                            try!(self.env.warn(&args[0], "Cannot resolve the module name \
-                                                          given to `require`").done());
+                            try!(self.env.warn(&args[0], m::CannotResolveModName {}).done());
                             return Ok(SlotSeq::from(T::All));
                         }
                     };
@@ -938,7 +926,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Some(Builtin::Assert) => {
                 if args.len() < 1 {
                     // TODO should display the true name
-                    try!(self.env.error(expspan, "`assert` built-in needs at least one argument")
+                    try!(self.env.error(expspan,
+                                        m::BuiltinGivenLessArgs { name: "assert", nargs: 1 })
                                  .done());
                     return Ok(self.dummy_slotseq());
                 }
@@ -953,8 +942,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Some(Builtin::AssertNot) => {
                 if args.len() < 1 {
                     // TODO should display the true name
-                    try!(self.env.error(expspan, "`assert-not` built-in needs \
-                                                  at least one argument")
+                    try!(self.env.error(expspan,
+                                        m::BuiltinGivenLessArgs { name: "assert-not", nargs: 1 })
                                  .done());
                     return Ok(self.dummy_slotseq());
                 }
@@ -969,8 +958,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Some(Builtin::AssertType) => {
                 if args.len() < 2 {
                     // TODO should display the true name
-                    try!(self.env.error(expspan, "`assert-type` built-in needs \
-                                                  at least two arguments")
+                    try!(self.env.error(expspan,
+                                        m::BuiltinGivenLessArgs { name: "assert-type", nargs: 2 })
                                  .done());
                     return Ok(self.dummy_slotseq());
                 }
@@ -1008,8 +997,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if let Some(vararg) = self.env.get_vararg() {
                     Ok(SlotSeq::from_seq(vararg.clone()).with_loc(exp))
                 } else {
-                    try!(self.env.error(exp, "Variadic arguments do not exist \
-                                              in the innermost function").done());
+                    try!(self.env.error(exp, m::NoVarargs {}).done());
                     Ok(self.dummy_slotseq().without_loc())
                 }
             },
@@ -1017,8 +1005,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if let Some(info) = self.env.get_var(name) {
                     Ok(SlotSeq::from_slot(info.clone()).with_loc(exp))
                 } else {
-                    try!(self.env.error(exp, format!("Global or local variable {:?} is \
-                                                      not defined", *name)).done());
+                    try!(self.env.error(exp, m::NoVar { name: name }).done());
                     Ok(self.dummy_slotseq().without_loc())
                 }
             },
@@ -1077,8 +1064,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Ex::MethodCall(ref e, ref _method, ref args) => {
                 let info = try!(self.visit_exp(e)).map(|seq| seq.into_first());
                 if !info.unlift().is_tabular() {
-                    try!(self.env.error(exp, format!("Tried to index a non-table type \
-                                                      {:?}", info)).done());
+                    try!(self.env.error(exp, m::IndexToNonTable { tab: self.display(&info) })
+                                 .done());
                     return Ok(self.dummy_slotseq().without_loc());
                 }
 
@@ -1094,8 +1081,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if let Some(vinfo) = try!(self.check_index(&ty, &kty, exp.span, false)) {
                     Ok(SlotSeq::from_slot(vinfo).with_loc(exp))
                 } else {
-                    try!(self.env.error(exp, format!("Cannot index `{}` with `{}`",
-                                                     self.display(&ty), self.display(&kty)))
+                    try!(self.env.error(exp, m::CannotIndex { tab: self.display(&ty),
+                                                              key: self.display(&kty) })
                                  .done());
                     Ok(self.dummy_slotseq().without_loc())
                 }
@@ -1146,8 +1133,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             let typeofexp = if funcinfo.builtin() == Some(Builtin::Type) {
                 // there should be a single argument there
                 if args.len() != 1 {
-                    try!(self.env.error(exp, format!("{:?} should be called with one argument, \
-                                                      received {:?}", func, args)).done());
+                    try!(self.env.error(exp, m::BuiltinGivenLessArgs { name: "type", nargs: 1 })
+                                 .done());
                     None
                 } else {
                     let arg = try!(self.visit_exp(&args[0])).map(|seq| seq.into_first());
@@ -1328,7 +1315,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 b"thread" => T_THREAD,
                 b"userdata" => T_USERDATA,
                 _ => {
-                    try!(self.env.error(info, "Unknown type name").done());
+                    try!(self.env.error(info, m::UnknownTypeName {}).done());
                     return Ok(None);
                 }
             };
@@ -1358,7 +1345,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 b"thread" => T_THREAD,
                 b"userdata" => T_USERDATA,
                 _ => {
-                    try!(self.env.error(info, "Unknown type name").done());
+                    try!(self.env.error(info, m::UnknownTypeName {}).done());
                     return Ok(None);
                 }
             };

@@ -1,4 +1,5 @@
-extern crate kailua_diag;
+#[macro_use] extern crate parse_generics_shim;
+#[macro_use] extern crate kailua_diag;
 extern crate kailua_syntax;
 #[macro_use] extern crate bitflags;
 #[macro_use] extern crate log;
@@ -12,6 +13,7 @@ pub use env::Context;
 pub use check::Checker;
 
 mod diag;
+mod message;
 mod ty;
 mod options;
 mod env;

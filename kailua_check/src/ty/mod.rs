@@ -1,6 +1,7 @@
 use std::fmt;
 use std::borrow::Borrow;
 use diag::CheckResult;
+use message as m;
 use kailua_diag::{self, Kind, Span, Spanned, Report, Reporter, Localize};
 use kailua_syntax::Name;
 
@@ -186,9 +187,9 @@ impl<A: Display, B: Display> Lattice<Spanned<B>> for Spanned<A>
 
     fn do_assert_sub(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> CheckResult<()> {
         if let Err(e) = self.base.assert_sub(&other.base, ctx) {
-            try!(ctx.error(self.span, format!("`{}` is not a subtype of `{}`",
-                                              self.display(ctx), other.display(ctx)))
-                    .note_if(other.span, "The right hand side originates here")
+            try!(ctx.error(self.span, m::NotSubtype { sub: self.display(ctx),
+                                                      sup: other.display(ctx) })
+                    .note_if(other.span, m::OtherTypeOrigin {})
                     .done());
             Err(e) // XXX not sure if we can recover here
         } else {
@@ -198,9 +199,9 @@ impl<A: Display, B: Display> Lattice<Spanned<B>> for Spanned<A>
 
     fn do_assert_eq(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> CheckResult<()> {
         if let Err(e) = self.base.assert_eq(&other.base, ctx) {
-            try!(ctx.error(self.span, format!("`{}` does not equal to `{}`",
-                                              self.display(ctx), other.display(ctx)))
-                    .note_if(other.span, "The right hand side originates here")
+            try!(ctx.error(self.span, m::NotEqual { lhs: self.display(ctx),
+                                                    rhs: other.display(ctx) })
+                    .note_if(other.span, m::OtherTypeOrigin {})
                     .done());
             Err(e) // XXX not sure if we can recover here
         } else {

@@ -66,7 +66,7 @@ macro_rules! define_msg_internal {
         // we need to coerce the AST to delay the expansion
 
         define_msg_internal! { @as_item
-            $($vis)* struct $name<$($params)*> {
+            $($vis)* struct $name<$($constr)*> {
                 $($(pub $fname: $ftype,)*)*
             }
         }

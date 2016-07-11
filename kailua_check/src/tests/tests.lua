@@ -2,7 +2,7 @@
 
 --8<-- funccall-nil
 local p
-p() --@< Error: Tried to index a non-function `nil`
+p() --@< Error: Tried to call a non-function `nil`
 --! error
 
 --8<-- funccall-func
@@ -158,7 +158,7 @@ local p = ({a = 4}).b --@< Error: Cannot index `{a = 4}` with `"b"`
 
 --8<-- index-rec-with-string
 --# assume x: string
-local p = ({a = 4})[x] --@< Error: Cannot index `{a = 4}` with index `string` that cannot be resolved in compile time
+local p = ({a = 4})[x] --@< Error: Cannot index `{a = 4}` with index `string` that cannot be resolved ahead of time
 --! error
 
 --8<-- index-rec-with-weird-string
@@ -176,7 +176,7 @@ local p = ({}):hello() -- XXX
 --! ok
 
 --8<-- methodcall-func
-local p = (function() end)[3] --@< Error: Tried to index a non-table `function() -> ()`
+local p = (function() end)[3] --@< Error: Tried to index a non-table type `function() -> ()`
 --! error
 
 --8<-- currently-nil-to-string
@@ -593,14 +593,14 @@ local x = p().a + 5
 --8<-- func-returns-rec-2
 --v () -> {a=integer}
 local function p() return {a=4} end
-local x = p().a.b --@< Error: Tried to index a non-table `integer`
+local x = p().a.b --@< Error: Tried to index a non-table type `integer`
 --! error
 
 --8<-- func-returns-rec-2-span
 --v () -> {a=integer}
 local function p() return {a=4} end
 local x = p().a
-local y = x.b --@< Error: Tried to index a non-table `integer`
+local y = x.b --@< Error: Tried to index a non-table type `integer`
 --! error
 
 --8<-- func-implicit-returns-rec
@@ -1128,12 +1128,12 @@ end
 --! error
 
 --8<-- for-in-non-func
-for x in 'hello' do --@< Error: The iterator returned a non-function "hello"
+for x in 'hello' do --@< Error: The iterator given to `for`-`in` statement returned a non-function `"hello"`
 end
 --! error
 
 --8<-- for-in-non-func-recover
-for x in 'hello' do --@< Error: The iterator returned a non-function "hello"
+for x in 'hello' do --@< Error: The iterator given to `for`-`in` statement returned a non-function `"hello"`
     x()
     y() --@< Error: Global or local variable `y` is not defined
 end
