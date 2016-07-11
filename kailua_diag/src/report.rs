@@ -8,6 +8,7 @@ use unicode_width::UnicodeWidthChar;
 use source::{Source, Span, Pos};
 use dummy_term::{stderr_or_dummy};
 use term::{color, StderrTerminal};
+use message::{Localize, Localized, get_message_language};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Kind {
@@ -41,44 +42,44 @@ impl From<Stop> for String {
 pub type Result<T> = result::Result<T, Stop>;
 
 pub trait Report {
-    fn add_span(&self, kind: Kind, span: Span, msg: String) -> Result<()>;
+    fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> Result<()>;
     fn can_continue(&self) -> bool;
 }
 
 impl<'a, R: Report> Report for &'a R {
-    fn add_span(&self, k: Kind, s: Span, m: String) -> Result<()> { (**self).add_span(k, s, m) }
+    fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
     fn can_continue(&self) -> bool { (**self).can_continue() }
 }
 
 impl<'a, R: Report> Report for &'a mut R {
-    fn add_span(&self, k: Kind, s: Span, m: String) -> Result<()> { (**self).add_span(k, s, m) }
+    fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
     fn can_continue(&self) -> bool { (**self).can_continue() }
 }
 
 impl<'a> Report for &'a Report {
-    fn add_span(&self, k: Kind, s: Span, m: String) -> Result<()> { (**self).add_span(k, s, m) }
+    fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
     fn can_continue(&self) -> bool { (**self).can_continue() }
 }
 
 pub trait Reporter: Report + Sized {
-    fn fatal<Loc: Into<Span>, Msg: Into<String>, T>(&self, loc: Loc, msg: Msg) -> ReportMore<T> {
-        let ret = self.add_span(Kind::Fatal, loc.into(), msg.into());
+    fn fatal<Loc: Into<Span>, Msg: Localize, T>(&self, loc: Loc, msg: Msg) -> ReportMore<T> {
+        let ret = self.add_span(Kind::Fatal, loc.into(), &msg);
         let ret = ret.map(|_| panic!("Report::fatal should always return Err"));
         ReportMore::new(self, ret)
     }
 
-    fn error<Loc: Into<Span>, Msg: Into<String>>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
-        let ret = self.add_span(Kind::Error, loc.into(), msg.into());
+    fn error<Loc: Into<Span>, Msg: Localize>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
+        let ret = self.add_span(Kind::Error, loc.into(), &msg);
         ReportMore::new(self, ret)
     }
 
-    fn warn<Loc: Into<Span>, Msg: Into<String>>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
-        let ret = self.add_span(Kind::Warning, loc.into(), msg.into());
+    fn warn<Loc: Into<Span>, Msg: Localize>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
+        let ret = self.add_span(Kind::Warning, loc.into(), &msg);
         ReportMore::new(self, ret)
     }
 
-    fn note<Loc: Into<Span>, Msg: Into<String>>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
-        let ret = self.add_span(Kind::Note, loc.into(), msg.into());
+    fn note<Loc: Into<Span>, Msg: Localize>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
+        let ret = self.add_span(Kind::Note, loc.into(), &msg);
         ReportMore::new(self, ret)
     }
 }
@@ -96,32 +97,27 @@ impl<'a, T> ReportMore<'a, T> {
         ReportMore { report: report, result: result }
     }
 
-    pub fn fatal<Loc: Into<Span>, Msg: Into<String>, U>(self,
-                                                        loc: Loc, msg: Msg) -> ReportMore<'a, U> {
+    pub fn fatal<Loc: Into<Span>, Msg: Localize, U>(self, loc: Loc, msg: Msg) -> ReportMore<'a, U> {
         let ret = self.report.fatal(loc, msg).result;
         ReportMore::new(self.report, self.result.and(ret))
     }
 
-    pub fn error<Loc: Into<Span>, Msg: Into<String>>(self,
-                                                     loc: Loc, msg: Msg) -> ReportMore<'a, T> {
+    pub fn error<Loc: Into<Span>, Msg: Localize>(self, loc: Loc, msg: Msg) -> ReportMore<'a, T> {
         let ret = self.report.error(loc, msg).result;
         ReportMore::new(self.report, if let Err(e) = ret { Err(e) } else { self.result })
     }
 
-    pub fn warn<Loc: Into<Span>, Msg: Into<String>>(self,
-                                                    loc: Loc, msg: Msg) -> ReportMore<'a, T> {
+    pub fn warn<Loc: Into<Span>, Msg: Localize>(self, loc: Loc, msg: Msg) -> ReportMore<'a, T> {
         let ret = self.report.warn(loc, msg).result;
         ReportMore::new(self.report, if let Err(e) = ret { Err(e) } else { self.result })
     }
 
-    pub fn note<Loc: Into<Span>, Msg: Into<String>>(self,
-                                                    loc: Loc, msg: Msg) -> ReportMore<'a, T> {
+    pub fn note<Loc: Into<Span>, Msg: Localize>(self, loc: Loc, msg: Msg) -> ReportMore<'a, T> {
         let ret = self.report.note(loc, msg).result;
         ReportMore::new(self.report, if let Err(e) = ret { Err(e) } else { self.result })
     }
 
-    pub fn note_if<Loc: Into<Span>, Msg: Into<String>>(self,
-                                                       loc: Loc, msg: Msg) -> ReportMore<'a, T> {
+    pub fn note_if<Loc: Into<Span>, Msg: Localize>(self, loc: Loc, msg: Msg) -> ReportMore<'a, T> {
         let loc = loc.into();
         if loc.is_dummy() {
             self
@@ -147,15 +143,26 @@ pub struct ConsoleReport {
     source: Rc<RefCell<Source>>,
     term: RefCell<Box<StderrTerminal>>,
     maxkind: Cell<Option<Kind>>,
+    lang: String,
 }
 
 impl ConsoleReport {
     pub fn new(source: Rc<RefCell<Source>>) -> ConsoleReport {
+        let lang = get_message_language().unwrap_or_else(|| String::new());
+        ConsoleReport::with_lang(source, lang)
+    }
+
+    pub fn with_lang(source: Rc<RefCell<Source>>, lang: String) -> ConsoleReport {
         ConsoleReport {
             source: source,
             term: RefCell::new(stderr_or_dummy()),
             maxkind: Cell::new(None),
+            lang: lang,
         }
+    }
+
+    pub fn lang(&self) -> &str {
+        &self.lang
     }
 
     // column number starts from 0
@@ -236,7 +243,7 @@ impl ConsoleReport {
 }
 
 impl Report for ConsoleReport {
-    fn add_span(&self, kind: Kind, span: Span, msg: String) -> Result<()> {
+    fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> Result<()> {
         let mut term = self.term.borrow_mut();
         let term = &mut *term;
         let source = self.source.borrow();
@@ -264,7 +271,7 @@ impl Report for ConsoleReport {
         let _ = term.fg(dim);
         let _ = write!(term, "] ");
         let _ = term.fg(color::BRIGHT_WHITE);
-        let _ = write!(term, "{}", msg);
+        let _ = write!(term, "{}", Localized::new(msg, &self.lang));
         let _ = term.reset();
         let _ = writeln!(term, "");
 
@@ -408,11 +415,12 @@ impl Report for ConsoleReport {
 
 pub struct CollectedReport {
     collected: RefCell<Vec<(Kind, Span, String)>>,
+    lang: String,
 }
 
 impl CollectedReport {
-    pub fn new() -> CollectedReport {
-        CollectedReport { collected: RefCell::new(Vec::new()) }
+    pub fn new(lang: String) -> CollectedReport {
+        CollectedReport { collected: RefCell::new(Vec::new()), lang: lang }
     }
 
     pub fn into_reports(self) -> Vec<(Kind, Span, String)> {
@@ -421,7 +429,8 @@ impl CollectedReport {
 }
 
 impl Report for CollectedReport {
-    fn add_span(&self, kind: Kind, span: Span, msg: String) -> Result<()> {
+    fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> Result<()> {
+        let msg = Localized::new(msg, &self.lang).to_string();
         self.collected.borrow_mut().push((kind, span, msg));
         if kind == Kind::Fatal { Err(Stop) } else { Ok(()) }
     }
@@ -434,7 +443,7 @@ impl Report for CollectedReport {
 pub struct NoReport;
 
 impl Report for NoReport {
-    fn add_span(&self, _kind: Kind, _span: Span, _msg: String) -> Result<()> { Err(Stop) }
+    fn add_span(&self, _kind: Kind, _span: Span, _msg: &Localize) -> Result<()> { Err(Stop) }
     fn can_continue(&self) -> bool { true }
 }
 

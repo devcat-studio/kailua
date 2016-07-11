@@ -358,6 +358,7 @@ pub struct Tester<T> {
     filter: Option<Regex>,
     term: Box<StderrTerminal>,
     exact_diags: bool,
+    message_lang: String,
     failed_logs: Vec<(Test, Source, String, Vec<(Kind, Span, String)>)>,
     num_tested: usize,
     num_passed: usize,
@@ -380,8 +381,15 @@ impl<T: Testing> Tester<T> {
             Ok(s) => !s.is_empty(),
             Err(_) => false,
         };
-        Tester { testing: testing, filter: filter, term: term, exact_diags: exact_diags,
-                 failed_logs: Vec::new(), num_tested: 0, num_passed: 0 }
+        let message_lang = match env::var("KAILUA_TEST_MESSAGE_LANG") {
+            Ok(s) => s.to_lowercase(),
+            Err(_) => String::from("en"),
+        };
+        Tester {
+            testing: testing, filter: filter, term: term,
+            exact_diags: exact_diags, message_lang: message_lang,
+            failed_logs: Vec::new(), num_tested: 0, num_passed: 0,
+        }
     }
 
     pub fn scan<P: AsRef<Path>>(mut self, dir: P) -> Tester<T> {
@@ -433,7 +441,7 @@ impl<T: Testing> Tester<T> {
         }
 
         let source = Rc::new(RefCell::new(source));
-        let collected = Rc::new(CollectedReport::new());
+        let collected = Rc::new(CollectedReport::new(self.message_lang.clone()));
         let output = self.testing.run(source.clone(), inputspan, &filespans, collected.clone());
         let source = match Rc::try_unwrap(source) {
             Ok(src) => src.into_inner(),
@@ -574,7 +582,7 @@ impl<T: Testing> Tester<T> {
             let source = Rc::new(RefCell::new(source));
             let display = kailua_diag::ConsoleReport::new(source);
             for (kind, span, msg) in collected {
-                let _ = display.add_span(kind, span, msg.clone());
+                let _ = display.add_span(kind, span, &msg);
             }
         }
         let _ = self.term.fg(term::color::BRIGHT_BLACK);

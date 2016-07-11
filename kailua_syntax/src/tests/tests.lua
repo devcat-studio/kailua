@@ -62,20 +62,20 @@ local a, b, c = f() --: integer, var string, const {}
 --8<-- local-duplicate-types-in-same-line-1
 local a, b, c --: const {}
               = f() --: integer, var string, const {}
---@^ Error: The type specification cannot appear both at names and at expressions
+--@^ Error: The type specification cannot appear both at variable names and after the `local` declaration
 --! error
 
 --8<-- local-duplicate-types-in-same-line-2
 local a, --: integer
       b, c = f() --: integer, var string, const {}
---@^ Error: The type specification cannot appear both at names and at expressions
+--@^ Error: The type specification cannot appear both at variable names and after the `local` declaration
 --! error
 
 --8<-- local-duplicate-types-in-same-line-3
 local a, --: integer
       b, --: var string
       c = f() --: const {}
---@^ Error: The type specification cannot appear both at names and at expressions
+--@^ Error: The type specification cannot appear both at variable names and after the `local` declaration
 --! error
 
 --8<-- local-less-types-in-same-line-1
@@ -95,13 +95,13 @@ local a,
 --8<-- local-more-types-in-same-line-1
 local a, b = f() --: integer,
                  --: var string,
-                 --: const {} --@< Error: Excess type specifications in the initial expressions
+                 --: const {} --@< Error: Excess type specifications after the `local` declaration
 --! error
 
 --8<-- local-more-types-in-same-line-2
 local a = f() --: integer,
               --: var string,
-              --: const {} --@2-3 Error: Excess type specifications in the initial expressions
+              --: const {} --@2-3 Error: Excess type specifications after the `local` declaration
 --! error
 
 --8<-- assign-1-1
@@ -186,20 +186,20 @@ a, b, c = f() --: integer, var string, const {}
 --8<-- assign-duplicate-types-in-same-line-1
 a, b, c --: const {}
         = f() --: integer, var string, const {}
---@^ Error: The type specification cannot appear both at left hand and right hand side
+--@^ Error: The type specification cannot appear both at the left hand side and after the assignment
 --! error
 
 --8<-- assign-duplicate-types-in-same-line-2
 a, --: integer
 b, c = f() --: integer, var string, const {}
---@^ Error: The type specification cannot appear both at left hand and right hand side
+--@^ Error: The type specification cannot appear both at the left hand side and after the assignment
 --! error
 
 --8<-- assign-duplicate-types-in-same-line-3
 a, --: integer
 b, --: var string
 c = f() --: const {}
---@^ Error: The type specification cannot appear both at left hand and right hand side
+--@^ Error: The type specification cannot appear both at the left hand side and after the assignment
 --! error
 
 --8<-- assign-less-types-in-same-line-1
@@ -219,13 +219,13 @@ d --@3-4 Error: Excess type specifications in the left hand side
 --8<-- assign-more-types-in-same-line-1
 a, b = f() --: integer,
            --: var string,
-           --: const {} --@< Error: Excess type specifications in the right hand side
+           --: const {} --@< Error: Excess type specifications after the assignment
 --! error
 
 --8<-- assign-more-types-in-same-line-2
 a = f() --: integer,
         --: var string,
-        --: const {} --@2-3 Error: Excess type specifications in the right hand side
+        --: const {} --@2-3 Error: Excess type specifications after the assignment
 --! error
 
 --8<-- func-argtype
@@ -468,7 +468,7 @@ local x --: `function`
 
 --8<-- kind-any-func-recover
 local x --: `function`() --@< Error: Expected a newline, got `(`
-local                    --@< Fatal: Expected a name or `function` after `local`
+local                    --@< Fatal: Expected a name or `function` after `local`, got the end of file
 --! error
 
 --&
@@ -772,18 +772,18 @@ end
 
 --8<-- assume-multiline-recover
 --# assume a: { integer, string
---#                      boolean --@< Fatal: expected `,`, `;` or `}`, got a name
+--#                      boolean --@< Fatal: Expected `,`, `;` or `}`, got a name
 --! error
 
 --8<-- long-string-incomplete-1
-f([==== [ --@< Fatal: Opening long bracket should end with `]`
+f([==== [ --@< Fatal: Opening long bracket should end with `[`
 --! error
 
 --&
 ) -- highlighting fix
 
 --8<-- long-string-incomplete-2
-f([==== --@< Fatal: Opening long bracket should end with `]`
+f([==== --@< Fatal: Opening long bracket should end with `[`
 --! error
 
 --&
@@ -877,15 +877,15 @@ f(@3) --@< Fatal: Unexpected character
 --! error
 
 --8<-- for-of
-for a of x --@< Fatal: Expected `=`, `,`, `in` or `--:` after `for NAME`
+for a of x --@< Fatal: Expected `=`, `,`, `in` or `--:` after `for NAME`, got a name
 --! error
 
 --8<-- local-seq
-local (x, y) = (1, 2) --@< Fatal: Expected a name or `function` after `local`
+local (x, y) = (1, 2) --@< Fatal: Expected a name or `function` after `local`, got `(`
 --! error
 
 --8<-- func-args-invalid-char
-function p(# --@< Fatal: Expected a name, `)` or `...`
+function p(# --@< Fatal: Expected an argument name, `)` or `...`, got `#`
 --! error
 
 --&
@@ -897,7 +897,7 @@ end
 --! error
 
 --8<-- table-invalid-char
-f({x#}) --@< Fatal: expected `,`, `;` or `}`, got `#`
+f({x#}) --@< Fatal: Expected `,`, `;` or `}`, got `#`
 --! error
 
 --8<-- index-with-number
@@ -925,7 +925,7 @@ f(#*3) --@< Fatal: Expected an expression, got `*`
 --! error
 
 --8<-- lval-invalid-char
-a, *b = 5 --@< Fatal: Expected a variable, got `*`
+a, *b = 5 --@< Fatal: Expected a left-hand-side expression, got `*`
 --! error
 
 --8<-- assume-invalid-char
@@ -955,7 +955,7 @@ a, *b = 5 --@< Fatal: Expected a variable, got `*`
 --! error
 
 --8<-- assume-seq-invalid-char
---# assume x: (integer, #) --@< Fatal: Expected a kind, got `#`
+--# assume x: (integer, #) --@< Fatal: Expected a type, got `#`
 --! error
 
 --8<-- assume-func-invalid-char
@@ -967,11 +967,11 @@ a, *b = 5 --@< Fatal: Expected a variable, got `*`
 --! [KailuaAssume(Local, `x`, _, `whatever`, None)]
 
 --8<-- assume-rec-invalid-char
---# assume x: {x = integer #} --@< Fatal: expected `,`, `;` or `}`, got `#`
+--# assume x: {x = integer #} --@< Fatal: Expected `,`, `;` or `}`, got `#`
 --! error
 
 --8<-- assume-tuple-invalid-char
---# assume x: {integer #} --@< Fatal: expected `,`, `;` or `}`, got `#`
+--# assume x: {integer #} --@< Fatal: Expected `,`, `;` or `}`, got `#`
 --! error
 
 --8<-- assume-rec-duplicate-name

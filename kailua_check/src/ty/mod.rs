@@ -1,7 +1,7 @@
 use std::fmt;
 use std::borrow::Borrow;
 use diag::CheckResult;
-use kailua_diag::{self, Kind, Span, Spanned, Report, Reporter};
+use kailua_diag::{self, Kind, Span, Spanned, Report, Reporter, Localize};
 use kailua_syntax::Name;
 
 pub use self::literals::{Numbers, Strings};
@@ -119,7 +119,7 @@ pub trait TypeContext: Report {
 }
 
 impl<'a> Report for &'a mut TypeContext {
-    fn add_span(&self, kind: Kind, span: Span, msg: String) -> kailua_diag::Result<()> {
+    fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> kailua_diag::Result<()> {
         (**self).add_span(kind, span, msg)
     }
     fn can_continue(&self) -> bool {
@@ -213,7 +213,7 @@ impl<A: Display, B: Display> Lattice<Spanned<B>> for Spanned<A>
 struct NoTypeContext;
 
 impl Report for NoTypeContext {
-    fn add_span(&self, _kind: Kind, _span: Span, _msg: String) -> kailua_diag::Result<()> {
+    fn add_span(&self, _kind: Kind, _span: Span, _msg: &Localize) -> kailua_diag::Result<()> {
         Ok(()) // ignore any report
     }
     fn can_continue(&self) -> bool {

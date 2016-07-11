@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::collections::{HashMap, HashSet};
 use vec_map::VecMap;
 
-use kailua_diag::{self, Kind, Span, Spanned, Report};
+use kailua_diag::{self, Kind, Span, Spanned, Report, Localize};
 use kailua_syntax::{Name, parse_chunk};
 use diag::CheckResult;
 use ty::{Ty, TySeq, T, Slot, F, TVar, Mark, Lattice, Displayed, Display};
@@ -496,7 +496,7 @@ impl Context {
 }
 
 impl Report for Context {
-    fn add_span(&self, k: Kind, s: Span, m: String) -> kailua_diag::Result<()> {
+    fn add_span(&self, k: Kind, s: Span, m: &Localize) -> kailua_diag::Result<()> {
         self.report.add_span(k, s, m)
     }
     fn can_continue(&self) -> bool { self.report.can_continue() }
@@ -1079,7 +1079,7 @@ impl<'ctx> Env<'ctx> {
 }
 
 impl<'ctx> Report for Env<'ctx> {
-    fn add_span(&self, k: Kind, s: Span, m: String) -> kailua_diag::Result<()> {
+    fn add_span(&self, k: Kind, s: Span, m: &Localize) -> kailua_diag::Result<()> {
         self.context.report.add_span(k, s, m)
     }
     fn can_continue(&self) -> bool {

@@ -7,3 +7,4 @@ publish = false
 [dependencies]
 term = "0.4.4"
 unicode-width = "0.1.3"
+parse-generics-shim = "0.1.0"

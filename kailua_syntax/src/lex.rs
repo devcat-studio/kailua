@@ -2,8 +2,9 @@ use std::str;
 use std::u64;
 use std::fmt;
 
+use message as m;
 use kailua_diag as diag;
-use kailua_diag::{SourceBytes, Pos, Span, Spanned, WithLoc, Report, Reporter};
+use kailua_diag::{SourceBytes, Pos, Span, Spanned, WithLoc, Report, Reporter, Localize, Localized};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tok {
@@ -16,106 +17,126 @@ pub enum Tok {
     EOF,
 }
 
-impl fmt::Display for Tok {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Tok::Error      => write!(f, "an invalid character"),
-            Tok::Punct(p)   => write!(f, "{}", p),
-            Tok::Keyword(w) => write!(f, "{}", w),
-            Tok::Num(_)     => write!(f, "a number"),
-            Tok::Name(_)    => write!(f, "a name"),
-            Tok::Str(_)     => write!(f, "a string literal"),
-            Tok::EOF        => write!(f, "the end of file"),
+impl Localize for Tok {
+    fn fmt_localized(&self, f: &mut fmt::Formatter, lang: &str) -> fmt::Result {
+        match (lang, self) {
+            ("ko", &Tok::Error)      => write!(f, "잘못된 문자"),
+            (_,    &Tok::Error)      => write!(f, "an invalid character"),
+            (_,    &Tok::Punct(p))   => write!(f, "{}", Localized::new(&p, lang)),
+            (_,    &Tok::Keyword(w)) => write!(f, "{}", Localized::new(&w, lang)),
+            ("ko", &Tok::Num(_))     => write!(f, "숫자"),
+            (_,    &Tok::Num(_))     => write!(f, "a number"),
+            ("ko", &Tok::Name(_))    => write!(f, "이름"),
+            (_,    &Tok::Name(_))    => write!(f, "a name"),
+            ("ko", &Tok::Str(_))     => write!(f, "문자열 리터럴"),
+            (_,    &Tok::Str(_))     => write!(f, "a string literal"),
+            ("ko", &Tok::EOF)        => write!(f, "파일의 끝"),
+            (_,    &Tok::EOF)        => write!(f, "the end of file"),
         }
     }
 }
 
-macro_rules! tt_to_expr { ($e:expr) => ($e) }
+impl<'a> Localize for &'a Tok {
+    fn fmt_localized(&self, f: &mut fmt::Formatter, lang: &str) -> fmt::Result {
+        (**self).fmt_localized(f, lang)
+    }
+}
+
 macro_rules! define_tokens {
-    ($ty:ident: $($t:tt $i:ident,)*) => (
+    ($ty:ident |$lang:ident|: $($i:ident $t:expr,)*) => (
         #[derive(Copy, Clone, Debug, PartialEq, Eq)]
         pub enum $ty { $($i,)* }
-        impl fmt::Display for $ty {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                let text = match *self { $($ty::$i => tt_to_expr!($t),)* };
+
+        impl Localize for $ty {
+            fn fmt_localized(&self, f: &mut fmt::Formatter, $lang: &str) -> fmt::Result {
+                let text = match *self { $($ty::$i => $t,)* };
                 fmt::Display::fmt(text, f)
             }
         }
     );
 }
 
-define_tokens! { Punct:
-    "`+`"   Plus,
-    "`-`"   Dash,
-    "`*`"   Star,
-    "`/`"   Slash,
-    "`%`"   Percent,
-    "`^`"   Caret,
-    "`#`"   Hash,
-    "`==`"  EqEq,
-    "`~=`"  TildeEq,
-    "`<=`"  LtEq,
-    "`>=`"  GtEq,
-    "`<`"   Lt,
-    "`>`"   Gt,
-    "`=`"   Eq,
-    "`(`"   LParen,
-    "`)`"   RParen,
-    "`{`"   LBrace,
-    "`}`"   RBrace,
-    "`[`"   LBracket,
-    "`]`"   RBracket,
-    "`;`"   Semicolon,
-    "`:`"   Colon,
-    "`,`"   Comma,
-    "`.`"   Dot,
-    "`..`"  DotDot,
-    "`...`" DotDotDot,
+define_tokens! { Punct |lang|:
+    Plus        "`+`",
+    Dash        "`-`",
+    Star        "`*`",
+    Slash       "`/`",
+    Percent     "`%`",
+    Caret       "`^`",
+    Hash        "`#`",
+    EqEq        "`==`",
+    TildeEq     "`~=`",
+    LtEq        "`<=`",
+    GtEq        "`>=`",
+    Lt          "`<`",
+    Gt          "`>`",
+    Eq          "`=`",
+    LParen      "`(`",
+    RParen      "`)`",
+    LBrace      "`{`",
+    RBrace      "`}`",
+    LBracket    "`[`",
+    RBracket    "`]`",
+    Semicolon   "`;`",
+    Colon       "`:`",
+    Comma       "`,`",
+    Dot         "`.`",
+    DotDot      "`..`",
+    DotDotDot   "`...`",
 
     // Kailua extensions
-    "`--#`" DashDashHash,
-    "`--v`" DashDashV,
-    "`--:`" DashDashColon,
-    "`-->`" DashDashGt,
-    "`?`"   Ques,
-    "`|`"   Pipe,
-    "`&`"   Amp,
-    "`->`"  DashGt,
-    "a newline" Newline,
+    DashDashHash    "`--#`",
+    DashDashV       "`--v`",
+    DashDashColon   "`--:`",
+    DashDashGt      "`-->`",
+    Ques            "`?`",
+    Pipe            "`|`",
+    Amp             "`&`",
+    DashGt          "`->`",
+    Newline         match lang { "ko" => "개행문자", _ => "a newline" },
 }
 
-define_tokens! { Keyword:
-    "a keyword `and`"       And,
-    "a keyword `break`"     Break,
-    "a keyword `do`"        Do,
-    "a keyword `else`"      Else,
-    "a keyword `elseif`"    Elseif,
-    "a keyword `end`"       End,
-    "a keyword `false`"     False,
-    "a keyword `for`"       For,
-    "a keyword `function`"  Function,
-    "a keyword `if`"        If,
-    "a keyword `in`"        In,
-    "a keyword `local`"     Local,
-    "a keyword `nil`"       Nil,
-    "a keyword `not`"       Not,
-    "a keyword `or`"        Or,
-    "a keyword `repeat`"    Repeat,
-    "a keyword `return`"    Return,
-    "a keyword `then`"      Then,
-    "a keyword `true`"      True,
-    "a keyword `until`"     Until,
-    "a keyword `while`"     While,
+macro_rules! kwname {
+    ($lang:ident $name:expr) => (
+        match $lang {
+            "ko" => concat!("예약어 `", $name, "`"),
+            _ => concat!("a keyword `", $name, "`"),
+        }
+    )
+}
+
+define_tokens! { Keyword |lang|:
+    And         kwname!(lang "and"),
+    Break       kwname!(lang "break"),
+    Do          kwname!(lang "do"),
+    Else        kwname!(lang "else"),
+    Elseif      kwname!(lang "elseif"),
+    End         kwname!(lang "end"),
+    False       kwname!(lang "false"),
+    For         kwname!(lang "for"),
+    Function    kwname!(lang "function"),
+    If          kwname!(lang "if"),
+    In          kwname!(lang "in"),
+    Local       kwname!(lang "local"),
+    Nil         kwname!(lang "nil"),
+    Not         kwname!(lang "not"),
+    Or          kwname!(lang "or"),
+    Repeat      kwname!(lang "repeat"),
+    Return      kwname!(lang "return"),
+    Then        kwname!(lang "then"),
+    True        kwname!(lang "true"),
+    Until       kwname!(lang "until"),
+    While       kwname!(lang "while"),
 
     // Kailua extensions
-    "a keyword `assume`"    Assume,
-    "a keyword `const`"     Const,
-    "a keyword `global`"    Global,
-    "a keyword `module`"    Module,
-    "a keyword `once`"      Once,
-    "a keyword `open`"      Open,
-    "a keyword `type`"      Type,
-    "a keyword `var`"       Var,
+    Assume      kwname!(lang "assume"),
+    Const       kwname!(lang "const"),
+    Global      kwname!(lang "global"),
+    Module      kwname!(lang "module"),
+    Once        kwname!(lang "once"),
+    Open        kwname!(lang "open"),
+    Type        kwname!(lang "type"),
+    Var         kwname!(lang "var"),
 }
 
 impl Keyword {
@@ -250,13 +271,11 @@ impl<'a> Lexer<'a> {
             Some(b'[') => {}
             Some(c) => {
                 self.unread(c);
-                return self.report.fatal(begin..self.pos(),
-                                         "Opening long bracket should end with `]`")
+                return self.report.fatal(begin..self.pos(), m::UnclosedOpeningLongBracket {})
                                   .done();
             }
             None => {
-                return self.report.fatal(begin..self.pos(),
-                                         "Opening long bracket should end with `]`")
+                return self.report.fatal(begin..self.pos(), m::UnclosedOpeningLongBracket {})
                                   .done();
             }
         }
@@ -274,24 +293,22 @@ impl<'a> Lexer<'a> {
                             self.unread(c); // may be the start of closing bracket
                         },
                         None => {
-                            return self.report.fatal(self.pos(),
-                                                     "Premature end of file in a long string")
-                                              .note(begin, "The long string started here")
+                            return self.report.fatal(self.pos(), m::PrematureEofInLongString {})
+                                              .note(begin, m::LongStringStart {})
                                               .done();
                         }
                     }
                 },
                 Some(b'\r') | Some(b'\n') if self.meta => {
                     return self.report.fatal(begin..lastpos, // do not include newlines
-                                             "A newline is disallowed in a long string inside \
-                                              the meta block")
-                                      .note(self.meta_span, "The meta block started here")
+                                             m::NoNewlineInLongStringInMeta {})
+                                      .note(self.meta_span, m::MetaStart {})
                                       .done();
                 },
                 Some(c) => f(c),
                 None => {
-                    return self.report.fatal(self.pos(), "Premature end of file in a long string")
-                                      .note(begin, "The long string started here")
+                    return self.report.fatal(self.pos(), m::PrematureEofInLongString {})
+                                      .note(begin, m::LongStringStart {})
                                       .done();
                 }
             }
@@ -335,20 +352,20 @@ impl<'a> Lexer<'a> {
                     },
                     Some(_) => {
                         try!(self.report.error(lastpos..self.pos(),
-                                               "Unrecognized escape sequence in a string")
+                                               m::UnrecognizedEscapeInString {})
                                         .done());
                     },
                     None => {
-                        return self.report.fatal(self.pos(), "Premature end of file in a string")
-                                          .note(begin, "The string started here")
+                        return self.report.fatal(self.pos(), m::PrematureEofInString {})
+                                          .note(begin, m::StringStart {})
                                           .done();
                     },
                 },
                 Some(c) if c == quote => break,
                 Some(c) => f(c),
                 None => {
-                    return self.report.fatal(self.pos(), "Premature end of file in a string")
-                                      .note(begin, "The string started here")
+                    return self.report.fatal(self.pos(), m::PrematureEofInString {})
+                                      .note(begin, m::StringStart {})
                                       .done();
                 },
             }
@@ -449,7 +466,7 @@ impl<'a> Lexer<'a> {
                             }
                         }
 
-                        return self.report.fatal(begin..self.pos(), "Invalid number").done();
+                        return self.report.fatal(begin..self.pos(), m::InvalidNumber {}).done();
                     }
                 }
 
@@ -521,7 +538,7 @@ impl<'a> Lexer<'a> {
                 },
                 Some(b'~') => {
                     if let Some(_) = self.try(|c| c == b'=') { return tok!(TildeEq); }
-                    return self.report.fatal(begin..self.pos(), "Unexpected character").done();
+                    return self.report.fatal(begin..self.pos(), m::UnexpectedChar {}).done();
                 },
                 Some(b'<') => {
                     if let Some(_) = self.try(|c| c == b'=') { return tok!(LtEq); }
@@ -562,7 +579,7 @@ impl<'a> Lexer<'a> {
                 Some(b'&') if self.meta => return tok!(Amp),
 
                 Some(_) => {
-                    return self.report.fatal(begin..self.pos(), "Unexpected character").done();
+                    return self.report.fatal(begin..self.pos(), m::UnexpectedChar {}).done();
                 },
                 None => {
                     if self.meta { // the last line should be closed by the (dummy) Newline token

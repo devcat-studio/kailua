@@ -4,7 +4,8 @@ use std::fmt;
 use std::collections::{hash_map, HashMap};
 
 use kailua_diag as diag;
-use kailua_diag::{Pos, Span, Spanned, WithLoc, Report, Reporter, Stop};
+use kailua_diag::{Pos, Span, Spanned, WithLoc, Report, Reporter, Localize, Stop};
+use message as m;
 use lex::{Tok, Punct, Keyword};
 use ast::{Name, Str, Var, Seq, Presig, Sig};
 use ast::{Ex, Exp, UnOp, BinOp, NameScope, SelfParam, St, Stmt, Block};
@@ -30,13 +31,16 @@ pub struct Parser<'a, T> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct EOF; // a placeholder arg to `expect`
 
-impl fmt::Display for EOF {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt("end of file", f)
+impl Localize for EOF {
+    fn fmt_localized(&self, f: &mut fmt::Formatter, lang: &str) -> fmt::Result {
+        match lang {
+            "ko" => write!(f, "파일의 끝"),
+            _ => write!(f, "end of file"),
+        }
     }
 }
 
-trait Expectable: fmt::Display {
+pub trait Expectable: Localize {
     fn check_token(&self, tok: &Tok) -> bool;
 }
 
@@ -164,7 +168,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     fn expect<Tok: Expectable>(&mut self, tok: Tok) -> diag::Result<()> {
         let read = try!(self.read()).1;
         if !tok.check_token(&read.base) {
-            self.report.fatal(read.span, format!("Expected {}, got {}", tok, read.base)).done()
+            self.report.fatal(read.span, m::ExpectFailed { expected: tok, read: &read.base })
+                       .done()
         } else {
             Ok(())
         }
@@ -213,11 +218,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             self.elided_newline = false;
 
             if !elided {
-                let (span, msg) = {
-                    let next = self.peek();
-                    (next.span, format!("Expected a newline, got {}", next.base))
-                };
-                try!(self.report.error(span, msg).done());
+                let next = self.peek().clone();
+                try!(self.report.error(next.span, m::NoNewline { read: &next.base }).done());
                 return self.skip_meta_comment(meta);
             }
 
@@ -276,7 +278,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             let name: Name = name.into();
             Ok(name.with_loc(tok.1.span))
         } else {
-            self.report.fatal(tok.1.span, format!("Expected a name, got {}", tok.1.base)).done()
+            self.report.fatal(tok.1.span, m::NoName { read: &tok.1.base }).done()
         }
     }
 
@@ -301,9 +303,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     fn update_type_specs_with_typeseq_spec<Item>(&self,
                                                  oldspecs: Vec<TypeSpec<Spanned<Item>>>,
                                                  specs: Spanned<Vec<Spanned<(M, Spanned<Kind>)>>>,
-                                                 note_on_dup: &str,
-                                                 note_on_less: &str,
-                                                 note_on_more: &str)
+                                                 note_on_dup: &Localize,
+                                                 note_on_less: &Localize,
+                                                 note_on_more: &Localize)
             -> diag::Result<Vec<TypeSpec<Spanned<Item>>>> {
         if oldspecs.iter().any(|oldspec| oldspec.modf != M::None ||
                                          oldspec.kind.is_some()) {
@@ -355,9 +357,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 _ => false,
             };
             if !allowed {
-                try!(self.report.error(presig.span, "No function declaration after \
-                                                     the function specification")
-                                .done());
+                try!(self.report.error(presig.span, m::MissingFuncDeclAfterFuncSpec {}).done());
             }
         }
 
@@ -436,9 +436,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     }
 
                     (_, tok) => {
-                        return self.report.fatal(tok.span,
-                                                 "Expected `=`, `,`, `in` or `--:` \
-                                                  after `for NAME`")
+                        return self.report.fatal(tok.span, m::NoForInSep { read: &tok.base })
                                           .done();
                     }
                 }
@@ -479,8 +477,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
                         // forbid `--v ...` then `local NAME ...`
                         if let Some(ref presig) = presig {
-                            try!(self.report.error(presig.span, "No function declaration after \
-                                                                 the function specification")
+                            try!(self.report.error(presig.span, m::MissingFuncDeclAfterFuncSpec {})
                                             .done());
                         }
 
@@ -494,18 +491,16 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         if let Some(specs) = try!(self.try_parse_kailua_typeseq_spec()) {
                             names = try!(self.update_type_specs_with_typeseq_spec(
                                 names, specs,
-                                "The type specification cannot appear \
-                                 both at names and at expressions",
-                                "Excess type specifications in the variable names",
-                                "Excess type specifications in the initial expressions"));
+                                &m::DuplicateTypeSpecInLocal {},
+                                &m::ExcessNamesInLocal {},
+                                &m::ExcessTypeSpecsInLocal {}));
                         }
                         Box::new(St::Local(names, exps))
                     }
 
                     (_, tok) => {
                         return self.report.fatal(tok.span,
-                                                 "Expected a name or `function` \
-                                                  after `local`")
+                                                 m::NoFuncOrNameAfterLocal { read: &tok.base })
                                           .done();
                     }
                 }
@@ -564,10 +559,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                             if let Some(specs) = try!(self.try_parse_kailua_typeseq_spec()) {
                                 lhs = try!(self.update_type_specs_with_typeseq_spec(
                                     lhs, specs,
-                                    "The type specification cannot appear \
-                                     both at left hand and right hand side",
-                                    "Excess type specifications in the left hand side",
-                                    "Excess type specifications in the right hand side"));
+                                    &m::DuplicateTypeSpecInAssign {},
+                                    &m::ExcessLvaluesInAssign {},
+                                    &m::ExcessTypeSpecsInAssign {}));
                             }
 
                             Box::new(St::Assign(lhs, rhs))
@@ -642,7 +636,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 self.unread(tok);
             }
             (_, tok) => {
-                return self.report.fatal(tok.span, "Expected a name, `)` or `...`").done();
+                return self.report.fatal(tok.span, m::BadFuncArg { read: &tok.base }).done();
             }
         }
         if let Some(span) = variadic {
@@ -654,9 +648,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             }
             let varargs_ = if let Some(Spanned { base: (m, kind), .. }) = varargs_ {
                 if m.base != M::None {
-                    try!(self.report.error(m.span, "Variadic argument specifier \
-                                                    cannot have modifiers")
-                                    .done());
+                    try!(self.report.error(m.span, m::NoModfAllowedInVarargs {}).done());
                 }
                 Some(kind)
             } else {
@@ -680,56 +672,41 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             if args.len() > presig.base.args.head.len() {
                 let excess = &args[presig.base.args.head.len()..];
                 let span = excess.iter().fold(Span::dummy(), |span, i| span | i.0.span);
-                try!(self.report.error(span, "Excess arguments in the function declaration")
-                                .done());
+                try!(self.report.error(span, m::ExcessArgsInFuncDecl {}).done());
             } else if args.len() < presig.base.args.head.len() {
                 let excess = &presig.base.args.head[args.len()..];
                 let span = excess.iter().fold(Span::dummy(), |span, i| span | i.span);
-                try!(self.report.error(span, "Excess arguments in the function specification")
-                                .done());
+                try!(self.report.error(span, m::ExcessArgsInFuncSpec {}).done());
             }
             match (&varargs, &presig.base.args.tail) {
                 (&Some(ref v), &None) => {
-                    try!(self.report.error(v.span, "Variadic arguments appear in the function \
-                                                    but not in the function specification")
-                                    .done());
+                    try!(self.report.error(v.span, m::MissingVarargsInFuncSpec {}).done());
                 }
                 (&None, &Some(ref v)) => {
-                    try!(self.report.error(v.span, "Variadic arguments appear in the function \
-                                                    specification but not in the function itself")
-                                    .done());
+                    try!(self.report.error(v.span, m::MissingVarargsInFuncDecl {}).done());
                 }
                 (&Some(Spanned { base: Some(_), span }), &Some(ref v)) => {
-                    try!(self.report.error(span, "Inline variadic argument type specification \
-                                                  cannot appear with the function specification")
-                                    .note(v.span, "The corresponding argument in the \
-                                                   function specification was here")
+                    try!(self.report.error(span, m::DuplicateVarargsSpecInFuncDecl {})
+                                    .note(v.span, m::PriorVarargsSpecInFuncSpec {})
                                     .done());
                 }
                 (_, _) => {}
             }
             for (arg, sigarg) in args.iter().zip(presig.base.args.head.iter()) {
                 if arg.0.base != sigarg.base.base.base { // TODO might not be needed
-                    try!(self.report.error(arg.0.span, "Mismatching argument name \
-                                                        in the function specification")
-                                    .note(sigarg.base.base.span,
-                                          "The corresponding argument was here")
+                    try!(self.report.error(arg.0.span, m::ArgNameMismatchInFuncDecl {})
+                                    .note(sigarg.base.base.span, m::PriorArgNameInFuncSpec {})
                                     .done());
                 }
                 if let Some(ref spec) = arg.1 {
-                    try!(self.report.error(spec.span, "Inline argument type specification cannot \
-                                                       appear with the function specification")
-                                    .note(presig.span,
-                                          "The function specification appeared here")
+                    try!(self.report.error(spec.span, m::DuplicateSpecInFuncDecl {})
+                                    .note(presig.span, m::PriorFuncSpec {})
                                     .done());
                 }
             }
             if let Some(returns) = returns {
-                try!(self.report.error(returns.span,
-                                       "Inline return type specification cannot appear \
-                                        with the function specification")
-                                .note(presig.span,
-                                      "The function specification appeared here")
+                try!(self.report.error(returns.span, m::DuplicateReturnSpecInFuncDecl {})
+                                .note(presig.span, m::PriorFuncSpec {})
                                 .done());
             }
             sig = presig.base.to_sig();
@@ -801,10 +778,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 (_, Spanned { base: Tok::Punct(Punct::Semicolon), .. }) => {}
                 (_, Spanned { base: Tok::Punct(Punct::RBrace), .. }) => break,
                 (_, tok) => {
-                    return self.report.fatal(tok.span,
-                                             format!("expected `,`, `;` or `}}`, got {}",
-                                                     tok.base))
-                                      .done();
+                    return self.report.fatal(tok.span, m::NoTableSep { read: &tok.base }).done();
                 }
             }
         }
@@ -868,9 +842,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         exp = Box::new(Ex::Index(exp, name)).with_loc(span);
                     } else {
                         return self.report.fatal(tok.span,
-                                                 format!("Expected a name after \
-                                                          `<expression> .`, got {}",
-                                                          tok.base))
+                                                 m::NoNameAfterExpDot { read: &tok.base })
                                           .done();
                     }
                 }
@@ -892,9 +864,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     } else {
                         let tok = try!(self.read()).1;
                         return self.report.fatal(tok.span,
-                                                 format!("Expected argument(s) after \
-                                                          `<expression> : <name>`, \
-                                                          got {}", tok.base))
+                                                 m::NoArgsAfterExpColonName { read: &tok.base })
                                           .done();
                     }
                 }
@@ -933,9 +903,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         if let Some(ref presig) = presig {
             if !self.lookahead(Keyword::Function) {
                 // limit the possible lookahead
-                try!(self.report.error(presig.span, "No function literal after \
-                                                     the function specification")
-                                .done());
+                try!(self.report.error(presig.span, m::MissingFuncLitAfterFuncSpec {}).done());
             }
         }
 
@@ -993,7 +961,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             Ok(None)
         } else {
             let tok = try!(self.read()).1;
-            self.report.fatal(tok.span, format!("Expected an expression, got {}", tok.base)).done()
+            self.report.fatal(tok.span, m::NoExp { read: &tok.base }).done()
         }
     }
 
@@ -1012,9 +980,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     exp = Box::new(Ex::Bin(exp, op.with_loc(opspan), exp2)).with_loc(span);
                 } else {
                     let tok = try!(self.read()).1;
-                    return self.report.fatal(tok.span,
-                                             format!("Expected an expression, got {}", tok.base))
-                                      .done();
+                    return self.report.fatal(tok.span, m::NoExp { read: &tok.base }).done();
                 }
             }
             Ok(Some(exp))
@@ -1041,9 +1007,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     exp = e;
                 } else {
                     let tok = try!(self.read()).1;
-                    return self.report.fatal(tok.span,
-                                             format!("Expected an expression, got {}", tok.base))
-                                      .done();
+                    return self.report.fatal(tok.span, m::NoExp { read: &tok.base }).done();
                 }
             }
             while let Some((exp1, op)) = terms.pop() {
@@ -1124,7 +1088,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             Ok(exp)
         } else {
             let tok = try!(self.read()).1;
-            self.report.fatal(tok.span, format!("Expected an expression, got {}", tok.base)).done()
+            self.report.fatal(tok.span, m::NoExp { read: &tok.base }).done()
         }
     }
 
@@ -1142,7 +1106,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             Ok(var)
         } else {
             let tok = try!(self.read()).1;
-            self.report.fatal(tok.span, format!("Expected a variable, got {}", tok.base)).done()
+            self.report.fatal(tok.span, m::NoVar { read: &tok.base }).done()
         }
     }
 
@@ -1235,9 +1199,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             Some(kind) => kind,
             None => match try!(self.read()) {
                 (_, Spanned { base: Tok::Punct(Punct::DotDotDot), span }) => {
-                    try!(self.report.error(span, "`...` should be preceded with a kind \
-                                                  in the ordinary kinds")
-                                    .done());
+                    try!(self.report.error(span, m::NoKindBeforeEllipsis {}).done());
                     // pretend that (an invalid) `(...)` is `(?...)`
                     return Ok(Seq { head: kinds, tail: Some(Box::new(K::Dynamic).with_loc(span)) });
                 }
@@ -1253,17 +1215,13 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 Some(kind) => kind,
                 None => match try!(self.read()) {
                     (_, Spanned { base: Tok::Punct(Punct::DotDotDot), span }) => {
-                        try!(self.report.error(span, "`...` should be preceded with a kind \
-                                                      in the ordinary kinds")
-                                        .done());
+                        try!(self.report.error(span, m::NoKindBeforeEllipsis {}).done());
                         // pretend that (an invalid) `(<explist>, ...)` is `(<explist>, ?...)`
                         return Ok(Seq { head: kinds,
                                         tail: Some(Box::new(K::Dynamic).with_loc(span)) });
                     }
                     (_, tok) => {
-                        return self.report.fatal(tok.span,
-                                                 format!("Expected a kind, got {}", tok.base))
-                                          .done();
+                        return self.report.fatal(tok.span, m::NoKind { read: &tok.base }).done();
                     }
                 },
             };
@@ -1406,12 +1364,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                 match seen.entry(name.base.clone()) {
                                     hash_map::Entry::Occupied(e) => {
                                         try!(self.report.error(name.span,
-                                                               format!("Duplicate record field \
-                                                                        {:?} in the \
-                                                                        type specification",
-                                                                       name.base))
-                                                        .note(*e.get(),
-                                                              "The first duplicate appeared here")
+                                                               m::DuplicateFieldNameInRec
+                                                                   { name: &name.base })
+                                                        .note(*e.get(), m::FirstFieldNameInRec {})
                                                         .done());
                                     }
                                     hash_map::Entry::Vacant(e) => {
@@ -1429,8 +1384,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                     Spanned { base: Tok::Punct(Punct::RBrace), .. } => break,
                                     tok => {
                                         return self.report.fatal(tok.span,
-                                                                 format!("expected `,`, `;` or \
-                                                                          `}}`, got {}", tok.base))
+                                                                 m::NoTableSep { read: &tok.base })
                                                           .done();
                                     }
                                 }
@@ -1451,8 +1405,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                     Spanned { base: Tok::Punct(Punct::RBrace), .. } => break,
                                     tok => {
                                         return self.report.fatal(tok.span,
-                                                                 format!("expected `,`, `;` or \
-                                                                          `}}`, got {}", tok.base))
+                                                                 m::NoTableSep { read: &tok.base })
                                                           .done();
                                     }
                                 }
@@ -1545,15 +1498,13 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                             }
                             Some(AtomicKind::Seq(..)) => {
                                 try!(self.report.error(begin..self.last_pos(),
-                                                       "A sequence of types cannot be \
-                                                        inside a union")
+                                                       m::NoTypeSeqInUnion {})
                                                 .done());
                                 kinds.push(self.dummy_kind());
                             }
                             None => {
                                 let tok = try!(self.read()).1;
-                                return self.report.fatal(tok.span, format!("Expected a type, \
-                                                                            got {}", tok.base))
+                                return self.report.fatal(tok.span, m::NoType { read: &tok.base })
                                                   .done();
                             }
                         }
@@ -1573,9 +1524,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 let span = kindseq.span | first.span; // overwrite the span
                 Ok(Some(first.base.with_loc(span)))
             } else {
-                try!(self.report.error(kindseq.span,
-                                       "Expected a single type, not type sequence")
-                                .done());
+                try!(self.report.error(kindseq.span, m::NoSingleTypeButTypeSeq {}).done());
                 Ok(Some(self.dummy_kind()))
             }
         } else {
@@ -1588,10 +1537,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             Ok(kindseq.base)
         } else {
             let tok = try!(self.read()).1;
-            try!(self.report.error(tok.span,
-                                   format!("Expected a single type or type sequence, \
-                                            got {}", tok.base))
-                            .done());
+            try!(self.report.error(tok.span, m::NoTypeOrTypeSeq { read: &tok.base }).done());
             Ok(Seq { head: vec![self.dummy_kind()], tail: None })
         }
     }
@@ -1601,9 +1547,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             Ok(kind)
         } else {
             let tok = try!(self.read()).1;
-            try!(self.report.error(tok.span,
-                                   format!("Expected a single type, got {}", tok.base))
-                            .done());
+            try!(self.report.error(tok.span, m::NoSingleType { read: &tok.base }).done());
             Ok(self.dummy_kind())
         }
     }
@@ -1742,10 +1686,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         if let Tok::Str(s) = tok.base {
                             builtin = Some(Str::from(s).with_loc(tok.span));
                         } else {
-                            try!(self.report.error(tok.span,
-                                                   format!("Expected a string after \
-                                                            `assume <name> : <kind> =`, got {}",
-                                                           tok.base))
+                            try!(self.report.error(tok.span, m::NoStringAfterAssumeNameKind
+                                                             { read: &tok.base })
                                             .done());
                             try!(self.skip_meta_comment(Punct::DashDashHash));
                             return Ok(Some(None));
@@ -1772,7 +1714,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
                     // forbid overriding builtin types
                     if self.builtin_kind(&*name.base).is_some() {
-                        try!(self.report.error(name.span, "Cannot redefine a builtin type").done());
+                        try!(self.report.error(name.span, m::CannotRedefineBuiltin {}).done());
                     }
 
                     Some(Box::new(St::KailuaType(name, kind)))

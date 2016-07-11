@@ -20,6 +20,12 @@ custom_derive! {
     pub struct Name(Vec<u8>);
 }
 
+impl fmt::Display for Name {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
+}
+
 impl fmt::Debug for Name {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if !f.sign_minus() { try!(write!(f, "`")); }
@@ -32,6 +38,12 @@ impl fmt::Debug for Name {
 custom_derive! {
     #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, NewtypeFrom, NewtypeDeref)]
     pub struct Str(Vec<u8>);
+}
+
+impl fmt::Display for Str {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
 }
 
 impl fmt::Debug for Str {

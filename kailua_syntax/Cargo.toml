@@ -15,6 +15,7 @@ harness = false
 [dependencies]
 custom_derive = "0.1.2"
 newtype_derive = "0.1.2"
+parse-generics-shim = "0.1.0"
 kailua_diag = { path = "../kailua_diag" }
 
 [dev-dependencies]
