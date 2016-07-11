@@ -105,14 +105,49 @@ macro_rules! define_msg {
 }
 
 // XXX won't work well in Windows
-fn get_locale_string() -> Option<String> {
+fn get_locale_string_from_env() -> Option<String> {
     if let Ok(s) = env::var("LC_ALL") {
         if !s.is_empty() { return Some(s); }
     }
     if let Ok(s) = env::var("LC_MESSAGES") {
         if !s.is_empty() { return Some(s); }
     }
+    // per POSIX, allow an empty string here; in Windows the empty envvar is forbidden
     env::var("LANG").ok()
+}
+
+#[cfg(windows)]
+fn get_locale_string() -> Option<String> {
+    // allow the user to override via envvar
+    if let Some(s) = get_locale_string_from_env() {
+        return Some(s);
+    }
+
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use winapi;
+    use kernel32;
+
+    // what we need is the UI language, as opposed to the locale
+    let langid = unsafe { kernel32::GetUserDefaultUILanguage() };
+    let lcid = langid as winapi::LCID; // default sort order = 0 (XXX not yet in winapi?)
+    const LOCALE_SISO639LANGNAME: winapi::LCTYPE = 0x59; // XXX not yet in winapi??
+    let mut buf = [0; 16];
+    let bufsz = unsafe {
+        kernel32::GetLocaleInfoW(lcid, LOCALE_SISO639LANGNAME,
+                                 buf.as_mut_ptr(), buf.len() as winapi::c_int)
+    };
+    if bufsz > 0 {
+        let os: OsString = OsStringExt::from_wide(&buf[..(bufsz - 1) as usize]);
+        return os.into_string().ok();
+    }
+
+    None
+}
+
+#[cfg(not(windows))]
+fn get_locale_string() -> Option<String> {
+    get_locale_string_from_env()
 }
 
 pub fn get_message_language() -> Option<String> {

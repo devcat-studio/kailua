@@ -1,6 +1,8 @@
 extern crate term;
 extern crate unicode_width;
 #[macro_use] extern crate parse_generics_shim;
+#[cfg(windows)] extern crate winapi;
+#[cfg(windows)] extern crate kernel32;
 
 pub use message::{Localize, Localized, get_message_language};
 pub use source::{Pos, Span, Spanned, WithLoc};
