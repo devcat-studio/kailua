@@ -117,7 +117,7 @@ local x = p < 3.14 --@< Error: Cannot apply < operator to `function() -> ()` and
 --! error
 
 --8<-- unknown-type
---# assume p: unknown_type
+--# assume p: unknown_type --@< Error: Type `unknown_type` is not defined
 --! error
 
 --8<-- add-integer-integer
@@ -457,7 +457,7 @@ local x = p(4.5)
 
 --8<-- func-number-arg-implicit
 function p(a) return a + 3 end
-local x = p('what')
+local x = p('what') --@< Error: `"what"` is not a subtype of `<unknown type>`
 --! error
 
 --8<-- capture-and-return-1
@@ -618,7 +618,7 @@ end
 --8<-- func-returns-seq-error
 --v () -> (integer, string)
 local function p()
-    return 3, 4
+    return 3, 4 --@< Error: `4` is not a subtype of `string`
 end
 --! error
 
@@ -726,7 +726,7 @@ p(1, 2, 3)
 --8<-- func-varargs-type-2
 --v (...: integer)
 local function p(...) end
-p(1, false, 3)
+p(1, false, 3) --@< Error: `false` is not a subtype of `(nil|integer)`
 --! error
 
 --8<-- func-varargs-type-with-nil
@@ -745,7 +745,7 @@ local q = p - 5
 do
     --# type known_type = number
 end
---# assume p: known_type
+--# assume p: known_type --@< Error: Type `known_type` is not defined
 --! error
 
 --8<-- type-no-shadowing
@@ -756,7 +756,7 @@ end
 --! error
 
 --8<-- type-no-recursive
---# type known_type = known_type
+--# type known_type = known_type --@< Error: Type `known_type` is not defined
 --! error
 
 --8<-- type-transitive
@@ -767,11 +767,11 @@ local q = p * 3
 --! ok
 
 --8<-- type-unknown-type
---# type some_type = another_type
+--# type some_type = another_type --@< Error: Type `another_type` is not defined
 --! error
 
 --8<-- type-transitive-out-of-order
---# type some_type = another_type
+--# type some_type = another_type --@< Error: Type `another_type` is not defined
 --# type another_type = integer -- this is intentional
 --! error
 
@@ -1169,6 +1169,8 @@ end
 --# open lua51
 --# assume p: var {[integer] = var string}
 for x, y in ipairs(p) do
+	--@^ Error: `{[integer] = string}` is not a subtype of `{WHATEVER}`
+	-- XXX WHATEVER is temporary
 end
 --! error
 
@@ -1176,6 +1178,8 @@ end
 --# open lua51
 --# assume p: var table
 for x, y in ipairs(p) do
+	--@^ Error: `table` is not a subtype of `{WHATEVER}`
+	-- XXX WHATEVER is temporary
 end
 --! error
 
@@ -1183,6 +1187,8 @@ end
 --# open lua51
 --# assume p: var string
 for x, y in ipairs(p) do
+	--@^ Error: `string` is not a subtype of `{WHATEVER}`
+	-- XXX WHATEVER is temporary
 end
 --! error
 
@@ -1273,7 +1279,7 @@ end
 --8<-- lua51-pairs-no-non-table
 --# open lua51
 --# assume p: var string
-for x, y in pairs(p) do
+for x, y in pairs(p) do --@< Error: `string` is not a subtype of `table`
 end
 --! error
 

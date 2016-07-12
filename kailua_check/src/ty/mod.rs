@@ -1,5 +1,4 @@
 use std::fmt;
-use std::borrow::Borrow;
 use diag::CheckResult;
 use message as m;
 use kailua_diag::{self, Kind, Span, Spanned, Report, Reporter, Localize};
@@ -86,15 +85,19 @@ impl fmt::Debug for Mark {
 }
 
 pub trait TypeResolver: Report {
-    fn ty_from_name(&self, name: &Name) -> CheckResult<T<'static>>;
+    fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<T<'static>>;
 }
 
 impl<'a, R: TypeResolver> TypeResolver for &'a R {
-    fn ty_from_name(&self, name: &Name) -> CheckResult<T<'static>> { (**self).ty_from_name(name) }
+    fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<T<'static>> {
+        (**self).ty_from_name(name)
+    }
 }
 
 impl<'a, R: TypeResolver> TypeResolver for &'a mut R {
-    fn ty_from_name(&self, name: &Name) -> CheckResult<T<'static>> { (**self).ty_from_name(name) }
+    fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<T<'static>> {
+        (**self).ty_from_name(name)
+    }
 }
 
 pub trait TypeContext: Report {
@@ -132,26 +135,31 @@ impl<'a> Report for &'a mut TypeContext {
 pub trait Lattice<Other = Self> {
     type Output;
 
-    fn do_union(&self, other: &Other, ctx: &mut TypeContext) -> Self::Output;
-    fn do_assert_sub(&self, other: &Other, ctx: &mut TypeContext) -> CheckResult<()>;
-    fn do_assert_eq(&self, other: &Other, ctx: &mut TypeContext) -> CheckResult<()>;
+    fn union(&self, other: &Other, ctx: &mut TypeContext) -> Self::Output;
+    fn assert_sub(&self, other: &Other, ctx: &mut TypeContext) -> CheckResult<()>;
+    fn assert_eq(&self, other: &Other, ctx: &mut TypeContext) -> CheckResult<()>;
+}
 
-    // convenience methods
-    fn union<T: Borrow<Other>>(&self, other: &T, ctx: &mut TypeContext) -> Self::Output {
-        self.do_union(other.borrow(), ctx)
+impl<A: Lattice<B>, B> Lattice<Box<B>> for Box<A> {
+    type Output = <A as Lattice<B>>::Output;
+
+    fn union(&self, other: &Box<B>, ctx: &mut TypeContext) -> Self::Output {
+        (**self).union(other, ctx)
     }
-    fn assert_sub<T: Borrow<Other>>(&self, other: &T, ctx: &mut TypeContext) -> CheckResult<()> {
-        self.do_assert_sub(other.borrow(), ctx)
+
+    fn assert_sub(&self, other: &Box<B>, ctx: &mut TypeContext) -> CheckResult<()> {
+        (**self).assert_sub(other, ctx)
     }
-    fn assert_eq<T: Borrow<Other>>(&self, other: &T, ctx: &mut TypeContext) -> CheckResult<()> {
-        self.do_assert_eq(other.borrow(), ctx)
+
+    fn assert_eq(&self, other: &Box<B>, ctx: &mut TypeContext) -> CheckResult<()> {
+        (**self).assert_sub(other, ctx)
     }
 }
 
 impl<T: Lattice<Output=T> + fmt::Debug + Clone> Lattice for Option<T> {
     type Output = Option<T>;
 
-    fn do_union(&self, other: &Option<T>, ctx: &mut TypeContext) -> Option<T> {
+    fn union(&self, other: &Option<T>, ctx: &mut TypeContext) -> Option<T> {
         match (self, other) {
             (&Some(ref a), &Some(ref b)) => Some(a.union(b, ctx)),
             (&Some(ref a), &None) => Some(a.clone()),
@@ -160,7 +168,7 @@ impl<T: Lattice<Output=T> + fmt::Debug + Clone> Lattice for Option<T> {
         }
     }
 
-    fn do_assert_sub(&self, other: &Option<T>, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Option<T>, ctx: &mut TypeContext) -> CheckResult<()> {
         match (self, other) {
             (&Some(ref a), &Some(ref b)) => a.assert_sub(b, ctx),
             (&Some(ref a), &None) => error_not_bottom(a),
@@ -168,7 +176,7 @@ impl<T: Lattice<Output=T> + fmt::Debug + Clone> Lattice for Option<T> {
         }
     }
 
-    fn do_assert_eq(&self, other: &Option<T>, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Option<T>, ctx: &mut TypeContext) -> CheckResult<()> {
         match (self, other) {
             (&Some(ref a), &Some(ref b)) => a.assert_eq(b, ctx),
             (&Some(ref a), &None) => error_not_bottom(a),
@@ -182,11 +190,11 @@ impl<A: Display, B: Display> Lattice<Spanned<B>> for Spanned<A>
         where A: Lattice<B> {
     type Output = <A as Lattice<B>>::Output;
 
-    fn do_union(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> Self::Output {
-        self.base.do_union(&other.base, ctx)
+    fn union(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> Self::Output {
+        self.base.union(&other.base, ctx)
     }
 
-    fn do_assert_sub(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> CheckResult<()> {
         if let Err(e) = self.base.assert_sub(&other.base, ctx) {
             try!(ctx.error(self.span, m::NotSubtype { sub: self.display(ctx),
                                                       sup: other.display(ctx) })
@@ -198,7 +206,7 @@ impl<A: Display, B: Display> Lattice<Spanned<B>> for Spanned<A>
         }
     }
 
-    fn do_assert_eq(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> CheckResult<()> {
         if let Err(e) = self.base.assert_eq(&other.base, ctx) {
             try!(ctx.error(self.span, m::NotEqual { lhs: self.display(ctx),
                                                     rhs: other.display(ctx) })
@@ -298,18 +306,18 @@ fn err_on_instantiation<T, F>(ctx: &mut TypeContext, f: F) -> CheckResult<T>
 impl Lattice for TVar {
     type Output = TVar;
 
-    fn do_union(&self, other: &Self, ctx: &mut TypeContext) -> Self {
+    fn union(&self, other: &Self, ctx: &mut TypeContext) -> Self {
         let u = ctx.gen_tvar();
         assert_eq!(ctx.assert_tvar_sub_tvar(*self, u), Ok(()));
         assert_eq!(ctx.assert_tvar_sub_tvar(*other, u), Ok(()));
         u
     }
 
-    fn do_assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         ctx.assert_tvar_sub_tvar(*self, *other)
     }
 
-    fn do_assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         ctx.assert_tvar_eq_tvar(*self, *other)
     }
 }
@@ -332,6 +340,12 @@ pub trait Display: Sized {
 impl<T: Display> Display for Spanned<T> {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
         self.base.fmt_displayed(f, ctx)
+    }
+}
+
+impl<T: Display> Display for Box<T> {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
+        (**self).fmt_displayed(f, ctx)
     }
 }
 

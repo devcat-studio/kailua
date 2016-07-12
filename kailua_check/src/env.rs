@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::collections::{HashMap, HashSet};
 use vec_map::VecMap;
 
-use kailua_diag::{self, Kind, Span, Spanned, Report, Localize};
+use kailua_diag::{self, Kind, Span, Spanned, Report, Reporter, Localize};
 use kailua_syntax::{Name, parse_chunk};
 use diag::CheckResult;
 use ty::{Ty, TySeq, T, Slot, F, TVar, Mark, Lattice, Displayed, Display};
@@ -16,6 +16,7 @@ use ty::flags::*;
 use defs::get_defs;
 use options::Options;
 use check::Checker;
+use message as m;
 
 pub struct Frame {
     pub vararg: Option<TySeq>,
@@ -1088,11 +1089,12 @@ impl<'ctx> Report for Env<'ctx> {
 }
 
 impl<'ctx> TypeResolver for Env<'ctx> {
-    fn ty_from_name(&self, name: &Name) -> CheckResult<T<'static>> {
+    fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<T<'static>> {
         if let Some(t) = self.get_named_type(name) {
             Ok(t.into_send())
         } else {
-            Err(format!("unknown type name {:?}", *name))
+            try!(self.error(name, m::NoType { name: &name.base }).done());
+            Ok(T::Dynamic)
         }
     }
 }

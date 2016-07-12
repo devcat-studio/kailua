@@ -114,7 +114,7 @@ impl Unioned {
 impl Lattice for Unioned {
     type Output = Unioned;
 
-    fn do_union(&self, other: &Unioned, ctx: &mut TypeContext) -> Unioned {
+    fn union(&self, other: &Unioned, ctx: &mut TypeContext) -> Unioned {
         let simple    = self.simple | other.simple;
         let numbers   = self.numbers.union(&other.numbers, ctx);
         let strings   = self.strings.union(&other.strings, ctx);
@@ -130,7 +130,7 @@ impl Lattice for Unioned {
                   tables: tables, functions: functions, tvar: tvar }
     }
 
-    fn do_assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         if self.simple.intersects(!other.simple) {
             return error_not_sub(self, other);
         }
@@ -159,7 +159,7 @@ impl Lattice for Unioned {
         }
     }
 
-    fn do_assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         match (self.tvar, self.flags(), other.tvar, other.flags()) {
             (Some(a), T_NONE, Some(b), T_NONE) =>
                 return ctx.assert_tvar_eq_tvar(a, b),

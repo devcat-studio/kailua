@@ -471,13 +471,13 @@ impl<'a> T<'a> {
 impl<'a, 'b> Lattice<T<'b>> for T<'a> {
     type Output = T<'static>;
 
-    fn do_union(&self, other: &T<'b>, ctx: &mut TypeContext) -> T<'static> {
+    fn union(&self, other: &T<'b>, ctx: &mut TypeContext) -> T<'static> {
         match (self, other) {
             // built-in types are destructured first unless they point to the same builtin
             (&T::Builtin(lb, ref lhs), &T::Builtin(rb, ref rhs)) if lb == rb =>
                 T::Builtin(lb, Box::new(lhs.union(rhs, ctx))),
             (&T::Builtin(_, ref lhs), &T::Builtin(_, ref rhs)) => lhs.union(rhs, ctx),
-            (&T::Builtin(_, ref lhs), rhs) => lhs.union(rhs, ctx),
+            (&T::Builtin(_, ref lhs), rhs) => (**lhs).union(rhs, ctx),
             (lhs, &T::Builtin(_, ref rhs)) => lhs.union(rhs, ctx),
 
             // dynamic eclipses everything else
@@ -519,13 +519,13 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
         }
     }
 
-    fn do_assert_sub(&self, other: &T<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &T<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
         debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
         let ok = match (self, other) {
             // built-in types are destructured first
             (&T::Builtin(_, ref lhs), &T::Builtin(_, ref rhs)) => return lhs.assert_sub(rhs, ctx),
-            (&T::Builtin(_, ref lhs), rhs) => return lhs.assert_sub(rhs, ctx),
+            (&T::Builtin(_, ref lhs), rhs) => return (**lhs).assert_sub(rhs, ctx),
             (lhs, &T::Builtin(_, ref rhs)) => return lhs.assert_sub(rhs, ctx),
 
             (&T::Dynamic, _) => true,
@@ -597,13 +597,13 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
         if ok { Ok(()) } else { error_not_sub(self, other) }
     }
 
-    fn do_assert_eq(&self, other: &T<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &T<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
         debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
         let ok = match (self, other) {
             // built-in types are destructured first
             (&T::Builtin(_, ref lhs), &T::Builtin(_, ref rhs)) => return lhs.assert_eq(rhs, ctx),
-            (&T::Builtin(_, ref lhs), rhs) => return lhs.assert_eq(rhs, ctx),
+            (&T::Builtin(_, ref lhs), rhs) => return (**lhs).assert_eq(rhs, ctx),
             (lhs, &T::Builtin(_, ref rhs)) => return lhs.assert_eq(rhs, ctx),
 
             (&T::Dynamic, _) => true,

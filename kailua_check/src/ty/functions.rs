@@ -86,7 +86,7 @@ impl Functions {
 impl Lattice for Functions {
     type Output = Functions;
 
-    fn do_union(&self, other: &Functions, _: &mut TypeContext) -> Functions {
+    fn union(&self, other: &Functions, _: &mut TypeContext) -> Functions {
         match (self, other) {
             (&Functions::All, _) => Functions::All,
             (_, &Functions::All) => Functions::All,
@@ -99,7 +99,7 @@ impl Lattice for Functions {
         }
     }
 
-    fn do_assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (_, &Functions::All) => true,
             (&Functions::All, _) => false,
@@ -126,7 +126,7 @@ impl Lattice for Functions {
         if ok { Ok(()) } else { error_not_sub(self, other) }
     }
 
-    fn do_assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         match (self, other) {
             (&Functions::All, &Functions::All) => Ok(()),
             (&Functions::Simple(ref a), &Functions::Simple(ref b)) => a.assert_eq(b, ctx),

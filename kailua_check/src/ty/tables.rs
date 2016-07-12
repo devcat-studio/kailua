@@ -218,7 +218,7 @@ impl Tables {
 impl Lattice for Tables {
     type Output = Tables;
 
-    fn do_union(&self, other: &Tables, ctx: &mut TypeContext) -> Tables {
+    fn union(&self, other: &Tables, ctx: &mut TypeContext) -> Tables {
         match (self, other) {
             (&Tables::All, _) => Tables::All,
             (_, &Tables::All) => Tables::All,
@@ -268,13 +268,15 @@ impl Lattice for Tables {
                 Tables::Map(Box::new(key1.union(key2, ctx)), value1.union(value2, ctx)),
 
             (&Tables::Array(ref value1), &Tables::Map(ref key2, ref value2)) =>
-                Tables::Map(Box::new(key2.union(&T::integer(), ctx)), value1.union(value2, ctx)),
+                Tables::Map(Box::new((**key2).union(&T::integer(), ctx)),
+                            value1.union(value2, ctx)),
             (&Tables::Map(ref key1, ref value1), &Tables::Array(ref value2)) =>
-                Tables::Map(Box::new(key1.union(&T::integer(), ctx)), value1.union(value2, ctx)),
+                Tables::Map(Box::new((**key1).union(&T::integer(), ctx)),
+                            value1.union(value2, ctx)),
         }
     }
 
-    fn do_assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Tables::Empty, _) => true,
             (_, &Tables::Empty) => false,
@@ -326,7 +328,7 @@ impl Lattice for Tables {
         if ok { Ok(()) } else { error_not_sub(self, other) }
     }
 
-    fn do_assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Tables::All, &Tables::All) => true,
             (&Tables::Empty, &Tables::Empty) => true,

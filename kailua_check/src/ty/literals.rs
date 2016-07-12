@@ -17,7 +17,7 @@ pub enum Numbers {
 impl Lattice for Numbers {
     type Output = Numbers;
 
-    fn do_union(&self, other: &Numbers, _: &mut TypeContext) -> Numbers {
+    fn union(&self, other: &Numbers, _: &mut TypeContext) -> Numbers {
         match (self, other) {
             (&Numbers::All, _) => Numbers::All,
             (_, &Numbers::All) => Numbers::All,
@@ -53,7 +53,7 @@ impl Lattice for Numbers {
         }
     }
 
-    fn do_assert_sub(&self, other: &Self, _: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Self, _: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Numbers::One(a), &Numbers::One(b)) => a == b,
             (&Numbers::One(a), &Numbers::Some(ref b)) => b.contains(&a),
@@ -75,7 +75,7 @@ impl Lattice for Numbers {
         if ok { Ok(()) } else { error_not_sub(self, other) }
     }
 
-    fn do_assert_eq(&self, other: &Self, _ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Self, _ctx: &mut TypeContext) -> CheckResult<()> {
         if *self == *other { Ok(()) } else { error_not_eq(self, other) }
     }
 }
@@ -129,7 +129,7 @@ pub enum Strings {
 impl Lattice for Strings {
     type Output = Strings;
 
-    fn do_union(&self, other: &Strings, _: &mut TypeContext) -> Strings {
+    fn union(&self, other: &Strings, _: &mut TypeContext) -> Strings {
         match (self, other) {
             (&Strings::All, _) => Strings::All,
             (_, &Strings::All) => Strings::All,
@@ -162,7 +162,7 @@ impl Lattice for Strings {
         }
     }
 
-    fn do_assert_sub(&self, other: &Self, _: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Self, _: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Strings::One(ref a), &Strings::One(ref b)) => *a == *b,
             (&Strings::One(ref a), &Strings::Some(ref b)) => b.contains(a),
@@ -181,7 +181,7 @@ impl Lattice for Strings {
         if ok { Ok(()) } else { error_not_sub(self, other) }
     }
 
-    fn do_assert_eq(&self, other: &Self, _ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Self, _ctx: &mut TypeContext) -> CheckResult<()> {
         if *self == *other { Ok(()) } else { error_not_eq(self, other) }
     }
 }

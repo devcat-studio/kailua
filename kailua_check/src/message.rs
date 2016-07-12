@@ -14,6 +14,11 @@ define_msg! { pub NoVarargs:
     _    => "Variadic arguments do not exist in the innermost function",
 }
 
+define_msg! { pub NoType<'a> { name: &'a Name }:
+    "ko" => "{name} 타입이 선언되지 않았습니다",
+    _    => "Type {name} is not defined",
+}
+
 define_msg! { pub NotSubtype<'a, Sub: 'a + Display,
                                  Sup: 'a + Display> { sub: Displayed<'a, 'a, Sub>,
                                                       sup: Displayed<'a, 'a, Sup> }:

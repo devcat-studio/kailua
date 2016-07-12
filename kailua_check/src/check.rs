@@ -275,7 +275,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         // check if func.args :> args
         let mut returns = match *functy.get_functions().unwrap() {
             Functions::Simple(ref f) => {
-                let funcargs = f.args.clone().all_with_loc(func);
+                let funcargs = f.args.clone().all_without_loc();
                 if let Err(e) = args.assert_sub(&funcargs, self.context()) {
                     return Err(format!("failed to call {:?}: {}", func, e));
                 }

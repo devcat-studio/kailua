@@ -135,7 +135,7 @@ macro_rules! define_tyseq {
         impl Lattice for $tyseq {
             type Output = $tyseq;
 
-            fn do_union(&self, other: &$tyseq, ctx: &mut TypeContext) -> $tyseq {
+            fn union(&self, other: &$tyseq, ctx: &mut TypeContext) -> $tyseq {
                 let selftail = self.tail_to_type();
                 let othertail = other.tail_to_type();
 
@@ -160,7 +160,7 @@ macro_rules! define_tyseq {
                 $tyseq { head: head, tail: tail }
             }
 
-            fn do_assert_sub(&self, other: &$tyseq, ctx: &mut TypeContext) -> CheckResult<()> {
+            fn assert_sub(&self, other: &$tyseq, ctx: &mut TypeContext) -> CheckResult<()> {
                 debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
                 let mut selfhead = self.head.iter().fuse();
@@ -177,7 +177,7 @@ macro_rules! define_tyseq {
                 }
             }
 
-            fn do_assert_eq(&self, other: &$tyseq, ctx: &mut TypeContext) -> CheckResult<()> {
+            fn assert_eq(&self, other: &$tyseq, ctx: &mut TypeContext) -> CheckResult<()> {
                 debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
                 let mut selfhead = self.head.iter().fuse();
@@ -312,7 +312,7 @@ macro_rules! define_slotseq {
         impl Lattice for $slotseq {
             type Output = $slotseq;
 
-            fn do_union(&self, other: &$slotseq, ctx: &mut TypeContext) -> $slotseq {
+            fn union(&self, other: &$slotseq, ctx: &mut TypeContext) -> $slotseq {
                 let selftail = self.tail_to_slot();
                 let othertail = other.tail_to_slot();
 
@@ -337,7 +337,7 @@ macro_rules! define_slotseq {
                 $slotseq { head: head, tail: tail }
             }
 
-            fn do_assert_sub(&self, other: &$slotseq, ctx: &mut TypeContext) -> CheckResult<()> {
+            fn assert_sub(&self, other: &$slotseq, ctx: &mut TypeContext) -> CheckResult<()> {
                 debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
                 let mut selfhead = self.head.iter().fuse();
@@ -354,7 +354,7 @@ macro_rules! define_slotseq {
                 }
             }
 
-            fn do_assert_eq(&self, other: &$slotseq, ctx: &mut TypeContext) -> CheckResult<()> {
+            fn assert_eq(&self, other: &$slotseq, ctx: &mut TypeContext) -> CheckResult<()> {
                 debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
                 let mut selfhead = self.head.iter().fuse();

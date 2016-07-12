@@ -423,7 +423,7 @@ impl Slot {
 impl Lattice for Slot {
     type Output = Slot;
 
-    fn do_union(&self, other: &Slot, ctx: &mut TypeContext) -> Slot {
+    fn union(&self, other: &Slot, ctx: &mut TypeContext) -> Slot {
         // if self and other point to the same slot, do not try to borrow mutably
         if self.0.deref() as *const _ == other.0.deref() as *const _ { return self.clone(); }
 
@@ -431,11 +431,11 @@ impl Lattice for Slot {
         Slot::from(self.0.borrow_mut().union(&mut other.0.borrow_mut(), ctx))
     }
 
-    fn do_assert_sub(&self, other: &Slot, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Slot, ctx: &mut TypeContext) -> CheckResult<()> {
         self.0.borrow().assert_sub(&other.0.borrow(), ctx)
     }
 
-    fn do_assert_eq(&self, other: &Slot, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Slot, ctx: &mut TypeContext) -> CheckResult<()> {
         self.0.borrow().assert_eq(&other.0.borrow(), ctx)
     }
 }
@@ -445,15 +445,15 @@ impl Lattice for Slot {
 impl<'a> Lattice<T<'a>> for Slot {
     type Output = Slot;
 
-    fn do_union(&self, _other: &T<'a>, _ctx: &mut TypeContext) -> Slot {
+    fn union(&self, _other: &T<'a>, _ctx: &mut TypeContext) -> Slot {
         panic!("Lattice::union(Slot, T) is not supported")
     }
 
-    fn do_assert_sub(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
         self.unlift().assert_sub(other, ctx)
     }
 
-    fn do_assert_eq(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
         self.unlift().assert_eq(other, ctx)
     }
 }
