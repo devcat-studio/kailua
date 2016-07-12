@@ -8,7 +8,7 @@ use kailua_syntax::Name;
 pub use self::literals::{Numbers, Strings};
 pub use self::tables::{Key, Tables};
 pub use self::functions::{Function, Functions};
-pub use self::union::Union;
+pub use self::union::Unioned;
 pub use self::value::{T, Ty};
 pub use self::slot::{F, S, Slot};
 pub use self::with_nil::{TyWithNil, SlotWithNil};
@@ -406,7 +406,7 @@ pub mod flags {
     }
 
     bitflags! {
-        pub flags SimpleUnion: u16 {
+        pub flags UnionedSimple: u16 {
             const U_NONE     = T_NONE.bits,
             const U_NIL      = T_NIL.bits,
             const U_TRUE     = T_TRUE.bits,

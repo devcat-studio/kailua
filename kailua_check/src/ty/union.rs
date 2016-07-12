@@ -9,8 +9,8 @@ use super::flags::*;
 
 // expanded value types for unions
 #[derive(Clone, PartialEq)]
-pub struct Union {
-    pub simple: SimpleUnion,
+pub struct Unioned {
+    pub simple: UnionedSimple,
     pub numbers: Option<Numbers>,
     pub strings: Option<Strings>,
     pub tables: Option<Tables>,
@@ -18,13 +18,13 @@ pub struct Union {
     pub tvar: Option<TVar>,
 }
 
-impl Union {
-    pub fn from<'a>(ty: &T<'a>) -> Union {
-        let mut u = Union { simple: U_NONE, numbers: None, strings: None,
-                            tables: None, functions: None, tvar: None };
+impl Unioned {
+    pub fn from<'a>(ty: &T<'a>) -> Unioned {
+        let mut u = Unioned { simple: U_NONE, numbers: None, strings: None,
+                              tables: None, functions: None, tvar: None };
 
         match ty.as_base() {
-            &T::Dynamic | &T::All => panic!("Union::from called with T::Dynamic or T::All"),
+            &T::Dynamic | &T::All => panic!("Unioned::from called with T::Dynamic or T::All"),
 
             &T::None     => {}
             &T::Nil      => { u.simple = U_NIL; }
@@ -111,10 +111,10 @@ impl Union {
     }
 }
 
-impl Lattice for Union {
-    type Output = Union;
+impl Lattice for Unioned {
+    type Output = Unioned;
 
-    fn do_union(&self, other: &Union, ctx: &mut TypeContext) -> Union {
+    fn do_union(&self, other: &Unioned, ctx: &mut TypeContext) -> Unioned {
         let simple    = self.simple | other.simple;
         let numbers   = self.numbers.union(&other.numbers, ctx);
         let strings   = self.strings.union(&other.strings, ctx);
@@ -126,8 +126,8 @@ impl Lattice for Union {
             (a, b) => a.or(b),
         };
 
-        Union { simple: simple, numbers: numbers, strings: strings,
-                tables: tables, functions: functions, tvar: tvar }
+        Unioned { simple: simple, numbers: numbers, strings: strings,
+                  tables: tables, functions: functions, tvar: tvar }
     }
 
     fn do_assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
@@ -187,7 +187,7 @@ impl Lattice for Union {
     }
 }
 
-impl Display for Union {
+impl Display for Unioned {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
         // if the type variable can be completely resolved, try that first
         if let Some(tv) = self.tvar {
@@ -204,7 +204,7 @@ impl Display for Union {
     }
 }
 
-impl fmt::Debug for Union {
+impl fmt::Debug for Unioned {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt_generic(f, |t, f| fmt::Debug::fmt(t, f))
     }

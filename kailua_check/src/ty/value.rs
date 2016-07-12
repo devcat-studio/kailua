@@ -7,7 +7,7 @@ use kailua_syntax::{K, SlotKind, Str, M};
 use diag::CheckResult;
 use super::{F, Slot, SlotWithNil};
 use super::{TypeContext, NoTypeContext, TypeResolver, Lattice, TySeq, Display};
-use super::{Numbers, Strings, Key, Tables, Function, Functions, Union, TVar, Builtin};
+use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 
@@ -29,7 +29,7 @@ pub enum T<'a> {
     Functions(Cow<'a, Functions>),      // function, ...
     TVar(TVar),                         // type variable
     Builtin(Builtin, Box<T<'a>>),       // builtin types (cannot be nested)
-    Union(Cow<'a, Union>),              // union types A | B | ...
+    Union(Cow<'a, Unioned>),              // union types A | B | ...
 }
 
 impl<'a> T<'a> {
@@ -453,7 +453,7 @@ impl<'a> T<'a> {
                 if removed.is_empty() { return Ok(T::Union(u)); }
 
                 let mut u = u.into_owned();
-                let removed_simple = SimpleUnion::from_bits_truncate(removed.bits());
+                let removed_simple = UnionedSimple::from_bits_truncate(removed.bits());
                 if !removed_simple.is_empty() { u.simple &= !removed_simple; }
                 if removed.intersects(T_NUMBER) {
                     let num = Cow::Owned(u.numbers.unwrap());
@@ -515,7 +515,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::TVar(ref a), &T::TVar(ref b)) =>
                 T::TVar(a.union(b, ctx)),
 
-            (a, b) => Union::from(&a).union(&Union::from(&b), ctx).simplify(),
+            (a, b) => Unioned::from(&a).union(&Unioned::from(&b), ctx).simplify(),
         }
     }
 
@@ -731,8 +731,8 @@ impl<'a> fmt::Debug for T<'a> {
     }
 }
 
-impl<'a> From<T<'a>> for Union {
-    fn from(x: T<'a>) -> Union { Union::from(&x) }
+impl<'a> From<T<'a>> for Unioned {
+    fn from(x: T<'a>) -> Unioned { Unioned::from(&x) }
 }
 
 pub type Ty = Box<T<'static>>;
