@@ -1255,14 +1255,14 @@ for x, y in pairs(p) do
 end
 --! error
 
---8<-- lua51-ipairs-table
+--8<-- lua51-pairs-table
 --# open lua51
 --# assume p: var table
 for x, y in pairs(p) do
 end
 --! ok
 
---8<-- lua51-ipairs-table-any
+--8<-- lua51-pairs-table-any
 --# open lua51
 --# assume p: var table
 for x, y in pairs(p) do
@@ -1270,7 +1270,7 @@ for x, y in pairs(p) do
 end
 --! error
 
---8<-- lua51-ipairs-no-non-table
+--8<-- lua51-pairs-no-non-table
 --# open lua51
 --# assume p: var string
 for x, y in pairs(p) do

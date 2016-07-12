@@ -188,6 +188,10 @@ impl<T> Borrow<T> for Spanned<T> {
     fn borrow(&self) -> &T { &self.base }
 }
 
+impl<T> Borrow<T> for Spanned<Box<T>> {
+    fn borrow(&self) -> &T { &self.base }
+}
+
 impl<T: fmt::Display> fmt::Display for Spanned<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(&self.base, f)

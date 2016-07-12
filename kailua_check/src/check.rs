@@ -9,9 +9,9 @@ use kailua_diag::{Span, Spanned, WithLoc, Report, Reporter};
 use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, NameScope};
 use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
-use ty::{T, TySeq, Lattice, Displayed, Display, TypeContext};
+use ty::{T, TySeq, SpannedTySeq, Lattice, Displayed, Display, TypeContext};
 use ty::{Tables, Function, Functions, TyWithNil};
-use ty::{F, Slot, SlotSeq, SlotWithNil, Builtin};
+use ty::{F, Slot, SlotSeq, SpannedSlotSeq, SlotWithNil, Builtin};
 use ty::flags::*;
 use env::{Env, Frame, Scope, Context};
 use options::Options;
@@ -264,7 +264,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         }
     }
 
-    fn check_callable(&mut self, func: &Spanned<T>, args: &TySeq) -> CheckResult<TySeq> {
+    fn check_callable(&mut self, func: &Spanned<T>, args: &SpannedTySeq) -> CheckResult<TySeq> {
         let functy = if let Some(func) = self.env.resolve_exact_type(&func) {
             func
         } else {
@@ -275,7 +275,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         // check if func.args :> args
         let mut returns = match *functy.get_functions().unwrap() {
             Functions::Simple(ref f) => {
-                if let Err(e) = args.assert_sub(&f.args, self.context()) {
+                let funcargs = f.args.clone().all_with_loc(func);
+                if let Err(e) = args.assert_sub(&funcargs, self.context()) {
                     return Err(format!("failed to call {:?}: {}", func, e));
                 }
                 f.returns.clone()
@@ -513,7 +514,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let varinfos: Vec<_> = try!(vars.into_iter()
                                                 .map(|varspec| self.visit_var_with_spec(varspec))
                                                 .collect());
-                let infos = try!(self.visit_explist(exps)).base;
+                let infos = try!(self.visit_explist(exps));
                 for (varinfo, info) in varinfos.into_iter().zip(infos.into_iter()) {
                     try!(varinfo.accept(&info, self.context()));
                 }
@@ -523,7 +524,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             St::Do(ref block) => self.visit_block(block),
 
             St::While(ref cond, ref block) => {
-                let ty = try!(self.visit_exp(cond)).base.into_first();
+                let ty = try!(self.visit_exp(cond)).into_first();
                 if ty.is_truthy() {
                     // infinite loop
                     let exit = try!(self.visit_block(block));
@@ -539,7 +540,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             St::Repeat(ref block, ref cond) => {
                 let exit = try!(self.visit_block(block)); // TODO scope merger
-                let ty = try!(self.visit_exp(cond)).base.into_first();
+                let ty = try!(self.visit_exp(cond)).into_first();
                 if exit == Exit::None {
                     if ty.is_truthy() {
                         Ok(Exit::Stop)
@@ -562,7 +563,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         // TODO warning
                         continue;
                     }
-                    let ty = try!(self.visit_exp(cond)).base.into_first();
+                    let ty = try!(self.visit_exp(cond)).into_first();
                     if ty.is_truthy() {
                         ignoreelse = true;
                         exit = exit.or(try!(self.visit_block(block)));
@@ -583,12 +584,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             St::For(ref name, ref start, ref end, ref step, ref block) => {
-                let start = try!(self.visit_exp(start)).base.into_first();
-                let end = try!(self.visit_exp(end)).base.into_first();
+                let start = try!(self.visit_exp(start)).into_first();
+                let end = try!(self.visit_exp(end)).into_first();
                 let step = if let &Some(ref step) = step {
-                    try!(self.visit_exp(step)).base.into_first()
+                    try!(self.visit_exp(step)).into_first()
                 } else {
-                    Slot::just(T::integer()) // to simplify the matter
+                    Slot::just(T::integer()).without_loc() // to simplify the matter
                 };
 
                 // the similar logic is also present in check_bin_op
@@ -598,14 +599,14 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let indty;
                 if startflags.is_integral() && endflags.is_integral() && stepflags.is_integral() &&
                    !(startflags.is_dynamic() && endflags.is_dynamic() && stepflags.is_dynamic()) {
-                    try!(start.assert_sub(&T::integer(), self.context()));
-                    try!(end.assert_sub(&T::integer(), self.context()));
-                    try!(step.assert_sub(&T::integer(), self.context()));
+                    try!(start.assert_sub(&T::integer().without_loc(), self.context()));
+                    try!(end.assert_sub(&T::integer().without_loc(), self.context()));
+                    try!(step.assert_sub(&T::integer().without_loc(), self.context()));
                     indty = T::integer();
                 } else {
-                    try!(start.assert_sub(&T::number(), self.context()));
-                    try!(end.assert_sub(&T::number(), self.context()));
-                    try!(step.assert_sub(&T::number(), self.context()));
+                    try!(start.assert_sub(&T::number().without_loc(), self.context()));
+                    try!(end.assert_sub(&T::number().without_loc(), self.context()));
+                    try!(step.assert_sub(&T::number().without_loc(), self.context()));
                     indty = T::number();
                 }
 
@@ -616,14 +617,15 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             St::ForIn(ref names, ref exps, ref block) => {
-                let Spanned { base: infos, span: expspan } = try!(self.visit_explist(exps));
+                let infos = try!(self.visit_explist(exps));
+                let expspan = infos.all_span();
                 let mut infos = infos.into_iter();
                 let func = infos.next().unwrap(); // iterator function
                 let state = infos.next().unwrap(); // immutable state to the iterator
                 let last = infos.next().unwrap(); // last value returned from the iterator
 
                 // `func` is subject to similar constraints to `self.visit_func_call`
-                let func = func.unlift();
+                let func = func.map(|t| t.unlift().clone().into_send());
                 let indtys;
                 if !self.env.get_type_bounds(&func).1.is_callable() {
                     try!(self.env.error(expspan, m::NonFuncIterator { iter: self.display(&func) })
@@ -645,12 +647,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     // in any order, our current half-baked solver requires them to be ordered
                     // in the decreasing order of size. since the initial `last` type is likely
                     // to be a subtype of function's own bounds, we assert function types first.
-                    let state = state.unlift().clone().into_send();
-                    let args = TySeq { head: vec![Box::new(state), Box::new(indvar.clone())],
-                                       tail: None };
-                    let func = func.clone().into_send().with_loc(expspan);
-                    let mut returns = try!(self.check_callable(&func, &args));
-                    try!(last.assert_sub(&indvar, self.context()));
+                    let state = state.map(|t| Box::new(t.unlift().clone().into_send()));
+                    let args = SpannedTySeq { head: vec![state,
+                                                         Box::new(indvar.clone()).without_loc()],
+                                              tail: None };
+                    let mut returns = try!(self.check_callable(&func.with_loc(expspan), &args));
+                    try!(last.assert_sub(&indvar.without_loc(), self.context()));
 
                     // note that we ignore indvar here. it is only kept internally and
                     // not visible outside; returns is what we should assign to variables!
@@ -710,26 +712,27 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     }
                 };
 
-                let infos = try!(self.visit_explist(exps)).base;
+                let infos = try!(self.visit_explist(exps));
                 for (namespec, info) in names.iter().zip(infos.into_iter()) {
-                    try!(add_local_var(&mut self.env, namespec, info));
+                    try!(add_local_var(&mut self.env, namespec, info.base));
                 }
                 Ok(Exit::None)
             }
 
             St::Return(ref exps) => {
-                let seq = try!(self.visit_explist(exps)).base;
+                let seq = try!(self.visit_explist(exps));
                 let seq = seq.unlift(); // XXX wait, is it safe?
                 let (returns, returns_exact) = {
                     let frame = self.env.get_frame();
-                    (frame.returns.clone(), frame.returns_exact) // XXX redundant
+                    let returns = frame.returns.as_ref().map(|seq| seq.clone().all_without_loc());
+                    (returns, frame.returns_exact)
                 };
                 if returns_exact {
                     try!(Some(seq).assert_sub(&returns, self.context()));
                 } else {
                     // need to infer the return type
                     let returns = Some(seq).union(&returns, self.context());
-                    self.env.get_frame_mut().returns = returns;
+                    self.env.get_frame_mut().returns = returns.map(|seq| seq.unspan());
                 }
                 Ok(Exit::Return)
             }
@@ -830,7 +833,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     }
 
     fn visit_var_with_spec(&mut self,
-                           varspec: &TypeSpec<Spanned<Var>>) -> CheckResult<Slot> {
+                           varspec: &TypeSpec<Spanned<Var>>) -> CheckResult<Spanned<Slot>> {
         let specslot = if let Some(ref kind) = varspec.kind {
             let ty = try!(T::from(kind, &mut self.env));
             let flex = match varspec.modf {
@@ -843,14 +846,14 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             None
         };
 
-        match varspec.base.base {
+        let slot = match varspec.base.base {
             Var::Name(ref name) => {
                 // may refer to the global variable yet to be defined!
                 if let Some(info) = self.env.get_var(name).cloned() {
                     if let Some(ref slot) = specslot {
                         try!(info.accept(slot, self.context()));
                     }
-                    Ok(info.to_owned())
+                    info.to_owned()
                 } else {
                     // we need a type to initialize the variable with.
                     // if we have the type spec, use it. otherwise use a type variable.
@@ -858,18 +861,19 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         Slot::new(F::Var, T::TVar(self.context().gen_tvar()))
                     });
                     try!(self.env.assign_to_var(name, slot.clone()));
-                    Ok(slot)
+                    slot
                 }
             },
 
             Var::Index(ref e, ref key) => {
-                let ty = try!(self.visit_exp(e)).map(|seq| seq.into_first());
-                let kty = try!(self.visit_exp(key)).map(|seq| seq.into_first());
+                let ty = try!(self.visit_exp(e)).into_first();
+                let kty = try!(self.visit_exp(key)).into_first();
                 let slot = try!(self.check_index(&ty, &kty, varspec.base.span, true));
                 // since we've requested a lvalue it would never return None
-                Ok(slot.unwrap())
+                slot.unwrap()
             },
-        }
+        };
+        Ok(slot.with_loc(&varspec.base))
     }
 
     fn visit_func_call(&mut self, funcinfo: &Spanned<T>, args: &[Spanned<Exp>],
@@ -964,9 +968,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     return Ok(self.dummy_slotseq());
                 }
 
-                let typearg = argtys.head[1].clone().with_loc(args[1].span);
-                if let Some(flags) = try!(self.ext_literal_ty_to_flags(&typearg)) {
-                    let cond = Cond::Flags(argtys.head[0].clone().with_loc(args[0].span), flags);
+                if let Some(flags) = try!(self.ext_literal_ty_to_flags(&argtys.head[1])) {
+                    let cond = Cond::Flags(argtys.head[0].clone(), flags);
                     try!(self.assert_cond(cond, false));
                 }
             },
@@ -974,44 +977,49 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             _ => {}
         }
 
-        let returns = try!(self.check_callable(funcinfo, &argtys.base.unlift()));
+        let returns = try!(self.check_callable(funcinfo, &argtys.unlift()));
         Ok(SlotSeq::from_seq(returns))
     }
 
-    fn visit_exp(&mut self, exp: &Spanned<Exp>) -> CheckResult<Spanned<SlotSeq>> {
+    fn visit_exp(&mut self, exp: &Spanned<Exp>) -> CheckResult<SpannedSlotSeq> {
+        Ok(try!(self.visit_exp_(exp)).all_with_loc(exp))
+    }
+
+    fn visit_exp_(&mut self, exp: &Spanned<Exp>) -> CheckResult<SlotSeq> {
         debug!("visiting exp {:?}", *exp);
         match *exp.base {
-            Ex::Nil => Ok(SlotSeq::from(T::Nil).with_loc(exp)),
-            Ex::False => Ok(SlotSeq::from(T::False).with_loc(exp)),
-            Ex::True => Ok(SlotSeq::from(T::True).with_loc(exp)),
+            Ex::Nil => Ok(SlotSeq::from(T::Nil)),
+            Ex::False => Ok(SlotSeq::from(T::False)),
+            Ex::True => Ok(SlotSeq::from(T::True)),
             Ex::Num(v) if v.floor() == v =>
                 if i32::MIN as f64 <= v && v <= i32::MAX as f64 {
-                    Ok(SlotSeq::from(T::int(v as i32)).with_loc(exp))
+                    Ok(SlotSeq::from(T::int(v as i32)))
                 } else {
-                    Ok(SlotSeq::from(T::integer()).with_loc(exp))
+                    Ok(SlotSeq::from(T::integer()))
                 },
-            Ex::Num(_) => Ok(SlotSeq::from(T::number()).with_loc(exp)),
-            Ex::Str(ref s) => Ok(SlotSeq::from(T::str(s.to_owned())).with_loc(exp)),
+            Ex::Num(_) => Ok(SlotSeq::from(T::number())),
+            Ex::Str(ref s) => Ok(SlotSeq::from(T::str(s.to_owned()))),
 
             Ex::Varargs => {
                 if let Some(vararg) = self.env.get_vararg() {
-                    Ok(SlotSeq::from_seq(vararg.clone()).with_loc(exp))
+                    Ok(SlotSeq::from_seq(vararg.clone()))
                 } else {
                     try!(self.env.error(exp, m::NoVarargs {}).done());
-                    Ok(self.dummy_slotseq().without_loc())
+                    Ok(self.dummy_slotseq())
                 }
             },
             Ex::Var(ref name) => {
                 if let Some(info) = self.env.get_var(name) {
-                    Ok(SlotSeq::from_slot(info.clone()).with_loc(exp))
+                    Ok(SlotSeq::from_slot(info.clone()))
                 } else {
                     try!(self.env.error(exp, m::NoVar { name: name }).done());
-                    Ok(self.dummy_slotseq().without_loc())
+                    Ok(self.dummy_slotseq())
                 }
             },
 
             Ex::Func(ref sig, ref block) => {
-                Ok(SlotSeq::from_slot(try!(self.visit_func_body(None, sig, block))).with_loc(exp))
+                let returns = try!(self.visit_func_body(None, sig, block));
+                Ok(SlotSeq::from_slot(returns))
             },
             Ex::Table(ref fields) => {
                 let mut tab = Tables::Empty;
@@ -1020,7 +1028,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 for (idx, &(ref key, ref value)) in fields.iter().enumerate() {
                     // if this is the last entry and no explicit index is set, splice the values
                     if idx == fields.len() - 1 && key.is_none() {
-                        let vty = try!(self.visit_exp(value)).base;
+                        let vty = try!(self.visit_exp(value));
                         for ty in &vty.head {
                             let ty = ty.unlift().clone();
                             len += 1;
@@ -1033,7 +1041,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         }
                     } else {
                         let kty = if let Some(ref key) = *key {
-                            let key = try!(self.visit_exp(key)).base.into_first();
+                            let key = try!(self.visit_exp(key)).into_first();
                             let key = key.unlift();
                             key.clone().into_send()
                         } else {
@@ -1042,92 +1050,88 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         };
 
                         // update the table type according to new field
-                        let vty = try!(self.visit_exp(value)).base.into_first();
+                        let vty = try!(self.visit_exp(value)).into_first();
                         let vty = vty.unlift().clone();
                         tab = tab.insert(kty, vty, self.context());
                     }
                 }
 
                 // if the table remains intact, it is an empty table
-                Ok(SlotSeq::from(T::Tables(Cow::Owned(tab))).with_loc(exp))
+                Ok(SlotSeq::from(T::Tables(Cow::Owned(tab))))
             },
 
             Ex::FuncCall(ref func, ref args) => {
-                let Spanned { base: funcseq, span } = try!(self.visit_exp(func));
-                let funcinfo = funcseq.into_first();
-                let funcinfo = funcinfo.unlift();
-                let info = try!(self.visit_func_call(&funcinfo.to_ref().with_loc(span),
-                                                     args, exp.span));
-                Ok(info.with_loc(exp))
+                let funcinfo = try!(self.visit_exp(func)).into_first();
+                let funcinfo = funcinfo.map(|t| t.unlift().clone().into_send());
+                self.visit_func_call(&funcinfo, args, exp.span)
             },
 
             Ex::MethodCall(ref e, ref _method, ref args) => {
-                let info = try!(self.visit_exp(e)).map(|seq| seq.into_first());
+                let info = try!(self.visit_exp(e)).into_first();
                 if !info.unlift().is_tabular() {
                     try!(self.env.error(exp, m::IndexToNonTable { tab: self.display(&info) })
                                  .done());
-                    return Ok(self.dummy_slotseq().without_loc());
+                    return Ok(self.dummy_slotseq());
                 }
 
                 for arg in args {
                     try!(self.visit_exp(arg));
                 }
-                Ok(SlotSeq::from(T::Dynamic).with_loc(exp))
+                Ok(SlotSeq::from(T::Dynamic))
             },
 
             Ex::Index(ref e, ref key) => {
-                let ty = try!(self.visit_exp(e)).map(|seq| seq.into_first());
-                let kty = try!(self.visit_exp(key)).map(|seq| seq.into_first());
+                let ty = try!(self.visit_exp(e)).into_first();
+                let kty = try!(self.visit_exp(key)).into_first();
                 if let Some(vinfo) = try!(self.check_index(&ty, &kty, exp.span, false)) {
-                    Ok(SlotSeq::from_slot(vinfo).with_loc(exp))
+                    Ok(SlotSeq::from_slot(vinfo))
                 } else {
                     try!(self.env.error(exp, m::CannotIndex { tab: self.display(&ty),
                                                               key: self.display(&kty) })
                                  .done());
-                    Ok(self.dummy_slotseq().without_loc())
+                    Ok(self.dummy_slotseq())
                 }
             },
 
             Ex::Un(op, ref e) => {
-                let info = try!(self.visit_exp(e)).map(|seq| seq.into_first());
+                let info = try!(self.visit_exp(e)).into_first();
                 let info = try!(self.check_un_op(op.base, &info, exp.span));
-                Ok(SlotSeq::from_slot(info).with_loc(exp))
+                Ok(SlotSeq::from_slot(info))
             },
 
             Ex::Bin(ref l, op, ref r) => {
-                let lhs = try!(self.visit_exp(l)).map(|seq| seq.into_first());
-                let rhs = try!(self.visit_exp(r)).map(|seq| seq.into_first());
+                let lhs = try!(self.visit_exp(l)).into_first();
+                let rhs = try!(self.visit_exp(r)).into_first();
                 let info = try!(self.check_bin_op(&lhs, op.base, &rhs, exp.span));
-                Ok(SlotSeq::from_slot(info).with_loc(exp))
+                Ok(SlotSeq::from_slot(info))
             },
         }
     }
 
-    fn visit_explist(&mut self, exps: &[Spanned<Exp>]) -> CheckResult<Spanned<SlotSeq>> {
+    fn visit_explist(&mut self, exps: &[Spanned<Exp>]) -> CheckResult<SpannedSlotSeq> {
         let mut head = Vec::new();
-        let mut last: Option<SlotSeq> = None;
-        let mut span = Span::dummy();
+        let mut last: Option<SpannedSlotSeq> = None;
         for exp in exps {
             if let Some(last) = last.take() {
                 head.push(last.into_first());
             }
             let info = try!(self.visit_exp(exp));
-            last = Some(info.base);
-            span |= info.span;
+            last = Some(info);
         }
 
-        let mut seq = SlotSeq { head: head, tail: None };
+        let mut seq = SpannedSlotSeq { head: head, tail: None };
         if let Some(last) = last {
             seq.head.extend(last.head.into_iter());
             seq.tail = last.tail;
         }
-        Ok(seq.with_loc(span))
+        Ok(seq)
     }
 
     fn collect_type_from_exp(&mut self, exp: &Spanned<Exp>)
-            -> CheckResult<(Option<Spanned<Slot>>, Spanned<SlotSeq>)> {
+            -> CheckResult<(Option<Spanned<Slot>>, SpannedSlotSeq)> {
         if let Ex::FuncCall(ref func, ref args) = *exp.base {
-            let Spanned { base: funcseq, span: funcspan } = try!(self.visit_exp(func));
+            let funcseq = try!(self.visit_exp(func));
+            let funcspan = funcseq.all_span();
             let funcinfo = funcseq.into_first();
             let funcinfo = funcinfo.unlift();
             let typeofexp = if funcinfo.builtin() == Some(Builtin::Type) {
@@ -1137,15 +1141,14 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                  .done());
                     None
                 } else {
-                    let arg = try!(self.visit_exp(&args[0])).map(|seq| seq.into_first());
-                    Some(arg)
+                    Some(try!(self.visit_exp(&args[0])).into_first())
                 }
             } else {
                 None
             };
             let seq = try!(self.visit_func_call(&funcinfo.to_ref().with_loc(funcspan),
                                                 args, exp.span));
-            Ok((typeofexp, seq.with_loc(exp)))
+            Ok((typeofexp, seq.all_with_loc(exp)))
         } else {
             let seq = try!(self.visit_exp(exp));
             Ok((None, seq))
@@ -1154,7 +1157,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
     // similar to visit_exp but also tries to collect Cond
     fn collect_conds_from_exp(&mut self, exp: &Spanned<Exp>)
-            -> CheckResult<(Option<Cond>, Spanned<SlotSeq>)> {
+            -> CheckResult<(Option<Cond>, SpannedSlotSeq)> {
         debug!("collecting conditions from exp {:?}", *exp);
         match *exp.base {
             Ex::Un(Spanned { base: UnOp::Not, .. }, ref e) => {
@@ -1168,17 +1171,17 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     Some(cond) => Some(Cond::Not(Box::new(cond))),
                     None => None,
                 };
-                let info = seq.map(|seq| seq.into_first());
+                let info = seq.into_first();
                 let info = try!(self.check_un_op(UnOp::Not, &info, exp.span));
-                Ok((cond, SlotSeq::from_slot(info).with_loc(exp)))
+                Ok((cond, SpannedSlotSeq::from_slot(info.with_loc(exp))))
             }
 
             Ex::Bin(ref l, Spanned { base: BinOp::Eq, .. }, ref r) => {
                 let (lty, linfo) = try!(self.collect_type_from_exp(l));
                 let (rty, rinfo) = try!(self.collect_type_from_exp(r));
 
-                let linfo = linfo.map(|seq| seq.into_first());
-                let rinfo = rinfo.map(|seq| seq.into_first());
+                let linfo = linfo.into_first();
+                let rinfo = rinfo.into_first();
 
                 // detect an expression of the form `type(x) == y`.
                 // it is technically possible to detect `type(x) == type(y)` as well,
@@ -1204,7 +1207,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 // TODO when cond is None try to assert the type equivalence;
                 // it is currently not implemented due to bad interaction with sub-literal types
-                Ok((cond, SlotSeq::from(T::Boolean).with_loc(exp)))
+                Ok((cond, SpannedSlotSeq::from(T::Boolean.with_loc(exp))))
             }
 
             Ex::Bin(ref l, Spanned { base: BinOp::And, .. }, ref r) => {
@@ -1227,10 +1230,10 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     },
                 };
 
-                let linfo = lseq.map(|seq| seq.into_first());
-                let rinfo = rseq.map(|seq| seq.into_first());
+                let linfo = lseq.into_first();
+                let rinfo = rseq.into_first();
                 let info = try!(self.check_bin_op(&linfo, BinOp::And, &rinfo, exp.span));
-                Ok((cond, SlotSeq::from_slot(info).with_loc(exp)))
+                Ok((cond, SpannedSlotSeq::from_slot(info.with_loc(exp))))
             }
 
             Ex::Bin(ref l, Spanned { base: BinOp::Or, .. }, ref r) => {
@@ -1253,16 +1256,16 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     },
                 };
 
-                let linfo = lseq.map(|seq| seq.into_first());
-                let rinfo = rseq.map(|seq| seq.into_first());
+                let linfo = lseq.into_first();
+                let rinfo = rseq.into_first();
                 let info = try!(self.check_bin_op(&linfo, BinOp::Or, &rinfo, exp.span));
-                Ok((cond, SlotSeq::from_slot(info).with_loc(exp)))
+                Ok((cond, SpannedSlotSeq::from_slot(info.with_loc(exp))))
             }
 
             _ => {
                 let seq = try!(self.visit_exp(exp));
-                let info = seq.clone().map(|seq| seq.into_first());
-                Ok((Some(Cond::Flags(info, T_TRUTHY)), seq))
+                let info = seq.into_first();
+                Ok((Some(Cond::Flags(info.clone(), T_TRUTHY)), SpannedSlotSeq::from_slot(info)))
             }
         }
     }
