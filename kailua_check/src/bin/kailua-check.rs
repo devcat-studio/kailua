@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::path::{Path, PathBuf};
 
-use kailua_diag::{Spanned, WithLoc, Source, Report, ConsoleReport};
+use kailua_diag::{Spanned, Source, Report, ConsoleReport};
 use kailua_syntax::{parse_chunk, Block};
 
 fn parse_and_check(mainpath: &Path) -> Result<(), String> {
@@ -25,46 +25,35 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
         fn source(&self) -> &RefCell<Source> { &*self.source }
 
         fn require_block(&mut self, path: &[u8]) -> Result<Spanned<Block>, String> {
-            const BUILTIN_MODS: &'static [&'static str] = &[
-                "cjson",
-                "url",
-                "redis",
-            ];
+            let path = try!(str::from_utf8(path).map_err(|e| e.to_string()));
 
-            if BUILTIN_MODS.iter().any(|&name| name.as_bytes() == path) {
-                // dummy: they should not affect anything here
-                Ok(Vec::new().without_loc())
-            } else {
-                let path = try!(str::from_utf8(path).map_err(|e| e.to_string()));
-
-                let try = |opts: &mut Options, path: &Path| {
-                    let path = opts.root.join(path);
-                    let span = match opts.source.borrow_mut().add_file(&path) {
-                        Ok(span) => span,
-                        Err(e) => {
-                            if e.kind() == io::ErrorKind::NotFound { return Ok(None); }
-                            return Err(e.to_string());
-                        }
-                    };
-                    let chunk = try!(parse_chunk(&opts.source.borrow(), span,
-                                                 &*opts.report).map_err(|_| format!("parse error")));
-                    Ok(Some(chunk))
+            let try = |opts: &mut Options, path: &Path| {
+                let path = opts.root.join(path);
+                let span = match opts.source.borrow_mut().add_file(&path) {
+                    Ok(span) => span,
+                    Err(e) => {
+                        if e.kind() == io::ErrorKind::NotFound { return Ok(None); }
+                        return Err(e.to_string());
+                    }
                 };
+                let chunk = try!(parse_chunk(&opts.source.borrow(), span,
+                                             &*opts.report).map_err(|_| format!("parse error")));
+                Ok(Some(chunk))
+            };
 
-                macro_rules! try_path {
-                    ($e:expr) => ({
-                        if let Some(chunk) = try!(try(self, Path::new(&$e))) { return Ok(chunk); }
-                    })
-                }
-
-                if !path.ends_with(".lua") {
-                    try_path!(format!("{}.lua.kailua", path));
-                    try_path!(format!("{}.lua", path));
-                }
-                try_path!(format!("{}.kailua", path));
-                try_path!(path);
-                Err(format!("module not found"))
+            macro_rules! try_path {
+                ($e:expr) => ({
+                    if let Some(chunk) = try!(try(self, Path::new(&$e))) { return Ok(chunk); }
+                })
             }
+
+            if !path.ends_with(".lua") {
+                try_path!(format!("{}.lua.kailua", path));
+                try_path!(format!("{}.lua", path));
+            }
+            try_path!(format!("{}.kailua", path));
+            try_path!(path);
+            Err(format!("module not found"))
         }
     }
 
