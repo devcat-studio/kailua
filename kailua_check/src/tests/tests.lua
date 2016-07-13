@@ -158,7 +158,8 @@ local p = ({a = 4}).b --@< Error: Cannot index `{a = 4}` with `"b"`
 
 --8<-- index-rec-with-string
 --# assume x: string
-local p = ({a = 4})[x] --@< Error: Cannot index `{a = 4}` with index `string` that cannot be resolved ahead of time
+local p = ({a = 4})[x]
+--@^ Error: Cannot index `{a = 4}` with index `string` that cannot be resolved ahead of time
 --! error
 
 --8<-- index-rec-with-weird-string
@@ -288,7 +289,8 @@ x = 3
 --8<-- var-integer-literals-2
 local x
 --# assume x: var 4 | 5
-x = 3
+x = 3 --@< Error: Cannot assign `3` into `(4|5)`
+      --@^ Note: The other type originates here
 --! error
 
 --8<-- add-sub-mul-mod-integer-integer
@@ -307,7 +309,8 @@ local x, y, z
 --# assume x: var integer
 --# assume y: var integer
 --# assume z: var integer
-z = x / y
+z = x / y --@< Error: Cannot assign `number` into `integer`
+          --@^ Note: The other type originates here
 --! error
 
 --8<-- add-integer-integer-is-integer
@@ -319,7 +322,8 @@ p = 3 + 4
 --8<-- add-number-integer-is-not-integer
 local p
 --# assume p: var integer
-p = 3.1 + 4
+p = 3.1 + 4 --@< Error: Cannot assign `number` into `integer`
+            --@^ Note: The other type originates here
 --! error
 
 --8<-- add-dynamic-integer
@@ -333,7 +337,8 @@ q = p + 3
 local p, q
 --# assume p: WHATEVER
 --# assume q: var integer
-q = p + 3.5
+q = p + 3.5 --@< Error: Cannot assign `number` into `integer`
+            --@^ Note: The other type originates here
 --! error
 
 --8<-- add-dynamic-number-is-number
@@ -354,7 +359,8 @@ q = p + p
 local p, q
 --# assume p: WHATEVER
 --# assume q: var integer
-q = p + p
+q = p + p --@< Error: Cannot assign `number` into `integer`
+          --@^ Note: The other type originates here
 --! error
 
 --8<-- assume-currently-integer
@@ -388,12 +394,18 @@ for i = 1, 9, 2 do a = i end
 
 --8<-- for-non-integer
 --# assume a: var integer
-for i = 1.1, 9 do a = i end
+for i = 1.1, 9 do
+    a = i --@< Error: Cannot assign `number` into `integer`
+          --@^ Note: The other type originates here
+end
 --! error
 
 --8<-- for-non-integer-step
 --# assume a: var integer
-for i = 1, 9, 2.1 do a = i end
+for i = 1, 9, 2.1 do
+    a = i --@< Error: Cannot assign `number` into `integer`
+          --@^ Note: The other type originates here
+end
 --! error
 
 --8<-- func-varargs
@@ -512,7 +524,11 @@ a[2] = 54
 --8<-- var-table-update-with-integer
 local a = {} --: var {} -- cannot be changed!
 a[1] = 42
+--@^ Error: Cannot adapt the table type `{}` into `{<unknown type>,}`
+--@^^ Note: The table had to be adapted in order to index it with `1`
 a[2] = 54
+--@^ Error: Cannot adapt the table type `{}` into `{[2] = <unknown type>}`
+--@^^ Note: The table had to be adapted in order to index it with `2`
 --! error
 
 --8<-- table-update-with-name
@@ -540,6 +556,8 @@ local a = {} --: var {number}
 local a = {} --: var {number}
 a[1] = 42
 a.what = 54
+--@^ Error: Cannot adapt the table type `{number}` into `{[integer] = number}`
+--@^^ Note: The table had to be adapted in order to index it with `"what"`
 --! error
 
 --8<-- var-map-update-and-index
@@ -556,6 +574,8 @@ a[1] = 42
 a[3] = 54
 a[1] = nil
 local z = a[3] --: var integer?
+--@^ Error: Cannot assign `(nil|number)` into `(nil|integer)`
+--@^^ Note: The other type originates here
 --! error
 
 --8<-- var-map-update-and-index-without-nil
@@ -564,9 +584,15 @@ a[1] = 42
 a[3] = 54
 a[1] = nil
 local z = a[3] --: var integer
+--@^ Error: Cannot assign `(nil|number)` into `integer`
+--@^^ Note: The other type originates here
 --! error
 
---8<-- const-map-update
+-->8-- const-map-init
+local a = {} --: const {[number] = number}
+--! ok
+
+-->8-- const-map-update
 local a = {} --: const {[number] = number}
 a[1] = 42
 --! error
@@ -662,6 +688,8 @@ local function p()
     return 3, 'string', 5
 end
 local a, b = p() --: var integer, var integer
+--@^ Error: Cannot assign `"string"` into `integer`
+--@^^ Note: The other type originates here
 --! error
 
 --8<-- assign-from-seq-with-nil-1
@@ -690,6 +718,8 @@ local function p(n)
     if n then return 'string' else return nil, 'error' end
 end
 local a, b = p(false) --: var string, var string|nil
+--@^ Error: Cannot assign `(nil|"string")` into `string`
+--@^^ Note: The other type originates here
 --! error
 
 --8<-- assign-from-seq-union-3
@@ -697,6 +727,8 @@ local function p(n)
     if n then return 'string' else return nil, 'error' end
 end
 local a, b = p(false) --: var string|nil, var string
+--@^ Error: Cannot assign `(nil|"error")` into `string`
+--@^^ Note: The other type originates here
 --! error
 
 --8<-- table-from-seq
@@ -951,6 +983,8 @@ print(x + 4) --@< Error: `<unknown type>` is not a subtype of `integer`
 --# open lua51
 --# assume x: var integer
 x = require 'A' --@< Warning: Cannot resolve the module name given to `require`
+                --@^ Error: Cannot assign `any` into `integer`
+                --@^^ Note: The other type originates here
 
 --& a
 return 42
@@ -1059,7 +1093,8 @@ require 'a'
 
 --8<-- index-assign-typed
 local p = {x = 5, y = 6} --: var {x=number, y=number}
-p.x = 'string'
+p.x = 'string' --@< Error: Cannot assign `"string"` into `number`
+               --@^ Note: The other type originates here
 --! error
 
 --8<-- index-assign-whatever
@@ -1128,12 +1163,14 @@ end
 --! error
 
 --8<-- for-in-non-func
-for x in 'hello' do --@< Error: The iterator given to `for`-`in` statement returned a non-function `"hello"`
+--@v Error: The iterator given to `for`-`in` statement returned a non-function `"hello"`
+for x in 'hello' do
 end
 --! error
 
 --8<-- for-in-non-func-recover
-for x in 'hello' do --@< Error: The iterator given to `for`-`in` statement returned a non-function `"hello"`
+--@v Error: The iterator given to `for`-`in` statement returned a non-function `"hello"`
+for x in 'hello' do
     x()
     y() --@< Error: Global or local variable `y` is not defined
 end
@@ -1169,8 +1206,8 @@ end
 --# open lua51
 --# assume p: var {[integer] = var string}
 for x, y in ipairs(p) do
-	--@^ Error: `{[integer] = string}` is not a subtype of `{WHATEVER}`
-	-- XXX WHATEVER is temporary
+    --@^ Error: `{[integer] = string}` is not a subtype of `{WHATEVER}`
+    -- XXX WHATEVER is temporary
 end
 --! error
 
@@ -1178,8 +1215,8 @@ end
 --# open lua51
 --# assume p: var table
 for x, y in ipairs(p) do
-	--@^ Error: `table` is not a subtype of `{WHATEVER}`
-	-- XXX WHATEVER is temporary
+    --@^ Error: `table` is not a subtype of `{WHATEVER}`
+    -- XXX WHATEVER is temporary
 end
 --! error
 
@@ -1187,8 +1224,8 @@ end
 --# open lua51
 --# assume p: var string
 for x, y in ipairs(p) do
-	--@^ Error: `string` is not a subtype of `{WHATEVER}`
-	-- XXX WHATEVER is temporary
+    --@^ Error: `string` is not a subtype of `{WHATEVER}`
+    -- XXX WHATEVER is temporary
 end
 --! error
 
@@ -1282,4 +1319,16 @@ end
 for x, y in pairs(p) do --@< Error: `string` is not a subtype of `table`
 end
 --! error
+
+--8<-- redefine-global
+p = 42 --: integer
+p = 54 --: integer --@< Error: Cannot redefine the type of a global variable `p`
+p = 63 --: integer --@< Error: Cannot redefine the type of a global variable `p`
+--! error
+
+--8<-- redefine-local
+local p = 42 --: integer
+local p = 54 --: integer
+local p = 'string' --: string
+--! ok
 

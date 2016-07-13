@@ -38,6 +38,7 @@ macro_rules! define_tyseq {
             unspanned_t = $unspanned_t:ty; // &t should be coercable to &unspanned_t
 
             nil_ty = $nil_ty:expr;
+            dummy_tynil = $dummy_tynil:expr;
             ty_union = $ty_union:expr;
             t_to_ty = $t_to_ty:expr;
             tynil_to_ty = $tynil_to_ty:expr;
@@ -80,6 +81,10 @@ macro_rules! define_tyseq {
                     None
                 };
                 Ok($tyseq { head: head, tail: tail })
+            }
+
+            pub fn dummy() -> $tyseq {
+                $tyseq { head: Vec::new(), tail: Some($dummy_tynil) }
             }
 
             fn tail_to_type(&self) -> $ty {
@@ -220,6 +225,7 @@ macro_rules! define_slotseq {
             unspanned_slot = $unspanned_slot:ty; // &slot should be coercable to &unspanned_slot
 
             nil_slot = $nil_slot:expr;
+            dummy_slotnil = $dummy_slotnil:expr;
             slot_union = $slot_union:expr;
             t_to_slot = $t_to_slot:expr;
             ty_to_slot = $ty_to_slot:expr;
@@ -252,6 +258,10 @@ macro_rules! define_slotseq {
             pub fn from_seq(seq: $tyseq) -> $slotseq {
                 $slotseq { head: seq.head.into_iter().map(|t| $ty_to_slot(t)).collect(),
                            tail: seq.tail.map(|t| $tynil_to_slotnil(t)) }
+            }
+
+            pub fn dummy() -> $slotseq {
+                $slotseq { head: Vec::new(), tail: Some($dummy_slotnil) }
             }
 
             fn tail_to_slot(&self) -> $slot {
@@ -394,6 +404,7 @@ define_tyseq! {
         unspanned_t = T;
 
         nil_ty = Box::new(T::Nil);
+        dummy_tynil = Box::new(TyWithNil::dummy());
         ty_union = |lhs: &Ty, rhs: &Ty, ctx| Box::new(lhs.union(rhs, ctx));
         t_to_ty = |t: T| Box::new(t.into_send());
         tynil_to_ty = |t: Box<TyWithNil>| Box::new(t.into_type());
@@ -408,6 +419,7 @@ define_tyseq! {
         unspanned_t = T;
 
         nil_ty = Box::new(T::Nil).without_loc();
+        dummy_tynil = Box::new(TyWithNil::dummy()).without_loc();
         ty_union = |lhs: &Spanned<Ty>, rhs: &Spanned<Ty>, ctx|
             Box::new(lhs.base.union(&rhs.base, ctx)).without_loc();
         t_to_ty = |t: Spanned<T>| t.map(|t| Box::new(t.into_send()));
@@ -428,6 +440,7 @@ define_slotseq! {
         unspanned_slot = Slot;
 
         nil_slot = Slot::just(T::Nil);
+        dummy_slotnil = SlotWithNil::dummy();
         slot_union = |lhs: &Slot, rhs: &Slot, ctx| lhs.union(rhs, ctx);
         t_to_slot = |t: T| Slot::just(t);
         ty_to_slot = |t: Ty| Slot::just(*t);
@@ -448,6 +461,7 @@ define_slotseq! {
         unspanned_slot = Slot;
 
         nil_slot = Slot::just(T::Nil).without_loc();
+        dummy_slotnil = SlotWithNil::dummy().without_loc();
         slot_union = |lhs: &Spanned<Slot>, rhs: &Spanned<Slot>, ctx|
             lhs.base.union(&rhs.base, ctx).without_loc();
         t_to_slot = |t: Spanned<T>| t.map(|t| Slot::just(t));

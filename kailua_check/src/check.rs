@@ -77,14 +77,6 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         ScopedChecker(self)
     }
 
-    fn dummy_tyseq(&self) -> TySeq {
-        TySeq { head: Vec::new(), tail: Some(Box::new(TyWithNil::from(T::Dynamic))) }
-    }
-
-    fn dummy_slotseq(&self) -> SlotSeq {
-        SlotSeq { head: Vec::new(), tail: Some(SlotWithNil::from(T::Dynamic)) }
-    }
-
     fn check_un_op(&mut self, op: UnOp, info: &Spanned<Slot>,
                    _expspan: Span) -> CheckResult<Slot> {
         macro_rules! check_op {
@@ -234,7 +226,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             BinOp::And => {
                 if lhs.is_dynamic() || rhs.is_dynamic() {
-                    return Ok(Slot::just(T::Dynamic));
+                    return Ok(Slot::dummy());
                 }
 
                 if lhs.get_tvar().is_none() {
@@ -249,7 +241,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             BinOp::Or => {
                 if lhs.is_dynamic() || rhs.is_dynamic() {
-                    return Ok(Slot::just(T::Dynamic));
+                    return Ok(Slot::dummy());
                 }
 
                 if lhs.get_tvar().is_none() {
@@ -269,7 +261,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             func
         } else {
             try!(self.env.error(func, m::CallToInexactType { func: self.display(func) }).done());
-            return Ok(self.dummy_tyseq());
+            return Ok(TySeq::dummy());
         };
 
         // check if func.args :> args
@@ -284,11 +276,11 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Functions::Multi(ref _funcs) => { // TODO
                 try!(self.env.error(func, m::CallToOverloadedFunc { func: self.display(func) })
                              .done());
-                return Ok(self.dummy_tyseq());
+                return Ok(TySeq::dummy());
             }
             Functions::All => {
                 try!(self.env.error(func, m::CallToAnyFunc { func: self.display(func) }).done());
-                return Ok(self.dummy_tyseq());
+                return Ok(TySeq::dummy());
             }
         };
 
@@ -332,13 +324,13 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
         if !self.env.get_type_bounds(&ety).1.is_tabular() {
             try!(self.env.error(ety0, m::IndexToNonTable { tab: self.display(ety0) }).done());
-            return Ok(Some(Slot::just(T::Dynamic)));
+            return Ok(Some(Slot::dummy()));
         }
         let ety = if let Some(ety) = self.env.resolve_exact_type(&ety) {
             ety
         } else {
             try!(self.env.error(ety0, m::IndexToInexactType { tab: self.display(ety0) }).done());
-            return Ok(Some(Slot::just(T::Dynamic)));
+            return Ok(Some(Slot::dummy()));
         };
 
         macro_rules! check {
@@ -362,6 +354,20 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Slot::new(flex, tvar)
         };
 
+        macro_rules! adapt_table {
+            ($adapted:expr) => ({
+                let adapted = T::Tables(Cow::Owned($adapted));
+                if ety0.accept(&Slot::just(adapted.clone()), self.context()).is_err() {
+                    try!(self.env.error(ety0,
+                                        m::CannotAdaptTable { tab: self.display(ety0),
+                                                              adapted: self.display(&adapted) })
+                                 .note(kty0, m::AdaptTriggeredByIndex { key: self.display(kty0) })
+                                 .done());
+                    return Ok(Some(Slot::dummy()));
+                }
+            })
+        }
+
         // try fields first if the key is a string or integer determined in the compile time.
         let litkey =
             if let Some(key) = kty.as_integer() {
@@ -376,8 +382,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 (Some(&Tables::Empty), true) => {
                     let vslot = new_slot(self.context(), true);
                     let fields = Some((litkey, vslot.clone())).into_iter().collect();
-                    let adapted = T::Tables(Cow::Owned(Tables::Fields(fields)));
-                    check!(ety0.accept(&Slot::just(adapted), self.context()));
+                    adapt_table!(Tables::Fields(fields));
                     return Ok(Some(vslot));
                 }
 
@@ -387,8 +392,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                       .or_insert_with(|| new_slot(self.context(), true))
                                       .clone();
                     check!(vslot.adapt(ety0.flex(), self.context()));
-                    let adapted = T::Tables(Cow::Owned(Tables::Fields(fields)));
-                    check!(ety0.accept(&Slot::just(adapted), self.context()));
+                    adapt_table!(Tables::Fields(fields));
                     return Ok(Some(vslot));
                 }
 
@@ -408,6 +412,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             // possible! this occurs when the ety was Dynamic.
             (None, _) => {
                 let value = Slot::just(T::Dynamic);
+                // the flex should be retained
                 if lval { check!(value.adapt(ety0.flex(), self.context())); }
                 Ok(Some(value))
             },
@@ -417,7 +422,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                     m::IndexToRecWithInexactStr { tab: self.display(ety0),
                                                                   key: self.display(&kty) })
                              .done());
-                Ok(Some(Slot::just(T::Dynamic)))
+                Ok(Some(Slot::dummy()))
             },
 
             (Some(&Tables::Empty), true) => {
@@ -428,8 +433,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     Tables::Map(Box::new(kty.into_send()),
                                 SlotWithNil::from_slot(vslot.clone()))
                 };
-                let adapted = T::Tables(Cow::Owned(tab));
-                check!(ety0.accept(&Slot::just(adapted), self.context()));
+                adapt_table!(tab);
                 Ok(Some(vslot))
             },
 
@@ -447,7 +451,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                     m::IndexToArrayWithNonInt { tab: self.display(ety0),
                                                                 key: self.display(&kty) })
                              .done());
-                Ok(Some(Slot::just(T::Dynamic)))
+                Ok(Some(Slot::dummy()))
             },
 
             (Some(&Tables::Map(ref key, ref value)), false) => {
@@ -457,15 +461,14 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             (Some(&Tables::All), _) => {
                 try!(self.env.error(ety0, m::IndexToAnyTable { tab: self.display(ety0) }).done());
-                Ok(Some(Slot::just(T::Dynamic)))
+                Ok(Some(Slot::dummy()))
             },
 
             // Fields with no keys resolved in compile time, Array with non-integral keys, Map
             (Some(tab), true) => {
                 // we cannot keep the specialized table type, lift and adapt to a mapping
                 let tab = tab.clone().lift_to_map(self.context());
-                let adapted = T::Tables(Cow::Owned(tab));
-                check!(ety0.accept(&Slot::just(adapted), self.context()));
+                adapt_table!(tab);
 
                 // reborrow ety0 to check against the final mapping type
                 if let Some(&Tables::Map(ref key, ref value)) = ety0.unlift().get_tables() {
@@ -516,7 +519,13 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                                 .collect());
                 let infos = try!(self.visit_explist(exps));
                 for (varinfo, info) in varinfos.into_iter().zip(infos.into_iter()) {
-                    try!(varinfo.accept(&info, self.context()));
+                    if let Err(e) = varinfo.accept(&info, self.context()) {
+                        try!(self.env.error(&varinfo, m::CannotAssign { lhs: self.display(&varinfo),
+                                                                        rhs: self.display(&info) })
+                                     .note_if(&info, m::OtherTypeOrigin {})
+                                     .done());
+                        return Err(e);
+                    }
                 }
                 Ok(Exit::None)
             }
@@ -611,7 +620,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 }
 
                 let mut scope = self.scoped(Scope::new());
-                scope.env.add_local_var(name, Slot::just(indty), true);
+                scope.env.add_local_var(name, Slot::just(indty).without_loc(), true);
                 let exit = try!(scope.visit_block(block));
                 if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
             }
@@ -630,8 +639,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if !self.env.get_type_bounds(&func).1.is_callable() {
                     try!(self.env.error(expspan, m::NonFuncIterator { iter: self.display(&func) })
                                  .done());
-                    indtys = TySeq { head: vec![],
-                                     tail: Some(Box::new(TyWithNil::from(T::Dynamic))) };
+                    indtys = TySeq::dummy();
                 } else if func.is_dynamic() {
                     // can't determine what func will return
                     indtys = TySeq { head: vec![],
@@ -664,7 +672,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 let mut scope = self.scoped(Scope::new());
                 for (name, ty) in names.iter().zip(indtys.into_iter()) {
-                    scope.env.add_local_var(name, Slot::new(F::Var, *ty), true);
+                    scope.env.add_local_var(name, Slot::new(F::Var, *ty).without_loc(), true);
                 }
                 let exit = try!(scope.visit_block(block));
                 if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
@@ -673,7 +681,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             St::FuncDecl(scope, ref name, ref sig, ref block) => {
                 // `name` itself is available to the inner scope
                 let funcv = self.context().gen_tvar();
-                let info = Slot::just(T::TVar(funcv));
+                let info = Slot::just(T::TVar(funcv)).with_loc(stmt);
                 match scope {
                     NameScope::Local => self.env.add_local_var(name, info, true),
                     NameScope::Global => try!(self.env.assign_to_var(name, info)),
@@ -686,7 +694,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             St::MethodDecl(ref names, selfparam, ref sig, ref block) => {
                 // TODO verify names
                 let selfinfo = match selfparam {
-                    Some(_) => Some(Slot::just(T::Dynamic)),
+                    Some(_) => Some(Slot::just(T::Dynamic).without_loc()),
                     None => None,
                 };
                 try!(self.visit_func_body(selfinfo, sig, block));
@@ -696,7 +704,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             St::Local(ref names, ref exps) => {
                 let add_local_var = |env: &mut Env,
                                      namespec: &TypeSpec<Spanned<Name>>,
-                                     info: Slot| {
+                                     info: Spanned<Slot>| {
                     if let Some(ref kind) = namespec.kind {
                         let ty = try!(T::from(kind, env));
                         let flex = match namespec.modf {
@@ -704,17 +712,18 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                             M::Var => F::Var,
                             M::Const => F::Const,
                         };
-                        env.add_local_var(&namespec.base.base, Slot::new(flex, ty), false);
-                        env.assign_to_var(&namespec.base.base, info)
+                        let initinfo = Slot::new(flex, ty).with_loc(kind);
+                        env.add_local_var(&namespec.base, initinfo, false);
+                        env.assign_to_var(&namespec.base, info)
                     } else {
-                        env.add_local_var(&namespec.base.base, info, true);
+                        env.add_local_var(&namespec.base, info, true);
                         Ok(())
                     }
                 };
 
                 let infos = try!(self.visit_explist(exps));
                 for (namespec, info) in names.iter().zip(infos.into_iter()) {
-                    try!(add_local_var(&mut self.env, namespec, info.base));
+                    try!(add_local_var(&mut self.env, namespec, info));
                 }
                 Ok(Exit::None)
             }
@@ -764,7 +773,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     M::Var => F::Var,
                     M::Const => F::Const,
                 };
-                let slot = Slot::new(flex, ty);
+                let slot = Slot::new(flex, ty).with_loc(kind);
                 match scope {
                     NameScope::Local => try!(self.env.assume_var(name, slot)),
                     NameScope::Global => try!(self.env.assume_global_var(name, slot)),
@@ -774,7 +783,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         }
     }
 
-    fn visit_func_body(&mut self, selfinfo: Option<Slot>, sig: &Sig,
+    fn visit_func_body(&mut self, selfinfo: Option<Spanned<Slot>>, sig: &Sig,
                        block: &Spanned<Vec<Spanned<Stmt>>>) -> CheckResult<Slot> {
         let vatype = match sig.args.tail {
             None => None,
@@ -798,7 +807,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
         let mut scope = self.scoped(Scope::new_function(frame));
         if let Some(selfinfo) = selfinfo {
-            scope.env.add_local_var(&Name::from(&b"self"[..]), selfinfo, true);
+            scope.env.add_local_var(&Name::from(&b"self"[..]).without_loc(), selfinfo, true);
         }
 
         let mut argshead = Vec::new();
@@ -817,7 +826,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 ty = T::TVar(argv);
                 sty = Slot::new(F::Var, T::TVar(argv));
             }
-            scope.env.add_local_var(&param.base, sty, false);
+            scope.env.add_local_var(&param.base, sty.without_loc(), false);
             argshead.push(Box::new(ty));
         }
         let args = TySeq { head: argshead, tail: vatype };
@@ -834,34 +843,32 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
     fn visit_var_with_spec(&mut self,
                            varspec: &TypeSpec<Spanned<Var>>) -> CheckResult<Spanned<Slot>> {
-        let specslot = if let Some(ref kind) = varspec.kind {
-            let ty = try!(T::from(kind, &mut self.env));
-            let flex = match varspec.modf {
-                M::None => F::VarOrCurrently(self.context().gen_mark()),
-                M::Var => F::Var,
-                M::Const => F::Const,
-            };
-            Some(Slot::new(flex, ty))
-        } else {
-            None
-        };
-
         let slot = match varspec.base.base {
             Var::Name(ref name) => {
                 // may refer to the global variable yet to be defined!
                 if let Some(info) = self.env.get_var(name).cloned() {
-                    if let Some(ref slot) = specslot {
-                        try!(info.accept(slot, self.context()));
+                    if let Some(ref kind) = varspec.kind {
+                        try!(self.env.error(kind, m::CannotRedefineGlobalVar { name: &name.base })
+                                     .done());
                     }
                     info.to_owned()
                 } else {
                     // we need a type to initialize the variable with.
                     // if we have the type spec, use it. otherwise use a type variable.
-                    let slot = specslot.unwrap_or_else(|| {
-                        Slot::new(F::Var, T::TVar(self.context().gen_tvar()))
-                    });
+                    let slot = if let Some(ref kind) = varspec.kind {
+                        let ty = try!(T::from(kind, &mut self.env));
+                        let flex = match varspec.modf {
+                            M::None => F::VarOrCurrently(self.context().gen_mark()),
+                            M::Var => F::Var,
+                            M::Const => F::Const,
+                        };
+                        Slot::new(flex, ty).with_loc(kind)
+                    } else {
+                        Slot::new(F::Var, T::TVar(self.context().gen_tvar())).without_loc()
+                    };
+
                     try!(self.env.assign_to_var(name, slot.clone()));
-                    slot
+                    slot.base
                 }
             },
 
@@ -873,6 +880,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 slot.unwrap()
             },
         };
+
+        // overwrite the span, the spec is irrelevant outside
         Ok(slot.with_loc(&varspec.base))
     }
 
@@ -881,7 +890,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         if !self.env.get_type_bounds(funcinfo).1.is_callable() {
             try!(self.env.error(funcinfo, m::CallToNonFunc { func: self.display(funcinfo) })
                          .done());
-            return Ok(self.dummy_slotseq());
+            return Ok(SlotSeq::dummy());
         }
         if funcinfo.is_dynamic() {
             return Ok(SlotSeq::from(T::Dynamic));
@@ -897,7 +906,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     try!(self.env.error(expspan,
                                         m::BuiltinGivenLessArgs { name: "require", nargs: 1 })
                                  .done());
-                    return Ok(self.dummy_slotseq());
+                    return Ok(SlotSeq::dummy());
                 }
 
                 if let Ex::Str(ref modname) = *args[0].base {
@@ -933,7 +942,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     try!(self.env.error(expspan,
                                         m::BuiltinGivenLessArgs { name: "assert", nargs: 1 })
                                  .done());
-                    return Ok(self.dummy_slotseq());
+                    return Ok(SlotSeq::dummy());
                 }
 
                 let (cond, _seq) = try!(self.collect_conds_from_exp(&args[0]));
@@ -949,7 +958,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     try!(self.env.error(expspan,
                                         m::BuiltinGivenLessArgs { name: "assert-not", nargs: 1 })
                                  .done());
-                    return Ok(self.dummy_slotseq());
+                    return Ok(SlotSeq::dummy());
                 }
 
                 let (cond, _seq) = try!(self.collect_conds_from_exp(&args[0]));
@@ -965,7 +974,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     try!(self.env.error(expspan,
                                         m::BuiltinGivenLessArgs { name: "assert-type", nargs: 2 })
                                  .done());
-                    return Ok(self.dummy_slotseq());
+                    return Ok(SlotSeq::dummy());
                 }
 
                 if let Some(flags) = try!(self.ext_literal_ty_to_flags(&argtys.head[1])) {
@@ -1005,7 +1014,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     Ok(SlotSeq::from_seq(vararg.clone()))
                 } else {
                     try!(self.env.error(exp, m::NoVarargs {}).done());
-                    Ok(self.dummy_slotseq())
+                    Ok(SlotSeq::dummy())
                 }
             },
             Ex::Var(ref name) => {
@@ -1013,7 +1022,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     Ok(SlotSeq::from_slot(info.clone()))
                 } else {
                     try!(self.env.error(exp, m::NoVar { name: name }).done());
-                    Ok(self.dummy_slotseq())
+                    Ok(SlotSeq::dummy())
                 }
             },
 
@@ -1071,7 +1080,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if !info.unlift().is_tabular() {
                     try!(self.env.error(exp, m::IndexToNonTable { tab: self.display(&info) })
                                  .done());
-                    return Ok(self.dummy_slotseq());
+                    return Ok(SlotSeq::dummy());
                 }
 
                 for arg in args {
@@ -1089,7 +1098,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     try!(self.env.error(exp, m::CannotIndex { tab: self.display(&ty),
                                                               key: self.display(&kty) })
                                  .done());
-                    Ok(self.dummy_slotseq())
+                    Ok(SlotSeq::dummy())
                 }
             },
 
@@ -1280,7 +1289,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     try!(ty.filter_by_flags(flags, self.context()))
                 };
                 // TODO: won't work well with `var` slots
-                try!(info.accept(&Slot::just(filtered), self.context()));
+                try!(Slot::accept(&info, &Slot::just(filtered).without_loc(), self.context()));
             }
 
             Cond::And(lcond, rcond) => {

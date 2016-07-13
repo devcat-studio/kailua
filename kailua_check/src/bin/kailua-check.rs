@@ -83,12 +83,12 @@ pub fn main() {
     for path in env::args().skip(1) {
         println!("--== {} ==--", path);
         if let Err(e) = parse_and_check(&Path::new(&path)) {
-            println!("error: {}", e);
+            // hide the internal error message, which will be eventually removed
+            info!("error while checking {}: {}", path, e);
         } else {
             println!("done.");
         }
         println!("");
     }
 }
-
 

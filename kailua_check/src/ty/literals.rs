@@ -1,5 +1,5 @@
 use std::fmt;
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use kailua_syntax::Str;
 use diag::CheckResult;
@@ -9,7 +9,7 @@ use super::{error_not_sub, error_not_eq};
 #[derive(Clone)]
 pub enum Numbers {
     One(i32),
-    Some(HashSet<i32>),
+    Some(BTreeSet<i32>),
     Int,
     All,
 }
@@ -44,7 +44,7 @@ impl Lattice for Numbers {
                 if a == b {
                     Numbers::One(a)
                 } else {
-                    let mut ab = HashSet::new();
+                    let mut ab = BTreeSet::new();
                     ab.insert(a);
                     ab.insert(b);
                     Numbers::Some(ab)
@@ -122,7 +122,7 @@ impl fmt::Debug for Numbers {
 #[derive(Clone)]
 pub enum Strings {
     One(Str),
-    Some(HashSet<Str>),
+    Some(BTreeSet<Str>),
     All,
 }
 
@@ -153,7 +153,7 @@ impl Lattice for Strings {
                 if a == b {
                     Strings::One(a.clone())
                 } else {
-                    let mut ab = HashSet::new();
+                    let mut ab = BTreeSet::new();
                     ab.insert(a.clone());
                     ab.insert(b.clone());
                     Strings::Some(ab)

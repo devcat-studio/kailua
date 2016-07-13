@@ -34,8 +34,13 @@ define_msg! { pub NotEqual<'a, Lhs: 'a + Display,
 }
 
 define_msg! { pub OtherTypeOrigin:
-    "ko" => "다른 타입은 여기에서 선언되었습니다",
+    "ko" => "다른 타입은 여기에서 만들어졌습니다",
     _    => "The other type originates here",
+}
+
+define_msg! { pub CannotRedefineGlobalVar<'a> { name: &'a Name }:
+    "ko" => "전역 변수 {name}의 타입을 재지정할 수 없습니다",
+    _    => "Cannot redefine the type of a global variable {name}",
 }
 
 define_msg! { pub WrongOperand<'a> { op: &'static str, lhs: Slot<'a>, rhs: Slot<'a> }:
@@ -111,6 +116,21 @@ define_msg! { pub IndexToAnyTable<'a> { tab: Slot<'a> }:
 define_msg! { pub CannotIndex<'a> { tab: Slot<'a>, key: Slot<'a> }:
     "ko" => "`{key}` 타입으로 `{tab}`을(를) 인덱싱할 수 없습니다",
     _    => "Cannot index `{tab}` with `{key}`",
+}
+
+define_msg! { pub CannotAdaptTable<'a> { tab: Slot<'a>, adapted: T<'a> }:
+    "ko" => "`{tab}` 테이블 타입이 `{adapted}`(으)로 확장되어야 하는데 그럴 수 없습니다",
+    _    => "Cannot adapt the table type `{tab}` into `{adapted}`",
+}
+
+define_msg! { pub AdaptTriggeredByIndex<'a> { key: Slot<'a> }:
+    "ko" => "테이블을 `{key}` 타입으로 인덱싱하려면 테이블이 확장되어야 합니다",
+    _    => "The table had to be adapted in order to index it with `{key}`",
+}
+
+define_msg! { pub CannotAssign<'a> { lhs: Slot<'a>, rhs: Slot<'a> }:
+    "ko" => "`{lhs}` 타입에 `{rhs}` 타입을 대입할 수 없습니다",
+    _    => "Cannot assign `{rhs}` into `{lhs}`",
 }
 
 define_msg! { pub NonFuncIterator<'a> { iter: T<'a> }:

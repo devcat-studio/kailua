@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::collections::{HashMap, HashSet};
 use vec_map::VecMap;
 
-use kailua_diag::{self, Kind, Span, Spanned, Report, Reporter, Localize};
+use kailua_diag::{self, Kind, Span, Spanned, Report, Reporter, WithLoc, Localize};
 use kailua_syntax::{Name, parse_chunk};
 use diag::CheckResult;
 use ty::{Ty, TySeq, T, Slot, F, TVar, Mark, Lattice, Displayed, Display};
@@ -1005,48 +1005,53 @@ impl<'ctx> Env<'ctx> {
 
     // adapt is used when the info didn't come from the type specification
     // and should be considered identical to the assignment
-    pub fn add_local_var(&mut self, name: &Name, mut info: Slot, adapt: bool) {
+    pub fn add_local_var(&mut self, name: &Spanned<Name>, mut info: Spanned<Slot>, adapt: bool) {
         if adapt {
-            let newinfo = Slot::new(F::VarOrCurrently(self.context().gen_mark()), T::Nil);
+            let flex = F::VarOrCurrently(self.context().gen_mark());
+            let newinfo = Slot::new(flex, T::Nil).with_loc(name);
             newinfo.accept(&info, self.context()).unwrap();
             info = newinfo;
         }
 
         debug!("adding a local variable {:?} as {:?}", *name, info);
-        self.current_scope_mut().put(name.to_owned(), info);
+        self.current_scope_mut().put(name.base.to_owned(), info.base);
     }
 
-    pub fn assign_to_var(&mut self, name: &Name, info: Slot) -> CheckResult<()> {
+    pub fn assign_to_var(&mut self, name: &Spanned<Name>, info: Spanned<Slot>) -> CheckResult<()> {
         if let Some(previnfo) = self.get_var_mut(name).map(|info| info.clone()) {
             debug!("assigning {:?} to a variable {:?} with type {:?}",
                      info, *name, previnfo);
             if let Err(e) = previnfo.accept(&info, self.context()) {
-                return Err(format!("cannot assign {:?} to the variable {:?} with type {:?}: {}",
-                                   info, name, previnfo, e));
-            } else {
-                return Ok(());
+                try!(self.error(name, m::CannotAssign { lhs: self.display(&previnfo),
+                                                        rhs: self.display(&info) })
+                         .note_if(info, m::OtherTypeOrigin {})
+                         .done());
+                return Err(e);
             }
+            return Ok(());
         }
 
         debug!("adding a global variable {:?} as {:?}", *name, info);
-        let newinfo = Slot::new(F::VarOrCurrently(self.context().gen_mark()), T::Nil);
+        let flex = F::VarOrCurrently(self.context().gen_mark());
+        let newinfo = Slot::new(flex, T::Nil).with_loc(name);
         newinfo.accept(&info, self.context()).unwrap();
-        self.context.global_scope_mut().put(name.to_owned(), newinfo);
+        self.context.global_scope_mut().put(name.base.to_owned(), newinfo.base);
         Ok(())
     }
 
-    pub fn assume_var(&mut self, name: &Name, info: Slot) -> CheckResult<()> {
+    pub fn assume_var(&mut self, name: &Spanned<Name>, info: Spanned<Slot>) -> CheckResult<()> {
         if let Some(previnfo) = self.get_local_var_mut(name) {
             debug!("(force) adding a local variable {:?} as {:?}", *name, info);
-            *previnfo = info;
+            *previnfo = info.base;
             return Ok(());
         }
         self.assume_global_var(name, info)
     }
 
-    pub fn assume_global_var(&mut self, name: &Name, info: Slot) -> CheckResult<()> {
+    pub fn assume_global_var(&mut self, name: &Spanned<Name>,
+                             info: Spanned<Slot>) -> CheckResult<()> {
         debug!("(force) adding a global variable {:?} as {:?}", *name, info);
-        self.context.global_scope_mut().put(name.to_owned(), info);
+        self.context.global_scope_mut().put(name.base.to_owned(), info.base);
         Ok(())
     }
 

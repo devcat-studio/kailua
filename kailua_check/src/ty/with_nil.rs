@@ -17,6 +17,10 @@ impl TyWithNil {
         TyWithNil { ty: t.into_send().without_nil() }
     }
 
+    pub fn dummy() -> TyWithNil {
+        TyWithNil::from(T::Dynamic)
+    }
+
     pub fn as_type_without_nil(&self) -> &T<'static> {
         &self.ty
     }
@@ -68,6 +72,10 @@ impl SlotWithNil {
 
     pub fn from_ty_with_nil(t: TyWithNil) -> SlotWithNil {
         SlotWithNil { slot: Slot::just(t.ty) }
+    }
+
+    pub fn dummy() -> SlotWithNil {
+        SlotWithNil::from_slot(Slot::dummy())
     }
 
     pub fn as_slot_without_nil(&self) -> &Slot {

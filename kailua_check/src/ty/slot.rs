@@ -14,6 +14,8 @@ pub enum F {
     // invalid top type (no type information available)
     // for the typing convenience the type information itself is retained, but never used.
     Any,
+    // dynamic slot; all assignments are allowed and ignored
+    Dynamic,
     // temporary r-value slot
     // coerces to VarOrCurrently when used in the table fields
     Just,
@@ -46,6 +48,8 @@ impl F {
         match *self {
             F::Any => Ok(F::Any),
 
+            F::Dynamic => Ok(F::Dynamic),
+
             // if the Just slot contains a table it should be recursively weakened.
             // this is not handled here, but via `Slot::adapt` which gets called
             // whenever the Just slot is returned from the lvalue table (`Checker::check_index`).
@@ -76,6 +80,7 @@ impl PartialEq for F {
     fn eq(&self, other: &F) -> bool {
         match (*self, *other) {
             (F::Any, F::Any) => true,
+            (F::Dynamic, F::Dynamic) => true,
             (F::Just, F::Just) => true,
             (F::Const, F::Const) => true,
             (F::Var, F::Var) => true,
@@ -96,6 +101,7 @@ impl<'a> fmt::Debug for F {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             F::Any               => write!(f, "any"),
+            F::Dynamic           => write!(f, "WHATEVER"),
             F::Just              => write!(f, "just"),
             F::Const             => write!(f, "const"),
             F::Var               => write!(f, "var"),
@@ -144,6 +150,7 @@ impl<'a> S<'a> {
         if other.flex.is_linear() { other.flex = F::Var; }
 
         let (flex, ty) = match (self.flex, other.flex) {
+            (F::Dynamic, _) | (_, F::Dynamic) => (F::Dynamic, T::Dynamic),
             (F::Any, _) | (_, F::Any) => (F::Any, T::None),
 
             // it's fine to merge r-values
@@ -204,6 +211,7 @@ impl<'a> S<'a> {
 
         match (self.flex, other.flex) {
             (_, F::Any) => {}
+            (_, F::Dynamic) | (F::Dynamic, _) => {}
 
             (F::Just, F::Just) => m!(a <: b),
 
@@ -257,6 +265,7 @@ impl<'a> S<'a> {
 
         match (self.flex, other.flex) {
             (F::Any, F::Any) => {}
+            (_, F::Dynamic) | (F::Dynamic, _) => {}
 
             (F::Just, F::Just) => m!(a = b),
 
@@ -309,6 +318,10 @@ impl Slot {
         Slot::new(F::Just, t.into_send())
     }
 
+    pub fn dummy() -> Slot {
+        Slot::new(F::Dynamic, T::Dynamic)
+    }
+
     pub fn unlift<'a>(&'a self) -> Ref<'a, T<'static>> {
         Ref::map(self.0.borrow(), |s| s.unlift())
     }
@@ -344,6 +357,8 @@ impl Slot {
             lty.is_referential() && rhs.flex().is_linear() && rhs.unlift().is_referential();
 
         match (lhs.flex, rhs.flex) {
+            (_, F::Dynamic) | (F::Dynamic, _) => {}
+
             (_, F::Any) |
             (F::Any, _) |
             (F::Const, _) |

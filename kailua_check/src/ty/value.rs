@@ -33,6 +33,8 @@ pub enum T<'a> {
 }
 
 impl<'a> T<'a> {
+    pub fn dummy() -> T<'a> { T::Dynamic }
+
     pub fn number()          -> T<'a> { T::Numbers(Cow::Owned(Numbers::All)) }
     pub fn integer()         -> T<'a> { T::Numbers(Cow::Owned(Numbers::Int)) }
     pub fn int(v: i32)       -> T<'a> { T::Numbers(Cow::Owned(Numbers::One(v))) }
