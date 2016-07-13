@@ -781,9 +781,9 @@ end
 --! error
 
 --8<-- type-no-shadowing
---# type known_type = integer
+--# type known_type = integer --@< Note: The type was originally defined here
 do
-    --# type known_type = number
+    --# type known_type = number --@< Error: A type named `known_type` is already defined
 end
 --! error
 
@@ -882,7 +882,7 @@ print(p + 5)
 --# open lua51
 --# assume p: integer|string
 assert(type(p) == 'integer') -- no such type in Lua 5.1
---@^ Error: Unknown type name
+--@^ Error: The literal cannot appear as a return type name for `type`
 --! error
 
 --8<-- assert-same-type
@@ -1004,6 +1004,8 @@ return 42
 --8<-- require-returns-false
 --# open lua51
 require 'a'
+--@^ Error: Returning `false` from the module disables Lua's protection against recursive `require` calls and is heavily discouraged
+-- XXX the span should be ideally at `return`
 
 --& a
 return false -- false triggers a Lua bug, so it is prohibited
@@ -1034,6 +1036,8 @@ return p
 --8<-- require-returns-not-fully-resolved
 --# open lua51
 require 'a'
+--@^ Error: The module has returned a type `(nil|<unknown type>)` that is not yet fully resolved
+-- XXX the span should be ideally at `return`
 
 --& a
 local function p(...) return ... end
@@ -1069,13 +1073,13 @@ return true
 
 --8<-- require-recursive
 --# open lua51
-require 'a'
+require 'a' --@< Note: The module was previously `require`d here
 
 --& a
 require 'b'
 
 --& b
-require 'a'
+require 'a' --@< Error: Recursive `require` was requested
 
 --! error
 

@@ -27,7 +27,7 @@ pub struct Frame {
 pub struct Scope {
     names: HashMap<Name, Slot>,
     frame: Option<Frame>,
-    types: HashMap<Name, Ty>,
+    types: HashMap<Name, (Span, Ty)>,
 }
 
 impl Scope {
@@ -55,8 +55,9 @@ impl Scope {
         self.frame.as_mut()
     }
 
-    pub fn get_type<'a>(&'a self, name: &Name) -> Option<&'a T> {
-        self.types.get(name).map(|t| &**t)
+    // the span indicates the position of the initial definition
+    pub fn get_type<'a>(&'a self, name: &Name) -> Option<(Span, &'a T)> {
+        self.types.get(name).map(|&(span, ref ty)| (span, &**ty))
     }
 
     pub fn put(&mut self, name: Name, info: Slot) {
@@ -64,8 +65,8 @@ impl Scope {
     }
 
     // the caller should check for the outermost types first
-    pub fn put_type(&mut self, name: Name, ty: Ty) -> bool {
-        self.types.insert(name, ty).is_none()
+    pub fn put_type(&mut self, name: Spanned<Name>, ty: Ty) -> bool {
+        self.types.insert(name.base, (name.span, ty)).is_none()
     }
 }
 
@@ -374,6 +375,11 @@ impl Partition for Box<MarkInfo> {
     }
 }
 
+enum LoadStatus {
+    Done(Slot),
+    Ongoing(Span), // span for who to blame
+}
+
 // global context (also acts as a type context).
 // anything has to be retained across multiple files should be here
 pub struct Context {
@@ -386,7 +392,7 @@ pub struct Context {
     next_mark: Cell<Mark>,
     mark_infos: Partitions<Box<MarkInfo>>,
     opened: HashSet<String>,
-    loaded: HashMap<Vec<u8>, Option<Slot>>, // corresponds to `package.loaded`
+    loaded: HashMap<Vec<u8>, LoadStatus>, // corresponds to `package.loaded`
 }
 
 impl Context {
@@ -443,18 +449,23 @@ impl Context {
         }
     }
 
-    pub fn get_loaded_module(&self, name: &[u8]) -> CheckResult<Option<Slot>> {
+    pub fn get_loaded_module(&self, name: &[u8], span: Span) -> CheckResult<Option<Slot>> {
         match self.loaded.get(name) {
-            Some(&Some(ref slot)) => Ok(Some(slot.clone())),
+            Some(&LoadStatus::Done(ref slot)) => Ok(Some(slot.clone())),
             None => Ok(None),
 
             // this is allowed in Lua 5.2 and later, but will result in a loop anyway.
-            Some(&None) => Err(format!("recursive `require` requested")),
+            Some(&LoadStatus::Ongoing(oldspan)) => {
+                try!(self.error(span, m::RecursiveRequire {})
+                         .note(oldspan, m::PreviousRequire {})
+                         .done());
+                Ok(Some(Slot::dummy()))
+            }
         }
     }
 
-    pub fn mark_module_as_loading(&mut self, name: &[u8]) {
-        self.loaded.entry(name.to_owned()).or_insert(None);
+    pub fn mark_module_as_loading(&mut self, name: &[u8], span: Span) {
+        self.loaded.entry(name.to_owned()).or_insert(LoadStatus::Ongoing(span));
     }
 
     // used by assert_mark_require_{eq,sup}
@@ -904,7 +915,7 @@ impl<'ctx> Env<'ctx> {
         }
     }
 
-    pub fn return_from_module(mut self, modname: &[u8]) -> CheckResult<Slot> {
+    pub fn return_from_module(mut self, modname: &[u8], span: Span) -> CheckResult<Slot> {
         // note that this scope is distinct from the global scope
         let top_scope = self.scopes.drain(..).next().unwrap();
         let returns = if let Some(returns) = top_scope.frame.unwrap().returns {
@@ -918,8 +929,8 @@ impl<'ctx> Env<'ctx> {
 
             // prepare for the worse
             if flags.contains(T_FALSE) {
-                return Err(format!("returning `false` from the module disables Lua's protection \
-                                    against multiple `require` calls and is heavily discouraged"));
+                try!(self.error(span, m::ModCannotReturnFalse {}).done());
+                return Ok(Slot::dummy());
             }
 
             // simulate `require` behavior, i.e. nil translates to true
@@ -931,11 +942,14 @@ impl<'ctx> Env<'ctx> {
 
             // this has to be Var since the module is shared across the entire program
             let slot = Slot::new(F::Var, ty.into_send());
-            self.context.loaded.insert(modname.to_owned(), Some(slot.clone()));
+            self.context.loaded.insert(modname.to_owned(), LoadStatus::Done(slot.clone()));
             Ok(slot)
         } else {
             // TODO ideally we would want to resolve type variables in this type
-            Err(format!("the module has returned not yet fully resolved type"))
+            try!(self.error(span,
+                            m::ModCannotReturnInexactType { returns: self.display(&returns) })
+                     .done());
+            Ok(Slot::dummy())
         }
     }
 
@@ -1063,24 +1077,29 @@ impl<'ctx> Env<'ctx> {
         self.context.get_tvar_exact_type(tvar)
     }
 
-    pub fn get_named_type<'a>(&'a self, name: &Name) -> Option<T<'a>> {
+    pub fn get_named_type<'a>(&'a self, name: &Name) -> Option<(Span, T<'a>)> {
         for scope in self.scopes.iter().rev() {
-            if let Some(t) = scope.get_type(name) { return Some(t.to_ref()); }
+            if let Some((span, t)) = scope.get_type(name) {
+                return Some((span, t.to_ref()));
+            }
         }
-        if let Some(t) = self.context.global_scope().get_type(name) { return Some(t.to_ref()); }
+        if let Some((span, t)) = self.context.global_scope().get_type(name) {
+            return Some((span, t.to_ref()));
+        }
         None
     }
 
-    pub fn define_type(&mut self, name: &Name, ty: Ty) -> CheckResult<()> {
-        if self.get_named_type(name).is_some() {
-            return Err(format!("type name {:?} is already defined outside", *name));
+    pub fn define_type(&mut self, name: &Spanned<Name>, ty: Ty) -> CheckResult<()> {
+        if let Some((oldspan, _oldty)) = self.get_named_type(name) {
+            try!(self.error(name, m::CannotRedefineType { name: &name.base })
+                     .note(oldspan, m::AlreadyDefinedType {})
+                     .done());
+            return Ok(());
         }
 
-        if !self.current_scope_mut().put_type(name.clone(), ty) {
-            Err(format!("type name {:?} is already defined in this scope", *name))
-        } else {
-            Ok(())
-        }
+        let ret = self.current_scope_mut().put_type(name.clone(), ty);
+        assert!(ret, "failed to insert the type");
+        Ok(())
     }
 }
 
@@ -1095,11 +1114,11 @@ impl<'ctx> Report for Env<'ctx> {
 
 impl<'ctx> TypeResolver for Env<'ctx> {
     fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<T<'static>> {
-        if let Some(t) = self.get_named_type(name) {
+        if let Some((_, t)) = self.get_named_type(name) {
             Ok(t.into_send())
         } else {
             try!(self.error(name, m::NoType { name: &name.base }).done());
-            Ok(T::Dynamic)
+            Ok(T::dummy())
         }
     }
 }

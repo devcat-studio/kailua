@@ -755,7 +755,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             St::KailuaType(ref name, ref kind) => {
                 let ty = Box::new(try!(T::from(kind, &mut self.env)));
-                try!(self.env.define_type(&name.base, ty));
+                try!(self.env.define_type(name, ty));
                 Ok(Exit::None)
             }
 
@@ -910,11 +910,11 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 }
 
                 if let Ex::Str(ref modname) = *args[0].base {
-                    if let Some(slot) = try!(self.context().get_loaded_module(modname)) {
+                    if let Some(slot) = try!(self.context().get_loaded_module(modname, expspan)) {
                         info!("requiring {:?} (cached)", modname);
                         return Ok(SlotSeq::from_slot(slot));
                     }
-                    self.context().mark_module_as_loading(modname);
+                    self.context().mark_module_as_loading(modname, expspan);
 
                     info!("requiring {:?}", modname);
                     let block = match self.opts.require_block(modname) {
@@ -929,7 +929,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         let mut sub = Checker::new(&mut env, self.opts);
                         try!(sub.visit_block(&block));
                     }
-                    return Ok(SlotSeq::from_slot(try!(env.return_from_module(modname))));
+                    return Ok(SlotSeq::from_slot(try!(env.return_from_module(modname, expspan))));
                 } else {
                     return Ok(SlotSeq::from(T::All));
                 }
@@ -1327,7 +1327,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 b"thread" => T_THREAD,
                 b"userdata" => T_USERDATA,
                 _ => {
-                    try!(self.env.error(info, m::UnknownTypeName {}).done());
+                    try!(self.env.error(info, m::UnknownLiteralTypeName {}).done());
                     return Ok(None);
                 }
             };
@@ -1357,7 +1357,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 b"thread" => T_THREAD,
                 b"userdata" => T_USERDATA,
                 _ => {
-                    try!(self.env.error(info, m::UnknownTypeName {}).done());
+                    try!(self.env.error(info, m::UnknownLiteralTypeName {}).done());
                     return Ok(None);
                 }
             };

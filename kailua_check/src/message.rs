@@ -43,6 +43,16 @@ define_msg! { pub CannotRedefineGlobalVar<'a> { name: &'a Name }:
     _    => "Cannot redefine the type of a global variable {name}",
 }
 
+define_msg! { pub CannotRedefineType<'a> { name: &'a Name }:
+    "ko" => "{name} 타입은 이미 선언되어 있습니다",
+    _    => "A type named {name} is already defined",
+}
+
+define_msg! { pub AlreadyDefinedType:
+    "ko" => "이전 타입 선언은 여기에 있습니다",
+    _    => "The type was originally defined here",
+}
+
 define_msg! { pub WrongOperand<'a> { op: &'static str, lhs: Slot<'a>, rhs: Slot<'a> }:
     "ko" => "{op} 연산자를 `{lhs}`와(과) `{rhs}`에 적용할 수 없습니다",
     _    => "Cannot apply {op} operator to `{lhs}` and `{rhs}`",
@@ -148,8 +158,30 @@ define_msg! { pub CannotResolveModName:
     _    => "Cannot resolve the module name given to `require`",
 }
 
-define_msg! { pub UnknownTypeName:
-    "ko" => "타입 이름을 찾지 못했습니다",
-    _    => "Unknown type name",
+define_msg! { pub RecursiveRequire:
+    "ko" => "모듈을 재귀적으로 `require`하려고 했습니다",
+    _    => "Recursive `require` was requested",
+}
+
+define_msg! { pub PreviousRequire:
+    "ko" => "이전에 이미 여기에서 이 모듈을 `require` 했습니다",
+    _    => "The module was previously `require`d here",
+}
+
+define_msg! { pub ModCannotReturnFalse:
+    "ko" => "모듈에서 `false`를 반환하면 루아가 `require`를 재귀적으로 \
+             요청하는 것을 막을 수 없으므로 사용하면 안 됩니다",
+    _    => "Returning `false` from the module disables Lua's protection \
+             against recursive `require` calls and is heavily discouraged",
+}
+
+define_msg! { pub ModCannotReturnInexactType<'a> { returns: T<'a> }:
+    "ko" => "모듈이 아직 덜 추론된 타입 `{returns}`을(를) 반환하려고 합니다",
+    _    => "The module has returned a type `{returns}` that is not yet fully resolved",
+}
+
+define_msg! { pub UnknownLiteralTypeName:
+    "ko" => "리터럴이 `type`의 반환값으로 나올 수 있는 타입이 아닙니다",
+    _    => "The literal cannot appear as a return type name for `type`",
 }
 
