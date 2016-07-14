@@ -63,22 +63,26 @@ impl<'a> Report for &'a Report {
 
 pub trait Reporter: Report + Sized {
     fn fatal<Loc: Into<Span>, Msg: Localize, T>(&self, loc: Loc, msg: Msg) -> ReportMore<T> {
+        info!("reporting fatal error: {:?}", msg);
         let ret = self.add_span(Kind::Fatal, loc.into(), &msg);
         let ret = ret.map(|_| panic!("Report::fatal should always return Err"));
         ReportMore::new(self, ret)
     }
 
     fn error<Loc: Into<Span>, Msg: Localize>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
+        info!("reporting error: {:?}", msg);
         let ret = self.add_span(Kind::Error, loc.into(), &msg);
         ReportMore::new(self, ret)
     }
 
     fn warn<Loc: Into<Span>, Msg: Localize>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
+        info!("reporting warning: {:?}", msg);
         let ret = self.add_span(Kind::Warning, loc.into(), &msg);
         ReportMore::new(self, ret)
     }
 
     fn note<Loc: Into<Span>, Msg: Localize>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
+        info!("reporting note: {:?}", msg);
         let ret = self.add_span(Kind::Note, loc.into(), &msg);
         ReportMore::new(self, ret)
     }

@@ -161,7 +161,7 @@ local p = t[3]
 
 --8<-- index-map-with-integer-no-subtype
 local t = {[2] = 4, [8] = 5} --: var {[integer] = integer}
-local p = t.string --@< Error: Cannot index `{[integer] = integer}` with `"string"`
+local p = t.string --@< Error: Cannot index `var {[integer] = integer}` with `"string"`
 --! error
 
 --8<-- index-empty-with-name
@@ -309,7 +309,7 @@ x = 3
 --8<-- var-integer-literals-2
 local x
 --# assume x: var 4 | 5
-x = 3 --@< Error: Cannot assign `3` into `(4|5)`
+x = 3 --@< Error: Cannot assign `3` into `var (4|5)`
       --@^ Note: The other type originates here
 --! error
 
@@ -329,7 +329,7 @@ local x, y, z
 --# assume x: var integer
 --# assume y: var integer
 --# assume z: var integer
-z = x / y --@< Error: Cannot assign `number` into `integer`
+z = x / y --@< Error: Cannot assign `number` into `var integer`
           --@^ Note: The other type originates here
 --! error
 
@@ -342,7 +342,7 @@ p = 3 + 4
 --8<-- add-number-integer-is-not-integer
 local p
 --# assume p: var integer
-p = 3.1 + 4 --@< Error: Cannot assign `number` into `integer`
+p = 3.1 + 4 --@< Error: Cannot assign `number` into `var integer`
             --@^ Note: The other type originates here
 --! error
 
@@ -357,7 +357,7 @@ q = p + 3
 local p, q
 --# assume p: WHATEVER
 --# assume q: var integer
-q = p + 3.5 --@< Error: Cannot assign `number` into `integer`
+q = p + 3.5 --@< Error: Cannot assign `number` into `var integer`
             --@^ Note: The other type originates here
 --! error
 
@@ -379,7 +379,7 @@ q = p + p
 local p, q
 --# assume p: WHATEVER
 --# assume q: var integer
-q = p + p --@< Error: Cannot assign `number` into `integer`
+q = p + p --@< Error: Cannot assign `number` into `var integer`
           --@^ Note: The other type originates here
 --! error
 
@@ -415,7 +415,7 @@ for i = 1, 9, 2 do a = i end
 --8<-- for-non-integer
 --# assume a: var integer
 for i = 1.1, 9 do
-    a = i --@< Error: Cannot assign `number` into `integer`
+    a = i --@< Error: Cannot assign `number` into `var integer`
           --@^ Note: The other type originates here
 end
 --! error
@@ -423,7 +423,7 @@ end
 --8<-- for-non-integer-step
 --# assume a: var integer
 for i = 1, 9, 2.1 do
-    a = i --@< Error: Cannot assign `number` into `integer`
+    a = i --@< Error: Cannot assign `number` into `var integer`
           --@^ Note: The other type originates here
 end
 --! error
@@ -544,10 +544,10 @@ a[2] = 54
 --8<-- var-table-update-with-integer
 local a = {} --: var {} -- cannot be changed!
 a[1] = 42
---@^ Error: Cannot adapt the table type `{}` into `{<unknown type>,}`
+--@^ Error: Cannot adapt the table type `var {}` into `{<unknown type>,}`
 --@^^ Note: The table had to be adapted in order to index it with `1`
 a[2] = 54
---@^ Error: Cannot adapt the table type `{}` into `{[2] = <unknown type>}`
+--@^ Error: Cannot adapt the table type `var {}` into `{[2] = <unknown type>}`
 --@^^ Note: The table had to be adapted in order to index it with `2`
 --! error
 
@@ -576,7 +576,7 @@ local a = {} --: var {number}
 local a = {} --: var {number}
 a[1] = 42
 a.what = 54
---@^ Error: Cannot adapt the table type `{number}` into `{[integer] = number}`
+--@^ Error: Cannot adapt the table type `var {var number}` into `{[integer] = var number}`
 --@^^ Note: The table had to be adapted in order to index it with `"what"`
 --! error
 
@@ -594,14 +594,14 @@ a[1] = 42
 a[3] = 54
 a[1] = nil
 local z = a[3] --: var integer?
---@^ Error: Cannot assign `(nil|number)` into `(nil|integer)`
+--@^ Error: Cannot assign `var (nil|number)` into `var (nil|integer)`
 --@^^ Note: The other type originates here
 --! error
 
 --8<-- var-map-update-and-index-wrong-key
 local a = {} --: var {[number] = number}
 a[1] = 42
-a.string = 54 --@< Error: Cannot index `{[number] = number}` with `"string"`
+a.string = 54 --@< Error: Cannot index `var {[number] = var number}` with `"string"`
 --! error
 
 --8<-- var-map-update-and-index-without-nil
@@ -610,7 +610,7 @@ a[1] = 42
 a[3] = 54
 a[1] = nil
 local z = a[3] --: var integer
---@^ Error: Cannot assign `(nil|number)` into `integer`
+--@^ Error: Cannot assign `var (nil|number)` into `var integer`
 --@^^ Note: The other type originates here
 --! error
 
@@ -714,7 +714,7 @@ local function p()
     return 3, 'string', 5
 end
 local a, b = p() --: var integer, var integer
---@^ Error: Cannot assign `"string"` into `integer`
+--@^ Error: Cannot assign `"string"` into `var integer`
 --@^^ Note: The other type originates here
 --! error
 
@@ -744,7 +744,7 @@ local function p(n)
     if n then return 'string' else return nil, 'error' end
 end
 local a, b = p(false) --: var string, var string|nil
---@^ Error: Cannot assign `(nil|"string")` into `string`
+--@^ Error: Cannot assign `(nil|"string")` into `var string`
 --@^^ Note: The other type originates here
 --! error
 
@@ -753,7 +753,7 @@ local function p(n)
     if n then return 'string' else return nil, 'error' end
 end
 local a, b = p(false) --: var string|nil, var string
---@^ Error: Cannot assign `(nil|"error")` into `string`
+--@^ Error: Cannot assign `(nil|"error")` into `var string`
 --@^^ Note: The other type originates here
 --! error
 
@@ -994,6 +994,54 @@ x = y
 x = y
 --! ok
 
+--8<-- assign-var-subtype-1
+--# assume p: var number
+--# assume q: var integer
+p = q
+--! ok
+
+--8<-- assign-var-subtype-2
+--# assume p: var integer
+--# assume q: var 1|2
+p = q
+--! ok
+
+--8<-- assign-var-suptype-1
+--# assume p: var integer
+--# assume q: var number
+p = q
+--@^ Error: Cannot assign `var number` into `var integer`
+--@^^ Note: The other type originates here
+--! error
+
+--8<-- assign-var-suptype-2
+--# assume p: var 1|2
+--# assume q: var integer
+p = q
+--@^ Error: Cannot assign `var integer` into `var (1|2)`
+--@^^ Note: The other type originates here
+--! error
+
+--8<-- assign-var-map-eqtype
+--# assume p: var { [string] = var number }
+--# assume q: var number
+p.x = q
+--! ok
+
+--8<-- assign-var-map-subtype
+--# assume p: var { [string] = var number }
+--# assume q: var integer
+p.x = q
+--! ok
+
+--8<-- assign-var-map-suptype
+--# assume p: var { [string] = var integer }
+--# assume q: var number
+p.x = q
+--@^ Error: Cannot assign `var number` into `var (nil|integer)`
+--@^^ Note: The other type originates here
+--! error
+
 --8<-- require-unknown
 --# open lua51
 x = require 'a' --@< Warning: Cannot resolve the module name given to `require`
@@ -1009,7 +1057,7 @@ print(x + 4) --@< Error: `<unknown type>` is not a subtype of `integer`
 --# open lua51
 --# assume x: var integer
 x = require 'A' --@< Warning: Cannot resolve the module name given to `require`
-                --@^ Error: Cannot assign `any` into `integer`
+                --@^ Error: Cannot assign `any` into `var integer`
                 --@^^ Note: The other type originates here
 
 --& a
@@ -1123,7 +1171,7 @@ require 'a'
 
 --8<-- index-assign-typed
 local p = {x = 5, y = 6} --: var {x=number, y=number}
-p.x = 'string' --@< Error: Cannot assign `"string"` into `number`
+p.x = 'string' --@< Error: Cannot assign `"string"` into `var number`
                --@^ Note: The other type originates here
 --! error
 
@@ -1236,7 +1284,7 @@ end
 --# open lua51
 --# assume p: var {[integer] = var string}
 for x, y in ipairs(p) do
-    --@^ Error: `{[integer] = string}` is not a subtype of `{WHATEVER}`
+    --@^ Error: `{[integer] = var string}` is not a subtype of `{const WHATEVER}`
     -- XXX WHATEVER is temporary
 end
 --! error
@@ -1245,7 +1293,7 @@ end
 --# open lua51
 --# assume p: var table
 for x, y in ipairs(p) do
-    --@^ Error: `table` is not a subtype of `{WHATEVER}`
+    --@^ Error: `table` is not a subtype of `{const WHATEVER}`
     -- XXX WHATEVER is temporary
 end
 --! error
@@ -1254,7 +1302,7 @@ end
 --# open lua51
 --# assume p: var string
 for x, y in ipairs(p) do
-    --@^ Error: `string` is not a subtype of `{WHATEVER}`
+    --@^ Error: `string` is not a subtype of `{const WHATEVER}`
     -- XXX WHATEVER is temporary
 end
 --! error
@@ -1349,6 +1397,11 @@ end
 for x, y in pairs(p) do --@< Error: `string` is not a subtype of `table`
 end
 --! error
+
+--8<-- lua51-update-package-cpath
+--# open lua51
+package.cpath = '?.lua'
+--! ok
 
 --8<-- redefine-global
 p = 42 --: integer

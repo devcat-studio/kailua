@@ -2,34 +2,34 @@
 
 --# type file = {
 --#     -- TODO method receivers and recursive types are generally not implemented yet
---#     `close` = const function(WHATEVER);
---#     `flush` = const function(WHATEVER);
---#     `lines` = const function(WHATEVER) -> function() -> string?;
+--#     `close` = var function(WHATEVER);
+--#     `flush` = var function(WHATEVER);
+--#     `lines` = var function(WHATEVER) -> function() -> string?;
 --#     -- TODO should be:
---#     -- const function(self, '*n') -> number? &
---#     --       function(self, '*a') -> string &
---#     --       function(self, '*l'|integer?) -> string?
+--#     -- var function(self, '*n') -> number? &
+--#     --     function(self, '*a') -> string &
+--#     --     function(self, '*l'|integer?) -> string?
 --#     -- for now, let's ignore *n (which is most useless)
---#     `read` = const function(WHATEVER, '*a'|'*l'|integer?) -> string?;
---#     `seek` = const function(WHATEVER, 'set'|'cur'|'end'?, integer?);
+--#     `read` = var function(WHATEVER, '*a'|'*l'|integer?) -> string?;
+--#     `seek` = var function(WHATEVER, 'set'|'cur'|'end'?, integer?);
 --#     -- TODO again, 'no' does not accept an integer
---#     `setvbuf` = const function(WHATEVER, 'no'|'full'|'line', integer?);
---#     `write` = const function(WHATEVER, string|number);
+--#     `setvbuf` = var function(WHATEVER, 'no'|'full'|'line', integer?);
+--#     `write` = var function(WHATEVER, string|number);
 --# }
 --#
 --# assume global `io`:
---#     const {
---#         `close` = const function(file?);
---#         `flush` = const function();
+--#     var {
+--#         `close` = var function(file?);
+--#         `flush` = var function();
 --#         -- TODO should be separated
---#         `input` = const function(string|file?) -> file?;
---#         `lines` = const function(string?) -> function() -> string?;
---#         `open` = const function(string, string?) -> (file?, string?);
---#         `output` = const function(string|file?) -> file?;
---#         `popen` = const function(string, string?) -> file?;
---#         `read` = const function('*a'|'*l'|integer?) -> string?;
---#         `tmpfile` = const function() -> file;
---#         `type` = const function(any) -> 'file'|'closed file'?;
---#         `write` = const function(string|number);
+--#         `input` = var function(string|file?) -> file?;
+--#         `lines` = var function(string?) -> function() -> string?;
+--#         `open` = var function(string, string?) -> (file?, string?);
+--#         `output` = var function(string|file?) -> file?;
+--#         `popen` = var function(string, string?) -> file?;
+--#         `read` = var function('*a'|'*l'|integer?) -> string?;
+--#         `tmpfile` = var function() -> file;
+--#         `type` = var function(any) -> 'file'|'closed file'?;
+--#         `write` = var function(string|number);
 --#     }
 

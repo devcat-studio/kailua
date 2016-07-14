@@ -90,7 +90,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
         match op {
             UnOp::Neg => {
-                check_op!(info.assert_sub(&T::number().without_loc(), self.context()));
+                check_op!(info.assert_sub(&T::number(), self.context()));
 
                 // it is possible to be more accurate here.
                 // e.g. if ty = `v1 \/ integer` and it is known that `v1 <: integer`,
@@ -108,8 +108,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             UnOp::Len => {
-                check_op!(info.assert_sub(&(T::table() | T::string()).without_loc(),
-                                          self.context()));
+                check_op!(info.assert_sub(&(T::table() | T::string()), self.context()));
                 Ok(Slot::just(T::integer()))
             }
         }
@@ -135,26 +134,26 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if lflags.is_integral() && rflags.is_integral() &&
                    !(lflags.is_dynamic() && rflags.is_dynamic()) {
                     // we are definitely sure that it will be an integer
-                    check_op!(lhs.assert_sub(&T::integer().without_loc(), self.context()));
-                    check_op!(rhs.assert_sub(&T::integer().without_loc(), self.context()));
+                    check_op!(lhs.assert_sub(&T::integer(), self.context()));
+                    check_op!(rhs.assert_sub(&T::integer(), self.context()));
                     Ok(Slot::just(T::integer()))
                 } else {
                     // technically speaking they coerce strings to numbers,
                     // but that's probably not what you want
-                    check_op!(lhs.assert_sub(&T::number().without_loc(), self.context()));
-                    check_op!(rhs.assert_sub(&T::number().without_loc(), self.context()));
+                    check_op!(lhs.assert_sub(&T::number(), self.context()));
+                    check_op!(rhs.assert_sub(&T::number(), self.context()));
                     Ok(Slot::just(T::number()))
                 }
             }
 
             BinOp::Div | BinOp::Pow => {
-                check_op!(lhs.assert_sub(&T::number().without_loc(), self.context()));
-                check_op!(rhs.assert_sub(&T::number().without_loc(), self.context()));
+                check_op!(lhs.assert_sub(&T::number(), self.context()));
+                check_op!(rhs.assert_sub(&T::number(), self.context()));
                 Ok(Slot::just(T::number()))
             }
 
             BinOp::Cat => {
-                let stringy = (T::number() | T::string()).without_loc();
+                let stringy = T::number() | T::string();
                 check_op!(lhs.assert_sub(&stringy, self.context()));
                 check_op!(rhs.assert_sub(&stringy, self.context()));
                 Ok(Slot::just(T::string()))
@@ -205,11 +204,11 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                                                         rhs: self.display(rhs) })
                                  .done());
                 } else if lnum || rnum { // operands are definitely numbers
-                    check_op!(lhs.assert_sub(&T::number().without_loc(), self.context()));
-                    check_op!(rhs.assert_sub(&T::number().without_loc(), self.context()));
+                    check_op!(lhs.assert_sub(&T::number(), self.context()));
+                    check_op!(rhs.assert_sub(&T::number(), self.context()));
                 } else if lstr || rstr { // operands are definitely strings
-                    check_op!(lhs.assert_sub(&T::string().without_loc(), self.context()));
-                    check_op!(rhs.assert_sub(&T::string().without_loc(), self.context()));
+                    check_op!(lhs.assert_sub(&T::string(), self.context()));
+                    check_op!(rhs.assert_sub(&T::string(), self.context()));
                 } else { // XXX
                     try!(self.env.error(expspan,
                                         m::CannotDeduceBothNumOrStr { op: op.symbol(),
@@ -517,11 +516,13 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             St::Assign(ref vars, ref exps) => {
-                let varinfos: Vec<_> = try!(vars.into_iter()
+                let varinfos: Vec<_> = try!(vars.iter()
                                                 .map(|varspec| self.visit_var_with_spec(varspec))
                                                 .collect());
                 let infos = try!(self.visit_explist(exps));
-                for (varinfo, info) in varinfos.into_iter().zip(infos.into_iter()) {
+                for ((var, varinfo), info) in vars.iter().zip(varinfos.into_iter())
+                                                         .zip(infos.into_iter()) {
+                    debug!("assigning {:?} to {:?} with type {:?}", info, var, varinfo);
                     if let Err(e) = varinfo.accept(&info, self.context()) {
                         try!(self.env.error(&varinfo, m::CannotAssign { lhs: self.display(&varinfo),
                                                                         rhs: self.display(&info) })
@@ -611,14 +612,14 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let indty;
                 if startflags.is_integral() && endflags.is_integral() && stepflags.is_integral() &&
                    !(startflags.is_dynamic() && endflags.is_dynamic() && stepflags.is_dynamic()) {
-                    try!(start.assert_sub(&T::integer().without_loc(), self.context()));
-                    try!(end.assert_sub(&T::integer().without_loc(), self.context()));
-                    try!(step.assert_sub(&T::integer().without_loc(), self.context()));
+                    try!(start.assert_sub(&T::integer(), self.context()));
+                    try!(end.assert_sub(&T::integer(), self.context()));
+                    try!(step.assert_sub(&T::integer(), self.context()));
                     indty = T::integer();
                 } else {
-                    try!(start.assert_sub(&T::number().without_loc(), self.context()));
-                    try!(end.assert_sub(&T::number().without_loc(), self.context()));
-                    try!(step.assert_sub(&T::number().without_loc(), self.context()));
+                    try!(start.assert_sub(&T::number(), self.context()));
+                    try!(end.assert_sub(&T::number(), self.context()));
+                    try!(step.assert_sub(&T::number(), self.context()));
                     indty = T::number();
                 }
 
@@ -663,7 +664,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                                          Box::new(indvar.clone()).without_loc()],
                                               tail: None };
                     let mut returns = try!(self.check_callable(&func.with_loc(expspan), &args));
-                    try!(last.assert_sub(&indvar.without_loc(), self.context()));
+                    try!(last.assert_sub(&indvar, self.context()));
 
                     // note that we ignore indvar here. it is only kept internally and
                     // not visible outside; returns is what we should assign to variables!

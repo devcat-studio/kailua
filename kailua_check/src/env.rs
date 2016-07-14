@@ -851,6 +851,18 @@ impl TypeContext for Context {
         debug!("asserting {:?} requires {:?} :> {:?}", mark, *base, *ty);
         self.assert_mark_require(mark, base, Rel::Sup, ty)
     }
+
+    fn get_mark_exact(&self, mark: Mark) -> Option<bool> {
+        let m = self.mark_infos.find(mark.0 as usize);
+        if let Some(info) = self.mark_infos.map.get(&m) {
+            match info.value {
+                MarkValue::True => return Some(true),
+                MarkValue::False => return Some(false),
+                _ => {}
+            }
+        }
+        None
+    }
 }
 
 // per-file environment

@@ -1,18 +1,18 @@
 -- definitions for Lua 5.1 package library
 
 --# assume global `module`:
---#     const function(string, function(table)...) = "become-module"
+--#     var function(string, function(table)...) = "become-module"
 --#
 --# assume global `require`:
---#     const function(string) -> any = "require"
+--#     var function(string) -> any = "require"
 --#
 --# assume global `package`:
---#     const {
+--#     var {
 --#         `cpath` = var string;
 --#         `loaded` = var { [string] = var table };
 --#         `loaders` = var { var function(string) -> (function|string|nil) };
 --#         -- TODO no builtin tag for fields
---#         `loadlib` = const function(string, string);-- = "eval";
+--#         `loadlib` = var function(string, string);-- = "eval";
 --#         `path` = var string;
 --#         `preload` = var { var function(string) -> (function|string|nil) };
 --#         -- TODO error type not yet supported (should it be a slot?)

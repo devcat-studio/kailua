@@ -3,10 +3,12 @@ use std::ops::Deref;
 use std::rc::Rc;
 use std::cell::{Ref, RefCell};
 
+use kailua_diag::{Spanned, Reporter};
 use diag::CheckResult;
 use super::{T, TypeContext, Lattice, Display, Mark, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::Flags;
+use message as m;
 
 // slot type flexibility (a superset of type mutability)
 #[derive(Copy, Clone)]
@@ -74,6 +76,22 @@ impl F {
             },
         }
     }
+
+    pub fn resolve(&self, ctx: &TypeContext) -> F {
+        match *self {
+            F::VarOrConst(m) => match ctx.get_mark_exact(m) {
+                Some(true) => F::Var,
+                Some(false) => F::Const,
+                None => *self,
+            },
+            F::VarOrCurrently(m) => match ctx.get_mark_exact(m) {
+                Some(true) => F::Var,
+                Some(false) => F::Currently,
+                None => *self,
+            },
+            _ => *self,
+        }
+    }
 }
 
 impl PartialEq for F {
@@ -101,7 +119,7 @@ impl<'a> fmt::Debug for F {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             F::Any               => write!(f, "any"),
-            F::Dynamic           => write!(f, "WHATEVER"),
+            F::Dynamic           => write!(f, "?"),
             F::Just              => write!(f, "just"),
             F::Const             => write!(f, "const"),
             F::Var               => write!(f, "var"),
@@ -456,25 +474,52 @@ impl Lattice for Slot {
 
 // when the RHS is a normal type the LHS is automatically unlifted; useful for rvalue-only ops.
 // note that this makes a big difference from lifting the RHS.
-impl<'a> Lattice<T<'a>> for Slot {
+// also, for the convenience, this does NOT print the LHS with the flexibility
+// (which doesn't matter here).
+impl<'a> Lattice<T<'a>> for Spanned<Slot> {
     type Output = Slot;
 
     fn union(&self, _other: &T<'a>, _ctx: &mut TypeContext) -> Slot {
-        panic!("Lattice::union(Slot, T) is not supported")
+        panic!("Lattice::union(Spanned<Slot>, T) is not supported")
     }
 
     fn assert_sub(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
-        self.unlift().assert_sub(other, ctx)
+        let unlifted = self.unlift();
+        if let Err(e) = unlifted.assert_sub(other, ctx) {
+            try!(ctx.error(self.span, m::NotSubtype { sub: unlifted.display(ctx),
+                                                      sup: other.display(ctx) })
+                    .done());
+            Err(e) // XXX not sure if we can recover here
+        } else {
+            Ok(())
+        }
     }
 
     fn assert_eq(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
-        self.unlift().assert_eq(other, ctx)
+        let unlifted = self.unlift();
+        if let Err(e) = unlifted.assert_eq(other, ctx) {
+            try!(ctx.error(self.span, m::NotEqual { lhs: unlifted.display(ctx),
+                                                    rhs: other.display(ctx) })
+                    .done());
+            Err(e) // XXX not sure if we can recover here
+        } else {
+            Ok(())
+        }
     }
 }
 
 impl Display for Slot {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
-        fmt::Display::fmt(&self.0.borrow().ty.display(ctx), f)
+        let s = &*self.0.borrow();
+        match s.flex.resolve(ctx) {
+            F::Any     => write!(f, "<inaccessible type>"),
+            F::Dynamic => write!(f, "WHATEVER"),
+            F::Const   => write!(f, "const {}", s.ty.display(ctx)),
+            F::Var     => write!(f, "var {}", s.ty.display(ctx)),
+
+            // other unresolved flexibilities are not directly visible to the user
+            _ => write!(f, "{}", s.ty.display(ctx)),
+        }
     }
 }
 

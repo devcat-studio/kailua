@@ -73,6 +73,7 @@ pub fn main() {
         println!("--== {} ==--", path);
         if let Err(e) = parse_and_check(&Path::new(&path)) {
             // hide the internal error message, which will be eventually removed
+            println!("stopped due to prior errors.");
             info!("error while checking {}: {}", path, e);
         } else {
             println!("done.");

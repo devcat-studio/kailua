@@ -1,7 +1,7 @@
 use std::fmt;
 use std::env;
 
-pub trait Localize {
+pub trait Localize: fmt::Debug {
     fn fmt_localized(&self, f: &mut fmt::Formatter, lang: &str) -> fmt::Result;
 }
 
@@ -11,7 +11,7 @@ impl<'a> Localize for &'a Localize {
     }
 }
 
-impl<T: fmt::Display> Localize for T {
+impl<T: fmt::Display + fmt::Debug> Localize for T {
     fn fmt_localized(&self, f: &mut fmt::Formatter, _lang: &str) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }
@@ -51,7 +51,7 @@ macro_rules! define_msg_internal {
 
     (
         $name:ident
-        ($($vis:tt)*)
+        ($($prefix:tt)*)
         {
             constr: [ $($constr:tt)* ],
             params: [ $($params:tt)* ],
@@ -66,7 +66,8 @@ macro_rules! define_msg_internal {
         // we need to coerce the AST to delay the expansion
 
         define_msg_internal! { @as_item
-            $($vis)* struct $name<$($constr)*> {
+            #[derive(Debug)]
+            $($prefix)* struct $name<$($constr)*> {
                 $($(pub $fname: $ftype,)*)*
             }
         }
@@ -87,18 +88,18 @@ macro_rules! define_msg_internal {
 
 #[macro_export]
 macro_rules! define_msg {
-    (pub $name:ident $($t:tt)*) => (
+    ($(#[$meta:meta])* pub $name:ident $($t:tt)*) => (
         parse_generics_shim! {
             { constr, params, ltimes, tnames },
-            then define_msg_internal!($name (pub)),
+            then define_msg_internal!($name ($(#[$meta])* pub)),
             $($t)*
         }
     );
 
-    ($name:ident $($t:tt)*) => (
+    ($(#[$meta:meta])* $name:ident $($t:tt)*) => (
         parse_generics_shim! {
             { constr, params, ltimes, tnames },
-            then define_msg_internal!($name ()),
+            then define_msg_internal!($name ($(#[$meta])*)),
             $($t)*
         }
     );

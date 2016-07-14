@@ -121,6 +121,7 @@ pub trait TypeContext: Report {
     // base should be identical over the subsequent method calls for same mark
     fn assert_mark_require_eq(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()>;
     fn assert_mark_require_sup(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()>;
+    fn get_mark_exact(&self, mark: Mark) -> Option<bool>;
 }
 
 impl<'a> Report for &'a mut TypeContext {
@@ -283,6 +284,9 @@ impl TypeContext for NoTypeContext {
         panic!("assert_mark_require_sup({:?}, {:?}, {:?}) is not supposed to be called here",
                mark, *base, *ty);
     }
+    fn get_mark_exact(&self, mark: Mark) -> Option<bool> {
+        panic!("get_mark_exact({:?}) is not supposed to be called here", mark);
+    }
 }
 
 // it is generally hard to determine if a <: b \/ c (i.e. a <: b OR a <: c)
@@ -329,7 +333,7 @@ pub struct Displayed<'b, 'c, T: Display + 'b> {
     ctx: &'c TypeContext,
 }
 
-pub trait Display: Sized {
+pub trait Display: fmt::Debug + Sized {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result;
 
     fn display<'b, 'c>(&'b self, ctx: &'c TypeContext) -> Displayed<'b, 'c, Self> {
@@ -352,6 +356,12 @@ impl<T: Display> Display for Box<T> {
 impl<'b, 'c, T: Display + 'b> fmt::Display for Displayed<'b, 'c, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.base.fmt_displayed(f, self.ctx)
+    }
+}
+
+impl<'b, 'c, T: Display + fmt::Debug + 'b> fmt::Debug for Displayed<'b, 'c, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self.base, f)
     }
 }
 

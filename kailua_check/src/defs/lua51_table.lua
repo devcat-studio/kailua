@@ -2,12 +2,12 @@
 
 --# -- TODO lacks genericity (yet)
 --# assume global `table`:
---#     const {
---#         `concat` = const function({const string|number}, string?, integer?, integer?) -> string;
+--#     var {
+--#         `concat` = var function({const string|number}, string?, integer?, integer?) -> string;
 --#         -- TODO ah fuck, needs overloading with function({var any}, integer, any)
---#         `insert` = const function({var any}, any);
---#         `maxn` = const function({const any}) -> integer;
---#         `remove` = const function({var any}, integer?) -> any?;
---#         `sort` = const function({var any}, (function(WHATEVER, WHATEVER) -> boolean)?);
+--#         `insert` = var function({var any}, any);
+--#         `maxn` = var function({const any}) -> integer;
+--#         `remove` = var function({var any}, integer?) -> any?;
+--#         `sort` = var function({var any}, (function(WHATEVER, WHATEVER) -> boolean)?);
 --#     }
 
