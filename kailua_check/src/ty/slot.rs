@@ -328,7 +328,7 @@ impl Slot {
 
     // one tries to assign to `self` through parent with `flex`. how should `self` change?
     // (only makes sense when `self` is a Just slot, otherwise no-op)
-    pub fn adapt(&self, flex: F, ctx: &mut TypeContext) -> CheckResult<()> {
+    pub fn adapt(&self, flex: F, ctx: &mut TypeContext) {
         let mut slot = self.0.borrow_mut();
         if slot.flex == F::Just {
             slot.flex = match flex {
@@ -340,7 +340,6 @@ impl Slot {
                 _ => F::Just,
             };
         }
-        Ok(())
     }
 
     // one tries to assign `rhs` to `self`. is it *accepted*, and if so how should they change?

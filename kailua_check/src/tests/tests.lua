@@ -136,12 +136,32 @@ local p = true + 7 --@< Error: `true` is not a subtype of `number`
 local p = ({})[3] --@< Error: Cannot index `{}` with `3`
 --! error
 
---8<-- index-map-with-integer
+--8<-- index-intrec-with-integer
 local p = ({[3] = 4})[3]
 --! ok
 
---8<-- index-map-with-integer-no-key
+--8<-- index-intrec-with-integer-no-key
 local p = ({[2] = 4})[3] --@< Error: Cannot index `{[2] = 4}` with `3`
+--! error
+
+--8<-- index-map-with-integer
+local t = {[3] = 4, [8] = 5} --: var {[integer] = integer}
+local p = t[3]
+--! ok
+
+--8<-- index-map-with-integer-type
+local t = {[3] = 4, [8] = 5} --: var {[integer] = integer}
+local p = t[3] + 3 --@< Error: `(nil|integer)` is not a subtype of `number`
+--! error
+
+--8<-- index-map-with-integer-no-key
+local t = {[2] = 4, [8] = 5} --: var {[integer] = integer}
+local p = t[3]
+--! ok
+
+--8<-- index-map-with-integer-no-subtype
+local t = {[2] = 4, [8] = 5} --: var {[integer] = integer}
+local p = t.string --@< Error: Cannot index `{[integer] = integer}` with `"string"`
 --! error
 
 --8<-- index-empty-with-name
@@ -576,6 +596,12 @@ a[1] = nil
 local z = a[3] --: var integer?
 --@^ Error: Cannot assign `(nil|number)` into `(nil|integer)`
 --@^^ Note: The other type originates here
+--! error
+
+--8<-- var-map-update-and-index-wrong-key
+local a = {} --: var {[number] = number}
+a[1] = 42
+a.string = 54 --@< Error: Cannot index `{[number] = number}` with `"string"`
 --! error
 
 --8<-- var-map-update-and-index-without-nil

@@ -335,8 +335,11 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
         macro_rules! check {
             ($sub:expr) => {
-                if let Err(e) = $sub {
-                    return Err(format!("failed to index a table {:?}: {}", ety, e));
+                if $sub.is_err() {
+                    try!(self.env.error(expspan, m::CannotIndex { tab: self.display(ety0),
+                                                                  key: self.display(kty0) })
+                                 .done());
+                    return Ok(Some(Slot::dummy()));
                 }
             }
         }
@@ -391,7 +394,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     let vslot = fields.entry(litkey)
                                       .or_insert_with(|| new_slot(self.context(), true))
                                       .clone();
-                    check!(vslot.adapt(ety0.flex(), self.context()));
+                    vslot.adapt(ety0.flex(), self.context());
                     adapt_table!(Tables::Fields(fields));
                     return Ok(Some(vslot));
                 }
@@ -413,7 +416,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             (None, _) => {
                 let value = Slot::just(T::Dynamic);
                 // the flex should be retained
-                if lval { check!(value.adapt(ety0.flex(), self.context())); }
+                if lval { value.adapt(ety0.flex(), self.context()); }
                 Ok(Some(value))
             },
 
@@ -441,7 +444,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             (Some(&Tables::Array(ref value)), _) if intkey => {
                 if lval {
-                    check!(value.as_slot_without_nil().adapt(ety0.flex(), self.context()));
+                    value.as_slot_without_nil().adapt(ety0.flex(), self.context());
                 }
                 Ok(Some((*value).clone().into_slot()))
             },
@@ -473,7 +476,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 // reborrow ety0 to check against the final mapping type
                 if let Some(&Tables::Map(ref key, ref value)) = ety0.unlift().get_tables() {
                     check!(kty.assert_sub(key, self.context()));
-                    check!(value.as_slot_without_nil().adapt(ety0.flex(), self.context()));
+                    value.as_slot_without_nil().adapt(ety0.flex(), self.context());
                     Ok(Some((*value).clone().into_slot()))
                 } else {
                     unreachable!()
