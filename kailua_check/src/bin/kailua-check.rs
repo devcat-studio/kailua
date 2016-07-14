@@ -47,11 +47,15 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
                 })
             }
 
-            if !path.ends_with(".lua") {
+            let try_dotlua = !path.ends_with(".lua");
+            if try_dotlua {
                 try_path!(format!("{}.lua.kailua", path));
+            }
+            // this has to be first, it turns out that people tries to use A.kailua against A.lua
+            try_path!(format!("{}.kailua", path));
+            if try_dotlua {
                 try_path!(format!("{}.lua", path));
             }
-            try_path!(format!("{}.kailua", path));
             try_path!(path);
             Err(format!("module not found"))
         }

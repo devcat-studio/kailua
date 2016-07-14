@@ -1086,6 +1086,17 @@ return false -- false triggers a Lua bug, so it is prohibited
 
 --! error
 
+--8<-- require-returns-whatever
+--# open lua51
+local a = require 'a'
+a(a*a[a])
+
+--& a
+--# assume x: WHATEVER
+return x
+
+--! ok
+
 --8<-- require-returns-string
 --# open lua51
 --# assume x: var string

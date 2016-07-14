@@ -940,7 +940,7 @@ impl<'ctx> Env<'ctx> {
             let flags = ty.flags();
 
             // prepare for the worse
-            if flags.contains(T_FALSE) {
+            if !flags.is_dynamic() && flags.contains(T_FALSE) {
                 try!(self.error(span, m::ModCannotReturnFalse {}).done());
                 return Ok(Slot::dummy());
             }
