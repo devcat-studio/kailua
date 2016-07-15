@@ -1271,6 +1271,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             _ => {
                 let seq = try!(self.visit_exp(exp));
                 let info = seq.into_first();
+                // XXX should detect non-local slots and reject them!
+                // probably we can do that via proper weakening, but who knows.
                 Ok((Some(Cond::Flags(info.clone(), T_TRUTHY)), SpannedSlotSeq::from_slot(info)))
             }
         }

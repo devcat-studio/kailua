@@ -1427,7 +1427,9 @@ local p = 'string' --: string
 --! ok
 
 --8<-- unknown-builtin
---# assume sudo: [sudo] { --@< Warning: `sudo` is an unknown built-in name and ignored
+--# --@v Warning: `sudo` is an unknown built-in name and ignored
+--# assume sudo: [sudo] {
+--#     --@v Warning: `make_sandwich` is an unknown built-in name and ignored
 --#     make_sandwich = const [make_sandwich] function(boolean)
 --# }
 --! ok

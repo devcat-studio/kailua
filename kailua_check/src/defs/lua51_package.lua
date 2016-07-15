@@ -11,8 +11,7 @@
 --#         `cpath` = var [package_cpath] string;
 --#         `loaded` = var { [string] = var table };
 --#         `loaders` = var { var function(string) -> (function|string|nil) };
---#         -- TODO no builtin tag for fields
---#         `loadlib` = var [eval] function(string, string);
+--#         `loadlib` = var [geval] function(string, string);
 --#         `path` = var [package_path] string;
 --#         `preload` = var { var function(string) -> (function|string|nil) };
 --#         -- TODO error type not yet supported (should it be a slot?)

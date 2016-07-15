@@ -159,8 +159,7 @@ impl<'a> T<'a> {
                 if let Some(builtin) = Builtin::from_name(bname) {
                     Ok(T::Builtin(builtin, Box::new(try!(T::from(kind, resolv)))))
                 } else {
-                    // TODO suppress the warning in built-in definitions...
-                    //try!(resolv.warn(bname, m::UnknownBuiltinName { name: &bname.base }).done());
+                    try!(resolv.warn(bname, m::UnknownBuiltinName { name: &bname.base }).done());
                     T::from(kind, resolv)
                 }
             }

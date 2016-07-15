@@ -8,7 +8,7 @@
 --#     var function(string?, any?) -> any?
 --#
 --# assume global `dofile`:
---#     var [eval] function(string?) -> any?
+--#     var [geval] function(string?) -> any?
 --#
 --# -- TODO diverging function signature
 --# assume global `error`:
@@ -30,15 +30,15 @@
 --#
 --# -- TODO sequence conditional union
 --# assume global `load`:
---#     var [eval] function(function() -> string?, string?) -> (function?, string?)
+--#     var [geval] function(function() -> string?, string?) -> (function?, string?)
 --#
 --# -- TODO sequence conditional union
 --# assume global `loadfile`:
---#     var [eval] function(string?) -> (function?, string?)
+--#     var [geval] function(string?) -> (function?, string?)
 --#
 --# -- TODO sequence conditional union
 --# assume global `loadstring`:
---#     var [eval] function(string, string?) -> (function?, string?)
+--#     var [geval] function(string, string?) -> (function?, string?)
 --#
 --# -- TODO genericity
 --# assume global `next`:
