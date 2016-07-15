@@ -46,9 +46,9 @@ impl fmt::Display for Key {
         }
 
         match *self {
-            Key::Int(ref v) => write!(f, "[{:?}]", *v),
+            Key::Int(ref v) => write!(f, "{:?}", *v),
             Key::Str(ref s) if unquotable_name(s) => write!(f, "{:-?}", *s),
-            Key::Str(ref s) => write!(f, "[{:?}]", *s),
+            Key::Str(ref s) => write!(f, "`{:-?}`", *s),
         }
     }
 }

@@ -141,7 +141,7 @@ local p = ({[3] = 4})[3]
 --! ok
 
 --8<-- index-intrec-with-integer-no-key
-local p = ({[2] = 4})[3] --@< Error: Cannot index `{[2] = 4}` with `3`
+local p = ({[2] = 4})[3] --@< Error: Cannot index `{2 = 4}` with `3`
 --! error
 
 --8<-- index-map-with-integer
@@ -189,7 +189,7 @@ local p = ({['not ice'] = 4})[x]
 
 --8<-- index-rec-with-weird-string-error
 --# assume x: 'ice'
-local p = ({['not ice'] = 4})[x] --@< Error: Cannot index `{["not ice"] = 4}` with `"ice"`
+local p = ({['not ice'] = 4})[x] --@< Error: Cannot index `{`not ice` = 4}` with `"ice"`
 --! error
 
 --8<-- methodcall-empty
@@ -547,7 +547,7 @@ a[1] = 42
 --@^ Error: Cannot adapt the table type `var {}` into `{<unknown type>,}`
 --@^^ Note: The table had to be adapted in order to index it with `1`
 a[2] = 54
---@^ Error: Cannot adapt the table type `var {}` into `{[2] = <unknown type>}`
+--@^ Error: Cannot adapt the table type `var {}` into `{2 = <unknown type>}`
 --@^^ Note: The table had to be adapted in order to index it with `2`
 --! error
 
