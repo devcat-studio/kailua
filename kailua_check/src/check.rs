@@ -763,15 +763,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 Ok(Exit::None)
             }
 
-            St::KailuaAssume(scope, ref name, kindm, ref kind, ref builtin) => {
-                let mut ty = try!(T::from(kind, &mut self.env));
-                if let Some(ref bname) = *builtin {
-                    if let Some(builtin) = Builtin::from_name(bname) {
-                        ty = T::Builtin(builtin, Box::new(ty));
-                    } else {
-                        warn!("unrecognized builtin name {:?} for {:?} ignored", *bname, *name);
-                    }
-                }
+            St::KailuaAssume(scope, ref name, kindm, ref kind) => {
+                let ty = try!(T::from(kind, &mut self.env));
                 let flex = match kindm {
                     M::None => F::VarOrCurrently(self.context().gen_mark()),
                     M::Var => F::Var,

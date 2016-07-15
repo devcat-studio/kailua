@@ -42,7 +42,7 @@ impl<'a> Localize for &'a Tok {
     }
 }
 
-macro_rules! define_tokens {
+macro_rules! define_puncts {
     ($ty:ident |$lang:ident|: $($i:ident $t:expr,)*) => (
         #[derive(Copy, Clone, Debug, PartialEq, Eq)]
         pub enum $ty { $($i,)* }
@@ -56,7 +56,7 @@ macro_rules! define_tokens {
     );
 }
 
-define_tokens! { Punct |lang|:
+define_puncts! { Punct |lang|:
     Plus        "`+`",
     Dash        "`-`",
     Star        "`*`",
@@ -96,85 +96,71 @@ define_tokens! { Punct |lang|:
     Newline         match lang { "ko" => "개행문자", _ => "a newline" },
 }
 
-macro_rules! kwname {
-    ($lang:ident $name:expr) => (
-        match $lang {
-            "ko" => concat!("예약어 `", $name, "`"),
-            _ => concat!("a keyword `", $name, "`"),
+macro_rules! define_keywords {
+    ($ty:ident: everywhere { $($i:ident $t:expr,)* } meta_only { $($mi:ident $mt:expr,)* }) => (
+        #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+        pub enum $ty { $($i,)* $($mi,)* }
+
+        impl $ty {
+            pub fn from(s: &[u8], in_meta: bool) -> Option<Keyword> {
+                match (in_meta, s) {
+                    $((_, $t) => Some(Keyword::$i),)*
+                    $((true, $mt) => Some(Keyword::$mi),)*
+                    (_, _) => None,
+                }
+            }
+
+            pub fn name(&self) -> &'static [u8] {
+                match *self { $($ty::$i => $t,)* $($ty::$mi => $mt,)* }
+            }
         }
-    )
+
+        impl Localize for $ty {
+            fn fmt_localized(&self, f: &mut fmt::Formatter, lang: &str) -> fmt::Result {
+                let name = str::from_utf8(self.name()).unwrap();
+                match lang {
+                    "ko" => write!(f, "예약어 `{}`", name),
+                    _ => write!(f, "a keyword `{}`", name),
+                }
+            }
+        }
+    );
 }
 
-define_tokens! { Keyword |lang|:
-    And         kwname!(lang "and"),
-    Break       kwname!(lang "break"),
-    Do          kwname!(lang "do"),
-    Else        kwname!(lang "else"),
-    Elseif      kwname!(lang "elseif"),
-    End         kwname!(lang "end"),
-    False       kwname!(lang "false"),
-    For         kwname!(lang "for"),
-    Function    kwname!(lang "function"),
-    If          kwname!(lang "if"),
-    In          kwname!(lang "in"),
-    Local       kwname!(lang "local"),
-    Nil         kwname!(lang "nil"),
-    Not         kwname!(lang "not"),
-    Or          kwname!(lang "or"),
-    Repeat      kwname!(lang "repeat"),
-    Return      kwname!(lang "return"),
-    Then        kwname!(lang "then"),
-    True        kwname!(lang "true"),
-    Until       kwname!(lang "until"),
-    While       kwname!(lang "while"),
+define_keywords! { Keyword:
+    everywhere {
+        And         b"and",
+        Break       b"break",
+        Do          b"do",
+        Else        b"else",
+        Elseif      b"elseif",
+        End         b"end",
+        False       b"false",
+        For         b"for",
+        Function    b"function",
+        If          b"if",
+        In          b"in",
+        Local       b"local",
+        Nil         b"nil",
+        Not         b"not",
+        Or          b"or",
+        Repeat      b"repeat",
+        Return      b"return",
+        Then        b"then",
+        True        b"true",
+        Until       b"until",
+        While       b"while",
+    }
 
-    // Kailua extensions
-    Assume      kwname!(lang "assume"),
-    Const       kwname!(lang "const"),
-    Global      kwname!(lang "global"),
-    Module      kwname!(lang "module"),
-    Once        kwname!(lang "once"),
-    Open        kwname!(lang "open"),
-    Type        kwname!(lang "type"),
-    Var         kwname!(lang "var"),
-}
-
-impl Keyword {
-    pub fn from(s: &[u8], allow_meta: bool) -> Option<Keyword> {
-        match (allow_meta, s) {
-            (_, b"and")      => Some(Keyword::And),
-            (_, b"break")    => Some(Keyword::Break),
-            (_, b"do")       => Some(Keyword::Do),
-            (_, b"else")     => Some(Keyword::Else),
-            (_, b"elseif")   => Some(Keyword::Elseif),
-            (_, b"end")      => Some(Keyword::End),
-            (_, b"false")    => Some(Keyword::False),
-            (_, b"for")      => Some(Keyword::For),
-            (_, b"function") => Some(Keyword::Function),
-            (_, b"if")       => Some(Keyword::If),
-            (_, b"in")       => Some(Keyword::In),
-            (_, b"local")    => Some(Keyword::Local),
-            (_, b"nil")      => Some(Keyword::Nil),
-            (_, b"not")      => Some(Keyword::Not),
-            (_, b"or")       => Some(Keyword::Or),
-            (_, b"repeat")   => Some(Keyword::Repeat),
-            (_, b"return")   => Some(Keyword::Return),
-            (_, b"then")     => Some(Keyword::Then),
-            (_, b"true")     => Some(Keyword::True),
-            (_, b"until")    => Some(Keyword::Until),
-            (_, b"while")    => Some(Keyword::While),
-
-            (true, b"assume") => Some(Keyword::Assume),
-            (true, b"const")  => Some(Keyword::Const),
-            (true, b"global") => Some(Keyword::Global),
-            (true, b"module") => Some(Keyword::Module),
-            (true, b"once")   => Some(Keyword::Once),
-            (true, b"open")   => Some(Keyword::Open),
-            (true, b"type")   => Some(Keyword::Type),
-            (true, b"var")    => Some(Keyword::Var),
-
-            (_, _) => None,
-        }
+    meta_only { // Kailua extensions
+        Assume      b"assume",
+        Const       b"const",
+        Global      b"global",
+        Module      b"module",
+        Once        b"once",
+        Open        b"open",
+        Type        b"type",
+        Var         b"var",
     }
 }
 

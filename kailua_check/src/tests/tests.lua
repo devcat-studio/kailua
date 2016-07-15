@@ -918,7 +918,7 @@ assert(type(13) == type('string')) -- no-op
 
 --8<-- assert-not-1
 --# open lua51
---# assume assert_not: const function(any) = 'assert-not'
+--# assume assert_not: const [assert_not] function(any)
 --# assume p: integer|nil
 --# assume q: integer|nil
 assert_not(p or not q) -- i.e. assert(not p and q)
@@ -927,7 +927,7 @@ print(q + 5)
 
 --8<-- assert-not-2
 --# open lua51
---# assume assert_not: const function(any) = 'assert-not'
+--# assume assert_not: const [assert_not] function(any)
 --# assume p: integer|nil
 --# assume q: integer|nil
 assert_not(p or not q) -- i.e. assert(not p and q)
@@ -936,7 +936,7 @@ print(p + 5) --@< Error: `nil` is not a subtype of `number`
 
 --8<-- assert-type
 --# open lua51
---# assume assert_type: const function(any, string) = 'assert-type'
+--# assume assert_type: const [assert_type] function(any, string)
 --# assume p: integer|string
 assert_type(p, 'integer')
 print(p + 5)
@@ -1424,5 +1424,11 @@ p = 63 --: integer --@< Error: Cannot redefine the type of a global variable `p`
 local p = 42 --: integer
 local p = 54 --: integer
 local p = 'string' --: string
+--! ok
+
+--8<-- unknown-builtin
+--# assume sudo: [sudo] { --@< Warning: `sudo` is an unknown built-in name and ignored
+--#     make_sandwich = const [make_sandwich] function(boolean)
+--# }
 --! ok
 

@@ -126,11 +126,6 @@ define_msg! { pub NoArgsAfterExpColonName<'a> { read: &'a Tok }:
     _    => "Expected argument(s) after `<expression> : <name>`, got {read}",
 }
 
-define_msg! { pub NoStringAfterAssumeNameKind<'a> { read: &'a Tok }:
-    "ko" => "`assume <이름> : <타입> =` 뒤에 문자열 리터럴이 나와야 하는데 {read}이(가) 나왔습니다",
-    _    => "Expected a string after `assume <name> : <kind> =`, got {read}",
-}
-
 define_msg! { pub NoFuncOrNameAfterLocal<'a> { read: &'a Tok }:
     "ko" => "`local` 뒤에 이름이나 `function`이 나와야 하는데 {read}이(가) 나왔습니다",
     _    => "Expected a name or `function` after `local`, got {read}",
@@ -268,5 +263,10 @@ define_msg! { pub NoSingleTypeButTypeSeq:
 define_msg! { pub CannotRedefineBuiltin:
     "ko" => "내장 타입은 재선언할 수 없습니다",
     _    => "Cannot redefine a builtin type",
+}
+
+define_msg! { pub BuiltinSpecToKindSeq:
+    "ko" => "[name] 꼴의 내장 타입 선언은 타입열에는 붙일 수 없습니다",
+    _    => "Cannot attach the built-in type specification (like [name]) to the type sequence",
 }
 

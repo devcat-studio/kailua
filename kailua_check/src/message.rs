@@ -185,3 +185,8 @@ define_msg! { pub UnknownLiteralTypeName:
     _    => "The literal cannot appear as a return type name for `type`",
 }
 
+define_msg! { pub UnknownBuiltinName<'a> { name: &'a Name }:
+    "ko" => "{name} 내장 함수명을 알 수 없어서 무시합니다",
+    _    => "{name} is an unknown built-in name and ignored",
+}
+

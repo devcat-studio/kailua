@@ -40,9 +40,9 @@ impl Builtin {
             b"require"       => Some(Builtin::Require),
             b"type"          => Some(Builtin::Type),
             b"assert"        => Some(Builtin::Assert),
-            b"assert-not"    => Some(Builtin::AssertNot),
-            b"assert-type"   => Some(Builtin::AssertType),
-            b"generic-pairs" => Some(Builtin::GenericPairs),
+            b"assert_not"    => Some(Builtin::AssertNot),
+            b"assert_type"   => Some(Builtin::AssertType),
+            b"generic_pairs" => Some(Builtin::GenericPairs),
             _ => None,
         }
     }
@@ -52,9 +52,9 @@ impl Builtin {
             Builtin::Require => "require",
             Builtin::Type => "type",
             Builtin::Assert => "assert",
-            Builtin::AssertNot => "assert-not",
-            Builtin::AssertType => "assert-type",
-            Builtin::GenericPairs => "generic-pairs",
+            Builtin::AssertNot => "assert_not",
+            Builtin::AssertType => "assert_type",
+            Builtin::GenericPairs => "generic_pairs",
         }
     }
 }

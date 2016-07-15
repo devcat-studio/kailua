@@ -368,22 +368,22 @@ do end
 
 --8<-- assume
 --# assume a: string
---! [KailuaAssume(Local, `a`, _, String, None)]
+--! [KailuaAssume(Local, `a`, _, String)]
 
 --8<-- assume-and-empty
 --# assume a: string
 --#
---! [KailuaAssume(Local, `a`, _, String, None)]
+--! [KailuaAssume(Local, `a`, _, String)]
 
 --8<-- assume-multiline
 --# assume a:
 --#   string
---! [KailuaAssume(Local, `a`, _, String, None)]
+--! [KailuaAssume(Local, `a`, _, String)]
 
 --8<-- assume-global-multiline
 --# assume global a:
 --#   string
---! [KailuaAssume(Global, `a`, _, String, None)]
+--! [KailuaAssume(Global, `a`, _, String)]
 
 --8<-- assume-global-global
 --# assume global global --@< Fatal: Expected a name, got a keyword `global`
@@ -392,13 +392,14 @@ do end
 --8<-- assume-incomplete
 --# assume a:
 --# assume b: string --@< Error: Expected a single type, got a keyword `assume`
+                     --@^ Error: Expected a newline, got a name
 --! error
 
 --8<-- assume-global-local
 --# assume global a: {x=string}
 --# assume b: {y=string}
---! [KailuaAssume(Global, `a`, _, Record(["x": _ String]), None), \
---!  KailuaAssume(Local, `b`, _, Record(["y": _ String]), None)]
+--! [KailuaAssume(Global, `a`, _, Record(["x": _ String])), \
+--!  KailuaAssume(Local, `b`, _, Record(["y": _ String]))]
 
 --8<-- assume-assume
 --# assume assume: WHATEVER --@< Fatal: Expected a name, got a keyword `assume`
@@ -406,17 +407,16 @@ do end
 
 --8<-- assume-quoted-assume
 --# assume `assume`: WHATEVER
---! [KailuaAssume(Local, `assume`, _, Dynamic, None)]
+--! [KailuaAssume(Local, `assume`, _, Dynamic)]
 
 --8<-- quoted-assume-assume
 --# `assume` `assume`: WHATEVER --@< Error: Expected a newline, got a name
 --! error
 
---8<-- assume-builtin
---# assume a: WHATEVER = "foo"
+--8<-- assume-builtin-rejected
+--# assume a: WHATEVER = "foo" --@< Error: Expected a newline, got `=`
 --# assume b: WHATEVER
---! [KailuaAssume(Local, `a`, _, Dynamic, Some("foo")), \
---!  KailuaAssume(Local, `b`, _, Dynamic, None)]
+--! error
 
 --8<-- kind-table
 local x --: {b=var string, a=integer, c=const {d=const {}}}
@@ -578,6 +578,40 @@ local x --: {[integer] = const {var {[string] = {integer, integer}?}}}
 --!                    Const Array(Var Map(String, \
 --!                                        _ Union([Tuple([_ Integer, _ Integer]), \
 --!                                                 Nil]))))], [])]
+
+--8<-- kind-builtin-1
+local x --: [builtin] string
+--! [Local([`x`: _ [`builtin`] String], [])]
+
+--8<-- kind-builtin-2
+local x --: [builtin] function(any)
+--! [Local([`x`: _ [`builtin`] Func([(Any) -> ()])], [])]
+
+--8<-- kind-builtin-paren
+local x --: ([builtin] (string))
+--! [Local([`x`: _ [`builtin`] String], [])]
+
+--8<-- kind-builtin-empty
+local x --: [] string --@< Fatal: Expected a name, got `]`
+--! error
+
+--8<-- kind-builtin-wrong
+local x --: [built-in] string --@< Fatal: Expected `]`, got `-`
+--! error
+
+--8<-- kind-builtin-keyword
+local x --: [type] function(any)
+--! [Local([`x`: _ [`type`] Func([(Any) -> ()])], [])]
+
+--8<-- kind-builtin-dup
+local x --: [builtin] [builtin] string --@< Error: Expected a single type, got `[`
+                                       --@^ Error: Expected a newline, got a name
+--! error
+
+--8<-- kind-builtin-seq
+local x --: function() -> [builtin] (string, string)
+--@^ Error: Cannot attach the built-in type specification (like [name]) to the type sequence
+--! error
 
 --8<-- funcspec
 --v ()
@@ -964,7 +998,7 @@ a, *b = 5 --@< Fatal: Expected a left-hand-side expression, got `*`
 
 --8<-- assume-named
 --# assume x: whatever
---! [KailuaAssume(Local, `x`, _, `whatever`, None)]
+--! [KailuaAssume(Local, `x`, _, `whatever`)]
 
 --8<-- assume-rec-invalid-char
 --# assume x: {x = integer #} --@< Fatal: Expected `,`, `;` or `}`, got `#`
@@ -991,7 +1025,7 @@ a, *b = 5 --@< Fatal: Expected a left-hand-side expression, got `*`
 --! error
 
 --8<-- assume-builtin-and-literal-recover
---# assume x: WHATEVER = hello --@< Error: Expected a string after `assume <name> : <kind> =`, got a name
+--# assume x: WHATEVER = hello --@< Error: Expected a newline, got `=`
 --# assume y: "bo\gus"         --@< Error: Unrecognized escape sequence in a string
 f(                             --@< Fatal: Expected `)`, got the end of file
 --! error
@@ -1033,7 +1067,7 @@ f(                                      --@< Fatal: Expected `)`, got the end of
 --# type int = integer
 --# assume x: {int}
 --! [KailuaType(`int`, Integer), \
---!  KailuaAssume(Local, `x`, _, Array(_ `int`), None)]
+--!  KailuaAssume(Local, `x`, _, Array(_ `int`))]
 
 --8<-- alias-builtin
 --# type any = integer --@< Error: Cannot redefine a builtin type

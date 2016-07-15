@@ -2,20 +2,20 @@
 
 --# -- TODO return generics
 --# assume global `assert`:
---#     var function(any, string?) = "assert"
+--#     var [assert] function(any, string?)
 --#
 --# assume global `collectgarbage`:
 --#     var function(string?, any?) -> any?
 --#
 --# assume global `dofile`:
---#     var function(string?) -> any? = "eval"
+--#     var [eval] function(string?) -> any?
 --#
 --# -- TODO diverging function signature
 --# assume global `error`:
 --#     var function(string, integer?)
 --#
 --# assume global `_G`:
---#     var table = "genv"
+--#     var [genv] table
 --#
 --# assume global `getfenv`:
 --#     var function(function|integer?) -> table
@@ -24,28 +24,28 @@
 --#     var function(any) -> table?
 --#
 --# assume global `ipairs`:
---#     var function({const WHATEVER}) -> (function({const WHATEVER}, integer) -> (integer?, any),
---#                                        {const WHATEVER}, integer) = "generic-pairs"
+--#     var [generic_pairs]
+--#         function({const WHATEVER}) -> (function({const WHATEVER}, integer) -> (integer?, any),
+--#                                        {const WHATEVER}, integer)
 --#
 --# -- TODO sequence conditional union
 --# assume global `load`:
---#     var function(function() -> string?, string?) -> (function?, string?) = "eval"
+--#     var [eval] function(function() -> string?, string?) -> (function?, string?)
 --#
 --# -- TODO sequence conditional union
 --# assume global `loadfile`:
---#     var function(string?) -> (function?, string?) = "eval"
+--#     var [eval] function(string?) -> (function?, string?)
 --#
 --# -- TODO sequence conditional union
 --# assume global `loadstring`:
---#     var function(string, string?) -> (function?, string?) = "eval"
+--#     var [eval] function(string, string?) -> (function?, string?)
 --#
 --# -- TODO genericity
 --# assume global `next`:
 --#     var function(table, any?) -> (integer, any)
 --#
 --# assume global `pairs`:
---#     var function(table) -> (function(table, any) -> (any?, any),
---#                             table, any) = "generic-pairs"
+--#     var [generic_pairs] function(table) -> (function(table, any) -> (any?, any), table, any)
 --#
 --# -- TODO `f` should be once function
 --# -- TODO genericity
@@ -82,7 +82,7 @@
 --#
 --# -- TODO enumerate all the possibility?
 --# assume global `type`:
---#     var function(any) -> string = "type"
+--#     var [type] function(any) -> string
 --#
 --# -- TODO genericity
 --# assume global `unpack`:

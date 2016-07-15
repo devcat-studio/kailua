@@ -100,6 +100,15 @@ impl<'a, R: TypeResolver> TypeResolver for &'a mut R {
     }
 }
 
+impl<'a> Report for &'a mut TypeResolver {
+    fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> kailua_diag::Result<()> {
+        (**self).add_span(kind, span, msg)
+    }
+    fn can_continue(&self) -> bool {
+        (**self).can_continue()
+    }
+}
+
 pub trait TypeContext: Report {
     // type variable management
     fn last_tvar(&self) -> Option<TVar>;

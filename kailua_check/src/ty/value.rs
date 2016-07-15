@@ -3,6 +3,7 @@ use std::ops;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
+use kailua_diag::Reporter;
 use kailua_syntax::{K, SlotKind, Str, M};
 use diag::CheckResult;
 use super::{F, Slot, SlotWithNil};
@@ -10,6 +11,7 @@ use super::{TypeContext, NoTypeContext, TypeResolver, Lattice, TySeq, Display};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
+use message as m;
 
 // basic value types, also used for enumeration and construction
 #[derive(Clone)]
@@ -28,8 +30,8 @@ pub enum T<'a> {
     Tables(Cow<'a, Tables>),            // table, ...
     Functions(Cow<'a, Functions>),      // function, ...
     TVar(TVar),                         // type variable
-    Builtin(Builtin, Box<T<'a>>),       // builtin types (cannot be nested)
-    Union(Cow<'a, Unioned>),              // union types A | B | ...
+    Builtin(Builtin, Box<T<'a>>),       // builtin types (cannot be nested, nesting is ignored)
+    Union(Cow<'a, Unioned>),            // union types A | B | ...
 }
 
 impl<'a> T<'a> {
@@ -151,6 +153,16 @@ impl<'a> T<'a> {
                     ty = ty | try!(T::from(kind, resolv));
                 }
                 Ok(ty)
+            }
+
+            K::Builtin(ref kind, ref bname) => {
+                if let Some(builtin) = Builtin::from_name(bname) {
+                    Ok(T::Builtin(builtin, Box::new(try!(T::from(kind, resolv)))))
+                } else {
+                    // TODO suppress the warning in built-in definitions...
+                    //try!(resolv.warn(bname, m::UnknownBuiltinName { name: &bname.base }).done());
+                    T::from(kind, resolv)
+                }
             }
         }
     }

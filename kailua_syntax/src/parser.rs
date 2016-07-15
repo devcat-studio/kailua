@@ -282,6 +282,23 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
+    fn parse_name_or_keyword(&mut self) -> diag::Result<Spanned<Name>> {
+        let tok = try!(self.read());
+        match tok.1.base {
+            Tok::Name(name) => {
+                let name: Name = name.into();
+                Ok(name.with_loc(tok.1.span))
+            }
+            Tok::Keyword(keyword) => {
+                let name: Name = keyword.name().into();
+                Ok(name.with_loc(tok.1.span))
+            }
+            _ => {
+                self.report.fatal(tok.1.span, m::NoName { read: &tok.1.base }).done()
+            }
+        }
+    }
+
     fn parse_block(&mut self) -> diag::Result<Spanned<Block>> {
         let begin = self.pos();
         let mut stmts = Vec::new();
@@ -1476,12 +1493,54 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             let nil = Box::new(K::Nil).with_loc(Span::dummy());
             kind = Box::new(K::Union(vec![kind, nil])).with_loc(begin..self.last_pos());
         }
+
         Ok(Some(AtomicKind::One(kind)))
+    }
+
+    fn try_parse_kailua_prefixed_kind_seq(&mut self) -> diag::Result<Option<AtomicKind>> {
+        let pos = self.pos();
+
+        let builtin = if self.may_expect(Punct::LBracket) {
+            // builtin spec: `[` NAME `]` KIND
+            let name = try!(self.parse_name_or_keyword());
+            try!(self.expect(Punct::RBracket));
+            Some(name.base.with_loc(pos..self.last_pos())) // expand the span
+        } else {
+            None
+        };
+
+        if let Some(kindseq) = try!(self.try_parse_kailua_atomic_kind_seq()) {
+            // apply the builtin spec if any
+            if let Some(builtin) = builtin {
+                match kindseq {
+                    AtomicKind::One(kind) => {
+                        let kind = Box::new(K::Builtin(kind, builtin));
+                        Ok(Some(AtomicKind::One(kind.with_loc(pos..self.last_pos()))))
+                    }
+                    AtomicKind::Seq(mut kindseq) => {
+                        if kindseq.head.len() == 1 && kindseq.tail.is_none() {
+                            // we are using AtomicKind::Seq to signal the end of the parsing,
+                            // so we need to keep the variant as is
+                            let kind = kindseq.head.pop().unwrap();
+                            let kind = Box::new(K::Builtin(kind, builtin));
+                            kindseq.head.push(kind.with_loc(pos..self.last_pos()));
+                        } else {
+                            try!(self.report.error(&builtin, m::BuiltinSpecToKindSeq {}).done());
+                        }
+                        Ok(Some(AtomicKind::Seq(kindseq)))
+                    }
+                }
+            } else {
+                Ok(Some(kindseq))
+            }
+        } else {
+            Ok(None)
+        }
     }
 
     fn try_parse_kailua_kind_seq(&mut self) -> diag::Result<Option<Spanned<Seq<Spanned<Kind>>>>> {
         let begin = self.pos();
-        match try!(self.try_parse_kailua_atomic_kind_seq()) {
+        match try!(self.try_parse_kailua_prefixed_kind_seq()) {
             None => Ok(None),
             Some(AtomicKind::Seq(kindseq)) => {
                 Ok(Some(kindseq.with_loc(begin..self.last_pos())))
@@ -1492,7 +1551,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     let mut kinds = vec![kind];
                     while self.may_expect(Punct::Pipe) {
                         let begin = self.pos();
-                        match try!(self.try_parse_kailua_atomic_kind_seq()) {
+                        match try!(self.try_parse_kailua_prefixed_kind_seq()) {
                             Some(AtomicKind::One(kind2)) => {
                                 kinds.push(kind2);
                             }
@@ -1668,7 +1727,6 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
             let stmt = match try!(self.read()) {
                 // assume [global] NAME ":" MODF KIND
-                // assume [global] NAME ":" MODF KIND "=" STR (for builtin spec)
                 (_, Spanned { base: Tok::Keyword(Keyword::Assume), .. }) => {
                     let scope = if self.may_expect(Keyword::Global) {
                         NameScope::Global
@@ -1680,23 +1738,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     let modf = try!(self.parse_kailua_mod());
                     let kind = try!(self.parse_kailua_kind());
 
-                    let builtin;
-                    if self.may_expect(Punct::Eq) {
-                        let tok = try!(self.read()).1;
-                        if let Tok::Str(s) = tok.base {
-                            builtin = Some(Str::from(s).with_loc(tok.span));
-                        } else {
-                            try!(self.report.error(tok.span, m::NoStringAfterAssumeNameKind
-                                                             { read: &tok.base })
-                                            .done());
-                            try!(self.skip_meta_comment(Punct::DashDashHash));
-                            return Ok(Some(None));
-                        }
-                    } else {
-                        builtin = None;
-                    }
-
-                    Some(Box::new(St::KailuaAssume(scope, name, modf, kind, builtin)))
+                    Some(Box::new(St::KailuaAssume(scope, name, modf, kind)))
                 }
 
                 // open NAME
@@ -1736,8 +1778,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
     pub fn into_chunk(mut self) -> diag::Result<Spanned<Block>> {
         let chunk = try!(self.parse_block());
-        try!(self.expect(EOF));
         if self.report.can_continue() {
+            try!(self.expect(EOF)); // do not try to expect EOF on error
             Ok(chunk)
         } else {
             // the report had recoverable error(s), but we now stop here

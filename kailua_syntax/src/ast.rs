@@ -333,7 +333,7 @@ pub enum St {
     // Kailua extensions
     KailuaOpen(Spanned<Name>),
     KailuaType(Spanned<Name>, Spanned<Kind>),
-    KailuaAssume(NameScope, Spanned<Name>, M, Spanned<Kind>, Option<Spanned<Str>>),
+    KailuaAssume(NameScope, Spanned<Name>, M, Spanned<Kind>),
 }
 
 pub type Stmt = Box<St>;
@@ -411,6 +411,7 @@ pub enum K {
     UserData,
     Named(Spanned<Name>),
     Union(Vec<Spanned<Kind>>),
+    Builtin(Spanned<Kind>, Spanned<Name>),
     Error(Option<Spanned<Str>>),
 }
 
@@ -452,6 +453,7 @@ impl fmt::Debug for K {
             K::Tuple(ref fields) => write!(f, "Tuple({:?})", *fields),
             K::Func(ref funcs) => write!(f, "Func({:?})", *funcs),
             K::Union(ref kinds) => write!(f, "Union({:?})", *kinds),
+            K::Builtin(ref k, ref b) => write!(f, "[{:?}] {:?}", *b, *k),
         }
     }
 }

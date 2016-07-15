@@ -1,7 +1,7 @@
 -- definitions for Lua 5.1 string library
 
 --# assume global `string`:
---#     var {
+--#     var [string_meta] {
 --#         `byte` = var function(string, integer?, integer?) -> (integer...);
 --#         `char` = var function(integer...) -> string;
 --#         `dump` = var function(function) -> string;
@@ -20,5 +20,5 @@
 --#         `reverse` = var function(string) -> string;
 --#         `sub` = var function(string, integer, integer?) -> string;
 --#         `upper` = var function(string) -> string;
---#     } = "string-meta"
+--#     }
 
