@@ -549,7 +549,7 @@ impl TypeContext for Context {
     fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
         debug!("adding a constraint {:?} :> {:?}", lhs, *rhs);
         if let Some(eb) = self.tvar_eq.get_bound(lhs).and_then(|b| b.bound.clone()) {
-            try!(rhs.assert_sub(&eb, self));
+            try!(rhs.assert_sub(&*eb, self));
         } else {
             if let Some(lb) = self.tvar_sup.add_bound(lhs, rhs).map(|b| b.clone().into_send()) {
                 // the original bound is not consistent, bound :> rhs still has to hold
@@ -560,7 +560,7 @@ impl TypeContext for Context {
                 }
             }
             if let Some(ub) = self.tvar_sub.get_bound(lhs).and_then(|b| b.bound.clone()) {
-                try!(rhs.assert_sub(&ub, self));
+                try!(rhs.assert_sub(&*ub, self));
             }
         }
         Ok(())
@@ -577,7 +577,7 @@ impl TypeContext for Context {
             }
         } else {
             if let Some(ub) = self.tvar_sub.get_bound(lhs).and_then(|b| b.bound.clone()) {
-                try!(rhs.assert_sub(&ub, self));
+                try!(rhs.assert_sub(&*ub, self));
             }
             if let Some(lb) = self.tvar_sup.get_bound(lhs).and_then(|b| b.bound.clone()) {
                 try!((*lb).assert_sub(rhs, self));

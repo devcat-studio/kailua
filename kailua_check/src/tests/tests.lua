@@ -1434,3 +1434,29 @@ local p = 'string' --: string
 --# }
 --! ok
 
+--8<-- builtin-with-subtyping-1
+--# assume x: var [`internal subtype`] number
+--# assume y: var number
+x = y
+--@^ Error: Cannot assign `var number` into `var [internal subtype] number`
+--@^^ Note: The other type originates here
+--! error
+
+--8<-- builtin-with-subtyping-2
+--# assume x: var [`internal subtype`] number
+--# assume y: var number
+y = x
+--! ok
+
+--8<-- builtin-without-subtyping-1
+--# assume x: var [`internal no_subtype`] number
+--# assume y: var number
+x = y
+--! ok
+
+--8<-- builtin-without-subtyping
+--# assume x: var [`internal no_subtype`] number
+--# assume y: var number
+y = x
+--! ok
+

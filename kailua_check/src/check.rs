@@ -457,7 +457,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             },
 
             (Some(&Tables::Map(ref key, ref value)), false) => {
-                check!(kty.assert_sub(key, self.context()));
+                check!(kty.assert_sub(&**key, self.context()));
                 Ok(Some((*value).clone().into_slot()))
             },
 
@@ -474,7 +474,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 // reborrow ety0 to check against the final mapping type
                 if let Some(&Tables::Map(ref key, ref value)) = ety0.unlift().get_tables() {
-                    check!(kty.assert_sub(key, self.context()));
+                    check!(kty.assert_sub(&**key, self.context()));
                     value.as_slot_without_nil().adapt(ety0.flex(), self.context());
                     Ok(Some((*value).clone().into_slot()))
                 } else {

@@ -1,5 +1,9 @@
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Builtin {
+    // only used to test built-ins requiring subtypes and those not.
+    _Subtype,
+    _NoSubtype,
+
     // function(string, ...) -> table
     // also loads a code specified by the string literal (if any).
     Require,
@@ -64,6 +68,9 @@ pub enum Builtin {
 impl Builtin {
     pub fn from_name(name: &[u8]) -> Option<Builtin> {
         match name {
+            b"internal subtype"    => Some(Builtin::_Subtype),
+            b"internal no_subtype" => Some(Builtin::_NoSubtype),
+
             b"require"       => Some(Builtin::Require),
             b"type"          => Some(Builtin::Type),
             b"assert"        => Some(Builtin::Assert),
@@ -82,6 +89,8 @@ impl Builtin {
 
     pub fn name(&self) -> &'static str {
         match *self {
+            Builtin::_Subtype     => "internal subtype",
+            Builtin::_NoSubtype   => "internal no_subtype",
             Builtin::Require      => "require",
             Builtin::Type         => "type",
             Builtin::Assert       => "assert",
@@ -117,6 +126,10 @@ impl Builtin {
     // generally the built-in working via assignment should have this false.
     pub fn needs_subtype(&self) -> bool {
         match *self {
+            // only used for testing
+            Builtin::_Subtype => true,
+            Builtin::_NoSubtype => false,
+
             Builtin::PackagePath |
             Builtin::PackageCpath => false,
             _ => true,

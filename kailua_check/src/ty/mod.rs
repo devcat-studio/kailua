@@ -162,7 +162,7 @@ impl<A: Lattice<B>, B> Lattice<Box<B>> for Box<A> {
     }
 
     fn assert_eq(&self, other: &Box<B>, ctx: &mut TypeContext) -> CheckResult<()> {
-        (**self).assert_sub(other, ctx)
+        (**self).assert_eq(other, ctx)
     }
 }
 

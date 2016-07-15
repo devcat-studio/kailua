@@ -481,6 +481,66 @@ impl<'a> T<'a> {
     }
 }
 
+impl<'a> Lattice<Unioned> for T<'a> {
+    type Output = Unioned;
+
+    fn union(&self, other: &Unioned, ctx: &mut TypeContext) -> Unioned {
+        Unioned::from(self).union(other, ctx)
+    }
+
+    // assumes that the Unioned itself has been simplified.
+    fn assert_sub(&self, other: &Unioned, ctx: &mut TypeContext) -> CheckResult<()> {
+        // try to match each component
+        match *self {
+            T::Dynamic | T::None => return Ok(()),
+
+            T::Nil      => if other.simple.contains(U_NIL)      { return Ok(()); },
+            T::Boolean  => if other.simple.contains(U_BOOLEAN)  { return Ok(()); },
+            T::True     => if other.simple.contains(U_TRUE)     { return Ok(()); },
+            T::False    => if other.simple.contains(U_FALSE)    { return Ok(()); },
+            T::Thread   => if other.simple.contains(U_THREAD)   { return Ok(()); },
+            T::UserData => if other.simple.contains(U_USERDATA) { return Ok(()); },
+
+            T::Numbers(ref lhs) =>
+                if let Some(ref rhs) = other.numbers { return lhs.assert_sub(rhs, ctx); },
+            T::Strings(ref lhs) =>
+                if let Some(ref num) = other.strings { return lhs.assert_sub(num, ctx); },
+            T::Tables(ref lhs) =>
+                if let Some(ref num) = other.tables { return lhs.assert_sub(num, ctx); },
+            T::Functions(ref lhs) =>
+                if let Some(ref num) = other.functions { return lhs.assert_sub(num, ctx); },
+
+            T::TVar(lhs) => {
+                if other.tvar.is_some() { // XXX cannot determine the type var relation
+                    return error_not_sub(self, other);
+                } else {
+                    return ctx.assert_tvar_sub(lhs, &T::Union(Cow::Borrowed(other)));
+                }
+            },
+
+            T::Union(ref lhs) => return lhs.assert_sub(other, ctx),
+
+            _ => {}
+        }
+
+        // the union sans type variable is not a subtype of self.
+        // XXX we can try asserting an additional constraint to the union's type variable if any,
+        // but for now we bail out
+        error_not_sub(self, other)
+    }
+
+    // assumes that the Unioned itself has been simplified.
+    fn assert_eq(&self, other: &Unioned, ctx: &mut TypeContext) -> CheckResult<()> {
+        match *self {
+            T::Dynamic => return Ok(()),
+            T::Union(ref lhs) => return lhs.assert_eq(other, ctx),
+            _ => {}
+        }
+
+        error_not_eq(self, other)
+    }
+}
+
 impl<'a, 'b> Lattice<T<'b>> for T<'a> {
     type Output = T<'static>;
 
@@ -491,7 +551,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
                 T::Builtin(lb, Box::new(lhs.union(rhs, ctx))),
             (&T::Builtin(_, ref lhs), &T::Builtin(_, ref rhs)) => lhs.union(rhs, ctx),
             (&T::Builtin(_, ref lhs), rhs) => (**lhs).union(rhs, ctx),
-            (lhs, &T::Builtin(_, ref rhs)) => lhs.union(rhs, ctx),
+            (lhs, &T::Builtin(_, ref rhs)) => lhs.union(&**rhs, ctx),
 
             // dynamic eclipses everything else
             (&T::Dynamic, _) => T::Dynamic,
@@ -537,9 +597,26 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
 
         let ok = match (self, other) {
             // built-in types are destructured first
-            (&T::Builtin(_, ref lhs), &T::Builtin(_, ref rhs)) => return lhs.assert_sub(rhs, ctx),
-            (&T::Builtin(_, ref lhs), rhs) => return (**lhs).assert_sub(rhs, ctx),
-            (lhs, &T::Builtin(_, ref rhs)) => return lhs.assert_sub(rhs, ctx),
+            // some built-in requires the subtyping, so if any operand has such built-in
+            // and the built-in doesn't match bail out
+            (&T::Builtin(lb, ref lhs), &T::Builtin(rb, ref rhs)) => {
+                if (lb.needs_subtype() || rb.needs_subtype()) && lb != rb {
+                    false
+                } else {
+                    return lhs.assert_sub(rhs, ctx);
+                }
+            },
+            (&T::Builtin(_lb, ref lhs), rhs) => {
+                // every built-in types are subtypes of the original type
+                return (**lhs).assert_sub(rhs, ctx);
+            },
+            (lhs, &T::Builtin(rb, ref rhs)) => {
+                if rb.needs_subtype() {
+                    false
+                } else {
+                    return lhs.assert_sub(&**rhs, ctx);
+                }
+            },
 
             (&T::Dynamic, _) => true,
             (_, &T::Dynamic) => true,
@@ -573,32 +650,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
                 return a.visit(|i| i.assert_sub(b, ctx));
             },
 
-            // a <: b1 \/ b2 === a <: b1 OR a <: b2
-            (&T::Nil,      &T::Union(ref b)) => b.simple.contains(U_NIL),
-            (&T::Boolean,  &T::Union(ref b)) => b.simple.contains(U_BOOLEAN),
-            (&T::True,     &T::Union(ref b)) => b.simple.contains(U_TRUE),
-            (&T::False,    &T::Union(ref b)) => b.simple.contains(U_FALSE),
-            (&T::Thread,   &T::Union(ref b)) => b.simple.contains(U_THREAD),
-            (&T::UserData, &T::Union(ref b)) => b.simple.contains(U_USERDATA),
-
-            (&T::Numbers(ref a), &T::Union(ref b)) => {
-                if let Some(ref num) = b.numbers { return a.assert_sub(num, ctx); }
-                false
-            },
-            (&T::Strings(ref a), &T::Union(ref b)) => {
-                if let Some(ref str) = b.strings { return a.assert_sub(str, ctx); }
-                false
-            },
-            (&T::Tables(ref a), &T::Union(ref b)) => {
-                if let Some(ref tab) = b.tables { return a.assert_sub(tab, ctx); }
-                false
-            },
-            (&T::Functions(ref a), &T::Union(ref b)) => {
-                if let Some(ref func) = b.functions { return a.assert_sub(func, ctx); }
-                false
-            },
-            // XXX a <: T \/ b === a <: T OR a <: b
-            (&T::TVar(_a), &T::Union(ref b)) if b.tvar.is_some() => false,
+            (a, &T::Union(ref b)) => return a.assert_sub(&**b, ctx),
 
             (&T::TVar(a), &T::TVar(b)) => return a.assert_sub(&b, ctx),
             (a, &T::TVar(b)) => return ctx.assert_tvar_sup(b, a),
@@ -615,9 +667,29 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
 
         let ok = match (self, other) {
             // built-in types are destructured first
-            (&T::Builtin(_, ref lhs), &T::Builtin(_, ref rhs)) => return lhs.assert_eq(rhs, ctx),
-            (&T::Builtin(_, ref lhs), rhs) => return (**lhs).assert_eq(rhs, ctx),
-            (lhs, &T::Builtin(_, ref rhs)) => return lhs.assert_eq(rhs, ctx),
+            // some built-in requires the subtyping, so if any operand has such built-in
+            // and the built-in doesn't match bail out
+            (&T::Builtin(lb, ref lhs), &T::Builtin(rb, ref rhs)) => {
+                if (lb.needs_subtype() || rb.needs_subtype()) && lb != rb {
+                    false
+                } else {
+                    return lhs.assert_eq(rhs, ctx);
+                }
+            },
+            (&T::Builtin(lb, ref lhs), rhs) => {
+                if lb.needs_subtype() {
+                    false
+                } else {
+                    return (**lhs).assert_eq(rhs, ctx);
+                }
+            },
+            (lhs, &T::Builtin(rb, ref rhs)) => {
+                if rb.needs_subtype() {
+                    false
+                } else {
+                    return lhs.assert_eq(&**rhs, ctx);
+                }
+            },
 
             (&T::Dynamic, _) => true,
             (_, &T::Dynamic) => true,
@@ -644,9 +716,8 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (a, &T::TVar(b)) => return ctx.assert_tvar_eq(b, a),
             (&T::TVar(a), b) => return ctx.assert_tvar_eq(a, b),
 
-            (&T::Union(ref a), &T::Union(ref b)) => return a.assert_eq(b, ctx),
-            (&T::Union(ref _a), _b) => unimplemented!(), // XXX for now
-            (_a, &T::Union(ref _b)) => unimplemented!(), // XXX for now
+            (a, &T::Union(ref b)) => return a.assert_eq(&**b, ctx),
+            (&T::Union(ref _a), _b) => false, // XXX for now
 
             (_, _) => false,
         };
@@ -714,7 +785,7 @@ impl<'a> Display for T<'a> {
             T::Strings(ref str)    => fmt::Display::fmt(str, f),
             T::Tables(ref tab)     => fmt::Display::fmt(&tab.display(ctx), f),
             T::Functions(ref func) => fmt::Display::fmt(&func.display(ctx), f),
-            T::Builtin(b, ref t)   => write!(f, "{} (= {})", t.display(ctx), b.name()),
+            T::Builtin(b, ref t)   => write!(f, "[{}] {}", b.name(), t.display(ctx)),
             T::Union(ref u)        => fmt::Display::fmt(&u.display(ctx), f),
         }
     }
@@ -738,7 +809,7 @@ impl<'a> fmt::Debug for T<'a> {
             T::Tables(ref tab)     => fmt::Debug::fmt(tab, f),
             T::Functions(ref func) => fmt::Debug::fmt(func, f),
             T::TVar(tv)            => write!(f, "<#{}>", tv.0),
-            T::Builtin(b, ref t)   => write!(f, "{:?} (= {})", *t, b.name()),
+            T::Builtin(b, ref t)   => write!(f, "[{}] {:?}", b.name(), t),
             T::Union(ref u)        => fmt::Debug::fmt(u, f),
         }
     }
@@ -750,13 +821,13 @@ impl<'a> From<T<'a>> for Unioned {
 
 pub type Ty = Box<T<'static>>;
 
-#[cfg(test)] 
+#[cfg(test)]
 #[allow(unused_variables, dead_code)]
 mod tests {
     use kailua_diag::NoReport;
     use kailua_syntax::Str;
     use std::rc::Rc;
-    use ty::{Lattice, TypeContext, NoTypeContext, F, Slot, Mark};
+    use ty::{Lattice, TypeContext, NoTypeContext, F, Slot, Mark, Builtin};
     use env::Context;
     use super::*;
 
@@ -930,6 +1001,28 @@ mod tests {
                        &mut NoTypeContext),
                    Ok(()));
 
+        // built-in subtyping
+        let subnil = T::Builtin(Builtin::_Subtype, Box::new(T::Nil));
+        let nosubnil = T::Builtin(Builtin::_NoSubtype, Box::new(T::Nil));
+        let nosubtrue = T::Builtin(Builtin::_NoSubtype, Box::new(T::True));
+        let nosubtrueornil = T::Builtin(Builtin::_NoSubtype, Box::new(T::True | T::Nil));
+        let nosubboolornil = T::Builtin(Builtin::_NoSubtype, Box::new(T::Boolean | T::Nil));
+        assert!(subnil.assert_sub(&subnil, &mut NoTypeContext).is_ok());
+        assert!(subnil.assert_sub(&T::Nil, &mut NoTypeContext).is_ok());
+        assert!(T::Nil.assert_sub(&subnil, &mut NoTypeContext).is_err());
+        assert!(nosubnil.assert_sub(&nosubnil, &mut NoTypeContext).is_ok());
+        assert!(nosubnil.assert_sub(&T::Nil, &mut NoTypeContext).is_ok());
+        assert!(T::Nil.assert_sub(&nosubnil, &mut NoTypeContext).is_ok());
+        assert!(nosubnil.assert_sub(&subnil, &mut NoTypeContext).is_err());
+        assert!(subnil.assert_sub(&nosubnil, &mut NoTypeContext).is_err());
+        assert!(nosubtrue.assert_sub(&nosubnil, &mut NoTypeContext).is_err());
+        assert!(nosubnil.assert_sub(&nosubtrueornil, &mut NoTypeContext).is_ok());
+        assert!(nosubtrue.assert_sub(&nosubtrueornil, &mut NoTypeContext).is_ok());
+        assert!(nosubboolornil.assert_sub(&nosubtrueornil, &mut NoTypeContext).is_err());
+        assert!(nosubtrueornil.assert_sub(&nosubboolornil, &mut NoTypeContext).is_ok());
+        assert!(nosubboolornil.assert_sub(&subnil, &mut NoTypeContext).is_err());
+        assert!(nosubboolornil.assert_sub(&nosubboolornil, &mut NoTypeContext).is_ok());
+
         let mut ctx = Context::new(Rc::new(NoReport));
 
         {
@@ -967,6 +1060,31 @@ mod tests {
             // {a=just integer, b=just v1} = {a=just v2, b=just string, c=just boolean} (!)
             assert!(t1.assert_eq(&t2, &mut ctx).is_err());
         }
+    }
+
+    #[test]
+    fn test_eq() {
+        // built-in subtyping
+        let subnil = T::Builtin(Builtin::_Subtype, Box::new(T::Nil));
+        let nosubnil = T::Builtin(Builtin::_NoSubtype, Box::new(T::Nil));
+        let nosubtrue = T::Builtin(Builtin::_NoSubtype, Box::new(T::True));
+        let nosubtrueornil = T::Builtin(Builtin::_NoSubtype, Box::new(T::True | T::Nil));
+        let nosubboolornil = T::Builtin(Builtin::_NoSubtype, Box::new(T::Boolean | T::Nil));
+        assert!(subnil.assert_eq(&subnil, &mut NoTypeContext).is_ok());
+        assert!(subnil.assert_eq(&T::Nil, &mut NoTypeContext).is_err());
+        assert!(T::Nil.assert_eq(&subnil, &mut NoTypeContext).is_err());
+        assert!(nosubnil.assert_eq(&nosubnil, &mut NoTypeContext).is_ok());
+        assert!(nosubnil.assert_eq(&T::Nil, &mut NoTypeContext).is_ok());
+        assert!(T::Nil.assert_eq(&nosubnil, &mut NoTypeContext).is_ok());
+        assert!(nosubnil.assert_eq(&subnil, &mut NoTypeContext).is_err());
+        assert!(subnil.assert_eq(&nosubnil, &mut NoTypeContext).is_err());
+        assert!(nosubtrue.assert_eq(&nosubnil, &mut NoTypeContext).is_err());
+        assert!(nosubnil.assert_eq(&nosubtrueornil, &mut NoTypeContext).is_err());
+        assert!(nosubtrue.assert_eq(&nosubtrueornil, &mut NoTypeContext).is_err());
+        assert!(nosubboolornil.assert_eq(&nosubtrueornil, &mut NoTypeContext).is_err());
+        assert!(nosubtrueornil.assert_eq(&nosubboolornil, &mut NoTypeContext).is_err());
+        assert!(nosubboolornil.assert_eq(&subnil, &mut NoTypeContext).is_err());
+        assert!(nosubboolornil.assert_eq(&nosubboolornil, &mut NoTypeContext).is_ok());
     }
 }
 

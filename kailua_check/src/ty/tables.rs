@@ -147,7 +147,7 @@ impl Tables {
             // fall back to the map when in doubt
             (_, tab) => match tab.lift_to_map(ctx) {
                 Tables::Map(key_, value_) => {
-                    let key = key.union(&key_, ctx);
+                    let key = key.union(&*key_, ctx);
                     let value = Slot::just(value).union(value_.as_slot_without_nil(), ctx);
                     let value = SlotWithNil::from_slot(value);
                     Tables::Map(Box::new(key), value)
@@ -255,7 +255,7 @@ impl Lattice for Tables {
             (&Tables::Fields(ref fields), &Tables::Map(ref key, ref value)) |
             (&Tables::Map(ref key, ref value), &Tables::Fields(ref fields)) => {
                 let (fkey, fvalue) = lift_fields_to_map(fields, ctx);
-                Tables::Map(Box::new(fkey.union(key, ctx)), fvalue.union(value, ctx))
+                Tables::Map(Box::new(fkey.union(&**key, ctx)), fvalue.union(value, ctx))
             },
 
             (&Tables::Empty, tab) => tab.clone(),
@@ -297,7 +297,7 @@ impl Lattice for Tables {
 
             (&Tables::Fields(ref fields), &Tables::Map(ref key, ref value)) => {
                 for (k, v) in fields {
-                    try!(k.clone().into_type().assert_sub(key, ctx));
+                    try!(k.clone().into_type().assert_sub(&**key, ctx));
                     try!(v.assert_sub(value.as_slot_without_nil(), ctx));
                 }
                 true
@@ -318,7 +318,7 @@ impl Lattice for Tables {
             },
 
             (&Tables::Array(ref value1), &Tables::Map(ref key2, ref value2)) => {
-                try!(T::integer().assert_sub(key2, ctx));
+                try!(T::integer().assert_sub(&**key2, ctx));
                 try!(value1.assert_sub(value2, ctx));
                 true
             },

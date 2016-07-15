@@ -533,7 +533,7 @@ impl fmt::Debug for Slot {
     }
 }
 
-#[cfg(test)] 
+#[cfg(test)]
 #[allow(unused_variables, dead_code)]
 mod tests {
     use kailua_diag::NoReport;
