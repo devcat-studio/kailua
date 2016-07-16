@@ -12,25 +12,36 @@ p()
 
 --8<-- funccall-var-outside-of-scope-1
 local c
-if c then local p end
+--@v-vvv Warning: These `if` case(s) are never executed
+if c then --@< Note: This condition always evaluates to a falsey value
+    local p
+end
 p() --@< Error: Global or local variable `p` is not defined
 --! error
 
 --8<-- funccall-var-outside-of-scope-2
 local c = true
-if c then local p end
+if c then --@< Warning: This condition always evaluates to a truthy value
+    local p
+end
 p() --@< Error: Global or local variable `p` is not defined
 --! error
 
 --8<-- funccall-var-outside-of-scope-3
 local c = false
-if c then local p end
+--@v-vvv Warning: These `if` case(s) are never executed
+if c then --@< Note: This condition always evaluates to a falsey value
+    local p
+end
 p() --@< Error: Global or local variable `p` is not defined
 --! error
 
 --8<-- funccall-var-outside-of-scope-4
 local c --: boolean
-if c then local p end
+--@v-vvv Warning: These `if` case(s) are never executed
+if c then --@< Note: This condition always evaluates to a falsey value
+    local p
+end
 p() --@< Error: Global or local variable `p` is not defined
 --! error
 
@@ -1515,18 +1526,15 @@ package.cpath = x
 --@^ Warning: Cannot infer the values assigned to the `package_cpath` built-in variable; subsequent `require` may be unable to find the module path
 --! ok
 
---8<-- lua51-package-path-non-literal-local-1
---# open lua51
---# assume x: string
-
+--8<-- package-path-non-literal-local-1
 -- while this is very contrived, this and subsequent tests check the ability to
 -- declare *and* assign special variables altogether.
+--# assume x: string
 local p = x --: var [package_path] string
 --@^ Warning: Cannot infer the values assigned to the `package_path` built-in variable; subsequent `require` may be unable to find the module path
 --! ok
 
---8<-- lua51-package-path-non-literal-local-2
---# open lua51
+--8<-- package-path-non-literal-local-2
 --# assume x: string
 local p = '' --: var [package_path] string
 local q = 0 --: var integer
@@ -1534,18 +1542,93 @@ p, q = x, 42
 --@^ Warning: Cannot infer the values assigned to the `package_path` built-in variable; subsequent `require` may be unable to find the module path
 --! ok
 
---8<-- lua51-package-path-non-literal-global-1
---# open lua51
+--8<-- package-path-non-literal-global-1
 --# assume x: string
 p = x --: var [package_path] string
 --@^ Warning: Cannot infer the values assigned to the `package_path` built-in variable; subsequent `require` may be unable to find the module path
 --! ok
 
---8<-- lua51-package-path-non-literal-global-2
---# open lua51
+--8<-- package-path-non-literal-global-2
 --# assume x: string
 p, q = x, x --: var [package_path] string, var [package_cpath] string
 --@^ Warning: Cannot infer the values assigned to the `package_path` built-in variable; subsequent `require` may be unable to find the module path
 --@^^ Warning: Cannot infer the values assigned to the `package_cpath` built-in variable; subsequent `require` may be unable to find the module path
+--! ok
+
+--8<-- if-false-warning-1
+--@v-vvvvv Warning: These `if` case(s) are never executed
+if false then --@< Note: This condition always evaluates to a falsey value
+    local a
+    local b
+    local c
+end
+--! ok
+
+--8<-- if-false-warning-2
+--@v-vv Warning: These `if` case(s) are never executed
+if false then --@< Note: This condition always evaluates to a falsey value
+    local a
+else
+    local b
+    local c
+end
+--! ok
+
+--8<-- if-false-warning-3
+--# assume x: boolean
+if x then
+    local a
+--@v-vv Warning: These `if` case(s) are never executed
+elseif false then --@< Note: This condition always evaluates to a falsey value
+    local b
+--@v-vv Warning: These `if` case(s) are never executed
+elseif false then --@< Note: This condition always evaluates to a falsey value
+    local c
+else
+    local d
+end
+--! ok
+
+--8<-- if-true-warning-1
+if true then --@< Warning: This condition always evaluates to a truthy value
+    local a
+    local b
+    local c
+end
+--! ok
+
+--8<-- if-true-warning-2
+--# assume x: boolean
+if x then
+    local a
+elseif true then --@< Warning: This condition always evaluates to a truthy value
+    local b
+end
+--! ok
+
+--8<-- if-true-warning-3
+--# assume x: boolean
+if true then --@< Note: This condition always evaluates to a truthy value
+    local a
+elseif x then --@<-vvvv Warning: These `if` case(s) are never executed
+    local b
+else
+    local c
+end
+--! ok
+
+--8<-- if-true-warning-4
+--# assume x: boolean
+if x then
+    local a
+elseif true then --@< Note: This condition always evaluates to a truthy value
+    local b
+elseif true then --@<-vvvvvv Warning: These `if` case(s) are never executed
+    local c
+elseif false then
+    local d
+else
+    local e
+end
 --! ok
 

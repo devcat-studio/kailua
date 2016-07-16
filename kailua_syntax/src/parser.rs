@@ -417,19 +417,28 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 let cond = try!(self.parse_exp());
                 try!(self.expect(Keyword::Then));
                 let block = try!(self.parse_block());
-                let mut blocks = vec![(cond, block)];
+                let mut blocks = vec![(cond, block).with_loc(begin..self.last_pos())];
+                let mut begin = self.pos();
                 while self.may_expect(Keyword::Elseif) {
                     let cond = try!(self.parse_exp());
                     try!(self.expect(Keyword::Then));
                     let block = try!(self.parse_block());
-                    blocks.push((cond, block));
+                    blocks.push((cond, block).with_loc(begin..self.last_pos()));
+                    begin = self.pos();
                 }
-                let lastblock = if self.may_expect(Keyword::Else) {
+                let mut lastblock = if self.may_expect(Keyword::Else) {
                     Some(try!(self.parse_block()))
                 } else {
                     None
                 };
                 try!(self.expect(Keyword::End));
+
+                // fix the span for the last block appeared to include `end`
+                if let Some(ref mut lastblock) = lastblock {
+                    lastblock.span |= self.last_pos().into();
+                } else {
+                    blocks.last_mut().unwrap().span |= self.last_pos().into();
+                }
                 Box::new(St::If(blocks, lastblock))
             }
 

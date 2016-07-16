@@ -197,3 +197,18 @@ define_msg! { pub UnknownAssignToPackagePath<'a> { name: &'a str }:
              subsequent `require` may be unable to find the module path",
 }
 
+define_msg! { pub IgnoredIfCase:
+    "ko" => "`if` 문의 이 조건(들)은 실행되지 않습니다",
+    _    => "These `if` case(s) are never executed",
+}
+
+define_msg! { pub IfCaseWithTruthyCond:
+    "ko" => "이 조건이 항상 참인 값으로 평가됩니다",
+    _    => "This condition always evaluates to a truthy value",
+}
+
+define_msg! { pub IfCaseWithFalseyCond:
+    "ko" => "이 조건이 항상 거짓인 값으로 평가됩니다",
+    _    => "This condition always evaluates to a falsey value",
+}
+

@@ -88,7 +88,7 @@ local a, b,
 local a,
       b,
       c,
-      d --@3-4 Error: Excess type specifications in the variable names
+      d --@^-< Error: Excess type specifications in the variable names
       = f() --: integer, var string
 --! error
 
@@ -101,7 +101,7 @@ local a, b = f() --: integer,
 --8<-- local-more-types-in-same-line-2
 local a = f() --: integer,
               --: var string,
-              --: const {} --@2-3 Error: Excess type specifications after the `local` declaration
+              --: const {} --@^-< Error: Excess type specifications after the `local` declaration
 --! error
 
 --8<-- assign-1-1
@@ -212,7 +212,7 @@ c --@< Error: Excess type specifications in the left hand side
 a,
 b,
 c,
-d --@3-4 Error: Excess type specifications in the left hand side
+d --@^-< Error: Excess type specifications in the left hand side
 = f() --: integer, var string
 --! error
 
@@ -225,7 +225,7 @@ a, b = f() --: integer,
 --8<-- assign-more-types-in-same-line-2
 a = f() --: integer,
         --: var string,
-        --: const {} --@2-3 Error: Excess type specifications after the assignment
+        --: const {} --@^-< Error: Excess type specifications after the assignment
 --! error
 
 --8<-- func-argtype
@@ -621,10 +621,9 @@ function foo() end
 
 --8<-- funcspec-more-arity-1
 --v (a: integer,
---v  b: string)
+--v  b: string) --@^-< Error: Excess arguments in the function specification
 function foo() end
 --! error
---@1-2 Error: Excess arguments in the function specification
 
 --8<-- funcspec-more-arity-2
 --v (a: integer,
@@ -641,9 +640,8 @@ function foo(b) end --@< Error: Mismatching argument name in the function specif
 --8<-- funcspec-less-arity-1
 --v ()
 function foo(a,
-             b) end
+             b) end --@^-< Error: Excess arguments in the function declaration
 --! error
---@2-3 Error: Excess arguments in the function declaration
 
 --8<-- funcspec-less-arity-2
 --v (a: integer)
@@ -1047,7 +1045,7 @@ f(                               --@< Fatal: Expected `)`, got the end of file
 
 --8<-- assume-or-seq-2
 --# assume x: integer | (string,
---#                      boolean) | nil --@1-2 Error: A sequence of types cannot be inside a union
+--#                      boolean) | nil --@^-< Error: A sequence of types cannot be inside a union
 f(                                      --@< Fatal: Expected `)`, got the end of file
 --! error
 

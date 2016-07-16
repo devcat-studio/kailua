@@ -90,10 +90,9 @@ fn split_line<'a>(s: &'a str, file: Option<&'a str>,
         static ref LINE_PATTERN: Regex =
             Regex::new(r"(?xs)
                          ^ (?P<line> .*?)
-                           --@ (?: (?P<line1> \d+) (?: -(?P<line2> \d+))?
-                                 | (?P<this> <)
-                                 | (?P<up> \^+)
-                                 | (?P<down> v+) )?
+                           --@ (?: (?P<line1> \d+ | < | \^+ | v+)
+                                   (?: - (?P<line2> \d+ | < | \^+ | v+) )?
+                               )?
                                \s+ (?P<kind> \w+): (?P<msg> .*)
                          $").unwrap();
     }
@@ -115,24 +114,30 @@ fn split_line<'a>(s: &'a str, file: Option<&'a str>,
     assert!(lineno > 0);
     if let Some(m) = LINE_PATTERN.captures(s) {
         let line = m.name("line").unwrap();
+
+        let parse_lineno = |s: &str| {
+            if s.starts_with("<") {
+                Ok(lineno)
+            } else if s.starts_with("^") {
+                let lineno = try!(lineno.checked_sub(s.len()).ok_or_else(|| err()));
+                if lineno == 0 { return Err(err()); }
+                Ok(lineno)
+            } else if s.starts_with("v") {
+                lineno.checked_add(s.len()).ok_or_else(|| err())
+            } else {
+                s.parse().map_err(|e| erre(e))
+            }
+        };
+
         let pos = if let Some(line1) = m.name("line1") {
-            let line1 = try!(line1.parse().map_err(|e| erre(e)));
+            let line1 = try!(parse_lineno(line1));
             let line2 = if let Some(line2) = m.name("line2") {
-                try!(line2.parse().map_err(|e| erre(e)))
+                try!(parse_lineno(line2))
             } else {
                 line1
             };
             if line1 > line2 || line1 == 0 { return Err(err()); }
             Some((line1, line2))
-        } else if let Some(_) = m.name("this") {
-            Some((lineno, lineno))
-        } else if let Some(up) = m.name("up") {
-            let lineno = try!(lineno.checked_sub(up.len()).ok_or_else(|| err()));
-            if lineno == 0 { return Err(err()); }
-            Some((lineno, lineno))
-        } else if let Some(down) = m.name("down") {
-            let lineno = try!(lineno.checked_add(down.len()).ok_or_else(|| err()));
-            Some((lineno, lineno))
         } else {
             None
         };
@@ -203,6 +208,26 @@ fn test_split_line() {
                Err(()));
     assert_eq!(split_line("hello --@7-999999999999999999999999 Error: whatever ", 42),
                Err(()));
+    assert_eq!(split_line("hello --@^-v Error: whatever ", 42),
+               Ok(("hello ", Some(Expected { pos: make_pos(41, 43), kind: Kind::Error,
+                                             msg: "whatever".into() }))));
+    assert_eq!(split_line("hello --@<-vvvv Error: whatever ", 42),
+               Ok(("hello ", Some(Expected { pos: make_pos(42, 46), kind: Kind::Error,
+                                             msg: "whatever".into() }))));
+    assert_eq!(split_line("hello --@^^^-^^ Error: whatever ", 42),
+               Ok(("hello ", Some(Expected { pos: make_pos(39, 40), kind: Kind::Error,
+                                             msg: "whatever".into() }))));
+    assert_eq!(split_line("hello --@<-< Error: whatever ", 42),
+               Ok(("hello ", Some(Expected { pos: make_pos(42, 42), kind: Kind::Error,
+                                             msg: "whatever".into() }))));
+    assert_eq!(split_line("hello --@v-< Error: whatever ", 42),
+               Err(()));
+    assert_eq!(split_line("hello --@8-vv Error: whatever ", 42),
+               Ok(("hello ", Some(Expected { pos: make_pos(8, 44), kind: Kind::Error,
+                                             msg: "whatever".into() }))));
+    assert_eq!(split_line("hello --@<-45 Error: whatever ", 42),
+               Ok(("hello ", Some(Expected { pos: make_pos(42, 45), kind: Kind::Error,
+                                             msg: "whatever".into() }))));
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]

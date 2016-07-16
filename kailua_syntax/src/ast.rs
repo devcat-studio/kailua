@@ -321,7 +321,7 @@ pub enum St {
     Do(Spanned<Block>),
     While(Spanned<Exp>, Spanned<Block>),
     Repeat(Spanned<Block>, Spanned<Exp>),
-    If(Vec<(Spanned<Exp>, Spanned<Block>)>, Option<Spanned<Block>>),
+    If(Vec<Spanned<(Spanned<Exp>, Spanned<Block>)>>, Option<Spanned<Block>>),
     For(Spanned<Name>, Spanned<Exp>, Spanned<Exp>, Option<Spanned<Exp>>, Spanned<Block>),
     ForIn(Vec<Spanned<Name>>, Vec<Spanned<Exp>>, Spanned<Block>),
     FuncDecl(NameScope, Spanned<Name>, Sig, Spanned<Block>),

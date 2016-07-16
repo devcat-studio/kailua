@@ -570,29 +570,47 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             St::If(ref conds, ref lastblock) => {
                 let mut exit = Exit::Stop;
-                let mut ignoreelse = false;
-                for &(ref cond, ref block) in conds {
-                    if ignoreelse {
-                        // TODO warning
+                let mut ignored_blocks = None; // or Some((first truthy cond span, blocks span))
+                for &Spanned { base: (ref cond, ref block), span } in conds {
+                    if let Some((_, ref mut blocks_span)) = ignored_blocks {
+                        *blocks_span |= span;
                         continue;
                     }
                     let ty = try!(self.visit_exp(cond)).into_first();
                     if ty.is_truthy() {
-                        ignoreelse = true;
+                        ignored_blocks = Some((cond.span, Span::dummy()));
                         exit = exit.or(try!(self.visit_block(block)));
                     } else if ty.is_falsy() {
-                        // TODO warning
+                        try!(self.env.warn(span, m::IgnoredIfCase {})
+                                     .note(cond, m::IfCaseWithFalseyCond {})
+                                     .done());
                     } else {
                         exit = exit.or(try!(self.visit_block(block))); // TODO scope merger
                     }
                 }
-                if ignoreelse {
-                    // TODO warning
-                } else if let &Some(ref block) = lastblock {
-                    exit = exit.or(try!(self.visit_block(block))); // TODO scope merger
+
+                if let &Some(ref block) = lastblock {
+                    if let Some((_, ref mut blocks_span)) = ignored_blocks {
+                        *blocks_span |= block.span;
+                    } else {
+                        exit = exit.or(try!(self.visit_block(block))); // TODO scope merger
+                    }
                 } else {
-                    exit = Exit::None;
+                    if ignored_blocks.is_none() {
+                        exit = Exit::None;
+                    }
                 }
+
+                if let Some((truthy_span, blocks_span)) = ignored_blocks {
+                    if blocks_span.is_dummy() {
+                        try!(self.env.warn(truthy_span, m::IfCaseWithTruthyCond {}).done());
+                    } else {
+                        try!(self.env.warn(blocks_span, m::IgnoredIfCase {})
+                                     .note(truthy_span, m::IfCaseWithTruthyCond {})
+                                     .done());
+                    }
+                }
+
                 Ok(exit)
             }
 
