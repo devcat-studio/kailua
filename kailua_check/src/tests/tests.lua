@@ -294,6 +294,25 @@ local q = p + 3 --@< Error: `(number|string)` is not a subtype of `number`
 local q = p .. 3 --@< Error: `(boolean|string)` is not a subtype of `(number|string)`
 --! error
 
+--8<-- cat-string-lit-1
+--# assume p: 'a'
+--# assume q: 'b'
+--# assume r: var 'ab'
+r = p .. q
+--! ok
+
+--8<-- cat-string-lit-2
+--# assume r: var 'ab'
+r = 'a' .. 'b'
+--! ok
+
+--8<-- cat-string-lit-3
+--# assume r: var 'ab'
+local p = 'a' --: var string
+r = p .. 'b' --@< Error: Cannot assign `string` into `var "ab"`
+             --@^ Note: The other type originates here
+--! error
+
 --8<-- var-integer-literal
 local x
 --# assume x: var 3
@@ -1180,6 +1199,16 @@ require 'a'
 -- check is dynamic
 --! ok
 
+--8<-- require-name-expr
+--# open lua51
+--# assume x: var number
+x = require('a' .. 'b')
+
+--& ab
+return 42
+
+--! ok
+
 --8<-- index-assign-typed
 local p = {x = 5, y = 6} --: var {x=number, y=number}
 p.x = 'string' --@< Error: Cannot assign `"string"` into `var number`
@@ -1420,6 +1449,17 @@ p = 54 --: integer --@< Error: Cannot redefine the type of a global variable `p`
 p = 63 --: integer --@< Error: Cannot redefine the type of a global variable `p`
 --! error
 
+--8<-- redefine-global-in-single-stmt-1
+p, p = 42, 54 --: integer, integer
+--@^ Error: Cannot redefine the type of a global variable `p`
+--! error
+
+--8<-- redefine-global-in-single-stmt-2
+p, p, p = 42, 54, 63 --: integer, integer, integer
+--@^ Error: Cannot redefine the type of a global variable `p`
+--@^^ Error: Cannot redefine the type of a global variable `p`
+--! error
+
 --8<-- redefine-local
 local p = 42 --: integer
 local p = 54 --: integer
@@ -1458,5 +1498,54 @@ x = y
 --# assume x: var [`internal no_subtype`] number
 --# assume y: var number
 y = x
+--! ok
+
+--8<-- lua51-package-path-literal
+--# open lua51
+package.path = '?.lua'
+package.cpath = '?.so'
+--! ok
+
+--8<-- lua51-package-path-non-literal
+--# open lua51
+--# assume x: string
+package.path = x
+--@^ Warning: Cannot infer the values assigned to the `package_path` built-in variable; subsequent `require` may be unable to find the module path
+package.cpath = x
+--@^ Warning: Cannot infer the values assigned to the `package_cpath` built-in variable; subsequent `require` may be unable to find the module path
+--! ok
+
+--8<-- lua51-package-path-non-literal-local-1
+--# open lua51
+--# assume x: string
+
+-- while this is very contrived, this and subsequent tests check the ability to
+-- declare *and* assign special variables altogether.
+local p = x --: var [package_path] string
+--@^ Warning: Cannot infer the values assigned to the `package_path` built-in variable; subsequent `require` may be unable to find the module path
+--! ok
+
+--8<-- lua51-package-path-non-literal-local-2
+--# open lua51
+--# assume x: string
+local p = '' --: var [package_path] string
+local q = 0 --: var integer
+p, q = x, 42
+--@^ Warning: Cannot infer the values assigned to the `package_path` built-in variable; subsequent `require` may be unable to find the module path
+--! ok
+
+--8<-- lua51-package-path-non-literal-global-1
+--# open lua51
+--# assume x: string
+p = x --: var [package_path] string
+--@^ Warning: Cannot infer the values assigned to the `package_path` built-in variable; subsequent `require` may be unable to find the module path
+--! ok
+
+--8<-- lua51-package-path-non-literal-global-2
+--# open lua51
+--# assume x: string
+p, q = x, x --: var [package_path] string, var [package_cpath] string
+--@^ Warning: Cannot infer the values assigned to the `package_path` built-in variable; subsequent `require` may be unable to find the module path
+--@^^ Warning: Cannot infer the values assigned to the `package_cpath` built-in variable; subsequent `require` may be unable to find the module path
 --! ok
 

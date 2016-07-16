@@ -41,8 +41,15 @@ impl kailua_test::Testing for Testing {
 
         let opts = Rc::new(RefCell::new(Opts { source: source, filespans: filespans.clone(),
                                                report: report.clone() }));
-        match check_from_chunk(&mut Context::new(report), &chunk, opts) {
-            Ok(()) => format!("ok"),
+        match check_from_chunk(&mut Context::new(report.clone()), &chunk, opts) {
+            Ok(()) => {
+                if report.can_continue() {
+                    format!("ok")
+                } else {
+                    info!("check failed due to prior errors");
+                    format!("error")
+                }
+            },
             Err(e) => {
                 info!("check failed: {:?}", e);
                 format!("error")

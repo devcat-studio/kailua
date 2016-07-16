@@ -10,7 +10,7 @@ use vec_map::VecMap;
 use kailua_diag::{self, Kind, Span, Spanned, Report, Reporter, WithLoc, Localize};
 use kailua_syntax::{Name, parse_chunk};
 use diag::CheckResult;
-use ty::{Ty, TySeq, T, Slot, F, TVar, Mark, Lattice, Displayed, Display};
+use ty::{Ty, TySeq, T, Slot, F, TVar, Mark, Lattice, Builtin, Displayed, Display};
 use ty::{TypeContext, TypeResolver};
 use ty::flags::*;
 use defs::get_defs;
@@ -1039,38 +1039,65 @@ impl<'ctx> Env<'ctx> {
         self.get_frame().vararg.as_ref()
     }
 
+    // same to Slot::accept but also able to handle the built-in semantics
+    // should be used for any kind of non-internal assignments
+    pub fn assign(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> CheckResult<()> {
+        // handle the built-in variables first
+        match lhs.builtin() {
+            Some(b @ Builtin::PackagePath) |
+            Some(b @ Builtin::PackageCpath) => {
+                if let Some(s) = self.resolve_exact_type(&rhs.unlift())
+                                     .and_then(|t| t.as_string().map(|s| s.to_owned())) {
+                    if b == Builtin::PackagePath {
+                        try!(self.opts.borrow_mut().set_package_path(&s));
+                    } else {
+                        try!(self.opts.borrow_mut().set_package_cpath(&s));
+                    }
+                } else {
+                    try!(self.warn(rhs, m::UnknownAssignToPackagePath { name: b.name() }).done());
+                }
+            }
+            _ => {}
+        }
+
+        if let Err(_) = lhs.accept(rhs, self.context) {
+            try!(self.error(lhs, m::CannotAssign { lhs: self.display(lhs),
+                                                   rhs: self.display(rhs) })
+                     .note_if(rhs, m::OtherTypeOrigin {})
+                     .done());
+        }
+
+        Ok(())
+    }
+
     // adapt is used when the info didn't come from the type specification
     // and should be considered identical to the assignment
-    pub fn add_local_var(&mut self, name: &Spanned<Name>, mut info: Spanned<Slot>, adapt: bool) {
+    pub fn add_local_var(&mut self, name: &Spanned<Name>, mut info: Spanned<Slot>,
+                         adapt: bool) -> CheckResult<()> {
         if adapt {
             let flex = F::VarOrCurrently(self.context().gen_mark());
             let newinfo = Slot::new(flex, T::Nil).with_loc(name);
-            newinfo.accept(&info, self.context()).unwrap();
+            try!(self.assign(&newinfo, &info));
             info = newinfo;
         }
 
         debug!("adding a local variable {:?} as {:?}", *name, info);
         self.current_scope_mut().put(name.base.to_owned(), info.base);
+        Ok(())
     }
 
     pub fn assign_to_var(&mut self, name: &Spanned<Name>, info: Spanned<Slot>) -> CheckResult<()> {
         if let Some(previnfo) = self.get_var_mut(name).map(|info| info.clone()) {
             debug!("assigning {:?} to a variable {:?} with type {:?}",
                      info, *name, previnfo);
-            if let Err(e) = previnfo.accept(&info, self.context()) {
-                try!(self.error(name, m::CannotAssign { lhs: self.display(&previnfo),
-                                                        rhs: self.display(&info) })
-                         .note_if(info, m::OtherTypeOrigin {})
-                         .done());
-                return Err(e);
-            }
+            try!(self.assign(&previnfo.clone().with_loc(name), &info));
             return Ok(());
         }
 
         debug!("adding a global variable {:?} as {:?}", *name, info);
         let flex = F::VarOrCurrently(self.context().gen_mark());
         let newinfo = Slot::new(flex, T::Nil).with_loc(name);
-        newinfo.accept(&info, self.context()).unwrap();
+        try!(self.assign(&newinfo, &info));
         self.context.global_scope_mut().put(name.base.to_owned(), newinfo.base);
         Ok(())
     }

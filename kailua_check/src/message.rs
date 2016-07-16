@@ -190,3 +190,10 @@ define_msg! { pub UnknownBuiltinName<'a> { name: &'a Name }:
     _    => "{name} is an unknown built-in name and ignored",
 }
 
+define_msg! { pub UnknownAssignToPackagePath<'a> { name: &'a str }:
+    "ko" => "`{name}` 내장 변수에 저장되는 값을 알 수 없어서 \
+             `require` 경로를 찾는데 문제가 있을 수 있습니다",
+    _    => "Cannot infer the values assigned to the `{name}` built-in variable; \
+             subsequent `require` may be unable to find the module path",
+}
+

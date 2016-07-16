@@ -5,7 +5,7 @@ use std::ops::{Deref, DerefMut};
 use std::borrow::Cow;
 use take_mut::take;
 
-use kailua_diag::{Span, Spanned, WithLoc, Report, Reporter};
+use kailua_diag::{Span, Spanned, WithLoc, Reporter};
 use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, NameScope};
 use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
@@ -154,6 +154,19 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let stringy = T::number() | T::string();
                 check_op!(lhs.assert_sub(&stringy, self.context()));
                 check_op!(rhs.assert_sub(&stringy, self.context()));
+
+                // try to narrow them further. this operation is frequently used for
+                // constructing larger (otherwise constant) literals.
+                if let Some(lhs) = self.env.resolve_exact_type(&lhs.unlift())
+                                           .and_then(|t| t.as_string().map(|s| s.to_owned())) {
+                    if let Some(rhs) = self.env.resolve_exact_type(&rhs.unlift())
+                                               .and_then(|t| t.as_string().map(|s| s.to_owned())) {
+                        let mut s: Vec<u8> = lhs.into();
+                        s.append(&mut rhs.into());
+                        return Ok(Slot::just(T::str(s.into())));
+                    }
+                }
+
                 Ok(Slot::just(T::string()))
             }
 
@@ -484,12 +497,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
     pub fn visit(&mut self, chunk: &Spanned<Block>) -> CheckResult<()> {
         try!(self.visit_block(chunk));
-        if self.env.can_continue() {
-            Ok(())
-        } else {
-            // the report had recoverable error(s), but we now stop here
-            Err(format!("stopped due to prior errors"))
-        }
+        Ok(())
     }
 
     fn visit_block(&mut self, block: &Spanned<Block>) -> CheckResult<Exit> {
@@ -521,13 +529,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 for ((var, varinfo), info) in vars.iter().zip(varinfos.into_iter())
                                                          .zip(infos.into_iter()) {
                     debug!("assigning {:?} to {:?} with type {:?}", info, var, varinfo);
-                    if let Err(e) = varinfo.accept(&info, self.context()) {
-                        try!(self.env.error(&varinfo, m::CannotAssign { lhs: self.display(&varinfo),
-                                                                        rhs: self.display(&info) })
-                                     .note_if(&info, m::OtherTypeOrigin {})
-                                     .done());
-                        return Err(e);
-                    }
+                    try!(self.env.assign(&varinfo, &info));
                 }
                 Ok(Exit::None)
             }
@@ -622,7 +624,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 }
 
                 let mut scope = self.scoped(Scope::new());
-                scope.env.add_local_var(name, Slot::just(indty).without_loc(), true);
+                try!(scope.env.add_local_var(name, Slot::just(indty).without_loc(), true));
                 let exit = try!(scope.visit_block(block));
                 if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
             }
@@ -674,7 +676,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 let mut scope = self.scoped(Scope::new());
                 for (name, ty) in names.iter().zip(indtys.into_iter()) {
-                    scope.env.add_local_var(name, Slot::new(F::Var, *ty).without_loc(), true);
+                    try!(scope.env.add_local_var(name, Slot::new(F::Var, *ty).without_loc(), true));
                 }
                 let exit = try!(scope.visit_block(block));
                 if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
@@ -685,7 +687,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let funcv = self.context().gen_tvar();
                 let info = Slot::just(T::TVar(funcv)).with_loc(stmt);
                 match scope {
-                    NameScope::Local => self.env.add_local_var(name, info, true),
+                    NameScope::Local => try!(self.env.add_local_var(name, info, true)),
                     NameScope::Global => try!(self.env.assign_to_var(name, info)),
                 }
                 let functy = try!(self.visit_func_body(None, sig, block));
@@ -715,11 +717,10 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                             M::Const => F::Const,
                         };
                         let initinfo = Slot::new(flex, ty).with_loc(kind);
-                        env.add_local_var(&namespec.base, initinfo, false);
+                        try!(env.add_local_var(&namespec.base, initinfo, false));
                         env.assign_to_var(&namespec.base, info)
                     } else {
-                        env.add_local_var(&namespec.base, info, true);
-                        Ok(())
+                        env.add_local_var(&namespec.base, info, true)
                     }
                 };
 
@@ -803,7 +804,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
         let mut scope = self.scoped(Scope::new_function(frame));
         if let Some(selfinfo) = selfinfo {
-            scope.env.add_local_var(&Name::from(&b"self"[..]).without_loc(), selfinfo, true);
+            try!(scope.env.add_local_var(&Name::from(&b"self"[..]).without_loc(), selfinfo, true));
         }
 
         let mut argshead = Vec::new();
@@ -822,7 +823,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 ty = T::TVar(argv);
                 sty = Slot::new(F::Var, T::TVar(argv));
             }
-            scope.env.add_local_var(&param.base, sty.without_loc(), false);
+            try!(scope.env.add_local_var(&param.base, sty.without_loc(), false));
             argshead.push(Box::new(ty));
         }
         let args = TySeq { head: argshead, tail: vatype };
@@ -905,16 +906,17 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     return Ok(SlotSeq::dummy());
                 }
 
-                if let Ex::Str(ref modname) = *args[0].base {
-                    if let Some(slot) = try!(self.context().get_loaded_module(modname, expspan)) {
+                if let Some(modname) = self.env.resolve_exact_type(&argtys.head[0].unlift())
+                                               .and_then(|t| t.as_string().map(|s| s.to_owned())) {
+                    if let Some(slot) = try!(self.context().get_loaded_module(&modname, expspan)) {
                         info!("requiring {:?} (cached)", modname);
                         return Ok(SlotSeq::from_slot(slot));
                     }
-                    self.context().mark_module_as_loading(modname, expspan);
+                    self.context().mark_module_as_loading(&modname, expspan);
 
                     info!("requiring {:?}", modname);
                     let opts = self.env.opts().clone();
-                    let block = match opts.borrow_mut().require_block(modname) {
+                    let block = match opts.borrow_mut().require_block(&modname) {
                         Ok(block) => block,
                         Err(_) => {
                             try!(self.env.warn(&args[0], m::CannotResolveModName {}).done());
@@ -926,7 +928,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         let mut sub = Checker::new(&mut env);
                         try!(sub.visit_block(&block));
                     }
-                    return Ok(SlotSeq::from_slot(try!(env.return_from_module(modname, expspan))));
+                    return Ok(SlotSeq::from_slot(try!(env.return_from_module(&modname, expspan))));
                 } else {
                     return Ok(SlotSeq::from(T::All));
                 }

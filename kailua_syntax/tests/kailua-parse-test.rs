@@ -24,10 +24,12 @@ impl Testing {
 impl kailua_test::Testing for Testing {
     fn run(&self, source: Rc<RefCell<Source>>, span: Span, _filespans: &HashMap<String, Span>,
            report: Rc<Report>) -> String {
-        match kailua_syntax::parse_chunk(&source.borrow(), span, &*report) {
-            Ok(chunk) => self.span_pattern.replace_all(&format!("{:?}", chunk), ""),
-            Err(_) => String::from("error"),
+        if let Ok(chunk) = kailua_syntax::parse_chunk(&source.borrow(), span, &*report) {
+            if report.can_continue() {
+                return self.span_pattern.replace_all(&format!("{:?}", chunk), "");
+            }
         }
+        String::from("error")
     }
 }
 
