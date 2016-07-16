@@ -67,8 +67,9 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
     let report = Rc::new(ConsoleReport::new(source.clone()));
     let mut context = kailua_check::Context::new(report.clone());
     let root = mainpath.parent().unwrap_or(&Path::new(".."));
-    let mut opts = Options { source: source, root: root.to_owned(), report: report };
-    kailua_check::check_from_span(&mut context, filespan, &mut opts)
+    let opts = Rc::new(RefCell::new(Options { source: source, root: root.to_owned(),
+                                              report: report }));
+    kailua_check::check_from_span(&mut context, filespan, opts)
 }
 
 pub fn main() {

@@ -23,13 +23,13 @@ impl kailua_test::Testing for Testing {
             Err(_) => return format!("parse error"),
         };
 
-        struct Opts<'a> {
+        struct Opts {
             source: Rc<RefCell<Source>>,
-            filespans: &'a HashMap<String, Span>,
+            filespans: HashMap<String, Span>,
             report: Rc<Report>,
         }
 
-        impl<'a> Options for Opts<'a> {
+        impl Options for Opts {
             fn source(&self) -> &RefCell<Source> { &*self.source }
             fn require_block(&mut self, path: &[u8]) -> CheckResult<Spanned<Block>> {
                 let path = try!(str::from_utf8(path).map_err(|_| format!("bad require name")));
@@ -39,8 +39,9 @@ impl kailua_test::Testing for Testing {
             }
         }
 
-        let mut opts = Opts { source: source, filespans: filespans, report: report.clone() };
-        match check_from_chunk(&mut Context::new(report), &chunk, &mut opts) {
+        let opts = Rc::new(RefCell::new(Opts { source: source, filespans: filespans.clone(),
+                                               report: report.clone() }));
+        match check_from_chunk(&mut Context::new(report), &chunk, opts) {
             Ok(()) => format!("ok"),
             Err(e) => {
                 info!("check failed: {:?}", e);

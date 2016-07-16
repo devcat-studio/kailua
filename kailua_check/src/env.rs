@@ -2,7 +2,7 @@ use std::mem;
 use std::ops;
 use std::str;
 use std::fmt;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::collections::{HashMap, HashSet};
 use vec_map::VecMap;
@@ -428,18 +428,22 @@ impl Context {
         &mut self.global_scope
     }
 
-    pub fn open_library(&mut self, name: &Spanned<Name>, opts: &mut Options) -> CheckResult<()> {
+    pub fn open_library(&mut self, name: &Spanned<Name>,
+                        opts: Rc<RefCell<Options>>) -> CheckResult<()> {
         let name_ = try!(str::from_utf8(&name.base).map_err(|e| e.to_string()));
         if let Some(defs) = get_defs(name_) {
             // one library may consist of multiple files, so we defer duplicate check
             for def in defs {
                 if self.opened.insert(def.name.to_owned()) {
                     let name = format!("<internal: {}>", def.name);
-                    let span = opts.source().borrow_mut().add_string(&name, def.code);
-                    let chunk = parse_chunk(&opts.source().borrow(), span, &*self.report);
-                    let chunk = try!(chunk.map_err(|_| format!("parse error")));
-                    let mut env = Env::new(self);
-                    let mut checker = Checker::new(&mut env, opts);
+                    let chunk = {
+                        let opts = opts.borrow();
+                        let span = opts.source().borrow_mut().add_string(&name, def.code);
+                        let chunk = parse_chunk(&opts.source().borrow(), span, &*self.report);
+                        try!(chunk.map_err(|_| format!("parse error")))
+                    };
+                    let mut env = Env::new(self, opts.clone());
+                    let mut checker = Checker::new(&mut env);
                     try!(checker.visit(&chunk))
                 }
             }
@@ -868,14 +872,16 @@ impl TypeContext for Context {
 // per-file environment
 pub struct Env<'ctx> {
     context: &'ctx mut Context,
+    opts: Rc<RefCell<Options>>,
     scopes: Vec<Scope>,
 }
 
 impl<'ctx> Env<'ctx> {
-    pub fn new(context: &'ctx mut Context) -> Env<'ctx> {
+    pub fn new(context: &'ctx mut Context, opts: Rc<RefCell<Options>>) -> Env<'ctx> {
         let global_frame = Frame { vararg: None, returns: None, returns_exact: false };
         Env {
             context: context,
+            opts: opts,
             // we have local variables even at the global position, so we need at least one Scope
             scopes: vec![Scope::new_function(global_frame)],
         }
@@ -884,6 +890,10 @@ impl<'ctx> Env<'ctx> {
     // not to be called internally; it intentionally reduces the lifetime
     pub fn context(&mut self) -> &mut Context {
         self.context
+    }
+
+    pub fn opts(&self) -> &Rc<RefCell<Options>> {
+        &self.opts
     }
 
     // convenience function to avoid mutable references

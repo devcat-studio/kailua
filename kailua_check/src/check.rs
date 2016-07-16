@@ -14,7 +14,6 @@ use ty::{Tables, Function, Functions, TyWithNil};
 use ty::{F, Slot, SlotSeq, SpannedSlotSeq, SlotWithNil, Builtin};
 use ty::flags::*;
 use env::{Env, Frame, Scope, Context};
-use options::Options;
 use message as m;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -55,12 +54,11 @@ enum Cond {
 
 pub struct Checker<'envr, 'env: 'envr> {
     env: &'envr mut Env<'env>,
-    opts: &'env mut Options,
 }
 
 impl<'envr, 'env> Checker<'envr, 'env> {
-    pub fn new(env: &'envr mut Env<'env>, opts: &'env mut Options) -> Checker<'envr, 'env> {
-        Checker { env: env, opts: opts }
+    pub fn new(env: &'envr mut Env<'env>) -> Checker<'envr, 'env> {
+        Checker { env: env }
     }
 
     fn context(&mut self) -> &mut Context {
@@ -753,7 +751,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             St::Break => Ok(Exit::Break),
 
             St::KailuaOpen(ref name) => {
-                try!(self.env.context().open_library(name, self.opts));
+                let opts = self.env.opts().clone();
+                try!(self.env.context().open_library(name, opts));
                 Ok(Exit::None)
             }
 
@@ -914,16 +913,17 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     self.context().mark_module_as_loading(modname, expspan);
 
                     info!("requiring {:?}", modname);
-                    let block = match self.opts.require_block(modname) {
+                    let opts = self.env.opts().clone();
+                    let block = match opts.borrow_mut().require_block(modname) {
                         Ok(block) => block,
                         Err(_) => {
                             try!(self.env.warn(&args[0], m::CannotResolveModName {}).done());
                             return Ok(SlotSeq::from(T::All));
                         }
                     };
-                    let mut env = Env::new(self.env.context());
+                    let mut env = Env::new(self.env.context(), opts);
                     {
-                        let mut sub = Checker::new(&mut env, self.opts);
+                        let mut sub = Checker::new(&mut env);
                         try!(sub.visit_block(&block));
                     }
                     return Ok(SlotSeq::from_slot(try!(env.return_from_module(modname, expspan))));
