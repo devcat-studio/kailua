@@ -24,10 +24,23 @@ pub struct Frame {
     pub returns_exact: bool, // if false, returns can be updated
 }
 
+#[derive(Clone, Debug)]
+pub struct NameDef {
+    pub span: Span,
+    pub slot: Slot,
+    pub set: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct TypeDef {
+    pub span: Span,
+    pub ty: Ty,
+}
+
 pub struct Scope {
-    names: HashMap<Name, Slot>,
+    names: HashMap<Name, NameDef>,
     frame: Option<Frame>,
-    types: HashMap<Name, (Span, Ty)>,
+    types: HashMap<Name, TypeDef>,
 }
 
 impl Scope {
@@ -39,11 +52,11 @@ impl Scope {
         Scope { names: HashMap::new(), frame: Some(frame), types: HashMap::new() }
     }
 
-    pub fn get<'a>(&'a self, name: &Name) -> Option<&'a Slot> {
+    pub fn get<'a>(&'a self, name: &Name) -> Option<&'a NameDef> {
         self.names.get(name)
     }
 
-    pub fn get_mut<'a>(&'a mut self, name: &Name) -> Option<&'a mut Slot> {
+    pub fn get_mut<'a>(&'a mut self, name: &Name) -> Option<&'a mut NameDef> {
         self.names.get_mut(name)
     }
 
@@ -56,17 +69,17 @@ impl Scope {
     }
 
     // the span indicates the position of the initial definition
-    pub fn get_type<'a>(&'a self, name: &Name) -> Option<(Span, &'a T)> {
-        self.types.get(name).map(|&(span, ref ty)| (span, &**ty))
+    pub fn get_type<'a>(&'a self, name: &Name) -> Option<&'a TypeDef> {
+        self.types.get(name)
     }
 
-    pub fn put(&mut self, name: Name, info: Slot) {
-        self.names.insert(name, info);
+    pub fn put(&mut self, name: Spanned<Name>, info: Slot, set: bool) {
+        self.names.insert(name.base, NameDef { span: name.span, slot: info, set: set });
     }
 
     // the caller should check for the outermost types first
     pub fn put_type(&mut self, name: Spanned<Name>, ty: Ty) -> bool {
-        self.types.insert(name.base, (name.span, ty)).is_none()
+        self.types.insert(name.base, TypeDef { span: name.span, ty: ty }).is_none()
     }
 }
 
@@ -993,30 +1006,30 @@ impl<'ctx> Env<'ctx> {
         self.scopes.last_mut().unwrap()
     }
 
-    pub fn get_var<'a>(&'a self, name: &Name) -> Option<&'a Slot> {
+    pub fn get_var<'a>(&'a self, name: &Name) -> Option<&'a NameDef> {
         for scope in self.scopes.iter().rev() {
-            if let Some(info) = scope.get(name) { return Some(info); }
+            if let Some(def) = scope.get(name) { return Some(def); }
         }
         self.context.global_scope().get(name)
     }
 
-    pub fn get_var_mut<'a>(&'a mut self, name: &Name) -> Option<&'a mut Slot> {
+    pub fn get_var_mut<'a>(&'a mut self, name: &Name) -> Option<&'a mut NameDef> {
         for scope in self.scopes.iter_mut().rev() {
-            if let Some(info) = scope.get_mut(name) { return Some(info); }
+            if let Some(def) = scope.get_mut(name) { return Some(def); }
         }
         self.context.global_scope_mut().get_mut(name)
     }
 
-    pub fn get_local_var<'a>(&'a self, name: &Name) -> Option<&'a Slot> {
+    pub fn get_local_var<'a>(&'a self, name: &Name) -> Option<&'a NameDef> {
         for scope in self.scopes.iter().rev() {
-            if let Some(info) = scope.get(name) { return Some(info); }
+            if let Some(def) = scope.get(name) { return Some(def); }
         }
         None
     }
 
-    pub fn get_local_var_mut<'a>(&'a mut self, name: &Name) -> Option<&'a mut Slot> {
+    pub fn get_local_var_mut<'a>(&'a mut self, name: &Name) -> Option<&'a mut NameDef> {
         for scope in self.scopes.iter_mut().rev() {
-            if let Some(info) = scope.get_mut(name) { return Some(info); }
+            if let Some(def) = scope.get_mut(name) { return Some(def); }
         }
         None
     }
@@ -1039,9 +1052,8 @@ impl<'ctx> Env<'ctx> {
         self.get_frame().vararg.as_ref()
     }
 
-    // same to Slot::accept but also able to handle the built-in semantics
-    // should be used for any kind of non-internal assignments
-    pub fn assign(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> CheckResult<()> {
+    // internally used to give different feedback for assignment failure
+    fn assign_(&mut self, lhs: &Slot, rhs: &Spanned<Slot>) -> CheckResult<bool> {
         // handle the built-in variables first
         match lhs.builtin() {
             Some(b @ Builtin::PackagePath) |
@@ -1060,10 +1072,40 @@ impl<'ctx> Env<'ctx> {
             _ => {}
         }
 
-        if let Err(_) = lhs.accept(rhs, self.context) {
+        Ok(lhs.accept(rhs, self.context).is_ok())
+    }
+
+    // same to Slot::accept but also able to handle the built-in semantics
+    // should be used for any kind of non-internal assignments
+    pub fn assign(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> CheckResult<()> {
+        if !try!(self.assign_(lhs, rhs)) {
             try!(self.error(lhs, m::CannotAssign { lhs: self.display(lhs),
                                                    rhs: self.display(rhs) })
                      .note_if(rhs, m::OtherTypeOrigin {})
+                     .done());
+        }
+        Ok(())
+    }
+
+    pub fn mark_var_as_set(&mut self, name: &Name) {
+        self.get_var_mut(name).unwrap().set = true;
+    }
+
+    pub fn ensure_var(&mut self, name: &Spanned<Name>) -> CheckResult<()> {
+        let (defspan, defslot) = {
+            let def = self.get_var(name).expect("Env::ensure_var with an undefined var");
+            if def.set { return Ok(()); }
+            (def.span, def.slot.clone())
+        };
+
+        // if the variable is not yet set, we may still try to assign nil
+        // to allow `local x --: string|nil` (which is fine even when "uninitialized").
+        if try!(self.assign_(&defslot, &Slot::just(T::Nil).without_loc())) {
+            self.mark_var_as_set(name);
+        } else {
+            // won't alter the set flag, so subsequent uses are still errors
+            try!(self.error(name.span, m::UseOfUnassignedVar {})
+                     .note_if(defspan, m::UnassignedVarOrigin { var: self.display(&defslot) })
                      .done());
         }
 
@@ -1073,7 +1115,7 @@ impl<'ctx> Env<'ctx> {
     // adapt is used when the info didn't come from the type specification
     // and should be considered identical to the assignment
     pub fn add_local_var(&mut self, name: &Spanned<Name>, mut info: Spanned<Slot>,
-                         adapt: bool) -> CheckResult<()> {
+                         adapt: bool, set: bool) -> CheckResult<()> {
         if adapt {
             let flex = F::VarOrCurrently(self.context().gen_mark());
             let newinfo = Slot::new(flex, T::Nil).with_loc(name);
@@ -1082,15 +1124,21 @@ impl<'ctx> Env<'ctx> {
         }
 
         debug!("adding a local variable {:?} as {:?}", *name, info);
-        self.current_scope_mut().put(name.base.to_owned(), info.base);
+        self.current_scope_mut().put(name.to_owned(), info.base, set);
         Ok(())
     }
 
     pub fn assign_to_var(&mut self, name: &Spanned<Name>, info: Spanned<Slot>) -> CheckResult<()> {
-        if let Some(previnfo) = self.get_var_mut(name).map(|info| info.clone()) {
-            debug!("assigning {:?} to a variable {:?} with type {:?}",
-                     info, *name, previnfo);
-            try!(self.assign(&previnfo.clone().with_loc(name), &info));
+        // work around the lack of non-lexical borrowing, awww
+        let previnfo = if let Some(def) = self.get_var_mut(name) {
+            def.set = true;
+            Some(def.slot.clone())
+        } else {
+            None
+        };
+        if let Some(previnfo) = previnfo {
+            debug!("assigning {:?} to a variable {:?} with type {:?}", info, *name, previnfo);
+            try!(self.assign(&previnfo.with_loc(name), &info));
             return Ok(());
         }
 
@@ -1098,14 +1146,15 @@ impl<'ctx> Env<'ctx> {
         let flex = F::VarOrCurrently(self.context().gen_mark());
         let newinfo = Slot::new(flex, T::Nil).with_loc(name);
         try!(self.assign(&newinfo, &info));
-        self.context.global_scope_mut().put(name.base.to_owned(), newinfo.base);
+        self.context.global_scope_mut().put(name.to_owned(), newinfo.base, true);
         Ok(())
     }
 
     pub fn assume_var(&mut self, name: &Spanned<Name>, info: Spanned<Slot>) -> CheckResult<()> {
-        if let Some(previnfo) = self.get_local_var_mut(name) {
+        if let Some(def) = self.get_local_var_mut(name) {
             debug!("(force) adding a local variable {:?} as {:?}", *name, info);
-            *previnfo = info.base;
+            def.set = true;
+            def.slot = info.base;
             return Ok(());
         }
         self.assume_global_var(name, info)
@@ -1114,7 +1163,8 @@ impl<'ctx> Env<'ctx> {
     pub fn assume_global_var(&mut self, name: &Spanned<Name>,
                              info: Spanned<Slot>) -> CheckResult<()> {
         debug!("(force) adding a global variable {:?} as {:?}", *name, info);
-        self.context.global_scope_mut().put(name.base.to_owned(), info.base);
+        // assuming inherently makes the variable set (no matter there is an assignment)
+        self.context.global_scope_mut().put(name.to_owned(), info.base, true);
         Ok(())
     }
 
@@ -1126,22 +1176,18 @@ impl<'ctx> Env<'ctx> {
         self.context.get_tvar_exact_type(tvar)
     }
 
-    pub fn get_named_type<'a>(&'a self, name: &Name) -> Option<(Span, T<'a>)> {
+    pub fn get_named_type<'a>(&'a self, name: &Name) -> Option<&'a TypeDef> {
         for scope in self.scopes.iter().rev() {
-            if let Some((span, t)) = scope.get_type(name) {
-                return Some((span, t.to_ref()));
-            }
+            if let Some(def) = scope.get_type(name) { return Some(def); }
         }
-        if let Some((span, t)) = self.context.global_scope().get_type(name) {
-            return Some((span, t.to_ref()));
-        }
+        if let Some(def) = self.context.global_scope().get_type(name) { return Some(def); }
         None
     }
 
     pub fn define_type(&mut self, name: &Spanned<Name>, ty: Ty) -> CheckResult<()> {
-        if let Some((oldspan, _oldty)) = self.get_named_type(name) {
+        if let Some(def) = self.get_named_type(name) {
             try!(self.error(name, m::CannotRedefineType { name: &name.base })
-                     .note(oldspan, m::AlreadyDefinedType {})
+                     .note(def.span, m::AlreadyDefinedType {})
                      .done());
             return Ok(());
         }
@@ -1163,8 +1209,8 @@ impl<'ctx> Report for Env<'ctx> {
 
 impl<'ctx> TypeResolver for Env<'ctx> {
     fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<T<'static>> {
-        if let Some((_, t)) = self.get_named_type(name) {
-            Ok(t.into_send())
+        if let Some(def) = self.get_named_type(name) {
+            Ok(def.ty.clone().into_send())
         } else {
             try!(self.error(name, m::NoType { name: &name.base }).done());
             Ok(T::dummy())

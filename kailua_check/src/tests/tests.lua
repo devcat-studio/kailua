@@ -1632,3 +1632,39 @@ else
 end
 --! ok
 
+--8<-- unassigned-local-var-1
+local p --: var string
+--! ok
+
+--8<-- unassigned-local-var-2
+local p --: var string
+local function f(x) end
+f(p)
+--@^ Error: The variable is not yet initialized
+--@1 Note: The variable was not implicitly initialized to `nil` as its type is `var string`
+f(p)
+--@^ Error: The variable is not yet initialized
+--@1 Note: The variable was not implicitly initialized to `nil` as its type is `var string`
+p = 'string'
+f(p) -- no longer an error
+--! error
+
+--8<-- unassigned-local-var-nil-1
+local p --: var string?
+--! ok
+
+--8<-- unassigned-local-var-nil-2
+local p --: var string?
+local function f(x) end
+f(p)
+p = 'string'
+f(p)
+p = nil
+f(p)
+--! ok
+
+--8<-- unassigned-global-var
+q, p = 42 --: var integer, var string
+--@^ Error: Cannot assign `nil` into `var string`
+--! error
+

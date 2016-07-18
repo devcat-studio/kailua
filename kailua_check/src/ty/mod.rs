@@ -12,7 +12,6 @@ pub use self::value::{T, Ty};
 pub use self::slot::{F, S, Slot};
 pub use self::with_nil::{TyWithNil, SlotWithNil};
 pub use self::seq::{SeqIter, TySeq, SpannedTySeq, SlotSeq, SpannedSlotSeq};
-pub use self::seq::{TySeqIter, SpannedTySeqIter, SlotSeqIter, SpannedSlotSeqIter};
 pub use self::builtin::Builtin;
 
 mod literals;

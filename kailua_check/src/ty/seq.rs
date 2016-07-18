@@ -2,6 +2,7 @@ use std::cmp;
 use std::fmt;
 use std::vec;
 use std::usize;
+use std::iter;
 
 use kailua_diag::{Span, Spanned, WithLoc};
 use kailua_syntax::{Seq, Kind};
@@ -11,23 +12,26 @@ use super::{TypeContext, TypeResolver};
 
 pub struct SeqIter<Item: Clone> {
     head: vec::IntoIter<Item>,
-    tail: Item,
+    tail: Option<Item>,
 }
 
 impl<Item: Clone> Iterator for SeqIter<Item> {
     type Item = Item;
 
     fn next(&mut self) -> Option<Item> {
-        Some(self.head.next().unwrap_or_else(|| self.tail.clone()))
+        self.head.next().or_else(|| self.tail.clone())
     }
 
-    fn size_hint(&self) -> (usize, Option<usize>) { (usize::MAX, None) }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        if self.tail.is_some() { (usize::MAX, None) } else { self.head.size_hint() }
+    }
 }
 
-pub type TySeqIter = SeqIter<Ty>;
-pub type SpannedTySeqIter = SeqIter<Spanned<Ty>>;
-pub type SlotSeqIter = SeqIter<Slot>;
-pub type SpannedSlotSeqIter = SeqIter<Spanned<Slot>>;
+pub type SeqIterWithNil<Item> =
+    iter::Chain<SeqIter<Item>, iter::Repeat<Item>>;
+
+pub type SeqIterWithNone<Item> =
+    iter::Chain<iter::Map<SeqIter<Item>, fn(Item) -> Option<Item>>, iter::Repeat<Option<Item>>>;
 
 macro_rules! define_tyseq {
     ($(
@@ -109,8 +113,15 @@ macro_rules! define_tyseq {
             }
 
             pub fn into_iter(self) -> SeqIter<$ty> {
-                let tail = if let Some(t) = self.tail { $tynil_to_ty(t) } else { $nil_ty };
-                SeqIter { head: self.head.into_iter(), tail: tail }
+                SeqIter { head: self.head.into_iter(), tail: self.tail.map($tynil_to_ty) }
+            }
+
+            pub fn into_iter_with_none(self) -> SeqIterWithNone<$ty> {
+                self.into_iter().map(Some::<$ty> as fn(_) -> _).chain(iter::repeat(None::<$ty>))
+            }
+
+            pub fn into_iter_with_nil(self) -> SeqIterWithNil<$ty> {
+                self.into_iter().chain(iter::repeat($nil_ty))
             }
 
             pub fn into_first(self) -> $ty {
@@ -286,8 +297,15 @@ macro_rules! define_slotseq {
             }
 
             pub fn into_iter(self) -> SeqIter<$slot> {
-                let tail = if let Some(t) = self.tail { $slotnil_to_slot(t) } else { $nil_slot };
-                SeqIter { head: self.head.into_iter(), tail: tail }
+                SeqIter { head: self.head.into_iter(), tail: self.tail.map($slotnil_to_slot) }
+            }
+
+            pub fn into_iter_with_none(self) -> SeqIterWithNone<$slot> {
+                self.into_iter().map(Some::<$slot> as fn(_) -> _).chain(iter::repeat(None::<$slot>))
+            }
+
+            pub fn into_iter_with_nil(self) -> SeqIterWithNil<$slot> {
+                self.into_iter().chain(iter::repeat($nil_slot))
             }
 
             pub fn into_first(self) -> $slot {

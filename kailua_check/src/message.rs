@@ -43,6 +43,16 @@ define_msg! { pub CannotRedefineGlobalVar<'a> { name: &'a Name }:
     _    => "Cannot redefine the type of a global variable {name}",
 }
 
+define_msg! { pub UseOfUnassignedVar:
+    "ko" => "초기화되지 않은 변수를 사용하려고 했습니다",
+    _    => "The variable is not yet initialized",
+}
+
+define_msg! { pub UnassignedVarOrigin<'a> { var: Slot<'a> }:
+    "ko" => "변수가 `{var}` 타입이기 때문에 `nil`로 자동으로 초기화되지 않습니다",
+    _    => "The variable was not implicitly initialized to `nil` as its type is `{var}`",
+}
+
 define_msg! { pub CannotRedefineType<'a> { name: &'a Name }:
     "ko" => "{name} 타입은 이미 선언되어 있습니다",
     _    => "A type named {name} is already defined",
