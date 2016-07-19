@@ -865,7 +865,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 ty = T::TVar(argv);
                 sty = Slot::new(F::Var, T::TVar(argv));
             }
-            try!(scope.env.add_local_var(&param.base, None, Some(sty.without_loc())));
+            try!(scope.env.add_local_var_already_set(&param.base, sty.without_loc()));
             argshead.push(Box::new(ty));
         }
         let args = TySeq { head: argshead, tail: vatype };

@@ -1121,28 +1121,27 @@ impl<'ctx> Env<'ctx> {
                *name, specinfo, initinfo);
 
         let assigned = initinfo.is_some();
+        let specinfo = specinfo.unwrap_or_else(|| Slot::var(T::Nil, self.context).without_loc());
+        if let Some(initinfo) = initinfo {
+            try!(self.assign_(&specinfo, &initinfo, true));
+        }
 
-        let info = if let Some(specinfo) = specinfo {
-            // adapt `initinfo` into `specinfo` if any
-            if let Some(initinfo) = initinfo {
-                try!(self.assign_(&specinfo, &initinfo, true));
-            }
-            specinfo
-        } else if let Some(initinfo) = initinfo {
-            // use `initinfo` as the sole type.
-            //
-            // we cannot blindly `accept` the `initinfo`, since it will discard the flexibility
-            // (e.g. if the callee requests `F::Var`, we need to keep that).
-            // therefore we just remap `F::Just` to `F::VarOrCurrently`.
-            // we still have to keep the special assignment behavior, though.
-            try!(self.assign_special(&initinfo, &initinfo));
-            initinfo.adapt(F::Currently, self.context);
-            initinfo
-        } else {
-            Slot::var(T::Nil, self.context).without_loc()
-        };
+        self.current_scope_mut().put(name.to_owned(), specinfo.base, assigned);
+        Ok(())
+    }
 
-        self.current_scope_mut().put(name.to_owned(), info.base, assigned);
+    pub fn add_local_var_already_set(&mut self, name: &Spanned<Name>,
+                                     info: Spanned<Slot>) -> CheckResult<()> {
+        debug!("adding a local variable {:?} already set to {:?}", *name, info);
+
+        // we cannot blindly `accept` the `initinfo`, since it will discard the flexibility
+        // (e.g. if the callee requests `F::Var`, we need to keep that).
+        // therefore we just remap `F::Just` to `F::VarOrCurrently`.
+        // we still have to keep the special assignment behavior, though.
+        try!(self.assign_special(&info, &info));
+        info.adapt(F::Currently, self.context);
+
+        self.current_scope_mut().put(name.to_owned(), info.base, true);
         Ok(())
     }
 
@@ -1161,7 +1160,7 @@ impl<'ctx> Env<'ctx> {
 
         let specinfo =
             specinfo.unwrap_or_else(|| Slot::var(T::Nil, self.context).without_loc());
-        try!(self.assign_(&specinfo, &initinfo, false));
+        try!(self.assign_(&specinfo, &initinfo, true));
         self.global_scope_mut().put(name.to_owned(), specinfo.base, true);
         Ok(())
     }
@@ -1177,11 +1176,10 @@ impl<'ctx> Env<'ctx> {
             return Ok(());
         }
 
-        // see `add_local_var` comments for the handling of initialization-only declarations
         debug!("adding a global variable {:?} as {:?} (initialized)", *name, info);
-        try!(self.assign_special(&info, &info));
-        info.adapt(F::Currently, self.context);
-        self.global_scope_mut().put(name.to_owned(), info.base, true);
+        let newinfo = Slot::var(T::Nil, self.context).with_loc(name);
+        try!(self.assign_(&newinfo, &info, true));
+        self.global_scope_mut().put(name.to_owned(), newinfo.base, true);
         Ok(())
     }
 

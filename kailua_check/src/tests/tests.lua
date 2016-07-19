@@ -760,6 +760,12 @@ a = 'bar'
 --@^^ Note: The other type originates here
 --! error
 
+--8<-- local-init-does-not-copy-modf
+local x = 42 --: const integer
+local y = x
+y = 54
+--! ok
+
 --8<-- func-returns-rec-1
 --v () -> {a=integer}
 local function p() return {a=4} end
