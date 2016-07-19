@@ -644,13 +644,15 @@ local z = a[3] --: var integer
 --@^^ Note: The other type originates here
 --! error
 
--->8-- const-map-init
+--8<-- const-map-init
 local a = {} --: const {[number] = number}
 --! ok
 
--->8-- const-map-update
+--8<-- const-map-update
 local a = {} --: const {[number] = number}
 a[1] = 42
+--@^ Error: Cannot adapt the table type `const {[number] = number}` into `{[number] = number}`
+--@^^ Note: The table had to be adapted in order to index it with `1`
 --! error
 
 --8<-- var-any-update
@@ -664,6 +666,98 @@ a = 42
 local a --: var any
 a = 42
 local b = a + 5 --@< Error: `any` is not a subtype of `number`
+--! error
+
+--8<-- var-typed-error-1
+local a = 3 --: var number
+a = 'foo'
+--@^ Error: Cannot assign `"foo"` into `var number`
+--@^^ Note: The other type originates here
+a = 4
+a = 'bar'
+--@^ Error: Cannot assign `"bar"` into `var number`
+--@^^ Note: The other type originates here
+--! error
+
+--8<-- var-typed-error-2
+local a = 'foo' --: var number
+--@^ Error: Cannot assign `"foo"` into `var number`
+--@^^ Note: The other type originates here
+a = 3
+a = 'bar'
+--@^ Error: Cannot assign `"bar"` into `var number`
+--@^^ Note: The other type originates here
+a = 4
+--! error
+
+--8<-- var-typed-error-lazy-1
+local a --: var number
+a = 3
+a = 'foo'
+--@^ Error: Cannot assign `"foo"` into `var number`
+--@^^ Note: The other type originates here
+a = 4
+a = 'bar'
+--@^ Error: Cannot assign `"bar"` into `var number`
+--@^^ Note: The other type originates here
+--! error
+
+--8<-- var-typed-error-lazy-2
+local a --: var number
+a = 'foo'
+--@^ Error: Cannot assign `"foo"` into `var number`
+--@^^ Note: The other type originates here
+a = 3
+a = 'bar'
+--@^ Error: Cannot assign `"bar"` into `var number`
+--@^^ Note: The other type originates here
+a = 4
+--! error
+
+--8<-- const-typed-error-1
+local a = 3 --: const number
+a = 'foo'
+--@^ Error: Cannot assign `"foo"` into `const number`
+--@^^ Note: The other type originates here
+a = 4
+--@^ Error: Cannot assign `4` into `const number`
+--@^^ Note: The other type originates here
+--! error
+
+--8<-- const-typed-error-2
+local a = 'foo' --: const number
+--@^ Error: Cannot assign `"foo"` into `const number`
+--@^^ Note: The other type originates here
+a = 3
+--@^ Error: Cannot assign `3` into `const number`
+--@^^ Note: The other type originates here
+a = 'bar'
+--@^ Error: Cannot assign `"bar"` into `const number`
+--@^^ Note: The other type originates here
+--! error
+
+--8<-- const-typed-error-lazy-1
+local a --: const number
+a = 3
+a = 'foo'
+--@^ Error: Cannot assign `"foo"` into `const number`
+--@^^ Note: The other type originates here
+a = 4
+--@^ Error: Cannot assign `4` into `const number`
+--@^^ Note: The other type originates here
+--! error
+
+--8<-- const-typed-error-lazy-2
+local a --: const number
+a = 'foo'
+--@^ Error: Cannot assign `"foo"` into `const number`
+--@^^ Note: The other type originates here
+a = 3
+--@^ Error: Cannot assign `3` into `const number`
+--@^^ Note: The other type originates here
+a = 'bar'
+--@^ Error: Cannot assign `"bar"` into `const number`
+--@^^ Note: The other type originates here
 --! error
 
 --8<-- func-returns-rec-1
@@ -1080,7 +1174,7 @@ x = require 'a' --@< Warning: Cannot resolve the module name given to `require`
 --8<-- require-unknown-returns-1
 --# open lua51
 x = require 'a' --@< Warning: Cannot resolve the module name given to `require`
-print(x + 4) --@< Error: `<unknown type>` is not a subtype of `integer`
+print(x + 4) --@< Error: `any` is not a subtype of `number`
 --! error
 
 --8<-- require-unknown-returns-2

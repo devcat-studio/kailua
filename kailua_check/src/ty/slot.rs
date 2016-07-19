@@ -333,7 +333,11 @@ impl Slot {
     }
 
     pub fn just<'a>(t: T<'a>) -> Slot {
-        Slot::new(F::Just, t.into_send())
+        Slot::new(F::Just, t)
+    }
+
+    pub fn var<'a>(t: T<'a>, ctx: &mut TypeContext) -> Slot {
+        Slot::new(F::VarOrCurrently(ctx.gen_mark()), t)
     }
 
     pub fn dummy() -> Slot {
@@ -361,7 +365,8 @@ impl Slot {
     }
 
     // one tries to assign `rhs` to `self`. is it *accepted*, and if so how should they change?
-    pub fn accept(&self, rhs: &Slot, ctx: &mut TypeContext) -> CheckResult<()> {
+    // if `init` is true, this is the first time assignment with lax requirements.
+    pub fn accept(&self, rhs: &Slot, ctx: &mut TypeContext, init: bool) -> CheckResult<()> {
         // accepting itself is always fine and has no effect,
         // but it has to be filtered since it will borrow twice otherwise
         if self.0.deref() as *const _ == rhs.0.deref() as *const _ { return Ok(()); }
@@ -373,23 +378,28 @@ impl Slot {
         let is_shared = |lty: &T, rhs: &S|
             lty.is_referential() && rhs.flex().is_linear() && rhs.unlift().is_referential();
 
-        match (lhs.flex, rhs.flex) {
-            (_, F::Dynamic) | (F::Dynamic, _) => {}
+        match (lhs.flex, rhs.flex, init) {
+            (_, F::Dynamic, _) | (F::Dynamic, _, _) => {}
 
-            (_, F::Any) |
-            (F::Any, _) |
-            (F::Const, _) |
-            (F::Just, _) => {
+            (_, F::Any, _) |
+            (F::Any, _, _) |
+            (F::Just, _, _) |
+            (F::Const, _, false) => {
                 return Err(format!("impossible to assign {:?} to {:?}", rhs, lhs));
             }
 
             // as long as the type is in agreement, Var can be assigned
-            (F::Var, _) => {
+            (F::Var, _, _) => {
+                try!(rhs.ty.assert_sub(&lhs.ty, ctx));
+            }
+
+            // assignment to Const slot is for initialization only
+            (F::Const, _, true) => {
                 try!(rhs.ty.assert_sub(&lhs.ty, ctx));
             }
 
             // non-Currently value can be assigned to Currently while changing its type
-            (F::Currently, _) => {
+            (F::Currently, _, _) => {
                 // if both lhs and rhs are linear and tabular,
                 // the linearity is broken and both lhs and rhs have to be changed as well
                 if is_shared(&lhs.ty, &rhs) {
@@ -400,14 +410,19 @@ impl Slot {
             }
 
             // assigning to VarOrConst asserts the mark and makes it Var
-            (F::VarOrConst(m), _) => {
+            (F::VarOrConst(m), _, false) => {
                 try!(m.assert_true(ctx));
                 try!(rhs.ty.assert_sub(&lhs.ty, ctx));
                 lhs.flex = F::Var;
             }
 
+            // ...except for the first time
+            (F::VarOrConst(_), _, true) => {
+                try!(rhs.ty.assert_sub(&lhs.ty, ctx));
+            }
+
             // assigning to VarOrCurrently adds a new equality requirement to the mark
-            (F::VarOrCurrently(_), _) => {
+            (F::VarOrCurrently(_), _, _) => {
                 // ditto as above
                 if is_shared(&lhs.ty, &rhs) {
                     lhs.flex = F::Var;

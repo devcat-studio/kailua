@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use take_mut::take;
 
 use kailua_diag::{Span, Spanned, WithLoc, Reporter};
-use kailua_syntax::{Name, Var, M, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, NameScope};
+use kailua_syntax::{Name, Var, M, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp, NameScope};
 use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
 use ty::{T, TySeq, SpannedTySeq, Lattice, Displayed, Display, TypeContext};
@@ -370,7 +370,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         macro_rules! adapt_table {
             ($adapted:expr) => ({
                 let adapted = T::Tables(Cow::Owned($adapted));
-                if ety0.accept(&Slot::just(adapted.clone()), self.context()).is_err() {
+                if ety0.accept(&Slot::just(adapted.clone()), self.context(), false).is_err() {
                     try!(self.env.error(ety0,
                                         m::CannotAdaptTable { tab: self.display(ety0),
                                                               adapted: self.display(&adapted) })
@@ -522,18 +522,54 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             St::Assign(ref vars, ref exps) => {
-                let varinfos: Vec<_> = try!(vars.iter()
-                                                .map(|varspec| self.visit_var_with_spec(varspec))
-                                                .collect());
-                let infos = try!(self.visit_explist(exps));
-                // unlike St::Local, do not tolerate the uninitialized variables
-                for ((var, varinfo), info) in vars.iter().zip(varinfos.into_iter())
-                                                         .zip(infos.into_iter_with_nil()) {
-                    debug!("assigning {:?} to {:?} with type {:?}", info, var, varinfo);
-                    if let Var::Name(ref name) = var.base.base {
-                        self.env.mark_var_as_set(name);
+                #[derive(Debug)]
+                enum VarRef<'a> {
+                    Name(&'a Spanned<Name>),
+                    Slot(Spanned<Slot>),
+                }
+
+                let varrefs = try!(vars.iter().map(|varspec| {
+                    match varspec.base.base {
+                        Var::Name(ref name) => Ok(VarRef::Name(name)),
+
+                        Var::Index(ref e, ref key) => {
+                            if let Some(ref kind) = varspec.kind {
+                                try!(self.env.error(kind, m::TypeSpecToIndex {}).done());
+                            }
+
+                            let ty = try!(self.visit_exp(e)).into_first();
+                            let kty = try!(self.visit_exp(key)).into_first();
+                            let slot = try!(self.check_index(&ty, &kty, varspec.base.span, true));
+                            // since we've requested a lvalue it would never return None
+                            Ok(VarRef::Slot(slot.unwrap().with_loc(&varspec.base)))
+                        },
                     }
-                    try!(self.env.assign(&varinfo, &info));
+                }).collect::<CheckResult<Vec<_>>>());
+
+                let infos = try!(self.visit_explist(exps));
+
+                // unlike St::Local, do not tolerate the uninitialized variables
+                for ((var, varref), info) in vars.iter().zip(varrefs.into_iter())
+                                                        .zip(infos.into_iter_with_nil()) {
+                    debug!("assigning {:?} to {:?} with type {:?}", info, var, varref);
+
+                    match (varref, var) {
+                        // global variable declaration
+                        (VarRef::Name(name), &TypeSpec { modf, kind: Some(ref kind), .. }) => {
+                            let specinfo = try!(self.visit_modf_and_kind(modf, kind));
+                            try!(self.env.add_global_var(name, Some(specinfo), info));
+                        }
+
+                        // global or local variable assignment
+                        (VarRef::Name(name), &TypeSpec { kind: None, .. }) => {
+                            try!(self.env.assign_to_var(name, info));
+                        }
+
+                        // indexed assignment
+                        (VarRef::Slot(slot), _) => {
+                            try!(self.env.assign(&slot, &info));
+                        }
+                    }
                 }
                 Ok(Exit::None)
             }
@@ -646,7 +682,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 }
 
                 let mut scope = self.scoped(Scope::new());
-                try!(scope.env.add_local_var(name, Slot::just(indty).without_loc(), true, true));
+                let indty = Slot::var(indty, scope.context());
+                try!(scope.env.add_local_var(name, None, Some(indty.without_loc())));
                 let exit = try!(scope.visit_block(block));
                 if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
             }
@@ -698,8 +735,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 let mut scope = self.scoped(Scope::new());
                 for (name, ty) in names.iter().zip(indtys.into_iter_with_nil()) {
-                    try!(scope.env.add_local_var(name, Slot::new(F::Var, *ty).without_loc(),
-                                                 true, true));
+                    let ty = Slot::var(*ty, scope.context());
+                    try!(scope.env.add_local_var(name, None, Some(ty.without_loc())));
                 }
                 let exit = try!(scope.visit_block(block));
                 if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
@@ -710,7 +747,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let funcv = self.context().gen_tvar();
                 let info = Slot::just(T::TVar(funcv)).with_loc(stmt);
                 match scope {
-                    NameScope::Local => try!(self.env.add_local_var(name, info, true, true)),
+                    NameScope::Local => try!(self.env.add_local_var(name, None, Some(info))),
                     NameScope::Global => try!(self.env.assign_to_var(name, info)),
                 }
                 let functy = try!(self.visit_func_body(None, sig, block));
@@ -729,31 +766,14 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             St::Local(ref names, ref exps) => {
-                let add_local_var = |env: &mut Env,
-                                     namespec: &TypeSpec<Spanned<Name>>,
-                                     info: Option<Spanned<Slot>>| -> CheckResult<()> {
-                    let initinfo = if let Some(ref kind) = namespec.kind {
-                        let ty = try!(T::from(kind, env));
-                        let flex = match namespec.modf {
-                            M::None => F::VarOrCurrently(env.context().gen_mark()),
-                            M::Var => F::Var,
-                            M::Const => F::Const,
-                        };
-                        Slot::new(flex, ty).with_loc(kind)
-                    } else {
-                        let flex = F::VarOrCurrently(env.context().gen_mark());
-                        Slot::new(flex, T::Nil).without_loc()
-                    };
-                    try!(env.add_local_var(&namespec.base, initinfo, false, false));
-                    if let Some(info) = info {
-                        try!(env.assign_to_var(&namespec.base, info));
-                    }
-                    Ok(())
-                };
-
                 let infos = try!(self.visit_explist(exps));
                 for (namespec, info) in names.iter().zip(infos.into_iter_with_none()) {
-                    try!(add_local_var(&mut self.env, namespec, info));
+                    let specinfo = if let Some(ref kind) = namespec.kind {
+                        Some(try!(self.visit_modf_and_kind(namespec.modf, kind)))
+                    } else {
+                        None
+                    };
+                    try!(self.env.add_local_var(&namespec.base, specinfo, info));
                 }
                 Ok(Exit::None)
             }
@@ -791,13 +811,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             St::KailuaAssume(scope, ref name, kindm, ref kind) => {
-                let ty = try!(T::from(kind, &mut self.env));
-                let flex = match kindm {
-                    M::None => F::VarOrCurrently(self.context().gen_mark()),
-                    M::Var => F::Var,
-                    M::Const => F::Const,
-                };
-                let slot = Slot::new(flex, ty).with_loc(kind);
+                let slot = try!(self.visit_modf_and_kind(kindm, kind));
                 match scope {
                     NameScope::Local => try!(self.env.assume_var(name, slot)),
                     NameScope::Global => try!(self.env.assume_global_var(name, slot)),
@@ -831,8 +845,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
         let mut scope = self.scoped(Scope::new_function(frame));
         if let Some(selfinfo) = selfinfo {
-            try!(scope.env.add_local_var(&Name::from(&b"self"[..]).without_loc(), selfinfo,
-                                         true, true));
+            try!(scope.env.add_local_var(&Name::from(&b"self"[..]).without_loc(),
+                                         None, Some(selfinfo)));
         }
 
         let mut argshead = Vec::new();
@@ -851,7 +865,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 ty = T::TVar(argv);
                 sty = Slot::new(F::Var, T::TVar(argv));
             }
-            try!(scope.env.add_local_var(&param.base, sty.without_loc(), false, true));
+            try!(scope.env.add_local_var(&param.base, None, Some(sty.without_loc())));
             argshead.push(Box::new(ty));
         }
         let args = TySeq { head: argshead, tail: vatype };
@@ -864,51 +878,6 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
         let returns = scope.env.get_frame_mut().returns.take().unwrap();
         Ok(Slot::just(T::func(Function { args: args, returns: returns })))
-    }
-
-    fn visit_var_with_spec(&mut self,
-                           varspec: &TypeSpec<Spanned<Var>>) -> CheckResult<Spanned<Slot>> {
-        let slot = match varspec.base.base {
-            Var::Name(ref name) => {
-                // may refer to the global variable yet to be defined!
-                if let Some(def) = self.env.get_var(name).cloned() {
-                    if let Some(ref kind) = varspec.kind {
-                        try!(self.env.error(kind, m::CannotRedefineGlobalVar { name: &name.base })
-                                     .done());
-                    }
-                    self.env.mark_var_as_set(name);
-                    def.slot
-                } else {
-                    // we need a type to initialize the variable with.
-                    // if we have the type spec, use it. otherwise use a type variable.
-                    let slot = if let Some(ref kind) = varspec.kind {
-                        let ty = try!(T::from(kind, &mut self.env));
-                        let flex = match varspec.modf {
-                            M::None => F::VarOrCurrently(self.context().gen_mark()),
-                            M::Var => F::Var,
-                            M::Const => F::Const,
-                        };
-                        Slot::new(flex, ty).with_loc(kind)
-                    } else {
-                        Slot::new(F::Var, T::TVar(self.context().gen_tvar())).without_loc()
-                    };
-
-                    try!(self.env.assign_to_var(name, slot.clone()));
-                    slot.base
-                }
-            },
-
-            Var::Index(ref e, ref key) => {
-                let ty = try!(self.visit_exp(e)).into_first();
-                let kty = try!(self.visit_exp(key)).into_first();
-                let slot = try!(self.check_index(&ty, &kty, varspec.base.span, true));
-                // since we've requested a lvalue it would never return None
-                slot.unwrap()
-            },
-        };
-
-        // overwrite the span, the spec is irrelevant outside
-        Ok(slot.with_loc(&varspec.base))
     }
 
     fn visit_func_call(&mut self, funcinfo: &Spanned<T>, args: &[Spanned<Exp>],
@@ -1165,6 +1134,16 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         Ok(seq)
     }
 
+    fn visit_modf_and_kind(&mut self, modf: M, kind: &Spanned<Kind>) -> CheckResult<Spanned<Slot>> {
+        let ty = try!(T::from(kind, &mut self.env));
+        let flex = match modf {
+            M::None => F::VarOrCurrently(self.context().gen_mark()),
+            M::Var => F::Var,
+            M::Const => F::Const,
+        };
+        Ok(Slot::new(flex, ty).with_loc(kind))
+    }
+
     fn collect_type_from_exp(&mut self, exp: &Spanned<Exp>)
             -> CheckResult<(Option<Spanned<Slot>>, SpannedSlotSeq)> {
         if let Ex::FuncCall(ref func, ref args) = *exp.base {
@@ -1320,7 +1299,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     try!(ty.filter_by_flags(flags, self.context()))
                 };
                 // TODO: won't work well with `var` slots
-                try!(Slot::accept(&info, &Slot::just(filtered).without_loc(), self.context()));
+                try!(info.accept(&Slot::just(filtered).without_loc(), self.context(), false));
             }
 
             Cond::And(lcond, rcond) => {

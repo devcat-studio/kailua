@@ -43,6 +43,11 @@ define_msg! { pub CannotRedefineGlobalVar<'a> { name: &'a Name }:
     _    => "Cannot redefine the type of a global variable {name}",
 }
 
+define_msg! { pub TypeSpecToIndex:
+    "ko" => "인덱싱 수식에 타입을 지정할 수 없습니다",
+    _    => "Cannot specify the type of indexing expression",
+}
+
 define_msg! { pub UseOfUnassignedVar:
     "ko" => "초기화되지 않은 변수를 사용하려고 했습니다",
     _    => "The variable is not yet initialized",

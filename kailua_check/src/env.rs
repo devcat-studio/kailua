@@ -1052,9 +1052,7 @@ impl<'ctx> Env<'ctx> {
         self.get_frame().vararg.as_ref()
     }
 
-    // internally used to give different feedback for assignment failure
-    fn assign_(&mut self, lhs: &Slot, rhs: &Spanned<Slot>) -> CheckResult<bool> {
-        // handle the built-in variables first
+    fn assign_special(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> CheckResult<()> {
         match lhs.builtin() {
             Some(b @ Builtin::PackagePath) |
             Some(b @ Builtin::PackageCpath) => {
@@ -1072,13 +1070,12 @@ impl<'ctx> Env<'ctx> {
             _ => {}
         }
 
-        Ok(lhs.accept(rhs, self.context).is_ok())
+        Ok(())
     }
 
-    // same to Slot::accept but also able to handle the built-in semantics
-    // should be used for any kind of non-internal assignments
-    pub fn assign(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> CheckResult<()> {
-        if !try!(self.assign_(lhs, rhs)) {
+    fn assign_(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>, init: bool) -> CheckResult<()> {
+        try!(self.assign_special(lhs, rhs));
+        if lhs.accept(rhs, self.context, init).is_err() {
             try!(self.error(lhs, m::CannotAssign { lhs: self.display(lhs),
                                                    rhs: self.display(rhs) })
                      .note_if(rhs, m::OtherTypeOrigin {})
@@ -1087,66 +1084,104 @@ impl<'ctx> Env<'ctx> {
         Ok(())
     }
 
-    pub fn mark_var_as_set(&mut self, name: &Name) {
-        self.get_var_mut(name).unwrap().set = true;
+    // same to Slot::accept but also able to handle the built-in semantics
+    // should be used for any kind of non-internal assignments
+    pub fn assign(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> CheckResult<()> {
+        self.assign_(lhs, rhs, false)
     }
 
     pub fn ensure_var(&mut self, name: &Spanned<Name>) -> CheckResult<()> {
-        let (defspan, defslot) = {
+        let defslot = {
             let def = self.get_var(name).expect("Env::ensure_var with an undefined var");
             if def.set { return Ok(()); }
-            (def.span, def.slot.clone())
+            def.slot.clone().with_loc(def.span)
         };
 
         // if the variable is not yet set, we may still try to assign nil
         // to allow `local x --: string|nil` (which is fine even when "uninitialized").
-        if try!(self.assign_(&defslot, &Slot::just(T::Nil).without_loc())) {
-            self.mark_var_as_set(name);
+        let nil = Slot::just(T::Nil).without_loc();
+        try!(self.assign_special(&defslot, &nil));
+        if defslot.accept(&nil, self.context, true).is_ok() { // this IS still initialization
+            self.get_var_mut(name).unwrap().set = true;
         } else {
             // won't alter the set flag, so subsequent uses are still errors
-            try!(self.error(name.span, m::UseOfUnassignedVar {})
-                     .note_if(defspan, m::UnassignedVarOrigin { var: self.display(&defslot) })
+            try!(self.error(name, m::UseOfUnassignedVar {})
+                     .note_if(&defslot, m::UnassignedVarOrigin { var: self.display(&defslot) })
                      .done());
         }
 
         Ok(())
     }
 
-    // adapt is used when the info didn't come from the type specification
-    // and should be considered identical to the assignment
-    pub fn add_local_var(&mut self, name: &Spanned<Name>, mut info: Spanned<Slot>,
-                         adapt: bool, set: bool) -> CheckResult<()> {
-        if adapt {
-            let flex = F::VarOrCurrently(self.context().gen_mark());
-            let newinfo = Slot::new(flex, T::Nil).with_loc(name);
-            try!(self.assign(&newinfo, &info));
-            info = newinfo;
-        }
+    // adds a local variable with the explicit type `specinfo` and the implicit type `initinfo`.
+    pub fn add_local_var(&mut self, name: &Spanned<Name>,
+                         specinfo: Option<Spanned<Slot>>,
+                         initinfo: Option<Spanned<Slot>>) -> CheckResult<()> {
+        debug!("adding a local variable {:?} with {:?} (specified) and {:?} (initialized)",
+               *name, specinfo, initinfo);
 
-        debug!("adding a local variable {:?} as {:?}", *name, info);
-        self.current_scope_mut().put(name.to_owned(), info.base, set);
+        let assigned = initinfo.is_some();
+
+        let info = if let Some(specinfo) = specinfo {
+            // adapt `initinfo` into `specinfo` if any
+            if let Some(initinfo) = initinfo {
+                try!(self.assign_(&specinfo, &initinfo, true));
+            }
+            specinfo
+        } else if let Some(initinfo) = initinfo {
+            // use `initinfo` as the sole type.
+            //
+            // we cannot blindly `accept` the `initinfo`, since it will discard the flexibility
+            // (e.g. if the callee requests `F::Var`, we need to keep that).
+            // therefore we just remap `F::Just` to `F::VarOrCurrently`.
+            // we still have to keep the special assignment behavior, though.
+            try!(self.assign_special(&initinfo, &initinfo));
+            initinfo.adapt(F::Currently, self.context);
+            initinfo
+        } else {
+            Slot::var(T::Nil, self.context).without_loc()
+        };
+
+        self.current_scope_mut().put(name.to_owned(), info.base, assigned);
         Ok(())
     }
 
-    pub fn assign_to_var(&mut self, name: &Spanned<Name>, info: Spanned<Slot>) -> CheckResult<()> {
-        // work around the lack of non-lexical borrowing, awww
-        let previnfo = if let Some(def) = self.get_var_mut(name) {
-            def.set = true;
-            Some(def.slot.clone())
-        } else {
-            None
-        };
-        if let Some(previnfo) = previnfo {
-            debug!("assigning {:?} to a variable {:?} with type {:?}", info, *name, previnfo);
-            try!(self.assign(&previnfo.with_loc(name), &info));
+    // adds a global variable with the explicit type `specinfo` and the implicit type `initinfo`.
+    pub fn add_global_var(&mut self, name: &Spanned<Name>,
+                          specinfo: Option<Spanned<Slot>>,
+                          initinfo: Spanned<Slot>) -> CheckResult<()> {
+        debug!("adding a global variable {:?} with {:?} (specified) and {:?} (initialized)",
+               *name, specinfo, initinfo);
+
+        // it might collide with other local or global variables
+        if self.get_var(name).is_some() {
+            try!(self.error(name, m::CannotRedefineGlobalVar { name: &name.base }).done());
             return Ok(());
         }
 
-        debug!("adding a global variable {:?} as {:?}", *name, info);
-        let flex = F::VarOrCurrently(self.context().gen_mark());
-        let newinfo = Slot::new(flex, T::Nil).with_loc(name);
-        try!(self.assign(&newinfo, &info));
-        self.context.global_scope_mut().put(name.to_owned(), newinfo.base, true);
+        let specinfo =
+            specinfo.unwrap_or_else(|| Slot::var(T::Nil, self.context).without_loc());
+        try!(self.assign_(&specinfo, &initinfo, false));
+        self.global_scope_mut().put(name.to_owned(), specinfo.base, true);
+        Ok(())
+    }
+
+    // assigns to a global or local variable with a right-hand-side type of `info`.
+    // it may create a new global variable if there is no variable with that name.
+    pub fn assign_to_var(&mut self, name: &Spanned<Name>, info: Spanned<Slot>) -> CheckResult<()> {
+        if let Some((prevset, previnfo)) = self.get_var(name).map(|def| (def.set,
+                                                                         def.slot.clone())) {
+            debug!("assigning {:?} to a variable {:?} with type {:?}", info, *name, previnfo);
+            try!(self.assign_(&previnfo.with_loc(name), &info, !prevset));
+            self.get_var_mut(name).unwrap().set = true;
+            return Ok(());
+        }
+
+        // see `add_local_var` comments for the handling of initialization-only declarations
+        debug!("adding a global variable {:?} as {:?} (initialized)", *name, info);
+        try!(self.assign_special(&info, &info));
+        info.adapt(F::Currently, self.context);
+        self.global_scope_mut().put(name.to_owned(), info.base, true);
         Ok(())
     }
 
