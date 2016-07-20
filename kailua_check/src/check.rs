@@ -236,7 +236,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             BinOp::And => {
                 if lhs.is_dynamic() || rhs.is_dynamic() {
-                    return Ok(Slot::dummy());
+                    return Ok(Slot::just(T::Dynamic));
                 }
 
                 if lhs.get_tvar().is_none() {
@@ -251,7 +251,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             BinOp::Or => {
                 if lhs.is_dynamic() || rhs.is_dynamic() {
-                    return Ok(Slot::dummy());
+                    return Ok(Slot::just(T::Dynamic));
                 }
 
                 if lhs.get_tvar().is_none() {
@@ -267,6 +267,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     }
 
     fn check_callable(&mut self, func: &Spanned<T>, args: &SpannedTySeq) -> CheckResult<TySeq> {
+        debug!("checking if {:?} can be called with {:?}", func, args);
+
         let functy = if let Some(func) = self.env.resolve_exact_type(&func) {
             func
         } else {
@@ -367,8 +369,13 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Slot::new(flex, tvar)
         };
 
+        // table adaptation only happens for l-value assignments.
         macro_rules! adapt_table {
             ($adapted:expr) => ({
+                // the table itself may be at the Just slot, most primarily by
+                // being directly constructed from the table constructor.
+                ety0.adapt(F::Currently, self.context());
+
                 let adapted = T::Tables(Cow::Owned($adapted));
                 if ety0.accept(&Slot::just(adapted.clone()), self.context(), false).is_err() {
                     try!(self.env.error(ety0,
@@ -423,6 +430,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         let intkey = self.env.get_type_bounds(&kty).1.is_integral();
         match (ety.get_tables(), lval) {
             // possible! this occurs when the ety was Dynamic.
+            // TODO ah, it turns out that this is also triggered by strings (oops!).
             (None, _) => {
                 let value = Slot::just(T::Dynamic);
                 // the flex should be retained
@@ -515,6 +523,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
     fn visit_stmt(&mut self, stmt: &Spanned<Stmt>) -> CheckResult<Exit> {
         debug!("visiting stmt {:?}", *stmt);
+
         match *stmt.base {
             St::Void(ref exp) => {
                 try!(self.visit_exp(exp));
@@ -756,12 +765,52 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             St::MethodDecl(ref names, selfparam, ref sig, ref block) => {
-                // TODO verify names
+                assert!(names.len() >= 2);
+
+                // find a slot for the first name
+                let varname = &names[0];
+                let info = if let Some(def) = self.env.get_var(varname).cloned() {
+                    try!(self.env.ensure_var(varname));
+                    def.slot
+                } else {
+                    try!(self.env.error(varname, m::NoVar { name: varname }).done());
+                    Slot::dummy()
+                };
+
+                // reduce the expr a.b.c...y.z into (a["b"]["c"]...["y"]).z
+                let mut info = info.with_loc(varname);
+                for subname in &names[1..names.len()-1] {
+                    let kty = Slot::just(T::str(subname.base.clone().into())).with_loc(subname);
+                    let subspan = info.span | subname.span; // a subexpr for this indexing
+                    if let Some(subinfo) = try!(self.check_index(&info, &kty, subspan, false)) {
+                        info = subinfo.with_loc(subspan);
+                    } else {
+                        try!(self.env.error(subspan, m::CannotIndex { tab: self.display(&info),
+                                                                      key: self.display(&kty) })
+                                     .done());
+                        info = Slot::dummy().with_loc(subspan);
+                    }
+                }
+
+                // now prepare the right-hand side (i.e. method decl)
                 let selfinfo = match selfparam {
-                    Some(_) => Some(Slot::just(T::Dynamic).without_loc()),
+                    Some(ref selfparam) => {
+                        // TODO should be the proper self type if `info` is a class type
+                        let tv = T::TVar(self.context().gen_tvar());
+                        Some(Slot::just(tv).with_loc(selfparam))
+                    },
                     None => None,
                 };
-                try!(self.visit_func_body(selfinfo, sig, block));
+                let methinfo = try!(self.visit_func_body(selfinfo, sig, block));
+
+                // finally, go through the ordinary table update
+                let method = names.last().unwrap();
+                let subspan = info.span | method.span;
+                let kty = Slot::just(T::str(method.base.clone().into())).with_loc(method);
+                let slot = try!(self.check_index(&info, &kty, subspan, true));
+                // since we've requested a lvalue it would never return None
+                try!(self.env.assign(&slot.unwrap().with_loc(subspan), &methinfo.with_loc(stmt)));
+
                 Ok(Exit::None)
             }
 
@@ -843,13 +892,16 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Frame { vararg: vainfo, returns: None, returns_exact: false }
         };
 
+        let mut argshead = Vec::new();
+
         let mut scope = self.scoped(Scope::new_function(frame));
         if let Some(selfinfo) = selfinfo {
-            try!(scope.env.add_local_var(&Name::from(&b"self"[..]).without_loc(),
-                                         None, Some(selfinfo)));
+            let ty = selfinfo.unlift().clone().into_send();
+            let sty = Slot::new(F::Var, ty.clone()).with_loc(&selfinfo);
+            try!(scope.env.add_local_var(&Name::from(&b"self"[..]).without_loc(), None, Some(sty)));
+            argshead.push(Box::new(ty));
         }
 
-        let mut argshead = Vec::new();
         for param in &sig.args.head {
             let ty;
             let sty;
@@ -880,8 +932,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         Ok(Slot::just(T::func(Function { args: args, returns: returns })))
     }
 
-    fn visit_func_call(&mut self, funcinfo: &Spanned<T>, args: &[Spanned<Exp>],
-                       expspan: Span) -> CheckResult<SlotSeq> {
+    fn visit_func_call(&mut self, funcinfo: &Spanned<T>, selfinfo: Option<Spanned<Slot>>,
+                       args: &[Spanned<Exp>], expspan: Span) -> CheckResult<SlotSeq> {
         if !self.env.get_type_bounds(funcinfo).1.is_callable() {
             try!(self.env.error(funcinfo, m::CallToNonFunc { func: self.display(funcinfo) })
                          .done());
@@ -891,7 +943,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             return Ok(SlotSeq::from(T::Dynamic));
         }
 
-        let argtys = try!(self.visit_explist(args));
+        let mut argtys = try!(self.visit_explist(args));
 
         // handle builtins, which may return different things from the function signature
         match funcinfo.builtin() {
@@ -983,6 +1035,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             _ => {}
         }
 
+        if let Some(selfinfo) = selfinfo {
+            argtys.head.insert(0, selfinfo);
+        }
         let returns = try!(self.check_callable(funcinfo, &argtys.unlift()));
         Ok(SlotSeq::from_seq(returns))
     }
@@ -993,6 +1048,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
     fn visit_exp_(&mut self, exp: &Spanned<Exp>) -> CheckResult<SlotSeq> {
         debug!("visiting exp {:?}", *exp);
+
         match *exp.base {
             Ex::Nil => Ok(SlotSeq::from(T::Nil)),
             Ex::False => Ok(SlotSeq::from(T::False)),
@@ -1070,21 +1126,22 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Ex::FuncCall(ref func, ref args) => {
                 let funcinfo = try!(self.visit_exp(func)).into_first();
                 let funcinfo = funcinfo.map(|t| t.unlift().clone().into_send());
-                self.visit_func_call(&funcinfo, args, exp.span)
+                self.visit_func_call(&funcinfo, None, args, exp.span)
             },
 
-            Ex::MethodCall(ref e, ref _method, ref args) => {
-                let info = try!(self.visit_exp(e)).into_first();
-                if !info.unlift().is_tabular() {
-                    try!(self.env.error(exp, m::IndexToNonTable { tab: self.display(&info) })
+            Ex::MethodCall(ref e, ref method, ref args) => {
+                let ty = try!(self.visit_exp(e)).into_first();
+                let methodspan = method.span;
+                let kty = Slot::just(T::str(method.base.clone().into())).with_loc(methodspan);
+                if let Some(methinfo) = try!(self.check_index(&ty, &kty, exp.span, false)) {
+                    let methinfo = methinfo.unlift().clone().into_send().with_loc(methodspan);
+                    self.visit_func_call(&methinfo, Some(ty), args, exp.span)
+                } else {
+                    try!(self.env.error(exp, m::CannotIndex { tab: self.display(&ty),
+                                                              key: self.display(&kty) })
                                  .done());
-                    return Ok(SlotSeq::dummy());
+                    Ok(SlotSeq::dummy())
                 }
-
-                for arg in args {
-                    try!(self.visit_exp(arg));
-                }
-                Ok(SlotSeq::from(T::Dynamic))
             },
 
             Ex::Index(ref e, ref key) => {
@@ -1163,7 +1220,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             } else {
                 None
             };
-            let seq = try!(self.visit_func_call(&funcinfo.to_ref().with_loc(funcspan),
+            let seq = try!(self.visit_func_call(&funcinfo.to_ref().with_loc(funcspan), None,
                                                 args, exp.span));
             Ok((typeofexp, seq.all_with_loc(exp)))
         } else {
@@ -1176,6 +1233,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     fn collect_conds_from_exp(&mut self, exp: &Spanned<Exp>)
             -> CheckResult<(Option<Cond>, SpannedSlotSeq)> {
         debug!("collecting conditions from exp {:?}", *exp);
+
         match *exp.base {
             Ex::Un(Spanned { base: UnOp::Not, .. }, ref e) => {
                 let (cond, seq) = try!(self.collect_conds_from_exp(e));
@@ -1291,6 +1349,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
     fn assert_cond(&mut self, cond: Cond, negated: bool) -> CheckResult<()> {
         debug!("asserting condition {:?} (negated {:?})", cond, negated);
+
         match cond {
             Cond::Flags(info, flags) => {
                 let flags = if negated { !flags } else { flags };

@@ -18,6 +18,7 @@ use options::Options;
 use check::Checker;
 use message as m;
 
+#[derive(Clone, Debug)]
 pub struct Frame {
     pub vararg: Option<TySeq>,
     pub returns: Option<TySeq>, // None represents the bottom (TySeq does not have it)
@@ -37,6 +38,7 @@ pub struct TypeDef {
     pub ty: Ty,
 }
 
+#[derive(Clone, Debug)]
 pub struct Scope {
     names: HashMap<Name, NameDef>,
     frame: Option<Frame>,
@@ -916,12 +918,14 @@ impl<'ctx> Env<'ctx> {
     }
 
     pub fn enter(&mut self, scope: Scope) {
+        debug!("entering to a scope {:#?}", scope);
         self.scopes.push(scope);
     }
 
     pub fn leave(&mut self) {
         assert!(self.scopes.len() > 1);
-        self.scopes.pop();
+        let scope = self.scopes.pop().unwrap();
+        debug!("leaving from a scope {:#?}", scope);
     }
 
     // returns a pair of type flags that is an exact lower and upper bound for that type

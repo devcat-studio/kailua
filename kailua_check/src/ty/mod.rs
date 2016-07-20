@@ -297,24 +297,6 @@ impl TypeContext for NoTypeContext {
     }
 }
 
-// it is generally hard to determine if a <: b \/ c (i.e. a <: b OR a <: c)
-// and a /\ b <: c (i.e. a <: c OR b <: c) in the presence of
-// immediate variable instantiation; it requires the costly backtracking.
-//
-// since we don't need the full union and intersection types
-// (they are mostly created manually, or sometimes via the path merger),
-// we instead provide the "best effort" inference by disallowing instantiation.
-fn err_on_instantiation<T, F>(ctx: &mut TypeContext, f: F) -> CheckResult<T>
-        where F: FnOnce(&mut TypeContext) -> CheckResult<T> {
-    let last = ctx.last_tvar();
-    let ret = try!(f(ctx));
-    if last != ctx.last_tvar() {
-        Err(format!("type variable cannot be instantiated inside a union or intersection"))
-    } else {
-        Ok(ret)
-    }
-}
-
 impl Lattice for TVar {
     type Output = TVar;
 

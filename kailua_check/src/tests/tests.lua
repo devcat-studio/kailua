@@ -204,10 +204,44 @@ local p = ({['not ice'] = 4})[x] --@< Error: Cannot index `{`not ice` = 4}` with
 --! error
 
 --8<-- methodcall-empty
-local p = ({}):hello() -- XXX
+local p = ({}):hello() --@< Error: Cannot index `{}` with `"hello"`
+--! error
+
+--8<-- methodcall-rec-1
+local x = {hello = function(a) end}
+local p = x:hello()
 --! ok
 
---8<-- methodcall-func
+--8<-- methodcall-rec-2
+local x = {hello = --v (a: table, b: integer)
+                   function(a, b) end}
+local p = x:hello() --@ Error: `nil` is not a subtype of `integer`
+-- XXX missing span
+--! error
+
+--8<-- methodcall-rec-3
+local x = {hello = --v (a: table, b: integer)
+                   function(a, b) end}
+local p = x:hello(4)
+--! ok
+
+--8<-- methodcall-rec-4
+local x = {hello = --v (a: table, b: integer)
+                   function(a, b) end}
+local p = x:hello('string') --@< Error: `"string"` is not a subtype of `integer`
+--! error
+
+--8<-- methodcall-rec-5
+local x = {hello = function() end}
+local p = x:hello() --@< Error: `{hello = function() -> ()}` is not a subtype of `nil`
+-- XXX error is bad, should mention about the method call
+--! error
+
+--8<-- methodcall-integer
+local s = (42):char() --@< Error: Tried to index a non-table type `42`
+--! error
+
+--8<-- index-func
 local p = (function() end)[3] --@< Error: Tried to index a non-table type `function() -> ()`
 --! error
 
@@ -1766,5 +1800,75 @@ f(p)
 --8<-- unassigned-global-var
 q, p = 42 --: var integer, var string
 --@^ Error: Cannot assign `nil` into `var string`
+--! error
+
+--8<-- table-update-nested-1
+local a = {}
+a.b = {}
+a.b.c = {}
+a.b.c.d = {}
+--! ok
+
+--8<-- table-update-nested-2
+local a = { b = {} }
+a.b.c = {}
+a.b.c.d = {}
+--! ok
+
+--8<-- table-update-nested-3
+local a = { b = { c = {} } }
+a.b.c.d = {}
+--! ok
+
+--8<-- method-decl
+local p = {}
+function p.a() end
+p.a()
+--! ok
+
+--8<-- method-decl-nested
+local p = {a = {}}
+function p.a.b() end
+p.a.b()
+--! ok
+
+--8<-- method-decl-self
+local p = {}
+function p:a() end
+p:a()
+--! ok
+
+--8<-- method-decl-self-nested
+local p = {a = {}}
+function p.a:b() end
+p.a:b()
+--! ok
+
+--8<-- method-decl-nontable
+local p = 42
+function p.a() end --@< Error: Tried to index a non-table type `42`
+p.a()              --@< Error: Tried to index a non-table type `42`
+--! error
+
+--8<-- method-decl-nontable-nested
+local p = {a = 42}
+function p.a.b() end --@< Error: Tried to index a non-table type `42`
+p.a.b()              --@< Error: Tried to index a non-table type `42`
+--! error
+
+--8<-- method-decl-const
+local p = {} --: const {}
+function p.a() end
+--@^ Error: Cannot adapt the table type `const {}` into `{a = <unknown type>}`
+--@^^ Note: The table had to be adapted in order to index it with `"a"`
+p.a() --@< Error: Cannot index `const {}` with `"a"`
+--! error
+
+--8<-- method-decl-const-nested
+local p = { a = {} } --: const {a = const {}}
+function p.a.b() end
+--@^ Error: Cannot adapt the table type `const {}` into `{b = <unknown type>}`
+--@^^ Note: The table had to be adapted in order to index it with `"b"`
+p.a.b() --@< Error: Cannot index `const {}` with `"b"`
 --! error
 
