@@ -2,20 +2,20 @@
 
 --# -- TODO many of them will interfere with Kailua's own reasoning, so the support is minimal
 --# assume global `debug`:
---#     var {
---#         `debug` = var function();
---#         `getfenv` = var function;
---#         `gethook` = var function;
---#         `getinfo` = var function;
---#         `getlocal` = var function;
---#         `getmetatable` = var function;
---#         `getregistry` = var function;
---#         `getupvalue` = var function;
---#         `setfenv` = var function;
---#         `sethook` = var function;
---#         `setlocal` = var function;
---#         `setmetatable` = var function;
---#         `setupvalue` = var function;
---#         `traceback` = var function;
+--#     {
+--#         `debug` = function();
+--#         `getfenv` = function;
+--#         `gethook` = function;
+--#         `getinfo` = function;
+--#         `getlocal` = function;
+--#         `getmetatable` = function;
+--#         `getregistry` = function;
+--#         `getupvalue` = function;
+--#         `setfenv` = function;
+--#         `sethook` = function;
+--#         `setlocal` = function;
+--#         `setmetatable` = function;
+--#         `setupvalue` = function;
+--#         `traceback` = function;
 --#     }
 

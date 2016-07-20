@@ -1,37 +1,37 @@
 -- definitions for Lua 5.1 math library
 
 --# assume global `math`:
---#     var {
---#         `abs` = var function(number) -> number;
---#         `acos` = var function(number) -> number;
---#         `asin` = var function(number) -> number;
---#         `atan` = var function(number) -> number;
---#         `atan2` = var function(number, number) -> number;
---#         `ceil` = var function(number) -> number;
---#         `cos` = var function(number) -> number;
---#         `cosh` = var function(number) -> number;
---#         `deg` = var function(number) -> number;
---#         `exp` = var function(number) -> number;
---#         `floor` = var function(number) -> number;
---#         `fmod` = var function(number, number) -> number;
---#         `frexp` = var function(number) -> (number, integer);
---#         `huge` = var number;
---#         `ldexp` = var function(number, integer) -> number;
---#         `log` = var function(number) -> number;
---#         `log10` = var function(number) -> number;
---#         `max` = var function(number...) -> number;
---#         `min` = var function(number...) -> number;
---#         `modf` = var function(number) -> (integer, number);
---#         `pi` = var number;
---#         `pow` = var function(number, number) -> number;
---#         `rad` = var function(number) -> number;
+--#     {
+--#         `abs` = function(number) -> number;
+--#         `acos` = function(number) -> number;
+--#         `asin` = function(number) -> number;
+--#         `atan` = function(number) -> number;
+--#         `atan2` = function(number, number) -> number;
+--#         `ceil` = function(number) -> number;
+--#         `cos` = function(number) -> number;
+--#         `cosh` = function(number) -> number;
+--#         `deg` = function(number) -> number;
+--#         `exp` = function(number) -> number;
+--#         `floor` = function(number) -> number;
+--#         `fmod` = function(number, number) -> number;
+--#         `frexp` = function(number) -> (number, integer);
+--#         `huge` = number;
+--#         `ldexp` = function(number, integer) -> number;
+--#         `log` = function(number) -> number;
+--#         `log10` = function(number) -> number;
+--#         `max` = function(number...) -> number;
+--#         `min` = function(number...) -> number;
+--#         `modf` = function(number) -> (integer, number);
+--#         `pi` = number;
+--#         `pow` = function(number, number) -> number;
+--#         `rad` = function(number) -> number;
 --#         -- TODO should really be `function() -> number & function(integer, integer?) -> integer`
---#         `random` = var function(integer?, integer?) -> number;
---#         `randomseed` = var function(integer);
---#         `sin` = var function(number) -> number;
---#         `sinh` = var function(number) -> number;
---#         `sqrt` = var function(number) -> number;
---#         `tan` = var function(number) -> number;
---#         `tanh` = var function(number) -> number;
+--#         `random` = function(integer?, integer?) -> number;
+--#         `randomseed` = function(integer);
+--#         `sin` = function(number) -> number;
+--#         `sinh` = function(number) -> number;
+--#         `sqrt` = function(number) -> number;
+--#         `tan` = function(number) -> number;
+--#         `tanh` = function(number) -> number;
 --#     }
 

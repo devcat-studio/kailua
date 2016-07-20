@@ -2,109 +2,109 @@
 
 --# -- TODO return generics
 --# assume global `assert`:
---#     var [assert] function(any, string?)
+--#     [assert] function(any, string?)
 --#
 --# assume global `collectgarbage`:
---#     var function(string?, any?) -> any?
+--#     function(string?, any?) -> any?
 --#
 --# assume global `dofile`:
---#     var [geval] function(string?) -> any?
+--#     [geval] function(string?) -> any?
 --#
 --# -- TODO diverging function signature
 --# assume global `error`:
---#     var function(string, integer?)
+--#     function(string, integer?)
 --#
 --# assume global `_G`:
---#     var [genv] table
+--#     [genv] table
 --#
 --# assume global `getfenv`:
---#     var function(function|integer?) -> table
+--#     function(function|integer?) -> table
 --#
 --# assume global `getmetatable`:
---#     var function(any) -> table?
+--#     function(any) -> table?
 --#
 --# assume global `ipairs`:
---#     var [generic_pairs]
---#         function({const WHATEVER}) -> (function({const WHATEVER}, integer) -> (integer?, any),
---#                                        {const WHATEVER}, integer)
+--#     [generic_pairs]
+--#     function({const WHATEVER}) -> (function({const WHATEVER}, integer) -> (integer?, any),
+--#                                    {const WHATEVER}, integer)
 --#
 --# -- TODO sequence conditional union
 --# assume global `load`:
---#     var [geval] function(function() -> string?, string?) -> (function?, string?)
+--#     [geval] function(function() -> string?, string?) -> (function?, string?)
 --#
 --# -- TODO sequence conditional union
 --# assume global `loadfile`:
---#     var [geval] function(string?) -> (function?, string?)
+--#     [geval] function(string?) -> (function?, string?)
 --#
 --# -- TODO sequence conditional union
 --# assume global `loadstring`:
---#     var [geval] function(string, string?) -> (function?, string?)
+--#     [geval] function(string, string?) -> (function?, string?)
 --#
 --# -- TODO genericity
 --# assume global `next`:
---#     var function(table, any?) -> (integer, any)
+--#     function(table, any?) -> (integer, any)
 --#
 --# assume global `pairs`:
---#     var [generic_pairs] function(table) -> (function(table, any) -> (any?, any), table, any)
+--#     [generic_pairs] function(table) -> (function(table, any) -> (any?, any), table, any)
 --#
 --# -- TODO `f` should be once function
 --# -- TODO genericity
 --# assume global `pcall`:
---#     var function(function, any...) -> (boolean, any...)
+--#     function(function, any...) -> (boolean, any...)
 --#
 --# assume global `print`:
---#     var function(any...)
+--#     function(any...)
 --#
 --# assume global `rawequal`:
---#     var function(any, any) -> boolean
+--#     function(any, any) -> boolean
 --#
 --# assume global `rawget`:
---#     var function(table, any) -> any?
+--#     function(table, any) -> any?
 --#
 --# assume global `rawset`:
---#     var function(table, any, any) -> table
+--#     function(table, any, any) -> table
 --#
 --# -- TODO genericity
 --# assume global `select`:
---#     var function(number|'#', any...) -> (any...)
+--#     function(number|'#', any...) -> (any...)
 --#
 --# assume global `setfenv`:
---#     var function(function|integer?, table) -> function
+--#     function(function|integer?, table) -> function
 --#
 --# assume global `setmetatable`:
---#     var function(table, any?) -> table
+--#     function(table, any?) -> table
 --#
 --# assume global `tonumber`:
---#     var function(any, integer?) -> number
+--#     function(any, integer?) -> number
 --#
 --# assume global `tostring`:
---#     var function(any) -> string
+--#     function(any) -> string
 --#
 --# -- TODO enumerate all the possibility?
 --# assume global `type`:
---#     var [type] function(any) -> string
+--#     [type] function(any) -> string
 --#
 --# -- TODO genericity
 --# assume global `unpack`:
---#     var function(table, integer?, integer?) -> (any...)
+--#     function(table, integer?, integer?) -> (any...)
 --#
 --# assume global `_VERSION`:
---#     var string
+--#     string
 --#
 --# -- TODO `f` and `err` should be once function
 --# -- TODO genericity
 --# assume global `xpcall`:
---#     var function(function, function) -> (boolean, any...)
+--#     function(function, function) -> (boolean, any...)
 --#
 --# assume global `coroutine`:
---#     var {
+--#     {
 --#         -- TODO genericity
---#         `create` = var function(function) -> thread;
---#         `resume` = var function(thread, any...) -> (boolean, any...);
---#         `running` = var function() -> thread?;
---#         `status` = var function(thread) -> string;
+--#         `create` = function(function) -> thread;
+--#         `resume` = function(thread, any...) -> (boolean, any...);
+--#         `running` = function() -> thread?;
+--#         `status` = function(thread) -> string;
 --#         -- TODO genericity
---#         `wrap` = var function(function) -> thread;
---#         `yield` = var function(any...) -> (any...);
+--#         `wrap` = function(function) -> thread;
+--#         `yield` = function(any...) -> (any...);
 --#     }
 

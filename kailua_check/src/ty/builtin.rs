@@ -37,19 +37,20 @@ pub enum Builtin {
     //     ({T => U}, ...) -> (function({T => U}, T) -> (T?, U), {T => U}, T, ...)
     GenericPairs,
 
-    // XXX the following built-ins are not yet implemented
-
     // table
     // a table mirroring the global environment.
+    // XXX not yet implemented
     GlobalEnv,
 
     // function(...) -> (...)
     // calling this function will alter the global environment in unspecified way,
     // so it is no longer assumed to be known after the call.
+    // XXX not yet implemented
     GlobalEval,
 
     // function(string, ...) -> (...)
     // calling this function will enable the "module" mode in Lua 5.1.
+    // XXX not yet implemented
     // XXX probably requires ModuleEnv built-in
     BecomeModule,
 
@@ -62,6 +63,8 @@ pub enum Builtin {
     // table
     // the metatable for all strings. the method calls for string go through this table,
     // and any modification to this table is immediately available to subsequent code.
+    // note: this table is linked to the current environment only by `--# assume`;
+    //       there is no other valid way to get a table with such a type.
     StringMeta,
 }
 
@@ -109,6 +112,7 @@ impl Builtin {
     // is the effect of this built-in local to the current scope?
     // non-scope-local built-ins have a limited ability inside non-global scopes.
     // (exception: the once function called from the global scope counts as global.)
+    // XXX seems that it needs more accurate definition
     pub fn scope_local(&self) -> bool {
         match *self {
             Builtin::Type |

@@ -859,6 +859,15 @@ local function p(n)
 end
 --! ok
 
+--8<-- func-returns-wrong
+--v ()
+local function f()
+    return 'foo'
+    --@^ Error: `"foo"` is not a subtype of `nil`
+    -- TODO it should also note that `nil` is a return type
+end
+--! error
+
 --8<-- assign-from-seq-1
 local function p()
     return 3, 4, 5
@@ -1250,7 +1259,7 @@ return false -- false triggers a Lua bug, so it is prohibited
 
 --! error
 
---8<-- require-returns-whatever
+--8<-- require-returns-dynamic
 --# open lua51
 local a = require 'a'
 a(a*a[a])
@@ -1360,7 +1369,7 @@ p.x = 'string' --@< Error: Cannot assign `"string"` into `var number`
                --@^ Note: The other type originates here
 --! error
 
---8<-- index-assign-whatever
+--8<-- index-assign-dynamic
 --# assume p: WHATEVER
 p[1] = 42
 --! ok
@@ -1871,4 +1880,77 @@ function p.a.b() end
 --@^^ Note: The table had to be adapted in order to index it with `"b"`
 p.a.b() --@< Error: Cannot index `const {}` with `"b"`
 --! error
+
+--8<-- methodcall-string-meta-table
+--# assume blah: [string_meta] { byte = function(string) -> integer }
+local x = ('f'):byte() --: var integer
+--! ok
+
+--8<-- methodcall-string-meta-dynamic
+--# assume blah: [string_meta] WHATEVER
+local x = ('f'):foobar(1, 'what', false) --: var string
+--! ok
+
+--8<-- methodcall-string-meta-undefined
+local x = ('f'):byte()
+--@^ Error: Cannot use string methods as a metatable for `string` type is not yet defined
+--! error
+
+--8<-- methodcall-string-meta-non-table
+--# assume blah: [string_meta] integer
+--@^ Note: A metatable for `string` type has been previously defined here
+local x = ('f'):byte() --: var integer
+--@^ Error: A metatable for `string` type has been defined but is not a table
+-- XXX it is not very clear that we should catch it from the definition
+--! error
+
+--8<-- string-meta-redefine
+--# assume blah: [string_meta] { byte = function(string) -> integer }
+--@^ Note: A metatable for `string` type has been previously defined here
+--# assume blah2: [string_meta] { lower = function(string) -> string }
+--@^ Error: A metatable for `string` type cannot be defined more than once and in general should only be set via `--# open` directive
+--! error
+
+--8<-- lua51-string-meta-1
+--# open lua51
+local x = ('f'):byte() --: var integer?
+local x, y, z = ('XY'):byte() --: var integer?, var integer?, var integer?
+local x, y, z = ('XY'):byte(10, 15) --: var integer?, var integer?, var integer?
+local x = ('foo'):find('o') --: var integer?
+local x = ('%s%s'):format('x', 'y') --: var string
+local x = ('xyzzy'):len() --: var integer
+local x = ('xyZzy'):lower() --: var string
+local x = ('xyZzy'):upper() --: var string
+local x = ('*'):rep(80) --: var string
+local x = ('abracadabra'):reverse() --: var string
+local x = ('notice'):sub(4) --: var string
+local x = ('notice'):sub(1, 3) --: var string
+local x = ('notice'):sub(10, 10) --: var string
+--! ok
+
+--8<-- lua51-string-meta-2
+--# open lua51
+
+local x = ('f'):byte() --: var integer
+--@^ Error: Cannot assign `(nil|integer)` into `var integer`
+--@^^ Note: The other type originates here
+
+local x, y = ('XY'):byte() --: var integer, var integer
+--@^ Error: Cannot assign `(nil|integer)` into `var integer`
+--@^^ Note: The other type originates here
+--@^^^ Error: Cannot assign `(nil|integer)` into `var integer`
+--@^^^^ Note: The other type originates here
+
+local x = ('%d+%d'):format('str', 'ing') --: var string
+-- TODO formatting error not handled (possible builtin?)
+
+--! error
+
+-->8-- lua51-assert-string-type-and-meta
+--# open lua51
+local function f(s)
+    assert(type(s) == 'string')
+    return s:lower()
+end
+--! ok
 

@@ -212,6 +212,34 @@ define_msg! { pub UnknownAssignToPackagePath<'a> { name: &'a str }:
              subsequent `require` may be unable to find the module path",
 }
 
+define_msg! { pub IndexedTypeIsBothTableOrStr<'a> { indexed: Slot<'a> }:
+    "ko" => "인덱싱이 되는 `{indexed}` 타입이 테이블인지 문자열인지가 불분명합니다",
+    _    => "`{indexed}` type that is being indexed should be \
+             either a table or a string but not both",
+}
+
+define_msg! { pub UndefinedStringMeta:
+    "ko" => "`string` 타입의 메타테이블이 아직 설정되지 않아서 문자열 메소드들을 쓸 수 없습니다",
+    _    => "Cannot use string methods as a metatable for `string` type is not yet defined",
+}
+
+define_msg! { pub CannotRedefineStringMeta:
+    "ko" => "`string` 타입의 메타테이블은 한 번 이상 설정될 수 없으며 \
+             기본적으로 `--# open` 명령을 통해서만 설정되어야 합니다",
+    _    => "A metatable for `string` type cannot be defined more than once \
+             and in general should only be set via `--# open` directive",
+}
+
+define_msg! { pub NonTableStringMeta:
+    "ko" => "`string` 타입의 메타테이블이 설정되긴 했지만 테이블이 아닙니다",
+    _    => "A metatable for `string` type has been defined but is not a table",
+}
+
+define_msg! { pub PreviousStringMeta:
+    "ko" => "`string` 타입의 메타테이블이 이전에 여기서 설정되었습니다",
+    _    => "A metatable for `string` type has been previously defined here",
+}
+
 define_msg! { pub IgnoredIfCase:
     "ko" => "`if` 문의 이 조건(들)은 실행되지 않습니다",
     _    => "These `if` case(s) are never executed",

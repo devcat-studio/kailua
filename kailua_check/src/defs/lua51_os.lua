@@ -6,23 +6,23 @@
 --# }
 --#
 --# assume global `os`:
---#     var {
---#         `clock` = var function() -> number;
+--#     {
+--#         `clock` = function() -> number;
 --#         -- TODO it is very hard to recognize '*t'|'!*t' from other string types, ugh
---#         `date` = var function(string?, tm?) -> string | {
+--#         `date` = function(string?, tm?) -> string | {
 --#             year = integer, month = integer, day = integer,
 --#             hour = integer, min = integer, sec = integer,
 --#             wday = integer, yday = integer, isdst = boolean
 --#         };
---#         `difftime` = var function(number, number) -> number;
---#         `execute` = var function(string?) -> integer;
+--#         `difftime` = function(number, number) -> number;
+--#         `execute` = function(string?) -> integer;
 --#         -- TODO diverging function signature
---#         `exit` = var function(integer?);
---#         `getenv` = var function(string) -> string?;
---#         `remove` = var function(string) -> (boolean?, string?);
---#         `rename` = var function(string, string) -> (boolean?, string?);
---#         `setlocale` = var function(string?, string?) -> string?;
---#         `time` = var function(tm?) -> number;
---#         `tmpname` = var function() -> string;
+--#         `exit` = function(integer?);
+--#         `getenv` = function(string) -> string?;
+--#         `remove` = function(string) -> (boolean?, string?);
+--#         `rename` = function(string, string) -> (boolean?, string?);
+--#         `setlocale` = function(string?, string?) -> string?;
+--#         `time` = function(tm?) -> number;
+--#         `tmpname` = function() -> string;
 --#     }
 

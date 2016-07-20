@@ -408,6 +408,7 @@ pub struct Context {
     mark_infos: Partitions<Box<MarkInfo>>,
     opened: HashSet<String>,
     loaded: HashMap<Vec<u8>, LoadStatus>, // corresponds to `package.loaded`
+    string_meta: Option<Spanned<Slot>>,
 }
 
 impl Context {
@@ -423,6 +424,7 @@ impl Context {
             mark_infos: Partitions::new(),
             opened: HashSet::new(),
             loaded: HashMap::new(),
+            string_meta: None,
         };
 
         // it is fine to return from the top-level, so we treat it as like a function frame
@@ -1056,6 +1058,10 @@ impl<'ctx> Env<'ctx> {
         self.get_frame().vararg.as_ref()
     }
 
+    pub fn get_string_meta(&self) -> Option<Spanned<Slot>> {
+        self.context.string_meta.clone()
+    }
+
     fn assign_special(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> CheckResult<()> {
         match lhs.builtin() {
             Some(b @ Builtin::PackagePath) |
@@ -1187,20 +1193,44 @@ impl<'ctx> Env<'ctx> {
         Ok(())
     }
 
+    fn assume_special(&mut self, info: &Spanned<Slot>) -> CheckResult<()> {
+        match info.builtin() {
+            Some(Builtin::StringMeta) => {
+                if let Some(ref prevmeta) = self.context.string_meta {
+                    // while it is possible to alter the string metatable from C,
+                    // we don't think that it is useful after the initialization.
+                    try!(self.error(info, m::CannotRedefineStringMeta {})
+                             .note(prevmeta, m::PreviousStringMeta {})
+                             .done());
+                }
+                self.context.string_meta = Some(info.clone());
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
     pub fn assume_var(&mut self, name: &Spanned<Name>, info: Spanned<Slot>) -> CheckResult<()> {
+        try!(self.assume_special(&info));
         if let Some(def) = self.get_local_var_mut(name) {
             debug!("(force) adding a local variable {:?} as {:?}", *name, info);
             def.set = true;
             def.slot = info.base;
             return Ok(());
         }
-        self.assume_global_var(name, info)
+
+        // assuming is inherently an implicit assignment
+        self.context.global_scope_mut().put(name.to_owned(), info.base, true);
+        Ok(())
     }
 
     pub fn assume_global_var(&mut self, name: &Spanned<Name>,
                              info: Spanned<Slot>) -> CheckResult<()> {
         debug!("(force) adding a global variable {:?} as {:?}", *name, info);
-        // assuming inherently makes the variable set (no matter there is an assignment)
+        try!(self.assume_special(&info));
+
+        // assuming is inherently an implicit assignment
         self.context.global_scope_mut().put(name.to_owned(), info.base, true);
         Ok(())
     }

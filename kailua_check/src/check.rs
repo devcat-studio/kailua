@@ -331,24 +331,72 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
     fn check_index(&mut self, ety0: &Spanned<Slot>, kty0: &Spanned<Slot>, expspan: Span,
                    lval: bool) -> CheckResult<Option<Slot>> {
+        let mut ety0: Cow<Spanned<Slot>> = Cow::Borrowed(ety0);
+
         let ety = ety0.unlift().clone();
         let kty = kty0.unlift().clone();
 
         if !self.env.get_type_bounds(&ety).1.is_tabular() {
-            try!(self.env.error(ety0, m::IndexToNonTable { tab: self.display(ety0) }).done());
+            try!(self.env.error(&*ety0, m::IndexToNonTable { tab: self.display(&*ety0) }).done());
             return Ok(Some(Slot::dummy()));
         }
-        let ety = if let Some(ety) = self.env.resolve_exact_type(&ety) {
+        let mut ety = if let Some(ety) = self.env.resolve_exact_type(&ety) {
             ety
         } else {
-            try!(self.env.error(ety0, m::IndexToInexactType { tab: self.display(ety0) }).done());
+            try!(self.env.error(&*ety0,
+                                m::IndexToInexactType { tab: self.display(&*ety0) }).done());
             return Ok(Some(Slot::dummy()));
         };
+
+        let flags = ety.flags();
+
+        // if ety is a string, we go through the previously defined string metatable
+        if !flags.is_dynamic() && flags.intersects(T_STRING) {
+            if flags.intersects(!T_STRING) {
+                try!(self.env.error(&*ety0, m::IndexedTypeIsBothTableOrStr
+                                            { indexed: self.display(&*ety0) })
+                             .done());
+                return Ok(Some(Slot::dummy()));
+            }
+
+            if let Some(meta) = self.env.get_string_meta() {
+                // receives the same span to the original string expression
+                ety0 = Cow::Owned(meta.base.clone().with_loc(ety0.span));
+
+                // still possible that the string metatable itself is not fully resolved (!)
+                if let Some(ety_) = self.env.resolve_exact_type(&ety0.unlift()) {
+                    ety = ety_;
+
+                    // now the metatable should be a table proper
+                    if !ety.is_dynamic() && ety.flags().intersects(!T_TABLE) {
+                        try!(self.env.error(&*ety0, m::NonTableStringMeta {})
+                                     .note(meta.span, m::PreviousStringMeta {})
+                                     .done());
+                        return Ok(Some(Slot::dummy()));
+                    }
+                } else {
+                    try!(self.env.error(&*ety0, m::IndexToInexactType { tab: self.display(&*ety0) })
+                                 .done());
+                    return Ok(Some(Slot::dummy()));
+                }
+            } else {
+                try!(self.env.error(&*ety0, m::UndefinedStringMeta {}).done());
+                return Ok(Some(Slot::dummy()));
+            }
+        }
+
+        // this also handles the case where the string metatable itself is dynamic
+        if flags.is_dynamic() {
+            let value = Slot::just(T::Dynamic);
+            // the flex should be retained
+            if lval { value.adapt(ety0.flex(), self.context()); }
+            return Ok(Some(value));
+        }
 
         macro_rules! check {
             ($sub:expr) => {
                 if $sub.is_err() {
-                    try!(self.env.error(expspan, m::CannotIndex { tab: self.display(ety0),
+                    try!(self.env.error(expspan, m::CannotIndex { tab: self.display(&*ety0),
                                                                   key: self.display(kty0) })
                                  .done());
                     return Ok(Some(Slot::dummy()));
@@ -378,8 +426,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 let adapted = T::Tables(Cow::Owned($adapted));
                 if ety0.accept(&Slot::just(adapted.clone()), self.context(), false).is_err() {
-                    try!(self.env.error(ety0,
-                                        m::CannotAdaptTable { tab: self.display(ety0),
+                    try!(self.env.error(&*ety0,
+                                        m::CannotAdaptTable { tab: self.display(&*ety0),
                                                               adapted: self.display(&adapted) })
                                  .note(kty0, m::AdaptTriggeredByIndex { key: self.display(kty0) })
                                  .done());
@@ -429,8 +477,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         // XXX this is severely limited right now, due to the difficulty of union with type vars
         let intkey = self.env.get_type_bounds(&kty).1.is_integral();
         match (ety.get_tables(), lval) {
-            // possible! this occurs when the ety was Dynamic.
-            // TODO ah, it turns out that this is also triggered by strings (oops!).
+            // possible! this happens when the string metatable was resolved *and* it is wrong.
             (None, _) => {
                 let value = Slot::just(T::Dynamic);
                 // the flex should be retained
@@ -440,7 +487,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             (Some(&Tables::Fields(..)), false) => {
                 try!(self.env.error(expspan,
-                                    m::IndexToRecWithInexactStr { tab: self.display(ety0),
+                                    m::IndexToRecWithInexactStr { tab: self.display(&*ety0),
                                                                   key: self.display(&kty) })
                              .done());
                 Ok(Some(Slot::dummy()))
@@ -469,7 +516,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             (Some(&Tables::Array(..)), false) => {
                 try!(self.env.error(expspan,
-                                    m::IndexToArrayWithNonInt { tab: self.display(ety0),
+                                    m::IndexToArrayWithNonInt { tab: self.display(&*ety0),
                                                                 key: self.display(&kty) })
                              .done());
                 Ok(Some(Slot::dummy()))
@@ -481,7 +528,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             },
 
             (Some(&Tables::All), _) => {
-                try!(self.env.error(ety0, m::IndexToAnyTable { tab: self.display(ety0) }).done());
+                try!(self.env.error(&*ety0,
+                                    m::IndexToAnyTable { tab: self.display(&*ety0) }).done());
                 Ok(Some(Slot::dummy()))
             },
 
