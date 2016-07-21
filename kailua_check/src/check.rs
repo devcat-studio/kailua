@@ -336,22 +336,15 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         let ety = ety0.unlift().clone();
         let kty = kty0.unlift().clone();
 
-        if !self.env.get_type_bounds(&ety).1.is_tabular() {
+        let (_, flags) = self.env.get_type_bounds(&ety);
+        if !flags.is_tabular() {
             try!(self.env.error(&*ety0, m::IndexToNonTable { tab: self.display(&*ety0) }).done());
             return Ok(Some(Slot::dummy()));
         }
-        let mut ety = if let Some(ety) = self.env.resolve_exact_type(&ety) {
-            ety
-        } else {
-            try!(self.env.error(&*ety0,
-                                m::IndexToInexactType { tab: self.display(&*ety0) }).done());
-            return Ok(Some(Slot::dummy()));
-        };
 
-        let flags = ety.flags();
-
-        // if ety is a string, we go through the previously defined string metatable
-        if !flags.is_dynamic() && flags.intersects(T_STRING) {
+        let ety = if !flags.is_dynamic() && flags.intersects(T_STRING) {
+            // if ety is a string, we go through the previously defined string metatable
+            // note that ety may not be fully resolved here!
             if flags.intersects(!T_STRING) {
                 try!(self.env.error(&*ety0, m::IndexedTypeIsBothTableOrStr
                                             { indexed: self.display(&*ety0) })
@@ -364,9 +357,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 ety0 = Cow::Owned(meta.base.clone().with_loc(ety0.span));
 
                 // still possible that the string metatable itself is not fully resolved (!)
-                if let Some(ety_) = self.env.resolve_exact_type(&ety0.unlift()) {
-                    ety = ety_;
-
+                if let Some(ety) = self.env.resolve_exact_type(&ety0.unlift()) {
                     // now the metatable should be a table proper
                     if !ety.is_dynamic() && ety.flags().intersects(!T_TABLE) {
                         try!(self.env.error(&*ety0, m::NonTableStringMeta {})
@@ -374,6 +365,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                      .done());
                         return Ok(Some(Slot::dummy()));
                     }
+
+                    ety
                 } else {
                     try!(self.env.error(&*ety0, m::IndexToInexactType { tab: self.display(&*ety0) })
                                  .done());
@@ -383,7 +376,16 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 try!(self.env.error(&*ety0, m::UndefinedStringMeta {}).done());
                 return Ok(Some(Slot::dummy()));
             }
-        }
+        } else {
+            // normal tables, we need to resolve it fully
+            if let Some(ety) = self.env.resolve_exact_type(&ety) {
+                ety
+            } else {
+                try!(self.env.error(&*ety0,
+                                    m::IndexToInexactType { tab: self.display(&*ety0) }).done());
+                return Ok(Some(Slot::dummy()));
+            }
+        };
 
         // this also handles the case where the string metatable itself is dynamic
         if flags.is_dynamic() {
@@ -1401,12 +1403,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         match cond {
             Cond::Flags(info, flags) => {
                 let flags = if negated { !flags } else { flags };
-                let filtered = {
-                    let ty = info.unlift().clone().into_send();
-                    try!(ty.filter_by_flags(flags, self.context()))
-                };
-                // TODO: won't work well with `var` slots
-                try!(info.accept(&Slot::just(filtered).without_loc(), self.context(), false));
+                try!(info.filter_by_flags(flags, self.context()));
+                debug!("resulted in {:?}", info);
             }
 
             Cond::And(lcond, rcond) => {

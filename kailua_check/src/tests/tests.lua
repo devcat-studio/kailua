@@ -1946,7 +1946,7 @@ local x = ('%d+%d'):format('str', 'ing') --: var string
 
 --! error
 
--->8-- lua51-assert-string-type-and-meta
+--8<-- lua51-assert-string-type-and-meta
 --# open lua51
 local function f(s)
     assert(type(s) == 'string')

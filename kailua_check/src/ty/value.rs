@@ -419,8 +419,8 @@ impl<'a> T<'a> {
 
             // make a type variable i such that i <: ubound and i <: tvar
             let i = ctx.gen_tvar();
-            try!(ctx.assert_tvar_sub_tvar(tvar, i));
-            try!(ctx.assert_tvar_sub(tvar, &ubound));
+            try!(ctx.assert_tvar_sub_tvar(i, tvar));
+            try!(ctx.assert_tvar_sub(i, &ubound));
 
             Ok(i)
         }
@@ -460,7 +460,14 @@ impl<'a> T<'a> {
             T::Builtin(b, t) => {
                 Ok(T::Builtin(b, Box::new(try!((*t).filter_by_flags(flags, ctx)))))
             },
-            T::Union(u) => {
+            T::Union(mut u) => {
+                // if the union contains a type variable, that type variable should be
+                // also narrowed (and consequently `u` has to be copied).
+                if let Some(tv) = u.tvar {
+                    let tv = try!(narrow_tvar(tv, flags, ctx));
+                    u.to_mut().tvar = Some(tv);
+                }
+
                 // compile a list of flags to remove, and only alter if there is any removal
                 let removed = !flags & u.flags();
                 if removed.is_empty() { return Ok(T::Union(u)); }

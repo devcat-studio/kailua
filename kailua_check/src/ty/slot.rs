@@ -439,6 +439,12 @@ impl Slot {
         Ok(())
     }
 
+    pub fn filter_by_flags(&self, flags: Flags, ctx: &mut TypeContext) -> CheckResult<()> {
+        let mut s = self.0.borrow_mut();
+        s.ty = try!(s.ty.clone().into_send().filter_by_flags(flags, ctx));
+        Ok(())
+    }
+
     // following methods are direct analogues to value type's ones, whenever applicable
 
     pub fn flex(&self) -> F { self.0.borrow().flex() }
