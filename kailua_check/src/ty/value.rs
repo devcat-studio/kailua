@@ -1067,6 +1067,19 @@ mod tests {
             // {a=just integer, b=just v1} = {a=just v2, b=just string, c=just boolean} (!)
             assert!(t1.assert_eq(&t2, &mut ctx).is_err());
         }
+
+        /* TODO
+        {
+            let v1 = ctx.gen_tvar();
+            // nil|v1 <: nil|integer
+            assert_eq!((T::TVar(v1) | T::Nil).assert_sub(&(T::integer() | T::Nil), &mut ctx),
+                       Ok(()));
+            // v1 <: nil|integer
+            assert_eq!(T::TVar(v1).assert_sub(&(T::integer() | T::Nil), &mut ctx), Ok(()));
+            // v1 :> nil|integer
+            assert_eq!((T::integer() | T::Nil).assert_sub(&T::TVar(v1), &mut ctx), Ok(()));
+        }
+        */
     }
 
     #[test]

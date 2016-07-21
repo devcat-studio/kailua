@@ -966,6 +966,15 @@ local function p(...) end
 p(1, 2, 3, nil, nil, nil)
 --! ok
 
+-->8-- func-varargs-type-delegated
+--v (...: string)
+function f(...)
+end
+function g(...)
+    f(...)
+end
+--! ok
+
 --8<-- type
 --# type known_type = number
 --# assume p: known_type
@@ -1952,5 +1961,12 @@ local function f(s)
     assert(type(s) == 'string')
     return s:lower()
 end
+
+f('string')
+-- in theory f(42) and others may work, since assertion is a runtime type check
+-- and the compile time type checker may remain sound without any further check.
+-- in practice the current constraint solver is a bit quirky and will reject them.
+-- both are not what we want in the long term, clearly. TODO
+
 --! ok
 
