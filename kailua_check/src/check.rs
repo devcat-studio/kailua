@@ -11,7 +11,7 @@ use kailua_syntax::{St, Stmt, Block};
 use diag::CheckResult;
 use ty::{T, TySeq, SpannedTySeq, Lattice, Displayed, Display, TypeContext};
 use ty::{Tables, Function, Functions, TyWithNil};
-use ty::{F, Slot, SlotSeq, SpannedSlotSeq, SlotWithNil, Builtin};
+use ty::{F, Slot, SlotSeq, SpannedSlotSeq, SlotWithNil, Builtin, Class};
 use ty::flags::*;
 use env::{Env, Frame, Scope, Context};
 use message as m;
@@ -331,6 +331,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
     fn check_index(&mut self, ety0: &Spanned<Slot>, kty0: &Spanned<Slot>, expspan: Span,
                    lval: bool) -> CheckResult<Option<Slot>> {
+        debug!("indexing {:?} with {:?} as an {}-value", ety0, kty0, if lval { "l" } else { "r" });
+
         let mut ety0: Cow<Spanned<Slot>> = Cow::Borrowed(ety0);
 
         let ety = ety0.unlift().clone();
@@ -342,7 +344,149 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             return Ok(Some(Slot::dummy()));
         }
 
-        let ety = if !flags.is_dynamic() && flags.intersects(T_STRING) {
+        let new_slot = |context: &mut Context, linear: bool| {
+            // we don't yet know the exact value type, so generate a new type variable
+            let tvar = T::TVar(context.gen_tvar());
+            let flex = if linear {
+                F::VarOrCurrently(context.gen_mark())
+            } else {
+                F::Var
+            };
+            Slot::new(flex, tvar)
+        };
+
+        let clsinfo = match *ety.as_base() {
+            T::Class(Class::Prototype(cid)) => Some((cid, true)),
+            T::Class(Class::Instance(cid)) => Some((cid, false)),
+            T::Union(ref u) if !u.classes.is_empty() => {
+                // the union is assumed to be simplified, so even if `u.classes` has one type
+                // it is mixed with other types so it cannot be indexed.
+                try!(self.env.error(&*ety0, m::IndexToUnknownClass { cls: self.display(&*ety0) })
+                             .done());
+                return Ok(Some(Slot::dummy()));
+            },
+            _ => None,
+        };
+
+        let ety = if let Some((cid, proto)) = clsinfo {
+            // nominal types cannot be indexed with non-compile-time values
+            // (in some sense, nominal types are isomorphic to records)
+            let litkey =
+                if let Some(key) = kty.as_integer() {
+                    key.into()
+                } else if let Some(key) = kty.as_string() {
+                    key.into()
+                } else {
+                    try!(self.env.error(expspan,
+                                        m::IndexToClassWithUnknown { cls: self.display(&*ety0),
+                                                                     key: self.display(&kty) })
+                                 .done());
+                    return Ok(Some(Slot::dummy()));
+                };
+
+            // this "template" is used to make a reconstructed record type for indexing.
+            // we can in principle reconstruct the record type out of that,
+            // but we need to record any change back to the class definition
+            // so we duplicate the core logic here.
+            macro_rules! fields {
+                ($x:ident) => (self.context().get_class_mut(cid).expect("invalid ClassId").$x)
+            }
+
+            if lval {
+                // l-values. there are strong restrictions over class prototypes and instances.
+
+                let (vslot, new) = if proto {
+                    debug!("assigning to a field {:?} of the class prototype of {:?}", litkey, cid);
+
+                    if litkey == &b"init"[..] {
+                        // this method is special, and should be the first method defined ever
+                        // it cannot be replaced later, so the duplicate check is skipped
+                        if !fields!(class_ty).is_empty() {
+                            // since `init` should be the first method ever defined,
+                            // non-empty class_ty should always contain `init`.
+                            try!(self.env.error(expspan, m::CannotRedefineCtor {}).done());
+                            return Ok(Some(Slot::dummy()));
+                        }
+
+                        // should have a [constructor] built-in tag to create a `new` method
+                        let ty = T::Builtin(Builtin::Constructor,
+                                            Box::new(T::TVar(self.context().gen_tvar())));
+                        let slot = Slot::new(F::Var, ty);
+                        fields!(class_ty).insert(litkey, slot.clone());
+                        (slot, true)
+                    } else if litkey == &b"new"[..] {
+                        // `new` is handled from the assignment (it cannot be copied from `init`
+                        // because it initially starts as as a type varibale, i.e. unknown)
+                        try!(self.env.error(expspan, m::ReservedNewMethod {}).done());
+                        return Ok(Some(Slot::dummy()));
+                    } else if let Some(v) = fields!(class_ty).get(&litkey).cloned() {
+                        // for other methods, it should be used as is...
+                        (v, false)
+                    } else {
+                        // ...or created only when the `init` method is available.
+                        if fields!(class_ty).is_empty() {
+                            try!(self.env.error(expspan, m::CannotDefineMethodsWithoutCtor {})
+                                         .done());
+                            return Ok(Some(Slot::dummy()));
+                        }
+
+                        // prototypes always use Var slots; it is in principle append-only.
+                        // XXX but methods cannot be easily resolved without linearity.
+                        let slot = new_slot(self.context(), true);
+                        fields!(class_ty).insert(litkey, slot.clone());
+                        (slot, true)
+                    }
+                } else {
+                    debug!("assigning to a field {:?} of the class instance of {:?}", litkey, cid);
+
+                    if let Some(v) = fields!(instance_ty).get(&litkey).cloned() {
+                        // existing fields can be used as is
+                        (v, false)
+                    } else if ety.builtin() != Some(Builtin::Constructible) {
+                        // otherwise, only the constructor can add new fields
+                        try!(self.env.error(expspan, m::CannotAddFieldsToInstance {}).done());
+                        return Ok(Some(Slot::dummy()));
+                    } else {
+                        // the constructor (checked earlier) can add Currently slots to instances.
+                        let slot = new_slot(self.context(), true);
+                        fields!(instance_ty).insert(litkey, slot.clone());
+                        (slot, true)
+                    }
+                };
+
+                vslot.adapt(ety0.flex(), self.context());
+
+                // if the table is altered in any way, we need to "adapt" the template
+                if new {
+                    // the following is like `adapt_table` but specialized for this particular case.
+                    // `accept_in_place` simulates the self-assignment (not possible with `accept`).
+                    ety0.adapt(F::Currently, self.context());
+                    if let Err(e) = ety0.accept_in_place(self.context()) {
+                        error!("{}", e);
+                        try!(self.env.error(&*ety0,
+                                            m::CannotAdaptClass { cls: self.display(&*ety0) })
+                                     .note(kty0,
+                                           m::AdaptTriggeredByIndex { key: self.display(kty0) })
+                                     .done());
+                        return Ok(Some(Slot::dummy()));
+                    }
+                }
+
+                return Ok(Some(vslot));
+            } else {
+                // r-values. we just pick the method from the template.
+
+                let cdef = self.context().get_class_mut(cid).expect("invalid ClassId");
+                // TODO should we re-adapt methods?
+                if !proto {
+                    // instance fields have a precedence over class fields
+                    if let Some(info) = cdef.instance_ty.get(&litkey).map(|v| (*v).clone()) {
+                        return Ok(Some(info));
+                    }
+                }
+                return Ok(cdef.class_ty.get(&litkey).map(|v| (*v).clone()));
+            }
+        } else if !flags.is_dynamic() && flags.intersects(T_STRING) {
             // if ety is a string, we go through the previously defined string metatable
             // note that ety may not be fully resolved here!
             if flags.intersects(!T_STRING) {
@@ -406,20 +550,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
         }
 
-        // if a new field is about to be created, generate a new type variable
-        // (as we don't know the value type yet)
+        // if a new field is about to be created, make a new slot and
         // and try to adapt to a table containing that variable.
-        let new_slot = |context: &mut Context, linear: bool| {
-            let tvar = T::TVar(context.gen_tvar());
-            let flex = if linear {
-                F::VarOrCurrently(context.gen_mark())
-            } else {
-                F::Var
-            };
-            Slot::new(flex, tvar)
-        };
-
-        // table adaptation only happens for l-value assignments.
+        // this "adaptation" only happens for l-value assignments.
         macro_rules! adapt_table {
             ($adapted:expr) => ({
                 // the table itself may be at the Just slot, most primarily by
@@ -489,7 +622,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             (Some(&Tables::Fields(..)), false) => {
                 try!(self.env.error(expspan,
-                                    m::IndexToRecWithInexactStr { tab: self.display(&*ety0),
+                                    m::IndexToRecWithUnknownStr { tab: self.display(&*ety0),
                                                                   key: self.display(&kty) })
                              .done());
                 Ok(Some(Slot::dummy()))
@@ -843,18 +976,32 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 }
 
                 // now prepare the right-hand side (i.e. method decl)
+                let method = names.last().unwrap();
                 let selfinfo = match selfparam {
                     Some(ref selfparam) => {
-                        // TODO should be the proper self type if `info` is a class type
-                        let tv = T::TVar(self.context().gen_tvar());
-                        Some(Slot::just(tv).with_loc(selfparam))
+                        // if `info` is a class prototype we know the exact type for `self`
+                        let slot = if let T::Class(Class::Prototype(cid)) = *info.unlift() {
+                            let inst = T::Class(Class::Instance(cid));
+                            if *method.base == b"init" {
+                                // currently [constructible] <class instance #cid>
+                                Slot::new(F::Currently,
+                                          T::Builtin(Builtin::Constructible, Box::new(inst)))
+                            } else {
+                                // var <class instance #cid>
+                                Slot::new(F::Var, inst)
+                            }
+                        } else {
+                            // var <fresh type variable>
+                            let tv = T::TVar(self.context().gen_tvar());
+                            Slot::new(F::Var, tv)
+                        };
+                        Some(slot.with_loc(selfparam))
                     },
                     None => None,
                 };
                 let methinfo = try!(self.visit_func_body(selfinfo, sig, block));
 
                 // finally, go through the ordinary table update
-                let method = names.last().unwrap();
                 let subspan = info.span | method.span;
                 let kty = Slot::just(T::str(method.base.clone().into())).with_loc(method);
                 let slot = try!(self.check_index(&info, &kty, subspan, true));
@@ -947,8 +1094,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         let mut scope = self.scoped(Scope::new_function(frame));
         if let Some(selfinfo) = selfinfo {
             let ty = selfinfo.unlift().clone().into_send();
-            let sty = Slot::new(F::Var, ty.clone()).with_loc(&selfinfo);
-            try!(scope.env.add_local_var(&Name::from(&b"self"[..]).without_loc(), None, Some(sty)));
+            let selfname = Name::from(&b"self"[..]).without_loc();
+            try!(scope.env.add_local_var_already_set(&selfname, selfinfo));
             argshead.push(Box::new(ty));
         }
 
@@ -1032,7 +1179,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 } else {
                     return Ok(SlotSeq::from(T::All));
                 }
-            },
+            }
 
             // assert(expr)
             Some(Builtin::Assert) => {
@@ -1048,7 +1195,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if let Some(cond) = cond {
                     try!(self.assert_cond(cond, false));
                 }
-            },
+            }
 
             // assert_not(expr)
             Some(Builtin::AssertNot) => {
@@ -1064,7 +1211,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if let Some(cond) = cond {
                     try!(self.assert_cond(cond, true));
                 }
-            },
+            }
 
             // assert_type(expr)
             Some(Builtin::AssertType) => {
@@ -1080,7 +1227,13 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     let cond = Cond::Flags(argtys.head[0].clone(), flags);
                     try!(self.assert_cond(cond, false));
                 }
-            },
+            }
+
+            // class()
+            Some(Builtin::MakeClass) => {
+                let cid = self.context().make_class(None, expspan); // TODO parent
+                return Ok(SlotSeq::from(T::Class(Class::Prototype(cid))));
+            }
 
             _ => {}
         }

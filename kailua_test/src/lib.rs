@@ -426,10 +426,14 @@ impl<T: Testing> Tester<T> {
                                                               specification file {}",
                                                               path.display()));
             info!("extracted {} test(s) from {}", tests.len(), path.display());
-            self.note_file(&path);
+            let mut file_noted = false;
             for test in tests {
                 if let Some(ref filter) = self.filter {
                     if !filter.is_match(&test.name) { continue; }
+                }
+                if !file_noted {
+                    self.note_file(&path);
+                    file_noted = true;
                 }
                 if test.ignored {
                     self.note_test(&test, TestResult::Ignored);

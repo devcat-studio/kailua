@@ -1,9 +1,10 @@
 use std::fmt;
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 
 use diag::CheckResult;
 use super::{T, TypeContext, NoTypeContext, Lattice, Display};
-use super::{Numbers, Strings, Tables, Functions, TVar};
+use super::{Numbers, Strings, Tables, Functions, Class, TVar};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 
@@ -15,13 +16,16 @@ pub struct Unioned {
     pub strings: Option<Strings>,
     pub tables: Option<Tables>,
     pub functions: Option<Functions>,
+    pub classes: BTreeSet<Class>,
     pub tvar: Option<TVar>,
 }
 
 impl Unioned {
     pub fn from<'a>(ty: &T<'a>) -> Unioned {
-        let mut u = Unioned { simple: U_NONE, numbers: None, strings: None,
-                              tables: None, functions: None, tvar: None };
+        let mut u = Unioned {
+            simple: U_NONE, numbers: None, strings: None, tables: None,
+            functions: None, classes: BTreeSet::new(), tvar: None,
+        };
 
         match ty.as_base() {
             &T::Dynamic | &T::All => panic!("Unioned::from called with T::Dynamic or T::All"),
@@ -38,6 +42,7 @@ impl Unioned {
             &T::Strings(ref str)    => { u.strings = Some(str.clone().into_owned()); }
             &T::Tables(ref tab)     => { u.tables = Some(tab.clone().into_owned()); }
             &T::Functions(ref func) => { u.functions = Some(func.clone().into_owned()); }
+            &T::Class(c)            => { u.classes.insert(c); }
             &T::TVar(tv)            => { u.tvar = Some(tv); }
 
             &T::Builtin(..) => unreachable!(),
@@ -57,6 +62,7 @@ impl Unioned {
         if self.strings.is_some()   { flags.insert(T_STRING); }
         if self.tables.is_some()    { flags.insert(T_TABLE); }
         if self.functions.is_some() { flags.insert(T_FUNCTION); }
+        if !self.classes.is_empty() { flags.insert(T_TABLE); }
         flags
     }
 
@@ -74,6 +80,7 @@ impl Unioned {
         if let Some(ref str) = self.strings { try!(f(T::Strings(Cow::Borrowed(str)))) }
         if let Some(ref tab) = self.tables { try!(f(T::Tables(Cow::Borrowed(tab)))) }
         if let Some(ref func) = self.functions { try!(f(T::Functions(Cow::Borrowed(func)))) }
+        for &c in &self.classes { try!(f(T::Class(c))) }
         if let Some(tvar) = self.tvar { try!(f(T::TVar(tvar))) }
         Ok(())
     }
@@ -121,13 +128,18 @@ impl Lattice for Unioned {
         let tables    = self.tables.union(&other.tables, ctx);
         let functions = self.functions.union(&other.functions, ctx);
 
+        let mut classes = self.classes.clone();
+        classes.extend(other.classes.iter().cloned());
+
         let tvar = match (self.tvar, other.tvar) {
             (Some(a), Some(b)) => Some(a.union(&b, ctx)),
             (a, b) => a.or(b),
         };
 
-        Unioned { simple: simple, numbers: numbers, strings: strings,
-                  tables: tables, functions: functions, tvar: tvar }
+        Unioned {
+            simple: simple, numbers: numbers, strings: strings, tables: tables,
+            functions: functions, classes: classes, tvar: tvar,
+        }
     }
 
     fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
@@ -151,6 +163,10 @@ impl Lattice for Unioned {
 
         try!(self.tables.assert_sub(&other.tables, ctx));
         try!(self.functions.assert_sub(&other.functions, ctx));
+
+        if !self.classes.is_subset(&other.classes) {
+            return error_not_sub(self, other);
+        }
 
         match (self.tvar, other.tvar) {
             (Some(a), Some(b)) => a.assert_sub(&b, ctx),
@@ -183,6 +199,11 @@ impl Lattice for Unioned {
         try!(self.strings.assert_eq(&other.strings, &mut NoTypeContext));
         try!(self.tables.assert_eq(&other.tables, ctx));
         try!(self.functions.assert_eq(&other.functions, ctx));
+
+        if self.classes != other.classes {
+            return error_not_eq(self, other);
+        }
+
         Ok(())
     }
 }

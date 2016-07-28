@@ -439,6 +439,34 @@ impl Slot {
         Ok(())
     }
 
+    // one tries to modify `self` in place. the new value, when expressed as a type, is
+    // NOT a subtype of the previous value, but is of the same kind (e.g. records, arrays etc).
+    // is it *accepted*, and if so how should the slot change?
+    //
+    // conceptually this is same to `accept`, but some special types (notably nominal types)
+    // have a representation that is hard to express with `accept` only.
+    pub fn accept_in_place(&self, ctx: &mut TypeContext) -> CheckResult<()> {
+        let s = self.0.borrow();
+
+        match s.flex {
+            F::Dynamic => {}
+
+            F::Any | F::Just | F::Const | F::Var | F::VarOrConst(_) => {
+                return Err(format!("impossible to update {:?}", s));
+            }
+
+            // since the value is not shared via this "assignment", it can remain as Currently.
+            F::Currently => {}
+
+            // it cannot be Var
+            F::VarOrCurrently(m) => {
+                try!(m.assert_false(ctx));
+            }
+        };
+
+        Ok(())
+    }
+
     pub fn filter_by_flags(&self, flags: Flags, ctx: &mut TypeContext) -> CheckResult<()> {
         let mut s = self.0.borrow_mut();
         s.ty = try!(s.ty.clone().into_send().filter_by_flags(flags, ctx));

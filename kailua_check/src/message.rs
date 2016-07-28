@@ -123,9 +123,19 @@ define_msg! { pub IndexToInexactType<'a> { tab: Slot<'a> }:
     _    => "The type `{tab}` is tabular but not known enough to index",
 }
 
-define_msg! { pub IndexToRecWithInexactStr<'a> { tab: Slot<'a>, key: T<'a> }:
+define_msg! { pub IndexToUnknownClass<'a> { cls: Slot<'a> }:
+    "ko" => "`{cls}` 타입이 정확히 하나의 클래스로 추론되지 않아 인덱싱할 수 없습니다",
+    _    => "Cannot index `{cls}` that cannot be inferred to a single class",
+}
+
+define_msg! { pub IndexToRecWithUnknownStr<'a> { tab: Slot<'a>, key: T<'a> }:
     "ko" => "실행하기 전에 알 수 없는 `{key}` 타입으로 `{tab}`을(를) 인덱싱할 수 없습니다",
     _    => "Cannot index `{tab}` with index `{key}` that cannot be resolved ahead of time",
+}
+
+define_msg! { pub IndexToClassWithUnknown<'a> { cls: Slot<'a>, key: T<'a> }:
+    "ko" => "실행하기 전에 알 수 없는 `{key}` 타입으로 `{cls}`을(를) 인덱싱할 수 없습니다",
+    _    => "Cannot index `{cls}` with index `{key}` that cannot be resolved ahead of time",
 }
 
 define_msg! { pub IndexToArrayWithNonInt<'a> { tab: Slot<'a>, key: T<'a> }:
@@ -146,6 +156,11 @@ define_msg! { pub CannotIndex<'a> { tab: Slot<'a>, key: Slot<'a> }:
 define_msg! { pub CannotAdaptTable<'a> { tab: Slot<'a>, adapted: T<'a> }:
     "ko" => "`{tab}` 테이블 타입이 `{adapted}`(으)로 확장되어야 하는데 그럴 수 없습니다",
     _    => "Cannot adapt the table type `{tab}` into `{adapted}`",
+}
+
+define_msg! { pub CannotAdaptClass<'a> { cls: Slot<'a> }:
+    "ko" => "`{cls}` 타입을 제자리에서 확장할 수 없습니다",
+    _    => "Cannot adapt the type `{cls}` in place",
 }
 
 define_msg! { pub AdaptTriggeredByIndex<'a> { key: Slot<'a> }:
@@ -253,5 +268,67 @@ define_msg! { pub IfCaseWithTruthyCond:
 define_msg! { pub IfCaseWithFalseyCond:
     "ko" => "이 조건이 항상 거짓인 값으로 평가됩니다",
     _    => "This condition always evaluates to a falsey value",
+}
+
+define_msg! { pub RedefinedClassName:
+    "ko" => "클래스 이름이 이미 설정되어 있어서 이 이름은 무시됩니다",
+    _    => "A new name for the previously named class is ignored",
+}
+
+define_msg! { pub PreviousClassName:
+    "ko" => "클래스 이름이 여기서 설정되었습니다",
+    _    => "The class was previously named here",
+}
+
+define_msg! { pub CannotNameUnknownClass<'a> { cls: Slot<'a> }:
+    "ko" => "`{cls}` 타입이 하나의 클래스로 정해지지 않았기 때문에 이름을 설정할 수 없습니다",
+    _    => "The type `{cls}` cannot be resolved to a single class so cannot be named",
+}
+
+define_msg! { pub CannotDefineMethodsWithoutCtor:
+    "ko" => "생성자(`init` 메소드)가 없는 상태에서 메소드를 선언할 수 없습니다",
+    _    => "Cannot define methods without a constructor (`init` method) defined",
+}
+
+define_msg! { pub CannotRedefineCtor:
+    "ko" => "이미 선언된 생성자(`init` 메소드)를 바꿀 수 없습니다",
+    _    => "Cannot replace an already defined constructor (`init` method)",
+}
+
+define_msg! { pub SelfCannotBeAssignedInCtor:
+    "ko" => "생성자(`init` 메소드)에서는 `self` 변수에 대입을 할 수 없습니다",
+    _    => "`self` variable cannot be assigned in a constructor (`init` method)",
+}
+
+define_msg! { pub InexactInitMethod<'a> { init: Slot<'a> }:
+    "ko" => "생성자(`init` 메소드)의 타입 `{init}`이(가) 덜 추론되었습니다",
+    _    => "The type `{init}` of the constructor (`init` method) is not known enough to call",
+}
+
+define_msg! { pub NonFuncInitMethod<'a> { init: Slot<'a> }:
+    "ko" => "생성자(`init` 메소드)의 타입 `{init}`이(가) 함수가 아닙니다",
+    _    => "The type `{init}` of the constructor (`init` method) is not a function",
+}
+
+define_msg! { pub OverloadedFuncInitMethod<'a> { init: Slot<'a> }:
+    "ko" => "생성자(`init` 메소드)의 타입 `{init}`이(가) 오버로딩되어 있습니다",
+    _    => "The type `{init}` of the constructor (`init` method) is overloaded",
+}
+
+define_msg! { pub BadSelfInInitMethod<'a> { init: Slot<'a> }:
+    "ko" => "생성자(`init` 메소드)의 타입 `{init}`이(가) \
+             첫번째 인자로 올바른 타입을 가지지 않습니다",
+    _    => "The type `{init}` of the constructor (`init` method) \
+             doesn't have a correct type for the first argument",
+}
+
+define_msg! { pub ReservedNewMethod:
+    "ko" => "`new` 메소드는 예약되어 있으며 선언될 수 없습니다",
+    _    => "`new` method is reserved and cannot be defined",
+}
+
+define_msg! { pub CannotAddFieldsToInstance:
+    "ko" => "생성자 바깥에서는 클래스 인스턴스에 새 필드가 추가될 수 없습니다",
+    _    => "Cannot add a new field to the class instance outside of the constructor",
 }
 

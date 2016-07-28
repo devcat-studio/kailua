@@ -8,7 +8,7 @@ use kailua_syntax::{K, SlotKind, Str, M};
 use diag::CheckResult;
 use super::{F, Slot, SlotWithNil};
 use super::{TypeContext, NoTypeContext, TypeResolver, Lattice, TySeq, Display};
-use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, Builtin};
+use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, Builtin, Class};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 use message as m;
@@ -29,6 +29,7 @@ pub enum T<'a> {
     Strings(Cow<'a, Strings>),          // string, ...
     Tables(Cow<'a, Tables>),            // table, ...
     Functions(Cow<'a, Functions>),      // function, ...
+    Class(Class),                       // nominal type
     TVar(TVar),                         // type variable
     Builtin(Builtin, Box<T<'a>>),       // builtin types (cannot be nested, nesting is ignored)
     Union(Cow<'a, Unioned>),            // union types A | B | ...
@@ -185,6 +186,7 @@ impl<'a> T<'a> {
             T::Strings(..) => T_STRING,
             T::Tables(..) => T_TABLE,
             T::Functions(..) => T_FUNCTION,
+            T::Class(..) => T_TABLE,
 
             T::TVar(..) => T_NONE,
             T::Builtin(_, ref t) => t.flags(),
@@ -208,6 +210,7 @@ impl<'a> T<'a> {
             T::Strings(ref str) => T::Strings(Cow::Borrowed(&**str)),
             T::Tables(ref tab) => T::Tables(Cow::Borrowed(&**tab)),
             T::Functions(ref func) => T::Functions(Cow::Borrowed(&**func)),
+            T::Class(c) => T::Class(c),
             T::TVar(v) => T::TVar(v),
             T::Builtin(b, ref t) => T::Builtin(b, Box::new(t.to_ref())),
             T::Union(ref u) => T::Union(Cow::Borrowed(&**u)),
@@ -377,6 +380,7 @@ impl<'a> T<'a> {
             T::Strings(str)    => T::Strings(Cow::Owned(str.into_owned())),
             T::Tables(tab)     => T::Tables(Cow::Owned(tab.into_owned())),
             T::Functions(func) => T::Functions(Cow::Owned(func.into_owned())),
+            T::Class(c)        => T::Class(c),
             T::TVar(tv)        => T::TVar(tv),
 
             T::Builtin(b, t) => T::Builtin(b, Box::new(t.into_send())),
@@ -453,6 +457,7 @@ impl<'a> T<'a> {
             T::Strings(str)    => Ok(flags_or_none(T_STRING,   T::Strings(str))),
             T::Tables(tab)     => Ok(flags_or_none(T_TABLE,    T::Tables(tab))),
             T::Functions(func) => Ok(flags_or_none(T_FUNCTION, T::Functions(func))),
+            T::Class(c)        => Ok(flags_or_none(T_TABLE,    T::Class(c))),
 
             T::TVar(tv) => {
                 Ok(T::TVar(try!(narrow_tvar(tv, flags, ctx))))
@@ -516,6 +521,7 @@ impl<'a> Lattice<Unioned> for T<'a> {
                 if let Some(ref num) = other.tables { return lhs.assert_sub(num, ctx); },
             T::Functions(ref lhs) =>
                 if let Some(ref num) = other.functions { return lhs.assert_sub(num, ctx); },
+            T::Class(c) => if other.classes.contains(&c) { return Ok(()); },
 
             T::TVar(lhs) => {
                 if other.tvar.is_some() { // XXX cannot determine the type var relation
@@ -592,6 +598,8 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
                 T::Tables(Cow::Owned(a.union(b, ctx))),
             (&T::Functions(ref a), &T::Functions(ref b)) =>
                 T::Functions(Cow::Owned(a.union(b, ctx))),
+            (&T::Class(a), &T::Class(b)) if a == b =>
+                T::Class(a),
             (&T::TVar(ref a), &T::TVar(ref b)) =>
                 T::TVar(a.union(b, ctx)),
 
@@ -646,6 +654,11 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::Strings(ref a),   &T::Strings(ref b))   => return a.assert_sub(b, ctx),
             (&T::Tables(ref a),    &T::Tables(ref b))    => return a.assert_sub(b, ctx),
             (&T::Functions(ref a), &T::Functions(ref b)) => return a.assert_sub(b, ctx),
+
+            // prototypes are NOT compatible to each other!
+            (&T::Class(Class::Instance(a)), &T::Class(Class::Instance(b))) => {
+                ctx.is_subclass_of(a, b)
+            },
 
             (&T::Union(ref a), &T::Union(ref b)) => return a.assert_sub(b, ctx),
             (&T::Union(ref a), &T::TVar(b)) if a.tvar.is_none() => {
@@ -718,6 +731,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::Strings(ref a),   &T::Strings(ref b))   => return a.assert_eq(b, ctx),
             (&T::Tables(ref a),    &T::Tables(ref b))    => return a.assert_eq(b, ctx),
             (&T::Functions(ref a), &T::Functions(ref b)) => return a.assert_eq(b, ctx),
+            (&T::Class(a),         &T::Class(b))         => a == b,
 
             (&T::TVar(a), &T::TVar(b)) => return a.assert_eq(&b, ctx),
             (a, &T::TVar(b)) => return ctx.assert_tvar_eq(b, a),
@@ -758,6 +772,7 @@ impl<'a, 'b> PartialEq<T<'b>> for T<'a> {
             (&T::Strings(ref a),   &T::Strings(ref b))   => *a == *b,
             (&T::Tables(ref a),    &T::Tables(ref b))    => *a == *b,
             (&T::Functions(ref a), &T::Functions(ref b)) => *a == *b,
+            (&T::Class(a),         &T::Class(b))         => a == b,
             (&T::TVar(a),          &T::TVar(b))          => a == b,
             (&T::Builtin(ba, _),   &T::Builtin(bb, _))   => ba == bb, // XXX lifetime issues?
             (&T::Union(ref a),     &T::Union(ref b))     => a == b,
@@ -792,6 +807,7 @@ impl<'a> Display for T<'a> {
             T::Strings(ref str)    => fmt::Display::fmt(str, f),
             T::Tables(ref tab)     => fmt::Display::fmt(&tab.display(ctx), f),
             T::Functions(ref func) => fmt::Display::fmt(&func.display(ctx), f),
+            T::Class(c)            => ctx.fmt_class(c, f),
             T::Builtin(b, ref t)   => write!(f, "[{}] {}", b.name(), t.display(ctx)),
             T::Union(ref u)        => fmt::Display::fmt(&u.display(ctx), f),
         }
@@ -815,7 +831,8 @@ impl<'a> fmt::Debug for T<'a> {
             T::Strings(ref str)    => fmt::Debug::fmt(str, f),
             T::Tables(ref tab)     => fmt::Debug::fmt(tab, f),
             T::Functions(ref func) => fmt::Debug::fmt(func, f),
-            T::TVar(tv)            => write!(f, "<#{}>", tv.0),
+            T::Class(ref c)        => fmt::Debug::fmt(c, f),
+            T::TVar(ref tv)        => fmt::Debug::fmt(tv, f),
             T::Builtin(b, ref t)   => write!(f, "[{}] {:?}", b.name(), t),
             T::Union(ref u)        => fmt::Debug::fmt(u, f),
         }

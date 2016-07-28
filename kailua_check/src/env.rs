@@ -9,9 +9,9 @@ use vec_map::VecMap;
 
 use kailua_diag::{self, Kind, Span, Spanned, Report, Reporter, WithLoc, Localize};
 use kailua_syntax::{Name, parse_chunk};
-use diag::CheckResult;
+use diag::{CheckResult, unquotable_name};
 use ty::{Ty, TySeq, T, Slot, F, TVar, Mark, Lattice, Builtin, Displayed, Display};
-use ty::{TypeContext, TypeResolver};
+use ty::{TypeContext, TypeResolver, ClassId, Class, Functions, Function, Key};
 use ty::flags::*;
 use defs::get_defs;
 use options::Options;
@@ -36,6 +36,15 @@ pub struct NameDef {
 pub struct TypeDef {
     pub span: Span,
     pub ty: Ty,
+}
+
+#[derive(Clone, Debug)]
+pub struct ClassDef {
+    pub span: Span,
+    pub name: Option<Spanned<Name>>,
+    pub parent: Option<ClassId>,
+    pub class_ty: HashMap<Key, Slot>,
+    pub instance_ty: HashMap<Key, Slot>,
 }
 
 #[derive(Clone, Debug)]
@@ -409,6 +418,7 @@ pub struct Context {
     opened: HashSet<String>,
     loaded: HashMap<Vec<u8>, LoadStatus>, // corresponds to `package.loaded`
     string_meta: Option<Spanned<Slot>>,
+    classes: Vec<ClassDef>,
 }
 
 impl Context {
@@ -425,6 +435,7 @@ impl Context {
             opened: HashSet::new(),
             loaded: HashMap::new(),
             string_meta: None,
+            classes: Vec::new(),
         };
 
         // it is fine to return from the top-level, so we treat it as like a function frame
@@ -487,6 +498,36 @@ impl Context {
 
     pub fn mark_module_as_loading(&mut self, name: &[u8], span: Span) {
         self.loaded.entry(name.to_owned()).or_insert(LoadStatus::Ongoing(span));
+    }
+
+    pub fn get_class_mut<'a>(&'a mut self, cid: ClassId) -> Option<&'a mut ClassDef> {
+        self.classes.get_mut(cid.0 as usize)
+    }
+
+    pub fn make_class(&mut self, parent: Option<ClassId>, span: Span) -> ClassId {
+        assert!(parent.map_or(true, |cid| (cid.0 as usize) < self.classes.len()));
+
+        let cid = ClassId(self.classes.len() as u32);
+        self.classes.push(ClassDef {
+            span: span,
+            name: None,
+            parent: parent,
+            class_ty: HashMap::new(),
+            instance_ty: HashMap::new(),
+        });
+        cid
+    }
+
+    pub fn name_class(&mut self, cid: ClassId, name: &Spanned<Name>) -> CheckResult<()> {
+        let cls = &mut self.classes[cid.0 as usize];
+        if let Some(ref prevname) = cls.name {
+            try!(self.report.warn(name, m::RedefinedClassName {})
+                            .note(prevname, m::PreviousClassName {})
+                            .done());
+        } else {
+            cls.name = Some(name.clone());
+        }
+        Ok(())
     }
 
     // used by assert_mark_require_{eq,sup}
@@ -884,6 +925,49 @@ impl TypeContext for Context {
         }
         None
     }
+
+    fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result {
+        fn class_name(classes: &[ClassDef],
+                      cid: ClassId) -> Option<(&Spanned<Name>, &'static str)> {
+            let cid = cid.0 as usize;
+            if cid < classes.len() {
+                if let Some(ref name) = classes[cid].name {
+                    let q = if unquotable_name(&name) { "" } else { "`" };
+                    return Some((name, q));
+                }
+            }
+            None
+        }
+
+        match cls {
+            Class::Prototype(cid) => {
+                if let Some((name, q)) = class_name(&self.classes, cid) {
+                    write!(f, "<prototype for {}{:-?}{}>", q, name, q)
+                } else {
+                    write!(f, "<prototype for unnamed class #{}>", cid.0)
+                }
+            }
+            Class::Instance(cid) => {
+                if let Some((name, q)) = class_name(&self.classes, cid) {
+                    write!(f, "{}{:-?}{}", q, name, q)
+                } else {
+                    write!(f, "<unnamed class #{}>", cid.0)
+                }
+            }
+        }
+    }
+
+    fn is_subclass_of(&self, mut lhs: ClassId, rhs: ClassId) -> bool {
+        if lhs == rhs { return true; }
+
+        while let Some(parent) = self.classes[lhs.0 as usize].parent {
+            assert!(parent < lhs);
+            lhs = parent;
+            if lhs == rhs { return true; }
+        }
+
+        false
+    }
 }
 
 // per-file environment
@@ -1062,6 +1146,69 @@ impl<'ctx> Env<'ctx> {
         self.context.string_meta.clone()
     }
 
+    // why do we need this special method?
+    // conceptually, assigning to the placeholder `<prototype>.init` should give
+    // the exact type for the `init` method, thus also a type for automatically created `new`.
+    // in reality we instead get a type bound which cannot be exactly resolved;
+    // we instead put [constructor] tag to the placeholder and
+    // catch the exact type being assigned (method definitions guarantee the resolvability).
+    fn create_new_method_from_init(&mut self, init: &Spanned<Slot>) -> CheckResult<()> {
+        // ensure that the type can be resolved...
+        let ty = if let Some(ty) = self.resolve_exact_type(&init.unlift()) {
+            ty
+        } else {
+            try!(self.error(init, m::InexactInitMethod { init: self.display(init) }).done());
+            return Ok(());
+        };
+
+        // ...and is a function...
+        let mut func = match ty {
+            T::Functions(ref func) => match **func {
+                Functions::Simple(ref f) => f.to_owned(),
+                _ => {
+                    try!(self.error(init, m::OverloadedFuncInitMethod { init: self.display(init) })
+                             .done());
+                    return Ok(());
+                }
+            },
+            _ => {
+                try!(self.error(init, m::NonFuncInitMethod { init: self.display(init) }).done());
+                return Ok(());
+            },
+        };
+
+        // ...and has the first argument readily known as a [constructible] class instance type.
+        let mut cid = None;
+        if !func.args.head.is_empty() {
+            let selfarg = func.args.head.remove(0);
+            if let Some(selfarg) = self.resolve_exact_type(&selfarg) {
+                if let T::Builtin(Builtin::Constructible, ref t) = selfarg {
+                    if let T::Class(Class::Instance(cid_)) = **t {
+                        cid = Some(cid_);
+                    }
+                }
+            }
+        }
+        if let Some(cid) = cid {
+            // now `init` is: function(/* removed: [constructible] <%cid> */, ...) -> any
+            // fix the return type to make a signature for the `new` method
+            let returns = T::Class(Class::Instance(cid));
+            let ctor = Function { args: func.args, returns: TySeq::from(returns) };
+            let ctor = Slot::new(F::Const, T::func(ctor));
+
+            debug!("implicitly setting the `new` method of {:?} as {:?}", cid, ctor);
+            let cdef = self.context.get_class_mut(cid).expect("invalid ClassId");
+            let key = Key::Str(b"new"[..].into());
+            let prevctor = cdef.class_ty.insert(key, ctor);
+            assert_eq!(prevctor, None); // should have been prevented
+        } else {
+            try!(self.error(init, m::BadSelfInInitMethod { init: self.display(init) }).done());
+            return Ok(());
+        }
+
+        Ok(())
+    }
+
     fn assign_special(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> CheckResult<()> {
         match lhs.builtin() {
             Some(b @ Builtin::PackagePath) |
@@ -1077,6 +1224,15 @@ impl<'ctx> Env<'ctx> {
                     try!(self.warn(rhs, m::UnknownAssignToPackagePath { name: b.name() }).done());
                 }
             }
+
+            Some(Builtin::Constructible) => {
+                try!(self.error(lhs, m::SelfCannotBeAssignedInCtor {}).done());
+            }
+
+            Some(Builtin::Constructor) => {
+                try!(self.create_new_method_from_init(rhs));
+            }
+
             _ => {}
         }
 
@@ -1123,6 +1279,29 @@ impl<'ctx> Env<'ctx> {
         Ok(())
     }
 
+    fn name_class_if_any(&mut self, name: &Spanned<Name>, info: &Spanned<Slot>) -> CheckResult<()> {
+        match *info.unlift().as_base() {
+            T::Class(Class::Prototype(cid)) => {
+                try!(self.context.name_class(cid, name));
+
+                // TODO this is temporary, should check for the duplicate much earlier
+                // and put to the global scope if it was defined in the global scope
+                try!(self.define_type(name, Box::new(T::Class(Class::Instance(cid)))));
+            }
+            T::Union(ref u) => {
+                // should raise an error if a prototype is used within a union
+                let is_prototype = |&cls| if let Class::Prototype(_) = cls { true } else { false };
+                if u.classes.iter().any(is_prototype) {
+                    try!(self.error(info, m::CannotNameUnknownClass { cls: self.display(info) })
+                             .done());
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
     // adds a local variable with the explicit type `specinfo` and the implicit type `initinfo`.
     pub fn add_local_var(&mut self, name: &Spanned<Name>,
                          specinfo: Option<Spanned<Slot>>,
@@ -1134,6 +1313,9 @@ impl<'ctx> Env<'ctx> {
         let specinfo = specinfo.unwrap_or_else(|| Slot::var(T::Nil, self.context).without_loc());
         if let Some(initinfo) = initinfo {
             try!(self.assign_(&specinfo, &initinfo, true));
+
+            // name the class if it is currently unnamed
+            try!(self.name_class_if_any(name, &initinfo));
         }
 
         self.current_scope_mut().put(name.to_owned(), specinfo.base, assigned);
@@ -1147,9 +1329,9 @@ impl<'ctx> Env<'ctx> {
         // we cannot blindly `accept` the `initinfo`, since it will discard the flexibility
         // (e.g. if the callee requests `F::Var`, we need to keep that).
         // therefore we just remap `F::Just` to `F::VarOrCurrently`.
-        // we still have to keep the special assignment behavior, though.
-        try!(self.assign_special(&info, &info));
         info.adapt(F::Currently, self.context);
+
+        try!(self.name_class_if_any(name, &info));
 
         self.current_scope_mut().put(name.to_owned(), info.base, true);
         Ok(())
@@ -1171,6 +1353,8 @@ impl<'ctx> Env<'ctx> {
         let specinfo =
             specinfo.unwrap_or_else(|| Slot::var(T::Nil, self.context).without_loc());
         try!(self.assign_(&specinfo, &initinfo, true));
+        try!(self.name_class_if_any(name, &initinfo));
+
         self.global_scope_mut().put(name.to_owned(), specinfo.base, true);
         Ok(())
     }
@@ -1189,6 +1373,8 @@ impl<'ctx> Env<'ctx> {
         debug!("adding a global variable {:?} as {:?} (initialized)", *name, info);
         let newinfo = Slot::var(T::Nil, self.context).with_loc(name);
         try!(self.assign_(&newinfo, &info, true));
+        try!(self.name_class_if_any(name, &info));
+
         self.global_scope_mut().put(name.to_owned(), newinfo.base, true);
         Ok(())
     }

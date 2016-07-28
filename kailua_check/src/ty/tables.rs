@@ -2,8 +2,8 @@ use std::fmt;
 use std::borrow::ToOwned;
 use std::collections::BTreeMap;
 
-use kailua_syntax::{Str, Keyword};
-use diag::CheckResult;
+use kailua_syntax::Str;
+use diag::{CheckResult, unquotable_name};
 use super::{T, Ty, Slot, SlotWithNil, TypeContext, Lattice, Display};
 use super::{error_not_sub, error_not_eq};
 
@@ -29,22 +29,26 @@ impl From<i32> for Key { fn from(v: i32) -> Key { Key::Int(v) } }
 impl From<Str> for Key { fn from(s: Str) -> Key { Key::Str(s) } }
 impl<'a> From<&'a Str> for Key { fn from(s: &Str) -> Key { Key::Str(s.to_owned()) } }
 
+impl PartialEq<Str> for Key {
+    fn eq(&self, other: &Str) -> bool {
+        if let Key::Str(ref s) = *self { *s == *other } else { false }
+    }
+}
+
+impl<'a> PartialEq<&'a [u8]> for Key {
+    fn eq(&self, other: &&'a [u8]) -> bool {
+        if let Key::Str(ref s) = *self { **s == *other } else { false }
+    }
+}
+
+impl PartialEq<i32> for Key {
+    fn eq(&self, other: &i32) -> bool {
+        if let Key::Int(ref v) = *self { *v == *other } else { false }
+    }
+}
+
 impl fmt::Display for Key {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fn is_first(c: u8) -> bool {
-            match c { b'_' | b'a'...b'z' | b'A'...b'Z' => true, _ => false }
-        }
-
-        fn is_next(c: u8) -> bool {
-            match c { b'_' | b'a'...b'z' | b'A'...b'Z' | b'0'...b'9' => true, _ => false }
-        }
-
-        fn unquotable_name(s: &[u8]) -> bool {
-            !s.is_empty() && is_first(s[0])
-                          && s[1..].iter().all(|&c| is_next(c))
-                          && Keyword::from(s, true).is_none()
-        }
-
         match *self {
             Key::Int(ref v) => write!(f, "{:?}", *v),
             Key::Str(ref s) if unquotable_name(s) => write!(f, "{:-?}", *s),

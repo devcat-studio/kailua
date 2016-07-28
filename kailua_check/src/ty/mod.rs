@@ -83,6 +83,32 @@ impl fmt::Debug for Mark {
     }
 }
 
+// nominal type identifiers
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ClassId(pub u32);
+
+impl fmt::Debug for ClassId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "<%{}>", self.0)
+    }
+}
+
+// nominal type classification
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Class {
+    Prototype(ClassId),
+    Instance(ClassId),
+}
+
+impl fmt::Debug for Class {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Class::Prototype(cid) => write!(f, "<%{} prototype>", cid.0),
+            Class::Instance(cid) => write!(f, "<%{}>", cid.0),
+        }
+    }
+}
+
 pub trait TypeResolver: Report {
     fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<T<'static>>;
 }
@@ -130,6 +156,10 @@ pub trait TypeContext: Report {
     fn assert_mark_require_eq(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()>;
     fn assert_mark_require_sup(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()>;
     fn get_mark_exact(&self, mark: Mark) -> Option<bool>;
+
+    // nominal type management
+    fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result;
+    fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool;
 }
 
 impl<'a> Report for &'a mut TypeContext {
@@ -294,6 +324,13 @@ impl TypeContext for NoTypeContext {
     }
     fn get_mark_exact(&self, mark: Mark) -> Option<bool> {
         panic!("get_mark_exact({:?}) is not supposed to be called here", mark);
+    }
+
+    fn fmt_class(&self, cls: Class, _f: &mut fmt::Formatter) -> fmt::Result {
+        panic!("fmt_class({:?}, ...) is not supposed to be called here", cls);
+    }
+    fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool {
+        panic!("is_subclass_of({:?}, {:?}) is not supposed to be called here", lhs, rhs);
     }
 }
 

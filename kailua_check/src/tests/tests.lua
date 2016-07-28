@@ -212,6 +212,18 @@ local x = {hello = function(a) end}
 local p = x:hello()
 --! ok
 
+--8<-- methodcall-rec-1-type-1
+local x = {hello = function(a) end} --: {hello = function(table)}
+local p = x:hello()
+--! ok
+
+--8<-- methodcall-rec-1-type-2
+local x = {}
+local function hello(a) end
+x.hello = hello
+local p = x:hello()
+--! ok
+
 --8<-- methodcall-rec-2
 local x = {hello = --v (a: table, b: integer)
                    function(a, b) end}

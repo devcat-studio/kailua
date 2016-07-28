@@ -61,6 +61,11 @@ impl<'a> Report for &'a Report {
     fn can_continue(&self) -> bool { (**self).can_continue() }
 }
 
+impl<'a> Report for Rc<Report> {
+    fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
+    fn can_continue(&self) -> bool { (**self).can_continue() }
+}
+
 pub trait Reporter: Report + Sized {
     fn fatal<Loc: Into<Span>, Msg: Localize, T>(&self, loc: Loc, msg: Msg) -> ReportMore<T> {
         info!("reporting fatal error: {:?}", msg);
