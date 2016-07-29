@@ -178,8 +178,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 // subsets of numbers and strings. for now we try to detect if operands are
                 // definitely numbers or strings, and bail out when it is not possible.
 
-                let lflags = lhs.flags();
-                let rflags = rhs.flags();
+                let lflags = self.env.get_type_bounds(&lhs.unlift()).1;
+                let rflags = self.env.get_type_bounds(&rhs.unlift()).1;
 
                 // filter any non-strings and non-numbers
                 // avoid using assert_sub here, it is not accurate enough

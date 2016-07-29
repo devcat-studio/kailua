@@ -1990,3 +1990,11 @@ x()
 local p = 3 + x
 --! error
 
+--8<-- lua51-lt-operand-inferred-from-funcarg
+--# open lua51
+local function negative(x)
+    assert(type(x) == 'number') -- won't destroy the type varible
+    return x < 0
+end
+--! ok
+
