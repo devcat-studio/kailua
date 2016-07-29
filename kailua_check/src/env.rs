@@ -1279,15 +1279,27 @@ impl<'ctx> Env<'ctx> {
         Ok(())
     }
 
-    fn name_class_if_any(&mut self, name: &Spanned<Name>, info: &Spanned<Slot>) -> CheckResult<()> {
+    fn name_class_if_any(&mut self, name: &Spanned<Name>, info: &Spanned<Slot>,
+                         global: bool) -> CheckResult<()> {
         match *info.unlift().as_base() {
             T::Class(Class::Prototype(cid)) => {
+                // check if the name conflicts in the type namespace earlier
+                // note that even when the type is defined in the global scope
+                // we check both the local and global scope for the type name
+                if let Some(def) = self.get_named_type(name) {
+                    try!(self.error(name, m::CannotRedefineType { name: &name.base })
+                             .note(def.span, m::AlreadyDefinedType {})
+                             .done());
+                    return Ok(());
+                }
+
                 try!(self.context.name_class(cid, name));
 
-                // TODO this is temporary, should check for the duplicate much earlier
-                // and put to the global scope if it was defined in the global scope
-                try!(self.define_type(name, Box::new(T::Class(Class::Instance(cid)))));
+                let scope = if global { self.global_scope_mut() } else { self.current_scope_mut() };
+                let ret = scope.put_type(name.clone(), Box::new(T::Class(Class::Instance(cid))));
+                assert!(ret, "failed to insert the type");
             }
+
             T::Union(ref u) => {
                 // should raise an error if a prototype is used within a union
                 let is_prototype = |&cls| if let Class::Prototype(_) = cls { true } else { false };
@@ -1296,6 +1308,7 @@ impl<'ctx> Env<'ctx> {
                              .done());
                 }
             }
+
             _ => {}
         }
 
@@ -1315,7 +1328,7 @@ impl<'ctx> Env<'ctx> {
             try!(self.assign_(&specinfo, &initinfo, true));
 
             // name the class if it is currently unnamed
-            try!(self.name_class_if_any(name, &initinfo));
+            try!(self.name_class_if_any(name, &initinfo, false));
         }
 
         self.current_scope_mut().put(name.to_owned(), specinfo.base, assigned);
@@ -1331,7 +1344,7 @@ impl<'ctx> Env<'ctx> {
         // therefore we just remap `F::Just` to `F::VarOrCurrently`.
         info.adapt(F::Currently, self.context);
 
-        try!(self.name_class_if_any(name, &info));
+        try!(self.name_class_if_any(name, &info, false));
 
         self.current_scope_mut().put(name.to_owned(), info.base, true);
         Ok(())
@@ -1353,7 +1366,7 @@ impl<'ctx> Env<'ctx> {
         let specinfo =
             specinfo.unwrap_or_else(|| Slot::var(T::Nil, self.context).without_loc());
         try!(self.assign_(&specinfo, &initinfo, true));
-        try!(self.name_class_if_any(name, &initinfo));
+        try!(self.name_class_if_any(name, &initinfo, true));
 
         self.global_scope_mut().put(name.to_owned(), specinfo.base, true);
         Ok(())
@@ -1362,10 +1375,17 @@ impl<'ctx> Env<'ctx> {
     // assigns to a global or local variable with a right-hand-side type of `info`.
     // it may create a new global variable if there is no variable with that name.
     pub fn assign_to_var(&mut self, name: &Spanned<Name>, info: Spanned<Slot>) -> CheckResult<()> {
-        if let Some((prevset, previnfo)) = self.get_var(name).map(|def| (def.set,
-                                                                         def.slot.clone())) {
+        let def = if let Some(def) = self.get_local_var(name) {
+            Some((def.set, def.slot.clone(), false))
+        } else if let Some(def) = self.context.global_scope().get(name) {
+            Some((def.set, def.slot.clone(), true))
+        } else {
+            None
+        };
+        if let Some((prevset, previnfo, global)) = def {
             debug!("assigning {:?} to a variable {:?} with type {:?}", info, *name, previnfo);
             try!(self.assign_(&previnfo.with_loc(name), &info, !prevset));
+            try!(self.name_class_if_any(name, &info, global));
             self.get_var_mut(name).unwrap().set = true;
             return Ok(());
         }
@@ -1373,7 +1393,7 @@ impl<'ctx> Env<'ctx> {
         debug!("adding a global variable {:?} as {:?} (initialized)", *name, info);
         let newinfo = Slot::var(T::Nil, self.context).with_loc(name);
         try!(self.assign_(&newinfo, &info, true));
-        try!(self.name_class_if_any(name, &info));
+        try!(self.name_class_if_any(name, &info, true));
 
         self.global_scope_mut().put(name.to_owned(), newinfo.base, true);
         Ok(())

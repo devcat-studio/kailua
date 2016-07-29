@@ -35,6 +35,23 @@ local x = Goodbye + 3
 --@^ Error: `<prototype for Hello>` is not a subtype of `number`
 --! error
 
+--8<-- make-class-renamed-2
+--# assume `class`: [make_class] function() -> table
+Hello = class() --@< Note: The class was previously named here
+local x
+x = Hello --@< Warning: A new name for the previously named class is ignored
+local x = x + 3
+--@^ Error: `<prototype for Hello>` is not a subtype of `number`
+--! error
+
+--8<-- make-class-global-name-collision-with-local
+--# assume `class`: [make_class] function() -> table
+do
+    --# type Hello = string --@< Note: The type was originally defined here
+    Hello = class()         --@< Error: A type named `Hello` is already defined
+end
+--! error
+
 --8<-- class-init
 --# assume `class`: [make_class] function() -> table
 Hello = class()
@@ -208,6 +225,34 @@ local s = h:sum() --: var integer
 -- test error recovery
 --@v Error: Cannot index `Hello` with `"average"`
 local t = h:average() --: var integer
+
+--! error
+
+--8<-- lua51-class-global-naming
+--# open lua51
+require 'a'
+local hh = Hello.new() --: Hello
+
+--& a
+--# assume global `class`: [make_class] function() -> table
+Hello = class()
+function Hello:init() end
+local h = Hello.new() --: Hello
+
+--! ok
+
+--8<-- lua51-class-local-naming
+--# open lua51
+require 'a'
+local hh = Hello.new() --: Hello
+--@^ Error: Global or local variable `Hello` is not defined
+--@^^ Error: Type `Hello` is not defined
+
+--& a
+--# assume global `class`: [make_class] function() -> table
+local Hello = class()
+function Hello:init() end
+local h = Hello.new() --: Hello
 
 --! error
 
