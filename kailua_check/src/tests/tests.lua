@@ -1982,3 +1982,11 @@ f('string')
 
 --! ok
 
+--8<-- methodcall-recover
+local q = {}
+local x = q:f() --@< Error: Cannot index `{}` with `"f"`
+-- `x` should be a dummy type now, so the following shouldn't fail
+x()
+local p = 3 + x
+--! error
+

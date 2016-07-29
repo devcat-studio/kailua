@@ -185,3 +185,29 @@ local h = Hello.new(3, 4, 5)
 h:stringify()
 --! error
 
+--8<-- class-no-methodcall-in-ctor
+--# assume `class`: [make_class] function() -> table
+Hello = class()
+
+--v (x: integer, y: integer, z: integer)
+function Hello:init(x, y, z)
+    --@v Error: Cannot index `[internal constructible] Hello` with `"sum"`
+    local n = self:sum()
+    self.x = x + n
+    self.y = y + n
+    self.z = z + n
+end
+
+function Hello:sum()
+    return self.x + self.y + self.z
+end
+
+local h = Hello.new(3, 4, 5)
+local s = h:sum() --: var integer
+
+-- test error recovery
+--@v Error: Cannot index `Hello` with `"average"`
+local t = h:average() --: var integer
+
+--! error
+

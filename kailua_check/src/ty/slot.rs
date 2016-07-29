@@ -379,7 +379,7 @@ impl Slot {
             lty.is_referential() && rhs.flex().is_linear() && rhs.unlift().is_referential();
 
         match (lhs.flex, rhs.flex, init) {
-            (_, F::Dynamic, _) | (F::Dynamic, _, _) => {}
+            (F::Dynamic, _, _) => {}
 
             (_, F::Any, _) |
             (F::Any, _, _) |
@@ -387,6 +387,14 @@ impl Slot {
             (F::Const, _, false) => {
                 return Err(format!("impossible to assign {:?} to {:?}", rhs, lhs));
             }
+
+            // dynamic rhs *may* change the flex of lhs as well, if the initial flex permits
+            (F::Currently, F::Dynamic, _) | (F::VarOrCurrently(_), F::Dynamic, _) => {
+                lhs.flex = F::Dynamic;
+                lhs.ty = T::Dynamic;
+            }
+
+            (_, F::Dynamic, _) => {}
 
             // as long as the type is in agreement, Var can be assigned
             (F::Var, _, _) => {
