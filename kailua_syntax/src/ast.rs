@@ -341,7 +341,7 @@ pub enum St {
     For(Spanned<Name>, Spanned<Exp>, Spanned<Exp>, Option<Spanned<Exp>>, Spanned<Block>),
     ForIn(Vec<Spanned<Name>>, Vec<Spanned<Exp>>, Spanned<Block>),
     FuncDecl(NameScope, Spanned<Name>, Sig, Spanned<Block>),
-    MethodDecl(Vec<Spanned<Name>>, Option<Spanned<SelfParam>>, Sig, Spanned<Block>),
+    MethodDecl(Vec<Spanned<Name>>, Option<TypeSpec<Spanned<SelfParam>>>, Sig, Spanned<Block>),
     Local(Vec<TypeSpec<Spanned<Name>>>, Vec<Spanned<Exp>>),
     Return(Vec<Spanned<Exp>>),
     Break,

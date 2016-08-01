@@ -188,6 +188,11 @@ define_msg! { pub ExcessArgsInFuncSpec:
     _    => "Excess arguments in the function specification",
 }
 
+define_msg! { pub MissingArgTypeInFuncSpec:
+    "ko" => "함수 타입에 주어진 인자에 타입이 붙어 있지 않습니다",
+    _    => "Arguments in the function specification are missing their types",
+}
+
 define_msg! { pub MissingVarargsInFuncDecl:
     "ko" => "가변 인자가 함수 선언에는 있는데 함수 타입에는 없습니다",
     _    => "Variadic arguments appear in the function specification \
@@ -268,5 +273,10 @@ define_msg! { pub CannotRedefineBuiltin:
 define_msg! { pub AttrToKindSeq:
     "ko" => "[name] 꼴의 타입 속성 선언은 타입열에는 붙일 수 없습니다",
     _    => "Cannot attach the type attribute (like [name]) to the type sequence",
+}
+
+define_msg! { pub MissingSelfInFuncSpec:
+    "ko" => "메소드의 함수 타입에서 첫 인자가 `self`가 아닙니다",
+    _    => "The first argument in the function specification for a method is not `self`",
 }
 

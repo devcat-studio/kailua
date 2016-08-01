@@ -322,6 +322,12 @@ define_msg! { pub BadSelfInInitMethod<'a> { init: Slot<'a> }:
              doesn't have a correct type for the first argument",
 }
 
+define_msg! { pub CannotCallCtor:
+    "ko" => "생성자(`init` 메소드)는 내부적으로만 호출되며 바깥에서 호출되어서는 안됩니다",
+    _    => "The constructor (`init` method) is only internally called and \
+             should not be called outside",
+}
+
 define_msg! { pub ReservedNewMethod:
     "ko" => "`new` 메소드는 예약되어 있으며 선언될 수 없습니다",
     _    => "`new` method is reserved and cannot be defined",
@@ -330,6 +336,18 @@ define_msg! { pub ReservedNewMethod:
 define_msg! { pub CannotAddFieldsToInstance:
     "ko" => "생성자 바깥에서는 클래스 인스턴스에 새 필드가 추가될 수 없습니다",
     _    => "Cannot add a new field to the class instance outside of the constructor",
+}
+
+define_msg! { pub BadSelfTypeInMethod:
+    "ko" => "메소드의 `self` 타입이 주어질 경우 그 타입은 \
+             항상 클래스 인스턴스 타입이어야 합니다",
+    _    => "The type of `self` argument to the method, if present, \
+             should be a corresponding class instance type",
+}
+
+define_msg! { pub NoCheckRequiresTypedSelf:
+    "ko" => "[no_check] 속성이 주어졌을 경우 `self` 인자에 타입이 주어져야 합니다",
+    _    => "[no_check] attribute requires the `self` argument to be typed",
 }
 
 define_msg! { pub NoCheckRequiresTypedArgs:

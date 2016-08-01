@@ -2024,6 +2024,21 @@ local c = foo('hi') --: var integer
 
 --! error
 
+--8<-- no-check-method-type
+foo = {}
+
+--v [no_check]
+--v (self: integer, x: integer) -> integer
+function foo:bar(x)
+    return x + "string"
+end
+
+-- this is an error because `self` type is not affected by [no_check]
+--@v Error: `{bar = function(integer, integer) -> integer}` is not a subtype of `integer`
+local a = foo:bar(3) --: var integer
+
+--! error
+
 --8<-- no-check-untyped-args
 --v [no_check]
 function foo(x) --> boolean --@< Error: [no_check] attribute requires the arguments to be typed
@@ -2044,6 +2059,15 @@ end
 --@v-vvvv Error: [no_check] attribute requires the return type to be present
 --v [no_check]
 function foo(x) --: integer
+    return x + "string"
+end
+--! error
+
+--8<-- no-check-untyped-self
+foo = {}
+--v [no_check]
+--v (self, x: integer) -> boolean --@< Error: [no_check] attribute requires the `self` argument to be typed
+function foo:bar(x)
     return x + "string"
 end
 --! error

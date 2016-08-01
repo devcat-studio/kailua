@@ -23,6 +23,14 @@ local function r(p,...)
 end
 --! [FuncDecl(Local, `r`, [`p`, ...: _] -> _, [])]
 
+--8<-- func-in-table
+function a.b.c(p) --[[...]] end
+--! [MethodDecl([`a`, `b`, `c`], None, [`p`] -> _, [])]
+
+--8<-- method
+function a.b:c(p) --[[...]] end
+--! [MethodDecl([`a`, `b`, `c`], Some(self), [`p`] -> _, [])]
+
 --8<-- local
 local a, b
 --! [Local([`a`, `b`], [])]
@@ -840,6 +848,56 @@ end
 local function foo(...)
 end
 --! [FuncDecl(Local, `foo`, [...: String], [])]
+
+--8<-- funcspec-method-no-self-1
+--v () --@< Error: The first argument in the function specification for a method is not `self`
+function foo:bar() end
+--! error
+
+--8<-- funcspec-method-no-self-2
+--@v-vv Error: The first argument in the function specification for a method is not `self`
+--v (x: integer,
+--v  y: string)
+function foo:bar(x, y) end
+--! error
+
+--8<-- funcspec-method-self
+--v (self)
+function foo:bar() end
+--! [MethodDecl([`foo`, `bar`], Some(self), [], [])]
+
+--8<-- funcspec-method-self-typed
+--v (self: table)
+function foo:bar() end
+--! [MethodDecl([`foo`, `bar`], Some(self: _ Table), [], [])]
+
+--8<-- funcspec-method-self-typed-with-modf
+--v (self: const table)
+function foo:bar() end
+--! [MethodDecl([`foo`, `bar`], Some(self: Const Table), [], [])]
+
+--8<-- funcspec-non-method-self-1
+--v (self, x: integer) --@< Error: Arguments in the function specification are missing their types
+                       --@^ Error: Excess arguments in the function specification
+function foo.bar(x) end --@< Error: Mismatching argument name in the function specification
+                        --@^^^ Note: The corresponding argument was here
+--! error
+
+--8<-- funcspec-non-method-self-2
+--v (self, x: integer) --@< Error: Arguments in the function specification are missing their types
+function foo.bar(self, x) end
+--! error
+
+--8<-- funcspec-non-method-self-typed-1
+--v (self: table, x: integer) --@< Error: Excess arguments in the function specification
+function foo.bar(x) end --@< Error: Mismatching argument name in the function specification
+                        --@^^ Note: The corresponding argument was here
+--! error
+
+--8<-- funcspec-non-method-self-typed-2
+--v (self: table, x: integer)
+function foo.bar(self, x) end
+--! [MethodDecl([`foo`, `bar`], None, [`self`: _ Table, `x`: _ Integer], [])]
 
 --8<-- assume-multiline-recover
 --# assume a: { integer, string

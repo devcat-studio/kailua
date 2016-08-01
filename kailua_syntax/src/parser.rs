@@ -482,14 +482,35 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
             (_, Spanned { base: Tok::Keyword(Keyword::Function), .. }) => {
                 let mut names = vec![try!(self.parse_name())];
-                let mut selfparam = None;
                 while self.may_expect(Punct::Dot) {
                     names.push(try!(self.parse_name()));
                 }
+
+                let mut funcspec = funcspec;
+                let mut selfparam = None;
                 if self.may_expect(Punct::Colon) {
                     names.push(try!(self.parse_name()));
-                    selfparam = Some(SelfParam.with_loc(Span::dummy()));
+
+                    // if this is a method, the pre-signature (if any) should have `self`
+                    // as the first argument, either typed or not.
+                    // (`parse_func_body` doesn't like untyped params, so we need to pop it)
+                    if let Some(Spanned { base: (_, Some(ref mut presig)), .. }) = funcspec {
+                        if !presig.args.head.is_empty() &&
+                                *presig.args.head[0].base.base.base == b"self" {
+                            let Spanned { base: arg, span } = presig.args.head.remove(0);
+                            selfparam = Some(TypeSpec { base: SelfParam.with_loc(span),
+                                                        modf: arg.modf, kind: arg.kind });
+                        } else {
+                            try!(self.error(presig, m::MissingSelfInFuncSpec {}).done());
+                            // and assume that there *were* a `self` without a type
+                        }
+                    }
+                    if selfparam.is_none() {
+                        selfparam = Some(TypeSpec { base: SelfParam.without_loc(),
+                                                    modf: M::None, kind: None });
+                    }
                 }
+
                 let (sig, body) = try!(self.parse_func_body(funcspec));
                 if names.len() == 1 {
                     assert!(selfparam.is_none(), "ordinary function cannot have an implicit self");
@@ -710,6 +731,14 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
         let sig_or_others = if let Some(Spanned { base: (attrs, presig), .. }) = funcspec {
             if let Some(presig) = presig {
+                // before any checking, we should ensure that every parameter has a type attached
+                // (`self` is a notable exception, but should have been removed by now)
+                for arg in &presig.base.args.head {
+                    if arg.kind.is_none() {
+                        try!(self.error(&arg.base.base, m::MissingArgTypeInFuncSpec {}).done());
+                    }
+                }
+
                 // if there is a pre-signature, any mismatching parameter or
                 // inline argument type spec is an error
                 if args.len() > presig.base.args.head.len() {
@@ -1299,12 +1328,14 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    // may contain ellipsis, the caller is expected to error on unwanted cases
+    // the first argument may be `self`, which can have its type omitted
+    // may also contain ellipsis, the caller is expected to error on unwanted cases
     fn parse_kailua_namekindlist(&mut self)
             -> diag::Result<Seq<Spanned<TypeSpec<Spanned<Name>>>,
                                 Spanned<Option<Spanned<Kind>>>>> {
         let mut variadic = None;
         let mut specs = Vec::new();
+
         let begin = self.pos();
         if self.may_expect(Punct::DotDotDot) { // "..." [":" KIND]
             variadic = Some(begin);
@@ -1313,11 +1344,25 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 Some(name) => name,
                 None => return Ok(Seq { head: specs, tail: None }),
             };
-            try!(self.expect(Punct::Colon));
-            let modf = try!(self.parse_kailua_mod());
-            let kind = try!(self.parse_kailua_kind());
-            let spec = TypeSpec { base: name, modf: modf, kind: Some(kind) };
+            let modf;
+            let kind;
+            if *name.base == b"self" {
+                // `self` as the first argument can omit its type
+                if self.may_expect(Punct::Colon) {
+                    modf = try!(self.parse_kailua_mod());
+                    kind = Some(try!(self.parse_kailua_kind()));
+                } else {
+                    modf = M::None;
+                    kind = None;
+                }
+            } else {
+                try!(self.expect(Punct::Colon));
+                modf = try!(self.parse_kailua_mod());
+                kind = Some(try!(self.parse_kailua_kind()));
+            }
+            let spec = TypeSpec { base: name, modf: modf, kind: kind };
             specs.push(spec.with_loc(begin..self.last_pos()));
+
             while self.may_expect(Punct::Comma) {
                 let begin = self.pos();
                 if self.may_expect(Punct::DotDotDot) {
@@ -1332,6 +1377,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 specs.push(spec.with_loc(begin..self.last_pos()));
             }
         }
+
         if let Some(begin) = variadic {
             // we've already read `...`
             let varargs = if self.may_expect(Punct::Colon) {

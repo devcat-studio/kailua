@@ -63,7 +63,7 @@ local h = Hello.new() --: Hello
 --8<-- class-init-bad-arity
 --# assume `class`: [make_class] function() -> table
 Hello = class()
---v (x: integer, y: integer, z: integer)
+--v (self, x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
 end
 local h = Hello.new(3, 4, 5, 6)
@@ -73,7 +73,7 @@ local h = Hello.new(3, 4, 5, 6)
 --8<-- class-init-fields
 --# assume `class`: [make_class] function() -> table
 Hello = class()
---v (x: integer, y: integer, z: integer)
+--v (self, x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
     self.x = x
     self.y = y
@@ -86,7 +86,7 @@ local a = h.x + h.y + h.z --: integer
 --8<-- class-init-fields-currently
 --# assume `class`: [make_class] function() -> table
 Hello = class()
---v (x: integer, y: integer, z: integer)
+--v (self, x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
     self.x = x
     self.y = y
@@ -110,7 +110,7 @@ end
 --8<-- class-new-assign
 --# assume `class`: [make_class] function() -> table
 Hello = class()
---v (x: integer, y: integer, z: integer)
+--v (self, x: integer, y: integer, z: integer)
 function Hello:new(x, y, z) --@< Error: `new` method is reserved and cannot be defined
 end
 --! error
@@ -119,7 +119,7 @@ end
 --# assume `class`: [make_class] function() -> table
 Hello = class()
 
---v (x: integer, y: integer, z: integer)
+--v (self, x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
     self.x = x
     self.y = y
@@ -138,7 +138,7 @@ local a = h:sum() --: var integer
 --# assume `class`: [make_class] function() -> table
 Hello = class()
 
---v (x: integer, y: integer, z: integer)
+--v (self, x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
     self.x = x
     self.y = y
@@ -163,7 +163,7 @@ h:add()
 --# assume `class`: [make_class] function() -> table
 Hello = class()
 
---v (x: integer, y: integer, z: integer)
+--v (self, x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
     self.x = x
     self.y = y
@@ -184,7 +184,7 @@ h:add(8)
 --# assume `class`: [make_class] function() -> table
 Hello = class()
 
---v (x: integer, y: integer, z: integer)
+--v (self, x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
     self.x = x
     self.y = y
@@ -206,7 +206,7 @@ h:stringify()
 --# assume `class`: [make_class] function() -> table
 Hello = class()
 
---v (x: integer, y: integer, z: integer)
+--v (self, x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
     --@v Error: Cannot index `[internal constructible] Hello` with `"sum"`
     local n = self:sum()
@@ -253,6 +253,75 @@ local hh = Hello.new() --: Hello
 local Hello = class()
 function Hello:init() end
 local h = Hello.new() --: Hello
+
+--! error
+
+--8<-- class-call-ctor
+--# assume `class`: [make_class] function() -> table
+Hello = class()
+
+function Hello:init() end
+
+local h = Hello.new()
+h:init()      --@< Error: The constructor (`init` method) is only internally called and should not be called outside
+Hello.init(h) --@< Error: The constructor (`init` method) is only internally called and should not be called outside
+
+--! error
+
+--8<-- class-self-type-1
+--# assume `class`: [make_class] function() -> table
+Hello = class()
+function Hello:init() end
+
+--v (self: string) --@< Error: The type of `self` argument to the method, if present, should be a corresponding class instance type
+function Hello:foo() end
+
+-- should not be an error
+local h = Hello.new()
+Hello.foo(h)
+
+--! error
+
+--8<-- class-self-type-2
+--# assume `class`: [make_class] function() -> table
+Hello = class()
+function Hello:init() end
+
+--v (self: Hello)
+function Hello:foo() end
+
+local h = Hello.new()
+Hello.foo(h)
+
+--! ok
+
+--8<-- class-self-type-inferred
+--# assume `class`: [make_class] function() -> table
+Hello = class()
+function Hello:init() end
+
+--v (self)
+function Hello:foo() end
+
+local h = Hello.new()
+Hello.foo(h)
+
+--! ok
+
+-->8-- class-self-type-const
+--# assume `class`: [make_class] function() -> table
+Hello = class()
+function Hello:init()
+    self.x = 42
+end
+
+--v (self: const Hello)
+function Hello:foo()
+    self.x = self.x + 1
+end
+
+local h = Hello.new()
+Hello.foo(h)
 
 --! error
 

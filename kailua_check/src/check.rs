@@ -276,6 +276,11 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             return Ok(TySeq::dummy());
         };
 
+        if functy.builtin() == Some(Builtin::Constructor) {
+            try!(self.env.error(func, m::CannotCallCtor {}).done());
+            return Ok(TySeq::dummy());
+        }
+
         // check if func.args :> args
         let mut returns = match *functy.get_functions().unwrap() {
             Functions::Simple(ref f) => {
@@ -947,7 +952,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 Ok(Exit::None)
             }
 
-            St::MethodDecl(ref names, selfparam, ref sig, ref block) => {
+            St::MethodDecl(ref names, ref selfparam, ref sig, ref block) => {
                 assert!(names.len() >= 2);
 
                 // find a slot for the first name
@@ -977,28 +982,69 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 // now prepare the right-hand side (i.e. method decl)
                 let method = names.last().unwrap();
-                let selfinfo = match selfparam {
-                    Some(ref selfparam) => {
-                        // if `info` is a class prototype we know the exact type for `self`
-                        let slot = if let T::Class(Class::Prototype(cid)) = *info.unlift() {
-                            let inst = T::Class(Class::Instance(cid));
-                            if *method.base == b"init" {
-                                // currently [constructible] <class instance #cid>
-                                Slot::new(F::Currently,
-                                          T::Builtin(Builtin::Constructible, Box::new(inst)))
-                            } else {
-                                // var <class instance #cid>
-                                Slot::new(F::Var, inst)
-                            }
+                let selfinfo = if let Some(ref selfparam) = *selfparam {
+                    let given = if let Some(ref kind) = selfparam.kind {
+                        let ty = try!(T::from(kind, &mut self.env));
+                        let flex = match selfparam.modf {
+                            M::None | M::Var => F::Var,
+                            M::Const => F::Const,
+                        };
+                        Some((flex, ty))
+                    } else {
+                        None
+                    };
+
+                    // if `info` is a class prototype we know the exact type for `self`
+                    let inferred = if let T::Class(Class::Prototype(cid)) = *info.unlift() {
+                        let inst = T::Class(Class::Instance(cid));
+                        if *method.base == b"init" {
+                            // currently [constructible] <class instance #cid>
+                            Some((F::Currently,
+                                  T::Builtin(Builtin::Constructible, Box::new(inst))))
                         } else {
-                            // TODO should raise an error when no_check is requested
+                            // var <class instance #cid>
+                            Some((F::Var, inst))
+                        }
+                    } else {
+                        None
+                    };
+
+                    let slot = match (given, inferred) {
+                        // if both `given` and `inferred` are present, try to unify them
+                        (Some(given), Some(inferred)) => {
+                            if given.1.assert_eq(&inferred.1, self.context()).is_err() {
+                                let span = selfparam.kind.as_ref().unwrap().span;
+                                try!(self.env.error(span, m::BadSelfTypeInMethod {}).done());
+                            }
+
+                            // they may have the same type but different flex.
+                            // as given flex is no less stringent than inferred flex,
+                            // we overwrite the inferred flex to the given flex.
+                            Slot::new(given.0, inferred.1)
+                        }
+
+                        // if only one of them is present, use that
+                        (Some((flex, ty)), None) | (None, Some((flex, ty))) => {
+                            Slot::new(flex, ty)
+                        }
+
+                        // if both are missing, we try to use a fresh type variable,
+                        // except when [no_check] is requested (requires a fixed type)
+                        (None, None) => {
+                            if sig.attrs.iter().any(|a| *a.name.base == b"no_check") {
+                                try!(self.env.error(&selfparam.base, m::NoCheckRequiresTypedSelf {})
+                                             .done());
+                            }
+
                             // var <fresh type variable>
                             let tv = T::TVar(self.context().gen_tvar());
                             Slot::new(F::Var, tv)
-                        };
-                        Some(slot.with_loc(selfparam))
-                    },
-                    None => None,
+                        }
+                    };
+
+                    Some(slot.with_loc(&selfparam.base))
+                } else {
+                    None
                 };
                 let methinfo = try!(self.visit_func_body(selfinfo, sig, block, stmt.span));
 
