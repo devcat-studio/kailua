@@ -1998,3 +1998,53 @@ local function negative(x)
 end
 --! ok
 
+--8<-- no-check
+--v [no_check]
+--v (x: integer) -> integer
+function foo(x)
+    return x + "string"
+end
+--! ok
+
+--8<-- no-check-func-type
+--v [no_check]
+--v (x: integer) -> integer
+function foo(x)
+    return x + "string"
+end
+
+local a = foo(3) --: var integer
+
+local b = foo(4) --: var string
+--@^ Error: Cannot assign `integer` into `var string`
+--@^^ Note: The other type originates here
+
+local c = foo('hi') --: var integer
+--@^ Error: `"hi"` is not a subtype of `integer`
+
+--! error
+
+--8<-- no-check-untyped-args
+--v [no_check]
+function foo(x) --> boolean --@< Error: [no_check] attribute requires the arguments to be typed
+    return x + "string"
+end
+--! error
+
+--8<-- no-check-untyped-varargs
+--@v-vvvvv Error: [no_check] attribute requires the variadic arguments to be typed
+--v [no_check]
+function foo(x, --: integer
+             ...) --> boolean
+    return x + "string"
+end
+--! error
+
+--8<-- no-check-untyped-returns
+--@v-vvvv Error: [no_check] attribute requires the return type to be present
+--v [no_check]
+function foo(x) --: integer
+    return x + "string"
+end
+--! error
+

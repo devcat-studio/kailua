@@ -332,3 +332,18 @@ define_msg! { pub CannotAddFieldsToInstance:
     _    => "Cannot add a new field to the class instance outside of the constructor",
 }
 
+define_msg! { pub NoCheckRequiresTypedArgs:
+    "ko" => "[no_check] 속성이 주어졌을 경우 인자에 타입이 주어져야 합니다",
+    _    => "[no_check] attribute requires the arguments to be typed",
+}
+
+define_msg! { pub NoCheckRequiresTypedVarargs:
+    "ko" => "[no_check] 속성이 주어졌을 경우 가변 인자에 타입이 주어져야 합니다",
+    _    => "[no_check] attribute requires the variadic arguments to be typed",
+}
+
+define_msg! { pub NoCheckRequiresTypedReturns:
+    "ko" => "[no_check] 속성이 주어졌을 경우 함수의 반환 타입이 주어져야 합니다",
+    _    => "[no_check] attribute requires the return type to be present",
+}
+

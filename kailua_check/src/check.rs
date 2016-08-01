@@ -942,7 +942,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     NameScope::Local => try!(self.env.add_local_var(name, None, Some(info))),
                     NameScope::Global => try!(self.env.assign_to_var(name, info)),
                 }
-                let functy = try!(self.visit_func_body(None, sig, block));
+                let functy = try!(self.visit_func_body(None, sig, block, stmt.span));
                 try!(T::TVar(funcv).assert_eq(&*functy.unlift(), self.context()));
                 Ok(Exit::None)
             }
@@ -991,6 +991,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                 Slot::new(F::Var, inst)
                             }
                         } else {
+                            // TODO should raise an error when no_check is requested
                             // var <fresh type variable>
                             let tv = T::TVar(self.context().gen_tvar());
                             Slot::new(F::Var, tv)
@@ -999,7 +1000,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     },
                     None => None,
                 };
-                let methinfo = try!(self.visit_func_body(selfinfo, sig, block));
+                let methinfo = try!(self.visit_func_body(selfinfo, sig, block, stmt.span));
 
                 // finally, go through the ordinary table update
                 let subspan = info.span | method.span;
@@ -1068,11 +1069,20 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     }
 
     fn visit_func_body(&mut self, selfinfo: Option<Spanned<Slot>>, sig: &Sig,
-                       block: &Spanned<Vec<Spanned<Stmt>>>) -> CheckResult<Slot> {
+                       block: &Spanned<Vec<Spanned<Stmt>>>, declspan: Span) -> CheckResult<Slot> {
+        // if no check is requested, the signature should be complete
+        let no_check = sig.attrs.iter().any(|a| *a.name.base == b"no_check");
+
         let vatype = match sig.args.tail {
             None => None,
-            // varargs present but types are unspecified
-            Some(None) => Some(Box::new(TyWithNil::from(T::TVar(self.context().gen_tvar())))),
+            Some(None) => {
+                // varargs present but types are unspecified
+                if no_check {
+                    try!(self.env.error(declspan, m::NoCheckRequiresTypedVarargs {}).done());
+                    return Ok(Slot::dummy());
+                }
+                Some(Box::new(TyWithNil::from(T::TVar(self.context().gen_tvar()))))
+            },
             Some(Some(ref k)) => Some(Box::new(TyWithNil::from(try!(T::from(k, &mut self.env))))),
         };
         let vainfo = vatype.clone().map(|t| TySeq { head: Vec::new(), tail: Some(t) });
@@ -1085,6 +1095,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         let frame = if let Some(ref returns) = sig.returns {
             let returns = try!(TySeq::from_kind_seq(returns, &mut self.env));
             Frame { vararg: vainfo, returns: Some(returns), returns_exact: true }
+        } else if no_check {
+            try!(self.env.error(declspan, m::NoCheckRequiresTypedReturns {}).done());
+            return Ok(Slot::dummy());
         } else {
             Frame { vararg: vainfo, returns: None, returns_exact: false }
         };
@@ -1109,6 +1122,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     M::Const => F::Const,
                 };
                 sty = Slot::new(flex, ty.clone());
+            } else if no_check {
+                try!(scope.env.error(&param.base, m::NoCheckRequiresTypedArgs {}).done());
+                return Ok(Slot::dummy());
             } else {
                 let argv = scope.context().gen_tvar();
                 ty = T::TVar(argv);
@@ -1119,10 +1135,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         }
         let args = TySeq { head: argshead, tail: vatype };
 
-        if let Exit::None = try!(scope.visit_block(block)) {
-            // the last statement is an implicit return
-            let ret = Box::new(St::Return(Vec::new())).without_loc();
-            try!(scope.visit_stmt(&ret));
+        if !no_check {
+            if let Exit::None = try!(scope.visit_block(block)) {
+                // the last statement is an implicit return
+                let ret = Box::new(St::Return(Vec::new())).without_loc();
+                try!(scope.visit_stmt(&ret));
+            }
         }
 
         let returns = scope.env.get_frame_mut().returns.take().unwrap();
@@ -1284,7 +1302,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             },
 
             Ex::Func(ref sig, ref block) => {
-                let returns = try!(self.visit_func_body(None, sig, block));
+                let returns = try!(self.visit_func_body(None, sig, block, exp.span));
                 Ok(SlotSeq::from_slot(returns))
             },
             Ex::Table(ref fields) => {
