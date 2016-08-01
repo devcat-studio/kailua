@@ -1,3 +1,10 @@
+use kailua_diag::Reporter;
+use kailua_syntax::Attr;
+use diag::CheckResult;
+use super::TypeResolver;
+use message as m;
+
+// TODO will be renamed to "tag", the "builtin" is very confusing name
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Builtin {
     // only used to test built-ins requiring subtypes and those not.
@@ -116,26 +123,29 @@ pub enum Builtin {
 }
 
 impl Builtin {
-    pub fn from_name(name: &[u8]) -> Option<Builtin> {
-        match name {
-            b"internal subtype"    => Some(Builtin::_Subtype),
-            b"internal no_subtype" => Some(Builtin::_NoSubtype),
+    pub fn from(attr: &Attr, resolv: &mut TypeResolver) -> CheckResult<Option<Builtin>> {
+        match &attr.name.base[..] {
+            b"internal subtype"    => Ok(Some(Builtin::_Subtype)),
+            b"internal no_subtype" => Ok(Some(Builtin::_NoSubtype)),
 
-            b"require"       => Some(Builtin::Require),
-            b"type"          => Some(Builtin::Type),
-            b"assert"        => Some(Builtin::Assert),
-            b"assert_not"    => Some(Builtin::AssertNot),
-            b"assert_type"   => Some(Builtin::AssertType),
-            b"generic_pairs" => Some(Builtin::GenericPairs),
-            b"genv"          => Some(Builtin::GlobalEnv),
-            b"geval"         => Some(Builtin::GlobalEval),
-            b"become_module" => Some(Builtin::BecomeModule),
-            b"package_path"  => Some(Builtin::PackagePath),
-            b"package_cpath" => Some(Builtin::PackageCpath),
-            b"string_meta"   => Some(Builtin::StringMeta),
-            b"make_class"    => Some(Builtin::MakeClass),
+            b"require"       => Ok(Some(Builtin::Require)),
+            b"type"          => Ok(Some(Builtin::Type)),
+            b"assert"        => Ok(Some(Builtin::Assert)),
+            b"assert_not"    => Ok(Some(Builtin::AssertNot)),
+            b"assert_type"   => Ok(Some(Builtin::AssertType)),
+            b"generic_pairs" => Ok(Some(Builtin::GenericPairs)),
+            b"genv"          => Ok(Some(Builtin::GlobalEnv)),
+            b"geval"         => Ok(Some(Builtin::GlobalEval)),
+            b"become_module" => Ok(Some(Builtin::BecomeModule)),
+            b"package_path"  => Ok(Some(Builtin::PackagePath)),
+            b"package_cpath" => Ok(Some(Builtin::PackageCpath)),
+            b"string_meta"   => Ok(Some(Builtin::StringMeta)),
+            b"make_class"    => Ok(Some(Builtin::MakeClass)),
 
-            _ => None,
+            _ => {
+                try!(resolv.warn(&attr.name, m::UnknownAttrName { name: &attr.name.base }).done());
+                Ok(None)
+            }
         }
     }
 

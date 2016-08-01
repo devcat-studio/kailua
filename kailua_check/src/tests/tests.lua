@@ -1641,10 +1641,10 @@ local p = 54 --: integer
 local p = 'string' --: string
 --! ok
 
---8<-- unknown-builtin
---# --@v Warning: `sudo` is an unknown built-in name and ignored
+--8<-- unknown-attr
+--# --@v Warning: `sudo` is an unknown type attribute and ignored
 --# assume sudo: [sudo] {
---#     --@v Warning: `make_sandwich` is an unknown built-in name and ignored
+--#     --@v Warning: `make_sandwich` is an unknown type attribute and ignored
 --#     make_sandwich = const [make_sandwich] function(boolean)
 --# }
 --! ok

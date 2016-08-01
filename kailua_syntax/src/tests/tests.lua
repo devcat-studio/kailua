@@ -579,38 +579,38 @@ local x --: {[integer] = const {var {[string] = {integer, integer}?}}}
 --!                                        _ Union([Tuple([_ Integer, _ Integer]), \
 --!                                                 Nil]))))], [])]
 
---8<-- kind-builtin-1
+--8<-- kind-attr-1
 local x --: [builtin] string
 --! [Local([`x`: _ [`builtin`] String], [])]
 
---8<-- kind-builtin-2
+--8<-- kind-attr-2
 local x --: [builtin] function(any)
 --! [Local([`x`: _ [`builtin`] Func([(Any) -> ()])], [])]
 
---8<-- kind-builtin-paren
+--8<-- kind-attr-paren
 local x --: ([builtin] (string))
 --! [Local([`x`: _ [`builtin`] String], [])]
 
---8<-- kind-builtin-empty
+--8<-- kind-attr-empty
 local x --: [] string --@< Fatal: Expected a name, got `]`
 --! error
 
---8<-- kind-builtin-wrong
+--8<-- kind-attr-wrong
 local x --: [built-in] string --@< Fatal: Expected `]`, got `-`
 --! error
 
---8<-- kind-builtin-keyword
+--8<-- kind-attr-keyword
 local x --: [type] function(any)
 --! [Local([`x`: _ [`type`] Func([(Any) -> ()])], [])]
 
---8<-- kind-builtin-dup
+--8<-- kind-attr-dup
 local x --: [builtin] [builtin] string --@< Error: Expected a single type, got `[`
                                        --@^ Error: Expected a newline, got a name
 --! error
 
---8<-- kind-builtin-seq
+--8<-- kind-attr-seq
 local x --: function() -> [builtin] (string, string)
---@^ Error: Cannot attach the built-in type specification (like [name]) to the type sequence
+--@^ Error: Cannot attach the type attribute (like [name]) to the type sequence
 --! error
 
 --8<-- funcspec
@@ -678,6 +678,45 @@ local function foo(a) end
  --v -> string
  function(a, ...) end)()
 --! [Void(Func([`a`: Const Integer, ...: _] -> String, [])())]
+
+--8<-- funcspec-attr-1
+--v [no_check] ()
+function foo() end
+--! [FuncDecl(Global, `foo`, [`no_check`] [], [])]
+
+--8<-- funcspec-attr-2
+--v [no_check]
+--v ()
+function foo() end
+--! [FuncDecl(Global, `foo`, [`no_check`] [], [])]
+
+--8<-- funcspec-attr-multi-1
+--v [no_check] [self_destruct] ()
+function foo() end
+--! [FuncDecl(Global, `foo`, [`no_check`] [`self_destruct`] [], [])]
+
+--8<-- funcspec-attr-multi-2
+--v [no_check]
+--v [self_destruct]
+--v ()
+function foo() end
+--! [FuncDecl(Global, `foo`, [`no_check`] [`self_destruct`] [], [])]
+
+--8<-- funcspec-attr-only
+--v [no_check]
+function foo() end
+--! [FuncDecl(Global, `foo`, [`no_check`] [] -> _, [])]
+-- note the trailing `_`, which indicates that there was no pre-signature
+
+--8<-- funcspec-attr-incomplete
+--v [no_check --@<-v Fatal: Expected `]`, got a newline
+function foo() end
+--! error
+
+--8<-- funcspec-no-empty
+--v --@<-v Fatal: Expected `(`, got a newline
+function foo() end
+--! error
 
 --8<-- rettype-none
 function foo() --> ()

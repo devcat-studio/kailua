@@ -72,6 +72,17 @@ impl From<Name> for Str {
 }
 
 #[derive(Clone, PartialEq)]
+pub struct Attr {
+    pub name: Spanned<Name>,
+}
+
+impl fmt::Debug for Attr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[{:?}]", self.name)
+    }
+}
+
+#[derive(Clone, PartialEq)]
 pub struct Seq<Head, Tail=Head> {
     pub head: Vec<Head>,
     pub tail: Option<Tail>,
@@ -135,8 +146,9 @@ pub struct Presig {
 }
 
 impl Presig {
-    pub fn to_sig(self) -> Sig {
+    pub fn to_sig(self, attrs: Vec<Spanned<Attr>>) -> Sig {
         Sig {
+            attrs: attrs,
             args: Seq { head: self.args.head.into_iter().map(|arg| arg.base).collect(),
                         tail: self.args.tail.map(|arg| arg.base) },
             returns: self.returns,
@@ -146,6 +158,7 @@ impl Presig {
 
 #[derive(Clone, PartialEq)]
 pub struct Sig {
+    pub attrs: Vec<Spanned<Attr>>,
     pub args: Seq<TypeSpec<Spanned<Name>>,
                   Option<Spanned<Kind>>>, // may have to be inferred; Const only
     pub returns: Option<Seq<Spanned<Kind>>>, // may have to be inferred
@@ -153,6 +166,9 @@ pub struct Sig {
 
 impl fmt::Debug for Sig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for attr in &self.attrs {
+            try!(write!(f, "{:?} ", attr));
+        }
         try!(write!(f, "["));
         let mut first = true;
         for namespec in &self.args.head {
@@ -411,7 +427,7 @@ pub enum K {
     UserData,
     Named(Spanned<Name>),
     Union(Vec<Spanned<Kind>>),
-    Builtin(Spanned<Kind>, Spanned<Name>),
+    Attr(Spanned<Kind>, Spanned<Attr>),
     Error(Option<Spanned<Str>>),
 }
 
@@ -453,7 +469,7 @@ impl fmt::Debug for K {
             K::Tuple(ref fields) => write!(f, "Tuple({:?})", *fields),
             K::Func(ref funcs) => write!(f, "Func({:?})", *funcs),
             K::Union(ref kinds) => write!(f, "Union({:?})", *kinds),
-            K::Builtin(ref k, ref b) => write!(f, "[{:?}] {:?}", *b, *k),
+            K::Attr(ref k, ref a) => write!(f, "{:?} {:?}", a, k),
         }
     }
 }

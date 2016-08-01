@@ -8,7 +8,7 @@ use kailua_diag as diag;
 use kailua_diag::{Pos, Span, Spanned, WithLoc, Report, Reporter, Localize, Stop};
 use message as m;
 use lex::{Tok, Punct, Keyword};
-use ast::{Name, Str, Var, Seq, Presig, Sig};
+use ast::{Name, Str, Var, Seq, Presig, Sig, Attr};
 use ast::{Ex, Exp, UnOp, BinOp, NameScope, SelfParam, St, Stmt, Block};
 use ast::{M, K, Kind, SlotKind, FuncKind, TypeSpec};
 
@@ -378,8 +378,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
         let begin = self.pos();
 
-        let presig = try!(self.try_parse_kailua_func_spec());
-        if let Some(ref presig) = presig {
+        let funcspec = try!(self.try_parse_kailua_func_spec());
+        if let Some(ref funcspec) = funcspec {
             // limit the possible lookahead
             let allowed = match self.peek().base {
                 Tok::Keyword(Keyword::Function) => true,
@@ -387,7 +387,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 _ => false,
             };
             if !allowed {
-                try!(self.error(presig.span, m::MissingFuncDeclAfterFuncSpec {}).done());
+                try!(self.error(funcspec.span, m::MissingFuncDeclAfterFuncSpec {}).done());
             }
         }
 
@@ -490,7 +490,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     names.push(try!(self.parse_name()));
                     selfparam = Some(SelfParam.with_loc(Span::dummy()));
                 }
-                let (sig, body) = try!(self.parse_func_body(presig));
+                let (sig, body) = try!(self.parse_func_body(funcspec));
                 if names.len() == 1 {
                     assert!(selfparam.is_none(), "ordinary function cannot have an implicit self");
                     let name = names.pop().unwrap();
@@ -505,7 +505,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     // local function ...
                     (_, Spanned { base: Tok::Keyword(Keyword::Function), .. }) => {
                         let name = try!(self.parse_name());
-                        let (sig, body) = try!(self.parse_func_body(presig));
+                        let (sig, body) = try!(self.parse_func_body(funcspec));
                         Box::new(St::FuncDecl(NameScope::Local, name, sig, body))
                     }
 
@@ -514,8 +514,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         self.unread(tok);
 
                         // forbid `--v ...` then `local NAME ...`
-                        if let Some(ref presig) = presig {
-                            try!(self.error(presig.span, m::MissingFuncDeclAfterFuncSpec {})
+                        if let Some(ref funcspec) = funcspec {
+                            try!(self.error(funcspec.span, m::MissingFuncDeclAfterFuncSpec {})
                                      .done());
                         }
 
@@ -628,7 +628,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn parse_func_body(&mut self,
-                       presig: Option<Spanned<Presig>>) -> diag::Result<(Sig, Spanned<Block>)> {
+                       funcspec: Option<Spanned<(Vec<Spanned<Attr>>, Option<Spanned<Presig>>)>>)
+            -> diag::Result<(Sig, Spanned<Block>)> {
         let mut args = Vec::new();
         let mut varargs = None;
         let returns; // to check the error case
@@ -702,58 +703,73 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
         returns = try!(self.try_parse_kailua_rettype_spec());
 
-        // if there is a function spec, any mismatching parameter or
-        // inline argument type spec is an error
-        let sig;
-        if let Some(presig) = presig {
-            if args.len() > presig.base.args.head.len() {
-                let excess = &args[presig.base.args.head.len()..];
-                let span = excess.iter().fold(Span::dummy(), |span, i| span | i.0.span);
-                try!(self.error(span, m::ExcessArgsInFuncDecl {}).done());
-            } else if args.len() < presig.base.args.head.len() {
-                let excess = &presig.base.args.head[args.len()..];
-                let span = excess.iter().fold(Span::dummy(), |span, i| span | i.span);
-                try!(self.error(span, m::ExcessArgsInFuncSpec {}).done());
-            }
-            match (&varargs, &presig.base.args.tail) {
-                (&Some(ref v), &None) => {
-                    try!(self.error(v.span, m::MissingVarargsInFuncSpec {}).done());
+        enum SigOrOthers {
+            Sig(Sig),
+            Others(Vec<Spanned<Attr>>, Option<Spanned<Seq<Spanned<Kind>>>>),
+        }
+
+        let sig_or_others = if let Some(Spanned { base: (attrs, presig), .. }) = funcspec {
+            if let Some(presig) = presig {
+                // if there is a pre-signature, any mismatching parameter or
+                // inline argument type spec is an error
+                if args.len() > presig.base.args.head.len() {
+                    let excess = &args[presig.base.args.head.len()..];
+                    let span = excess.iter().fold(Span::dummy(), |span, i| span | i.0.span);
+                    try!(self.error(span, m::ExcessArgsInFuncDecl {}).done());
+                } else if args.len() < presig.base.args.head.len() {
+                    let excess = &presig.base.args.head[args.len()..];
+                    let span = excess.iter().fold(Span::dummy(), |span, i| span | i.span);
+                    try!(self.error(span, m::ExcessArgsInFuncSpec {}).done());
                 }
-                (&None, &Some(ref v)) => {
-                    try!(self.error(v.span, m::MissingVarargsInFuncDecl {}).done());
+                match (&varargs, &presig.base.args.tail) {
+                    (&Some(ref v), &None) => {
+                        try!(self.error(v.span, m::MissingVarargsInFuncSpec {}).done());
+                    }
+                    (&None, &Some(ref v)) => {
+                        try!(self.error(v.span, m::MissingVarargsInFuncDecl {}).done());
+                    }
+                    (&Some(Spanned { base: Some(_), span }), &Some(ref v)) => {
+                        try!(self.error(span, m::DuplicateVarargsSpecInFuncDecl {})
+                                 .note(v.span, m::PriorVarargsSpecInFuncSpec {})
+                                 .done());
+                    }
+                    (_, _) => {}
                 }
-                (&Some(Spanned { base: Some(_), span }), &Some(ref v)) => {
-                    try!(self.error(span, m::DuplicateVarargsSpecInFuncDecl {})
-                             .note(v.span, m::PriorVarargsSpecInFuncSpec {})
-                             .done());
+                for (arg, sigarg) in args.iter().zip(presig.base.args.head.iter()) {
+                    if arg.0.base != sigarg.base.base.base { // TODO might not be needed
+                        try!(self.error(arg.0.span, m::ArgNameMismatchInFuncDecl {})
+                                 .note(sigarg.base.base.span, m::PriorArgNameInFuncSpec {})
+                                 .done());
+                    }
+                    if let Some(ref spec) = arg.1 {
+                        try!(self.error(spec.span, m::DuplicateSpecInFuncDecl {})
+                                 .note(presig.span, m::PriorFuncSpec {})
+                                 .done());
+                    }
                 }
-                (_, _) => {}
-            }
-            for (arg, sigarg) in args.iter().zip(presig.base.args.head.iter()) {
-                if arg.0.base != sigarg.base.base.base { // TODO might not be needed
-                    try!(self.error(arg.0.span, m::ArgNameMismatchInFuncDecl {})
-                             .note(sigarg.base.base.span, m::PriorArgNameInFuncSpec {})
-                             .done());
-                }
-                if let Some(ref spec) = arg.1 {
-                    try!(self.error(spec.span, m::DuplicateSpecInFuncDecl {})
+                if let Some(returns) = returns {
+                    try!(self.error(returns.span, m::DuplicateReturnSpecInFuncDecl {})
                              .note(presig.span, m::PriorFuncSpec {})
                              .done());
                 }
+                SigOrOthers::Sig(presig.base.to_sig(attrs))
+            } else {
+                SigOrOthers::Others(attrs, returns)
             }
-            if let Some(returns) = returns {
-                try!(self.error(returns.span, m::DuplicateReturnSpecInFuncDecl {})
-                         .note(presig.span, m::PriorFuncSpec {})
-                         .done());
-            }
-            sig = presig.base.to_sig();
         } else {
-            let args = Seq {
-                head: args.into_iter().map(|(n,s)| self.make_kailua_typespec(n, s)).collect(),
-                tail: varargs.map(|tt| tt.base),
-            };
-            sig = Sig { args: args, returns: returns.map(|ret| ret.base) };
-        }
+            SigOrOthers::Others(Vec::new(), returns)
+        };
+
+        let sig = match sig_or_others {
+            SigOrOthers::Sig(sig) => sig,
+            SigOrOthers::Others(attrs, returns) => {
+                let args = Seq {
+                    head: args.into_iter().map(|(n,s)| self.make_kailua_typespec(n, s)).collect(),
+                    tail: varargs.map(|tt| tt.base),
+                };
+                Sig { attrs: attrs, args: args, returns: returns.map(|ret| ret.base) }
+            },
+        };
 
         let block = try!(self.parse_block());
         try!(self.expect(Keyword::End));
@@ -934,11 +950,11 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     fn try_parse_atomic_exp(&mut self) -> diag::Result<Option<Spanned<Exp>>> {
         let begin = self.pos();
 
-        let presig = try!(self.try_parse_kailua_func_spec());
-        if let Some(ref presig) = presig {
+        let funcspec = try!(self.try_parse_kailua_func_spec());
+        if let Some(ref funcspec) = funcspec {
             if !self.lookahead(Keyword::Function) {
                 // limit the possible lookahead
-                try!(self.error(presig.span, m::MissingFuncLitAfterFuncSpec {}).done());
+                try!(self.error(funcspec.span, m::MissingFuncLitAfterFuncSpec {}).done());
             }
         }
 
@@ -957,7 +973,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 Ok(Some(Box::new(Ex::Varargs).with_loc(span))),
 
             (_, Spanned { base: Tok::Keyword(Keyword::Function), .. }) => {
-                let (sig, body) = try!(self.parse_func_body(presig));
+                let (sig, body) = try!(self.parse_func_body(funcspec));
                 Ok(Some(Box::new(Ex::Func(sig, body)).with_loc(begin..self.last_pos())))
             }
 
@@ -1204,6 +1220,19 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             TypeSpec { base: base, modf: modf, kind: Some(kind) }
         } else {
             TypeSpec { base: base, modf: M::None, kind: None }
+        }
+    }
+
+    fn try_parse_kailua_attr(&mut self) -> diag::Result<Option<Spanned<Attr>>> {
+        let begin = self.pos();
+        if self.may_expect(Punct::LBracket) {
+            // `[` NAME `]`
+            let name = try!(self.parse_name_or_keyword());
+            try!(self.expect(Punct::RBracket));
+            let attr = Attr { name: name };
+            Ok(Some(attr.with_loc(begin..self.last_pos())))
+        } else {
+            Ok(None)
         }
     }
 
@@ -1516,34 +1545,32 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn try_parse_kailua_prefixed_kind_seq(&mut self) -> diag::Result<Option<AtomicKind>> {
-        let pos = self.pos();
+        let begin = self.pos();
 
-        let builtin = if self.may_expect(Punct::LBracket) {
-            // builtin spec: `[` NAME `]` KIND
-            let name = try!(self.parse_name_or_keyword());
-            try!(self.expect(Punct::RBracket));
-            Some(name.base.with_loc(pos..self.last_pos())) // expand the span
-        } else {
-            None
-        };
-
+        let attr = try!(self.try_parse_kailua_attr());
         if let Some(kindseq) = try!(self.try_parse_kailua_atomic_kind_seq()) {
-            // apply the builtin spec if any
-            if let Some(builtin) = builtin {
+            let end = self.last_pos();
+
+            // apply an attribute if any
+            if let Some(attr) = attr {
+                let apply_attr = |kind| {
+                    let kind = Box::new(K::Attr(kind, attr));
+                    kind.with_loc(begin..end)
+                };
+
                 match kindseq {
                     AtomicKind::One(kind) => {
-                        let kind = Box::new(K::Builtin(kind, builtin));
-                        Ok(Some(AtomicKind::One(kind.with_loc(pos..self.last_pos()))))
+                        let kind = apply_attr(kind);
+                        Ok(Some(AtomicKind::One(kind)))
                     }
                     AtomicKind::Seq(mut kindseq) => {
                         if kindseq.head.len() == 1 && kindseq.tail.is_none() {
                             // we are using AtomicKind::Seq to signal the end of the parsing,
                             // so we need to keep the variant as is
-                            let kind = kindseq.head.pop().unwrap();
-                            let kind = Box::new(K::Builtin(kind, builtin));
-                            kindseq.head.push(kind.with_loc(pos..self.last_pos()));
+                            let kind = apply_attr(kindseq.head.pop().unwrap());
+                            kindseq.head.push(kind);
                         } else {
-                            try!(self.error(&builtin, m::BuiltinSpecToKindSeq {}).done());
+                            try!(self.error(begin..end, m::AttrToKindSeq {}).done());
                         }
                         Ok(Some(AtomicKind::Seq(kindseq)))
                     }
@@ -1713,24 +1740,44 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn try_parse_kailua_func_spec(&mut self) -> diag::Result<Option<Spanned<Presig>>> {
-        let begin = self.pos();
+    // it may supply only attributes, so we need to return attributes and pre-signatures separately
+    fn try_parse_kailua_func_spec(&mut self)
+            -> diag::Result<Option<Spanned<(Vec<Spanned<Attr>>, Option<Spanned<Presig>>)>>> {
+        let metabegin = self.pos();
         if self.may_expect(Punct::DashDashV) {
-            // "(" [NAME ":" KIND] {"," NAME ":" KIND} ["," "..."] ")" ["->" KIND]
             self.begin_meta_comment(Punct::DashDashV);
-            try!(self.expect(Punct::LParen));
-            let args = try!(self.parse_kailua_namekindlist());
-            try!(self.expect(Punct::RParen));
-            let returns = if self.may_expect(Punct::DashGt) {
-                try!(self.parse_kailua_kind_seq())
-            } else {
-                Seq { head: Vec::new(), tail: None }
-            };
-            let end = self.last_pos();
-            try!(self.end_meta_comment(Punct::DashDashV));
 
-            let sig = Presig { args: args, returns: Some(returns) };
-            Ok(Some(sig.with_loc(begin..end)))
+            let mut attrs = Vec::new();
+            while let Some(attr) = try!(self.try_parse_kailua_attr()) {
+                attrs.push(attr);
+            }
+
+            // "(" [NAME ":" KIND] {"," NAME ":" KIND} ["," "..."] ")" ["->" KIND]
+            let begin = self.pos();
+            let has_sig = if attrs.is_empty() {
+                // force reading signatures if no attributes are present
+                try!(self.expect(Punct::LParen));
+                true
+            } else {
+                self.may_expect(Punct::LParen)
+            };
+            let sig = if has_sig {
+                let args = try!(self.parse_kailua_namekindlist());
+                try!(self.expect(Punct::RParen));
+                let returns = if self.may_expect(Punct::DashGt) {
+                    try!(self.parse_kailua_kind_seq())
+                } else {
+                    Seq { head: Vec::new(), tail: None }
+                };
+                let end = self.last_pos();
+                Some(Presig { args: args, returns: Some(returns) }.with_loc(begin..end))
+            } else {
+                None
+            };
+
+            let metaend = self.last_pos();
+            try!(self.end_meta_comment(Punct::DashDashV));
+            Ok(Some((attrs, sig).with_loc(metabegin..metaend)))
         } else {
             Ok(None)
         }

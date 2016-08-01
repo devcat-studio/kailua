@@ -265,8 +265,8 @@ define_msg! { pub CannotRedefineBuiltin:
     _    => "Cannot redefine a builtin type",
 }
 
-define_msg! { pub BuiltinSpecToKindSeq:
-    "ko" => "[name] 꼴의 내장 타입 선언은 타입열에는 붙일 수 없습니다",
-    _    => "Cannot attach the built-in type specification (like [name]) to the type sequence",
+define_msg! { pub AttrToKindSeq:
+    "ko" => "[name] 꼴의 타입 속성 선언은 타입열에는 붙일 수 없습니다",
+    _    => "Cannot attach the type attribute (like [name]) to the type sequence",
 }
 
