@@ -23,10 +23,14 @@ impl Pos {
 
 impl fmt::Debug for Pos {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.pos == 0 {
-            write!(f, "@_")
+        if f.alternate() {
+            if self.pos == 0 {
+                write!(f, "@_")
+            } else {
+                write!(f, "@{:x}", self.pos)
+            }
         } else {
-            write!(f, "@{:x}", self.pos)
+            Ok(())
         }
     }
 }
@@ -109,12 +113,16 @@ impl ops::BitOrAssign for Span {
 
 impl fmt::Debug for Span {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.begin.is_dummy() {
-            write!(f, "@_")
-        } else if self.begin == self.end {
-            write!(f, "@{:x}", self.begin.pos)
+        if f.alternate() {
+            if self.begin.is_dummy() {
+                write!(f, "@_")
+            } else if self.begin == self.end {
+                write!(f, "@{:x}", self.begin.pos)
+            } else {
+                write!(f, "@{:x}-{:x}", self.begin.pos, self.end.pos)
+            }
         } else {
-            write!(f, "@{:x}-{:x}", self.begin.pos, self.end.pos)
+            Ok(())
         }
     }
 }
@@ -197,9 +205,7 @@ impl<T: fmt::Display> fmt::Display for Spanned<T> {
 impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         try!(fmt::Debug::fmt(&self.base, f));
-        if f.alternate() {
-            try!(fmt::Debug::fmt(&self.span, f));
-        }
+        try!(fmt::Debug::fmt(&self.span, f));
         Ok(())
     }
 }

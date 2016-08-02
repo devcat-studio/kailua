@@ -10,6 +10,18 @@ local function p() end
 p()
 --! ok
 
+--8<-- funccall-func-too-many-args
+local function p() end
+p(3) --@< Error: `3` is not a subtype of `nil`
+--! error
+
+--8<-- funccall-func-too-less-args
+local function p(x)
+    x = x + 1
+end
+p() --@< Error: `nil` is not a subtype of `<unknown type>`
+--! error
+
 --8<-- funccall-var-outside-of-scope-1
 local c
 --@v-vvv Warning: These `if` case(s) are never executed
@@ -227,8 +239,7 @@ local p = x:hello()
 --8<-- methodcall-rec-2
 local x = {hello = --v (a: table, b: integer)
                    function(a, b) end}
-local p = x:hello() --@ Error: `nil` is not a subtype of `integer`
--- XXX missing span
+local p = x:hello() --@< Error: `nil` is not a subtype of `integer`
 --! error
 
 --8<-- methodcall-rec-3
@@ -1830,6 +1841,7 @@ f(p)
 --8<-- unassigned-global-var
 q, p = 42 --: var integer, var string
 --@^ Error: Cannot assign `nil` into `var string`
+--@^^ Note: The other type originates here
 --! error
 
 --8<-- table-update-nested-1

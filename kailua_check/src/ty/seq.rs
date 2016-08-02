@@ -41,13 +41,19 @@ macro_rules! define_tyseq {
             tynil = $tynil:ty;
             unspanned_t = $unspanned_t:ty; // &t should be coercable to &unspanned_t
 
-            nil_ty = $nil_ty:expr;
+            make_nil_ty = $make_nil_ty:expr;
             dummy_tynil = $dummy_tynil:expr;
             ty_union = $ty_union:expr;
             t_to_ty = $t_to_ty:expr;
             tynil_to_ty = $tynil_to_ty:expr;
             ty_to_tynil = $ty_to_tynil:expr;
             spanned_kind_to_ty = $spanned_kind_to_ty:expr;
+
+            $(span $span:ident: $spanty:ty {
+                dummy = $dummy_span:expr;
+                union = $span_union:expr;
+                from_t = $t_to_span:expr;
+            };)*
         }
     )*) => ($(
         #[derive(Clone, PartialEq)]
@@ -63,19 +69,24 @@ macro_rules! define_tyseq {
             // (we may need this because, well, C/C++ API *can* count the proper number of args.
             // TODO this is not yet enforced due to a number of concerns)
             pub tail: Option<$tynil>,
+
+            // this span is used for finer diagnostics
+            $(pub $span: $spanty,)*
         }
 
         impl $tyseq {
-            pub fn new() -> $tyseq {
-                $tyseq { head: Vec::new(), tail: None }
+            pub fn new($($span: $spanty,)*) -> $tyseq {
+                $tyseq { head: Vec::new(), tail: None, $($span: $span,)* }
             }
 
             pub fn from(t: $t) -> $tyseq {
-                $tyseq { head: vec![$t_to_ty(t)], tail: None }
+                $(let $span = $t_to_span(&t);)*
+                $tyseq { head: vec![$t_to_ty(t)], tail: None, $($span: $span,)* }
             }
 
             pub fn from_kind_seq(seq: &Seq<Spanned<Kind>>,
-                                 resolv: &mut TypeResolver) -> CheckResult<$tyseq> {
+                                 resolv: &mut TypeResolver,
+                                 $($span: $spanty,)*) -> CheckResult<$tyseq> {
                 let head = try!(seq.head.iter()
                                         .map(|k| $spanned_kind_to_ty(k, resolv))
                                         .collect());
@@ -84,15 +95,19 @@ macro_rules! define_tyseq {
                 } else {
                     None
                 };
-                Ok($tyseq { head: head, tail: tail })
+                Ok($tyseq { head: head, tail: tail, $($span: $span,)* })
             }
 
             pub fn dummy() -> $tyseq {
-                $tyseq { head: Vec::new(), tail: Some($dummy_tynil) }
+                $tyseq { head: Vec::new(), tail: Some($dummy_tynil), $($span: $dummy_span,)* }
             }
 
             fn tail_to_type(&self) -> $ty {
-                if let Some(ref t) = self.tail { $tynil_to_ty(t.clone()) } else { $nil_ty }
+                if let Some(ref t) = self.tail {
+                    $tynil_to_ty(t.clone())
+                } else {
+                    $make_nil_ty($(self.$span,)*)
+                }
             }
 
             fn ensure_index(&mut self, i: usize) {
@@ -121,13 +136,14 @@ macro_rules! define_tyseq {
             }
 
             pub fn into_iter_with_nil(self) -> SeqIterWithNil<$ty> {
-                self.into_iter().chain(iter::repeat($nil_ty))
+                let nil = $make_nil_ty($(self.$span,)*);
+                self.into_iter().chain(iter::repeat(nil))
             }
 
             pub fn into_first(self) -> $ty {
                 if let Some(head) = self.head.into_iter().next() { return head; }
                 if let Some(tail) = self.tail { return $tynil_to_ty(tail); }
-                $nil_ty
+                $make_nil_ty($(self.$span,)*)
             }
 
             fn fmt_generic<WriteTy>(&self, f: &mut fmt::Formatter,
@@ -144,7 +160,9 @@ macro_rules! define_tyseq {
                     try!(write_ty(t.as_type_without_nil(), f));
                     try!(write!(f, "..."));
                 }
-                write!(f, ")")
+                try!(write!(f, ")"));
+                $(try!(fmt::Debug::fmt(&self.$span, f));)*
+                Ok(())
             }
         }
 
@@ -173,7 +191,7 @@ macro_rules! define_tyseq {
                     None
                 };
 
-                $tyseq { head: head, tail: tail }
+                $tyseq { head: head, tail: tail, $($span: $span_union(self.$span, other.$span),)* }
             }
 
             fn assert_sub(&self, other: &$tyseq, ctx: &mut TypeContext) -> CheckResult<()> {
@@ -235,7 +253,7 @@ macro_rules! define_slotseq {
             tynil = $tynil:ty;
             unspanned_slot = $unspanned_slot:ty; // &slot should be coercable to &unspanned_slot
 
-            nil_slot = $nil_slot:expr;
+            make_nil_slot = $make_nil_slot:expr;
             dummy_slotnil = $dummy_slotnil:expr;
             slot_union = $slot_union:expr;
             t_to_slot = $t_to_slot:expr;
@@ -245,17 +263,24 @@ macro_rules! define_slotseq {
             slot_to_slotnil = $slot_to_slotnil:expr;
             slot_to_ty = $slot_to_ty:expr;
             slotnil_to_tynil = $slotnil_to_tynil:expr;
+
+            $(span $span:ident: $spanty:ty {
+                dummy = $dummy_span:expr;
+                union = $span_union:expr;
+                from_slot = $slot_to_span:expr;
+            };)*
         }
     )*) => ($(
         #[derive(Clone, PartialEq)]
         pub struct $slotseq {
             pub head: Vec<$slot>,
             pub tail: Option<$slotnil>,
+            $(pub $span: $spanty,)*
         }
 
         impl $slotseq {
-            pub fn new() -> $slotseq {
-                $slotseq { head: Vec::new(), tail: None }
+            pub fn new($($span: $spanty,)*) -> $slotseq {
+                $slotseq { head: Vec::new(), tail: None, $($span: $span,)* }
             }
 
             pub fn from(t: $t) -> $slotseq {
@@ -263,20 +288,26 @@ macro_rules! define_slotseq {
             }
 
             pub fn from_slot(s: $slot) -> $slotseq {
-                $slotseq { head: vec![s], tail: None }
+                $(let $span = $slot_to_span(&s);)*
+                $slotseq { head: vec![s], tail: None, $($span: $span,)* }
             }
 
             pub fn from_seq(seq: $tyseq) -> $slotseq {
                 $slotseq { head: seq.head.into_iter().map(|t| $ty_to_slot(t)).collect(),
-                           tail: seq.tail.map(|t| $tynil_to_slotnil(t)) }
+                           tail: seq.tail.map(|t| $tynil_to_slotnil(t)),
+                           $($span: seq.$span,)* }
             }
 
             pub fn dummy() -> $slotseq {
-                $slotseq { head: Vec::new(), tail: Some($dummy_slotnil) }
+                $slotseq { head: Vec::new(), tail: Some($dummy_slotnil), $($span: $dummy_span,)* }
             }
 
             fn tail_to_slot(&self) -> $slot {
-                if let Some(ref s) = self.tail { $slotnil_to_slot(s.clone()) } else { $nil_slot }
+                if let Some(ref s) = self.tail {
+                    $slotnil_to_slot(s.clone())
+                } else {
+                    $make_nil_slot($(self.$span,)*)
+                }
             }
 
             fn ensure_index(&mut self, i: usize) {
@@ -305,18 +336,20 @@ macro_rules! define_slotseq {
             }
 
             pub fn into_iter_with_nil(self) -> SeqIterWithNil<$slot> {
-                self.into_iter().chain(iter::repeat($nil_slot))
+                let nil = $make_nil_slot($(self.$span,)*);
+                self.into_iter().chain(iter::repeat(nil))
             }
 
             pub fn into_first(self) -> $slot {
                 if let Some(head) = self.head.into_iter().next() { return head; }
                 if let Some(tail) = self.tail { return $slotnil_to_slot(tail); }
-                $nil_slot
+                $make_nil_slot($(self.$span,)*)
             }
 
             pub fn unlift(self) -> $tyseq {
                 $tyseq { head: self.head.into_iter().map(|s| $slot_to_ty(s)).collect(),
-                         tail: self.tail.map(|s| $slotnil_to_tynil(s)) }
+                         tail: self.tail.map(|s| $slotnil_to_tynil(s)),
+                         $($span: self.$span,)* }
             }
 
             fn fmt_generic<WriteSlot>(&self, f: &mut fmt::Formatter,
@@ -333,7 +366,9 @@ macro_rules! define_slotseq {
                     try!(write_slot(t.as_slot_without_nil(), f));
                     try!(write!(f, "..."));
                 }
-                write!(f, ")")
+                try!(write!(f, ")"));
+                $(try!(fmt::Debug::fmt(&self.$span, f));)*
+                Ok(())
             }
         }
 
@@ -362,7 +397,8 @@ macro_rules! define_slotseq {
                     None
                 };
 
-                $slotseq { head: head, tail: tail }
+                $slotseq { head: head, tail: tail,
+                           $($span: $span_union(self.$span, other.$span),)* }
             }
 
             fn assert_sub(&self, other: &$slotseq, ctx: &mut TypeContext) -> CheckResult<()> {
@@ -421,7 +457,7 @@ define_tyseq! {
         tynil = Box<TyWithNil>;
         unspanned_t = T;
 
-        nil_ty = Box::new(T::Nil);
+        make_nil_ty = || Box::new(T::Nil);
         dummy_tynil = Box::new(TyWithNil::dummy());
         ty_union = |lhs: &Ty, rhs: &Ty, ctx| Box::new(lhs.union(rhs, ctx));
         t_to_ty = |t: T| Box::new(t.into_send());
@@ -436,7 +472,7 @@ define_tyseq! {
         tynil = Spanned<Box<TyWithNil>>;
         unspanned_t = T;
 
-        nil_ty = Box::new(T::Nil).without_loc();
+        make_nil_ty = |span: Span| Box::new(T::Nil).with_loc(span.end());
         dummy_tynil = Box::new(TyWithNil::dummy()).without_loc();
         ty_union = |lhs: &Spanned<Ty>, rhs: &Spanned<Ty>, ctx|
             Box::new(lhs.base.union(&rhs.base, ctx)).without_loc();
@@ -445,6 +481,12 @@ define_tyseq! {
         ty_to_tynil = |t: Spanned<Ty>| t.map(|t| Box::new(TyWithNil::from(*t)));
         spanned_kind_to_ty = |k: &Spanned<Kind>, resolv|
             T::from(&k.base, resolv).map(|t| Box::new(t).with_loc(k));
+
+        span span: Span {
+            dummy = Span::dummy();
+            union = |_lhs, _rhs| Span::dummy(); // do not try to merge them
+            from_t = |t: &Spanned<T>| t.span;
+        };
     }
 }
 
@@ -457,7 +499,7 @@ define_slotseq! {
         tynil = Box<TyWithNil>;
         unspanned_slot = Slot;
 
-        nil_slot = Slot::just(T::Nil);
+        make_nil_slot = || Slot::just(T::Nil);
         dummy_slotnil = SlotWithNil::dummy();
         slot_union = |lhs: &Slot, rhs: &Slot, ctx| lhs.union(rhs, ctx);
         t_to_slot = |t: T| Slot::just(t);
@@ -478,7 +520,7 @@ define_slotseq! {
         tynil = Spanned<Box<TyWithNil>>;
         unspanned_slot = Slot;
 
-        nil_slot = Slot::just(T::Nil).without_loc();
+        make_nil_slot = |span: Span| Slot::just(T::Nil).with_loc(span.end());
         dummy_slotnil = SlotWithNil::dummy().without_loc();
         slot_union = |lhs: &Spanned<Slot>, rhs: &Spanned<Slot>, ctx|
             lhs.base.union(&rhs.base, ctx).without_loc();
@@ -491,6 +533,12 @@ define_slotseq! {
         slot_to_ty = |s: Spanned<Slot>| s.map(|s| Box::new(s.unlift().clone().into_send()));
         slotnil_to_tynil = |s: Spanned<SlotWithNil>|
             s.map(|s| Box::new(TyWithNil::from(s.as_slot_without_nil().unlift().clone())));
+
+        span span: Span {
+            dummy = Span::dummy();
+            union = |_lhs, _rhs| Span::dummy(); // do not try to merge them
+            from_slot = |s: &Spanned<Slot>| s.span;
+        };
     }
 }
 
@@ -498,7 +546,8 @@ impl TySeq {
     pub fn all_with_loc<Loc: Into<Span>>(self, loc: Loc) -> SpannedTySeq {
         let span: Span = loc.into();
         SpannedTySeq { head: self.head.into_iter().map(|t| t.with_loc(span)).collect(),
-                       tail: self.tail.map(|t| t.with_loc(span)) }
+                       tail: self.tail.map(|t| t.with_loc(span)),
+                       span: span }
     }
 
     pub fn all_without_loc(self) -> SpannedTySeq {
@@ -510,7 +559,8 @@ impl SlotSeq {
     pub fn all_with_loc<Loc: Into<Span>>(self, loc: Loc) -> SpannedSlotSeq {
         let span: Span = loc.into();
         SpannedSlotSeq { head: self.head.into_iter().map(|s| s.with_loc(span)).collect(),
-                         tail: self.tail.map(|s| s.with_loc(span)) }
+                         tail: self.tail.map(|s| s.with_loc(span)),
+                         span: span }
     }
 
     pub fn all_without_loc(self) -> SpannedSlotSeq {

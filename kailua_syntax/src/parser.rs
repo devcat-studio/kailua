@@ -331,12 +331,12 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn update_type_specs_with_typeseq_spec<Item>(&self,
-                                                 oldspecs: Vec<TypeSpec<Spanned<Item>>>,
+                                                 oldspecs: Spanned<Vec<TypeSpec<Spanned<Item>>>>,
                                                  specs: Spanned<Vec<Spanned<(M, Spanned<Kind>)>>>,
                                                  note_on_dup: &Localize,
                                                  note_on_less: &Localize,
                                                  note_on_more: &Localize)
-            -> diag::Result<Vec<TypeSpec<Spanned<Item>>>> {
+            -> diag::Result<Spanned<Vec<TypeSpec<Spanned<Item>>>>> {
         if oldspecs.iter().any(|oldspec| oldspec.modf != M::None ||
                                          oldspec.kind.is_some()) {
             try!(self.error(specs.span, note_on_dup).done());
@@ -358,10 +358,12 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             try!(self.error(span, note_on_more).done());
             Ok(oldspecs)
         } else {
-            let newspecs = oldspecs.into_iter().zip(specs.base.into_iter()).map(|(oldspec, spec)| {
-                self.make_kailua_typespec(oldspec.base, Some(spec))
-            }).collect();
-            Ok(newspecs)
+            let span = oldspecs.span;
+            let newspecs: Vec<_> =
+                oldspecs.base.into_iter().zip(specs.base.into_iter()).map(|(oldspec, spec)| {
+                    self.make_kailua_typespec(oldspec.base, Some(spec))
+                }).collect();
+            Ok(newspecs.with_loc(span))
         }
     }
 
@@ -463,15 +465,16 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
                     // for NAME in ...
                     (_, Spanned { base: Tok::Keyword(Keyword::In), .. }) => {
-                        try!(self.parse_stmt_for_in(vec![name]))
+                        let span = name.span;
+                        try!(self.parse_stmt_for_in(vec![name].with_loc(span)))
                     }
 
                     // for NAME [SPEC] "," ... in ...
                     (_, Spanned { base: Tok::Punct(Punct::Comma), .. }) => {
                         let mut vars = vec![name];
-                        try!(self.scan_list(Self::parse_name, |name| vars.push(name)));
+                        let span = try!(self.scan_list(Self::parse_name, |name| vars.push(name)));
                         try!(self.expect(Keyword::In));
-                        try!(self.parse_stmt_for_in(vars))
+                        try!(self.parse_stmt_for_in(vars.with_loc(span)))
                     }
 
                     (_, tok) => {
@@ -541,12 +544,19 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         }
 
                         let mut names = Vec::new();
-                        let mut exps = Vec::new();
-                        let eq = try!(self.scan_list_with_spec(Self::parse_name,
-                                                               |namespec| names.push(namespec)));
-                        if eq {
-                            try!(self.scan_list(Self::parse_exp, |exp| exps.push(exp)));
-                        }
+                        let (span, eq) =
+                            try!(self.scan_list_with_spec(Self::parse_name,
+                                                          |namespec| names.push(namespec)));
+                        let mut names = names.with_loc(span);
+
+                        let exps = if eq {
+                            let mut exps = Vec::new();
+                            let span = try!(self.scan_list(Self::parse_exp, |exp| exps.push(exp)));
+                            exps.with_loc(span)
+                        } else {
+                            Vec::new().with_loc(self.last_pos())
+                        };
+
                         if let Some(specs) = try!(self.try_parse_kailua_typeseq_spec()) {
                             names = try!(self.update_type_specs_with_typeseq_spec(
                                 names, specs,
@@ -566,8 +576,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
             (_, Spanned { base: Tok::Keyword(Keyword::Return), .. }) => {
                 let mut exps = Vec::new();
-                try!(self.try_scan_explist(|exp| exps.push(exp)));
-                Box::new(St::Return(exps))
+                let (span, _) = try!(self.try_scan_explist(|exp| exps.push(exp)));
+                Box::new(St::Return(exps.with_loc(span)))
             }
 
             (_, Spanned { base: Tok::Keyword(Keyword::Break), .. }) => {
@@ -589,6 +599,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         // var {"," var} "=" explist
                         Ok(firstvar) => {
                             let mut lhs = Vec::new();
+                            let mut span = firstvar.span;
                             let mut eq = false;
 
                             // we've already read the first var, but not comma and/or specs yet
@@ -601,8 +612,11 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                     firstspec = try!(self.try_parse_kailua_type_spec());
                                 }
                                 lhs.push(self.make_kailua_typespec(firstvar, firstspec));
-                                eq = try!(self.scan_list_with_spec(Self::parse_var,
-                                                                   |varspec| lhs.push(varspec)));
+                                let (span_, eq_) =
+                                    try!(self.scan_list_with_spec(Self::parse_var,
+                                                                  |varspec| lhs.push(varspec)));
+                                span |= span_;
+                                eq = eq_;
                             } else {
                                 lhs.push(self.make_kailua_typespec(firstvar, firstspec));
                             }
@@ -610,9 +624,11 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                 // the equal sign is mandatory, so ensure it here
                                 try!(self.expect(Punct::Eq));
                             }
+                            let mut lhs = lhs.with_loc(span);
 
                             let mut rhs = Vec::new();
-                            try!(self.scan_list(Self::parse_exp, |exp| rhs.push(exp)));
+                            let span = try!(self.scan_list(Self::parse_exp, |exp| rhs.push(exp)));
+                            let rhs = rhs.with_loc(span);
 
                             if let Some(specs) = try!(self.try_parse_kailua_typeseq_spec()) {
                                 lhs = try!(self.update_type_specs_with_typeseq_spec(
@@ -639,9 +655,10 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         Ok(Some(stmt.with_loc(begin..self.last_pos())))
     }
 
-    fn parse_stmt_for_in(&mut self, names: Vec<Spanned<Name>>) -> diag::Result<Stmt> {
+    fn parse_stmt_for_in(&mut self, names: Spanned<Vec<Spanned<Name>>>) -> diag::Result<Stmt> {
         let mut exps = Vec::new();
-        try!(self.scan_list(Self::parse_exp, |exp| exps.push(exp)));
+        let span = try!(self.scan_list(Self::parse_exp, |exp| exps.push(exp)));
+        let exps = exps.with_loc(span);
         try!(self.expect(Keyword::Do));
         let block = try!(self.parse_block());
         try!(self.expect(Keyword::End));
@@ -666,6 +683,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         // each parsing code is scattered throughout the following block.
 
         try!(self.expect(Punct::LParen));
+        let begin = self.pos();
+        let end;
         let mut name = None;
         let mut spec = None;
         let mut variadic = None;
@@ -701,6 +720,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         if let Some(span) = variadic {
             // we've already read `...` and flushed the name-spec pair
             let mut varargs_ = try!(self.try_parse_kailua_type_spec_with_spanned_modf()); // 4)
+            end = self.last_pos();
             try!(self.expect(Punct::RParen));
             if varargs_.is_none() {
                 varargs_ = try!(self.try_parse_kailua_type_spec_with_spanned_modf()); // 5)
@@ -715,6 +735,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             };
             varargs = Some(varargs_.with_loc(span));
         } else {
+            end = self.last_pos();
             try!(self.expect(Punct::RParen));
             if let Some(name) = name {
                 // the last type spec may follow the right parenthesis
@@ -796,7 +817,11 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     head: args.into_iter().map(|(n,s)| self.make_kailua_typespec(n, s)).collect(),
                     tail: varargs.map(|tt| tt.base),
                 };
-                Sig { attrs: attrs, args: args, returns: returns.map(|ret| ret.base) }
+                Sig {
+                    attrs: attrs,
+                    args: args.with_loc(begin..end),
+                    returns: returns.map(|ret| ret.base),
+                }
             },
         };
 
@@ -868,22 +893,23 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         Ok(fields)
     }
 
-    fn try_parse_args(&mut self) -> diag::Result<Option<Vec<Spanned<Exp>>>> {
+    fn try_parse_args(&mut self) -> diag::Result<Option<Spanned<Vec<Spanned<Exp>>>>> {
         let begin = self.pos();
         match try!(self.read()) {
             (_, Spanned { base: Tok::Punct(Punct::LParen), .. }) => {
                 let mut args = Vec::new();
-                try!(self.try_scan_explist(|exp| args.push(exp)));
+                let (span, _) = try!(self.try_scan_explist(|exp| args.push(exp)));
                 try!(self.expect(Punct::RParen));
-                Ok(Some(args))
+                Ok(Some(args.with_loc(span)))
             }
             (_, Spanned { base: Tok::Str(s), span }) => {
-                Ok(Some(vec![Box::new(Ex::Str(Str::from(s))).with_loc(span)]))
+                Ok(Some(vec![Box::new(Ex::Str(Str::from(s))).with_loc(span)].with_loc(span)))
             }
             tok @ (_, Spanned { base: Tok::Punct(Punct::LBrace), .. }) => {
                 self.unread(tok);
                 let exp = Box::new(Ex::Table(try!(self.parse_table())));
-                Ok(Some(vec![exp.with_loc(begin..self.last_pos())]))
+                let span = Span::new(begin, self.last_pos());
+                Ok(Some(vec![exp.with_loc(span)].with_loc(span)))
             }
             tok => {
                 self.unread(tok);
@@ -1191,12 +1217,13 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     // ITEM {(SPEC `,` | `,` [SPEC]) ITEM} [SPEC | SPEC `=` | `=` SPEC]
-    // returns true if it has also consumed `=`
+    // bool is true if it has also consumed `=`
     fn scan_list_with_spec<Item, Scan, F>(&mut self,
                                           mut scan: Scan,
-                                          mut f: F) -> diag::Result<bool>
+                                          mut f: F) -> diag::Result<(Span, bool)>
             where Scan: FnMut(&mut Self) -> diag::Result<Item>,
                   F: FnMut(TypeSpec<Item>) {
+        let begin = self.pos();
         let mut item = try!(scan(self));
         let mut spec = try!(self.try_parse_kailua_type_spec());
         while self.may_expect(Punct::Comma) {
@@ -1206,38 +1233,43 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             item = try!(scan(self));
             spec = try!(self.try_parse_kailua_type_spec());
         }
+        let end = self.last_pos();
         if self.may_expect(Punct::Eq) {
             if spec.is_none() { spec = try!(self.try_parse_kailua_type_spec()); }
             f(self.make_kailua_typespec(item, spec));
-            Ok(true)
+            Ok((Span::new(begin, end), true))
         } else {
             f(self.make_kailua_typespec(item, spec));
-            Ok(false)
+            Ok((Span::new(begin, self.last_pos()), false)) // update the last position
         }
     }
 
     fn scan_list<Item, Scan, F>(&mut self,
                                 mut scan: Scan,
-                                mut f: F) -> diag::Result<()>
+                                mut f: F) -> diag::Result<Span>
             where Scan: FnMut(&mut Self) -> diag::Result<Item>,
                   F: FnMut(Item) {
+        let begin = self.pos();
         f(try!(scan(self)));
         while self.may_expect(Punct::Comma) {
             f(try!(scan(self)));
         }
-        Ok(())
+        let end = self.last_pos();
+        Ok(Span::new(begin, end))
     }
 
-    fn try_scan_explist<F>(&mut self, mut f: F) -> diag::Result<bool>
+    fn try_scan_explist<F>(&mut self, mut f: F) -> diag::Result<(Span, bool)>
             where F: FnMut(Spanned<Exp>) {
+        let begin = self.pos();
         if let Some(exp) = try!(self.try_parse_exp()) {
             f(exp);
             while self.may_expect(Punct::Comma) {
                 f(try!(self.parse_exp()));
             }
-            Ok(true)
+            let end = self.last_pos();
+            Ok((Span::new(begin, end), true))
         } else {
-            Ok(false)
+            Ok((Span::from(begin), false))
         }
     }
 
@@ -1331,8 +1363,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     // the first argument may be `self`, which can have its type omitted
     // may also contain ellipsis, the caller is expected to error on unwanted cases
     fn parse_kailua_namekindlist(&mut self)
-            -> diag::Result<Seq<Spanned<TypeSpec<Spanned<Name>>>,
-                                Spanned<Option<Spanned<Kind>>>>> {
+            -> diag::Result<Spanned<Seq<Spanned<TypeSpec<Spanned<Name>>>,
+                                        Spanned<Option<Spanned<Kind>>>>>> {
         let mut variadic = None;
         let mut specs = Vec::new();
 
@@ -1342,7 +1374,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         } else { // NAME ":" KIND {"," NAME ":" KIND} ["," "..." [":" KIND]] or empty
             let name = match try!(self.try_parse_name()) {
                 Some(name) => name,
-                None => return Ok(Seq { head: specs, tail: None }),
+                None => {
+                    return Ok(Seq { head: specs, tail: None }.with_loc(begin..self.last_pos()));
+                },
             };
             let modf;
             let kind;
@@ -1378,7 +1412,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             }
         }
 
-        if let Some(begin) = variadic {
+        let tail = if let Some(begin) = variadic {
             // we've already read `...`
             let varargs = if self.may_expect(Punct::Colon) {
                 let kind = try!(self.parse_kailua_kind());
@@ -1386,10 +1420,13 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             } else {
                 None
             };
-            Ok(Seq { head: specs, tail: Some(varargs.with_loc(begin..self.last_pos())) })
+            Some(varargs.with_loc(begin..self.last_pos()))
         } else {
-            Ok(Seq { head: specs, tail: None })
-        }
+            None
+        };
+
+        let end = self.last_pos();
+        Ok(Seq { head: specs, tail: tail }.with_loc(begin..end))
     }
 
     fn parse_kailua_funckind(&mut self) -> diag::Result<Spanned<FuncKind>> {

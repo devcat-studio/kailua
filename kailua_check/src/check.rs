@@ -918,7 +918,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     let state = state.map(|t| Box::new(t.unlift().clone().into_send()));
                     let args = SpannedTySeq { head: vec![state,
                                                          Box::new(indvar.clone()).without_loc()],
-                                              tail: None };
+                                              tail: None,
+                                              span: Span::dummy() };
                     let mut returns = try!(self.check_callable(&func.with_loc(expspan), &args));
                     try!(last.assert_sub(&indvar, self.context()));
 
@@ -1184,7 +1185,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         if !no_check {
             if let Exit::None = try!(scope.visit_block(block)) {
                 // the last statement is an implicit return
-                let ret = Box::new(St::Return(Vec::new())).without_loc();
+                let pos = block.span.end(); // the span is conceptually at the end of block
+                let ret = Box::new(St::Return(Vec::new().with_loc(pos))).with_loc(pos);
                 try!(scope.visit_stmt(&ret));
             }
         }
@@ -1194,7 +1196,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     }
 
     fn visit_func_call(&mut self, funcinfo: &Spanned<T>, selfinfo: Option<Spanned<Slot>>,
-                       args: &[Spanned<Exp>], expspan: Span) -> CheckResult<SlotSeq> {
+                       args: &Spanned<Vec<Spanned<Exp>>>, expspan: Span) -> CheckResult<SlotSeq> {
         if !self.env.get_type_bounds(funcinfo).1.is_callable() {
             try!(self.env.error(funcinfo, m::CallToNonFunc { func: self.display(funcinfo) })
                          .done());
@@ -1439,10 +1441,10 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         }
     }
 
-    fn visit_explist(&mut self, exps: &[Spanned<Exp>]) -> CheckResult<SpannedSlotSeq> {
+    fn visit_explist(&mut self, exps: &Spanned<Vec<Spanned<Exp>>>) -> CheckResult<SpannedSlotSeq> {
         let mut head = Vec::new();
         let mut last: Option<SpannedSlotSeq> = None;
-        for exp in exps {
+        for exp in &exps.base {
             if let Some(last) = last.take() {
                 head.push(last.into_first());
             }
@@ -1450,7 +1452,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             last = Some(info);
         }
 
-        let mut seq = SpannedSlotSeq { head: head, tail: None };
+        let mut seq = SpannedSlotSeq { head: head, tail: None, span: exps.span };
         if let Some(last) = last {
             seq.head.extend(last.head.into_iter());
             seq.tail = last.tail;

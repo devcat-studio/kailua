@@ -141,7 +141,7 @@ impl<T: fmt::Debug> fmt::Debug for TypeSpec<T> {
 // more spanned version of Sig, only used during the parsing
 #[derive(Clone, PartialEq)]
 pub struct Presig {
-    pub args: Seq<Spanned<TypeSpec<Spanned<Name>>>, Spanned<Option<Spanned<Kind>>>>,
+    pub args: Spanned<Seq<Spanned<TypeSpec<Spanned<Name>>>, Spanned<Option<Spanned<Kind>>>>>,
     pub returns: Option<Seq<Spanned<Kind>>>,
 }
 
@@ -149,8 +149,10 @@ impl Presig {
     pub fn to_sig(self, attrs: Vec<Spanned<Attr>>) -> Sig {
         Sig {
             attrs: attrs,
-            args: Seq { head: self.args.head.into_iter().map(|arg| arg.base).collect(),
-                        tail: self.args.tail.map(|arg| arg.base) },
+            args: self.args.map(|args| {
+                Seq { head: args.head.into_iter().map(|arg| arg.base).collect(),
+                      tail: args.tail.map(|arg| arg.base) }
+            }),
             returns: self.returns,
         }
     }
@@ -159,8 +161,8 @@ impl Presig {
 #[derive(Clone, PartialEq)]
 pub struct Sig {
     pub attrs: Vec<Spanned<Attr>>,
-    pub args: Seq<TypeSpec<Spanned<Name>>,
-                  Option<Spanned<Kind>>>, // may have to be inferred; Const only
+    pub args: Spanned<Seq<TypeSpec<Spanned<Name>>,
+                      Option<Spanned<Kind>>>>, // may have to be inferred; Const only
     pub returns: Option<Seq<Spanned<Kind>>>, // may have to be inferred
 }
 
@@ -212,8 +214,8 @@ pub enum Ex {
 
     // expressions
     Var(Spanned<Name>),
-    FuncCall(Spanned<Exp>, Vec<Spanned<Exp>>), // desugared form
-    MethodCall(Spanned<Exp>, Spanned<Name>, Vec<Spanned<Exp>>),
+    FuncCall(Spanned<Exp>, Spanned<Vec<Spanned<Exp>>>), // desugared form
+    MethodCall(Spanned<Exp>, Spanned<Name>, Spanned<Vec<Spanned<Exp>>>),
     Index(Spanned<Exp>, Spanned<Exp>),
     Un(Spanned<UnOp>, Spanned<Exp>),
     Bin(Spanned<Exp>, Spanned<BinOp>, Spanned<Exp>),
@@ -235,20 +237,22 @@ impl fmt::Debug for Ex {
             Ex::FuncCall(ref e, ref args) => {
                 try!(write!(f, "{:?}(", *e));
                 let mut first = true;
-                for arg in args {
+                for arg in &args.base {
                     if first { first = false; } else { try!(write!(f, ", ")); }
                     try!(write!(f, "{:?}", arg));
                 }
-                write!(f, ")")
+                try!(write!(f, ")"));
+                fmt::Debug::fmt(&args.span, f)
             },
             Ex::MethodCall(ref e, ref n, ref args) => {
                 try!(write!(f, "{:?}:{:?}(", *e, *n));
                 let mut first = true;
-                for arg in args {
+                for arg in &args.base {
                     if first { first = false; } else { try!(write!(f, ", ")); }
                     try!(write!(f, "{:?}", arg));
                 }
-                write!(f, ")")
+                try!(write!(f, ")"));
+                fmt::Debug::fmt(&args.span, f)
             },
             Ex::Index(ref e, ref i) => write!(f, "{:?}[{:?}]", *e, *i),
             Ex::Un(op, ref e) => write!(f, "({} {:?})", op.symbol(), *e),
@@ -333,17 +337,17 @@ impl fmt::Debug for SelfParam {
 #[derive(Clone, Debug, PartialEq)]
 pub enum St {
     Void(Spanned<Exp>), // technically not every Exp is valid here, but for simplicity.
-    Assign(Vec<TypeSpec<Spanned<Var>>>, Vec<Spanned<Exp>>),
+    Assign(Spanned<Vec<TypeSpec<Spanned<Var>>>>, Spanned<Vec<Spanned<Exp>>>),
     Do(Spanned<Block>),
     While(Spanned<Exp>, Spanned<Block>),
     Repeat(Spanned<Block>, Spanned<Exp>),
     If(Vec<Spanned<(Spanned<Exp>, Spanned<Block>)>>, Option<Spanned<Block>>),
     For(Spanned<Name>, Spanned<Exp>, Spanned<Exp>, Option<Spanned<Exp>>, Spanned<Block>),
-    ForIn(Vec<Spanned<Name>>, Vec<Spanned<Exp>>, Spanned<Block>),
+    ForIn(Spanned<Vec<Spanned<Name>>>, Spanned<Vec<Spanned<Exp>>>, Spanned<Block>),
     FuncDecl(NameScope, Spanned<Name>, Sig, Spanned<Block>),
     MethodDecl(Vec<Spanned<Name>>, Option<TypeSpec<Spanned<SelfParam>>>, Sig, Spanned<Block>),
-    Local(Vec<TypeSpec<Spanned<Name>>>, Vec<Spanned<Exp>>),
-    Return(Vec<Spanned<Exp>>),
+    Local(Spanned<Vec<TypeSpec<Spanned<Name>>>>, Spanned<Vec<Spanned<Exp>>>),
+    Return(Spanned<Vec<Spanned<Exp>>>),
     Break,
 
     // Kailua extensions
