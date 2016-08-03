@@ -7,7 +7,7 @@
 --#     [require] function(string) -> any
 --#
 --# assume global `package`:
---#     {
+--#     [currently] {
 --#         `cpath` = [package_cpath] string;
 --#         `loaded` = { [string] = table };
 --#         `loaders` = { function(string) -> (function|string|nil) };

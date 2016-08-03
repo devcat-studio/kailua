@@ -7,7 +7,7 @@ use take_mut::take;
 
 use kailua_diag::{Span, Spanned, WithLoc, Reporter};
 use kailua_syntax::{Name, Var, M, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp, NameScope};
-use kailua_syntax::{St, Stmt, Block};
+use kailua_syntax::{St, Stmt, Block, K};
 use diag::CheckResult;
 use ty::{T, TySeq, SpannedTySeq, Lattice, Displayed, Display, TypeContext};
 use ty::{Tables, Function, Functions, TyWithNil};
@@ -767,7 +767,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     match (varref, var) {
                         // global variable declaration
                         (VarRef::Name(name), &TypeSpec { modf, kind: Some(ref kind), .. }) => {
-                            let specinfo = try!(self.visit_modf_and_kind(modf, kind));
+                            let specinfo = try!(self.visit_kind(F::from(modf), kind));
                             try!(self.env.add_global_var(name, Some(specinfo), info));
                         }
 
@@ -1074,7 +1074,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let infos = try!(self.visit_explist(exps));
                 for (namespec, info) in names.iter().zip(infos.into_iter_with_none()) {
                     let specinfo = if let Some(ref kind) = namespec.kind {
-                        Some(try!(self.visit_modf_and_kind(namespec.modf, kind)))
+                        Some(try!(self.visit_kind(F::from(namespec.modf), kind)))
                     } else {
                         None
                     };
@@ -1116,7 +1116,22 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             St::KailuaAssume(scope, ref name, kindm, ref kind) => {
-                let slot = try!(self.visit_modf_and_kind(kindm, kind));
+                // while Currently slot is not explicitly constructible for most cases,
+                // `assume` frequently has to *suppose* that the variable is Currently.
+                // detect [currently] attribute and strip it.
+                let mut kind = kind;
+                let mut currently = false;
+                if kindm == M::None {
+                    if let K::Attr(ref k, ref a) = *kind.base {
+                        if *a.name.base == b"currently" {
+                            currently = true;
+                            kind = k;
+                        }
+                    }
+                }
+
+                let flex = if currently { F::Currently } else { F::from(kindm) };
+                let slot = try!(self.visit_kind(flex, kind));
                 match scope {
                     NameScope::Local => try!(self.env.assume_var(name, slot)),
                     NameScope::Global => try!(self.env.assume_global_var(name, slot)),
@@ -1468,9 +1483,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         Ok(seq)
     }
 
-    fn visit_modf_and_kind(&mut self, modf: M, kind: &Spanned<Kind>) -> CheckResult<Spanned<Slot>> {
+    fn visit_kind(&mut self, flex: F, kind: &Spanned<Kind>) -> CheckResult<Spanned<Slot>> {
         let ty = try!(T::from(kind, &mut self.env));
-        let flex = F::from(modf);
         Ok(Slot::new(flex, ty).with_loc(kind))
     }
 

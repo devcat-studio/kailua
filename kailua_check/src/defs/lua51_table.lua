@@ -2,7 +2,7 @@
 
 --# -- TODO lacks genericity (yet)
 --# assume global `table`:
---#     {
+--#     [currently] {
 --#         `concat` = function({const string|number}, string?, integer?, integer?) -> string;
 --#         -- TODO ah fuck, needs overloading with function({any}, integer, any)
 --#         `insert` = function({any}, any);

@@ -469,12 +469,31 @@ q = p + p --@< Error: Cannot assign `number` into `integer`
           --@^ Note: The other type originates here
 --! error
 
--->8-- assume-currently-integer
+--8<-- assume-currently-integer
 local a = true
 a = 'string'
---# assume a: integer
+--# assume a: [currently] integer
 a = a + 3.1
 --! ok
+
+--8<-- assume-currently-currently-integer
+local a = true
+a = 'string'
+-- the parser intentionally avoids parsing two consecutive attributes, but one can work around
+--# assume a: [currently] ([currently] integer)
+--@^ Warning: `currently` is an unknown type attribute and ignored
+a = a + 3.1
+--! ok
+
+--8<-- assume-table-currently
+local a = true
+a = 'string'
+--# assume a: [currently] { x = [currently] integer }
+--@^ Warning: `currently` is an unknown type attribute and ignored
+a.x = 'foo' -- a.x is still integer
+--@^ Error: Cannot assign `"foo"` into `integer`
+--@^^ Note: The other type originates here
+--! error
 
 --8<-- len-table
 local a = 3 + #{1, 2, 3}
@@ -2086,4 +2105,12 @@ function foo:bar(x)
     return x + "string"
 end
 --! error
+
+--8<-- lua51-string-add-method
+--# open lua51
+--v (self: string) -> string
+function string:trim()
+    return self:gsub('^%s+', ''):gsub('%s+$', '')
+end
+--! ok
 

@@ -1,7 +1,8 @@
 -- definitions for Lua 5.1 string library
 
 --# assume global `string`:
---#     [string_meta] {
+--#     -- [currently] should be first, it is specially handled only for `assume`
+--#     [currently] ([string_meta] {
 --#         `byte` = function(string, integer?, integer?) -> (integer...);
 --#         `char` = function(integer...) -> string;
 --#         `dump` = function(function) -> string;
@@ -20,5 +21,5 @@
 --#         `reverse` = function(string) -> string;
 --#         `sub` = function(string, integer, integer?) -> string;
 --#         `upper` = function(string) -> string;
---#     }
+--#     })
 

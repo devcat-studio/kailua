@@ -17,7 +17,7 @@
 --# }
 --#
 --# assume global `io`:
---#     {
+--#     [currently] {
 --#         `close` = function(file?);
 --#         `flush` = function();
 --#         -- TODO should be separated

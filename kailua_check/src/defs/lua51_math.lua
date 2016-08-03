@@ -1,7 +1,7 @@
 -- definitions for Lua 5.1 math library
 
 --# assume global `math`:
---#     {
+--#     [currently] {
 --#         `abs` = function(number) -> number;
 --#         `acos` = function(number) -> number;
 --#         `asin` = function(number) -> number;

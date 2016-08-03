@@ -6,7 +6,7 @@
 --# }
 --#
 --# assume global `os`:
---#     {
+--#     [currently] {
 --#         `clock` = function() -> number;
 --#         -- TODO it is very hard to recognize '*t'|'!*t' from other string types, ugh
 --#         `date` = function(string?, tm?) -> string | {
