@@ -3,7 +3,7 @@ use std::ops;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use kailua_syntax::{K, SlotKind, Str, M};
+use kailua_syntax::{K, SlotKind, Str};
 use diag::CheckResult;
 use super::{F, Slot, SlotWithNil};
 use super::{TypeContext, NoTypeContext, TypeResolver, Lattice, TySeq, Display};
@@ -73,11 +73,7 @@ impl<'a> T<'a> {
         let slot_from_slotkind = |slotkind: &SlotKind,
                                   resolv: &mut TypeResolver| -> CheckResult<Slot> {
             let ty = try!(T::from(&slotkind.kind.base, resolv));
-            let flex = match slotkind.modf {
-                M::None => F::Just, // XXX
-                M::Var => F::Var,
-                M::Const => F::Const,
-            };
+            let flex = F::from(slotkind.modf);
             Ok(Slot::new(flex, ty))
         };
 

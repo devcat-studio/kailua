@@ -680,13 +680,27 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 adapt_table!(tab);
 
                 // reborrow ety0 to check against the final mapping type
-                if let Some(&Tables::Map(ref key, ref value)) = ety0.unlift().get_tables() {
-                    check!(kty.assert_sub(&**key, self.context()));
-                    value.as_slot_without_nil().adapt(ety0.flex(), self.context());
-                    Ok(Some((*value).clone().into_slot()))
-                } else {
-                    unreachable!()
+                let (key, value) = match ety0.unlift().get_tables() {
+                    Some(&Tables::Map(ref key, ref value)) => {
+                        (Box::new((**key).union(&kty, self.context())), value.clone())
+                    },
+                    _ => unreachable!(),
+                };
+                value.as_slot_without_nil().adapt(ety0.flex(), self.context());
+
+                // try to assign an implied type to the new mapping type
+                // this is required for handling Currently slot containing a table
+                let implied = T::Tables(Cow::Owned(Tables::Map(key, value.clone())));
+                if ety0.accept(&Slot::just(implied.clone()), self.context(), false).is_err() {
+                    try!(self.env.error(&*ety0,
+                                        m::CannotAdaptTable { tab: self.display(&*ety0),
+                                                              adapted: self.display(&implied) })
+                                 .note(kty0, m::AdaptTriggeredByIndex { key: self.display(kty0) })
+                                 .done());
+                    return Ok(Some(Slot::dummy()));
                 }
+
+                Ok(Some(value.into_slot()))
             }
         }
     }
@@ -986,10 +1000,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let selfinfo = if let Some(ref selfparam) = *selfparam {
                     let given = if let Some(ref kind) = selfparam.kind {
                         let ty = try!(T::from(kind, &mut self.env));
-                        let flex = match selfparam.modf {
-                            M::None | M::Var => F::Var,
-                            M::Const => F::Const,
-                        };
+                        let flex = F::from(selfparam.modf);
                         Some((flex, ty))
                     } else {
                         None
@@ -1164,10 +1175,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             let sty;
             if let Some(ref kind) = param.kind {
                 ty = try!(T::from(kind, &mut scope.env));
-                let flex = match param.modf {
-                    M::None | M::Var => F::Var,
-                    M::Const => F::Const,
-                };
+                let flex = F::from(param.modf);
                 sty = Slot::new(flex, ty.clone());
             } else if no_check {
                 try!(scope.env.error(&param.base, m::NoCheckRequiresTypedArgs {}).done());
@@ -1462,11 +1470,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
     fn visit_modf_and_kind(&mut self, modf: M, kind: &Spanned<Kind>) -> CheckResult<Spanned<Slot>> {
         let ty = try!(T::from(kind, &mut self.env));
-        let flex = match modf {
-            M::None => F::VarOrCurrently(self.context().gen_mark()),
-            M::Var => F::Var,
-            M::Const => F::Const,
-        };
+        let flex = F::from(modf);
         Ok(Slot::new(flex, ty).with_loc(kind))
     }
 

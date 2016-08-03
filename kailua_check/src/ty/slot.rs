@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::cell::{Ref, RefCell};
 
 use kailua_diag::{Spanned, Reporter};
+use kailua_syntax::M;
 use diag::CheckResult;
 use super::{T, TypeContext, Lattice, Display, Mark, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
@@ -37,6 +38,13 @@ pub enum F {
 }
 
 impl F {
+    pub fn from(modf: M) -> F {
+        match modf {
+            M::None => F::Var,
+            M::Const => F::Const,
+        }
+    }
+
     // is possibly linear, and thus should be uniquely owned?
     // (there are some cases that this is impossible, e.g. array types)
     pub fn is_linear(&self) -> bool {
@@ -568,15 +576,21 @@ impl<'a> Lattice<T<'a>> for Spanned<Slot> {
 impl Display for Slot {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
         let s = &*self.0.borrow();
-        match s.flex.resolve(ctx) {
-            F::Any     => write!(f, "<inaccessible type>"),
-            F::Dynamic => write!(f, "WHATEVER"),
-            F::Const   => write!(f, "const {}", s.ty.display(ctx)),
-            F::Var     => write!(f, "var {}", s.ty.display(ctx)),
 
-            // other unresolved flexibilities are not directly visible to the user
-            _ => write!(f, "{}", s.ty.display(ctx)),
-        }
+        // for the purpose of display, Currently is most powerful *and* most constrained,
+        // Var is second, and Const is least powerful.
+        let prefix = match s.flex.resolve(ctx) {
+            F::Any               => return write!(f, "<inaccessible type>"),
+            F::Dynamic           => return write!(f, "WHATEVER"),
+            F::Just              => "", // can be seen as a mutable value yet to be assigned
+            F::Const             => "const ",
+            F::Var               => "",
+            F::Currently         => "<currently> ",
+            F::VarOrConst(_)     => "",
+            F::VarOrCurrently(_) => "<currently> ",
+        };
+
+        write!(f, "{}{}", prefix, s.ty.display(ctx))
     }
 }
 

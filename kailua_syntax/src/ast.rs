@@ -362,7 +362,6 @@ pub type Block = Vec<Spanned<Stmt>>;
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum M {
     None,
-    Var,
     Const,
 }
 
@@ -370,7 +369,6 @@ impl fmt::Debug for M {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             M::None => write!(f, "_"),
-            M::Var => write!(f, "Var"),
             M::Const => write!(f, "Const"),
         }
     }

@@ -94,7 +94,7 @@ function Hello:init(x, y, z)
     self.x = 'string'
 end
 local h = Hello.new(3, 4, 5)
-local a = h.y .. h.z --: integer
+local a = h.y + h.z --: integer
 local b = h.x .. 'hello' --: string
 --! ok
 
@@ -131,7 +131,7 @@ function Hello:sum()
 end
 
 local h = Hello.new(3, 4, 5)
-local a = h:sum() --: var integer
+local a = h:sum() --: integer
 --! ok
 
 --8<-- class-fields-assign-after-ctor-1
@@ -208,7 +208,7 @@ Hello = class()
 
 --v (self, x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
-    --@v Error: Cannot index `[internal constructible] Hello` with `"sum"`
+    --@v Error: Cannot index `<currently> [internal constructible] Hello` with `"sum"`
     local n = self:sum()
     self.x = x + n
     self.y = y + n
@@ -220,11 +220,11 @@ function Hello:sum()
 end
 
 local h = Hello.new(3, 4, 5)
-local s = h:sum() --: var integer
+local s = h:sum() --: integer
 
 -- test error recovery
---@v Error: Cannot index `Hello` with `"average"`
-local t = h:average() --: var integer
+--@v Error: Cannot index `<currently> Hello` with `"average"`
+local t = h:average() --: integer
 
 --! error
 

@@ -1299,7 +1299,6 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
     fn parse_kailua_mod(&mut self) -> diag::Result<M> {
         match try!(self.read()) {
-            (_, Spanned { base: Tok::Keyword(Keyword::Var), .. }) => Ok(M::Var),
             (_, Spanned { base: Tok::Keyword(Keyword::Const), .. }) => Ok(M::Const),
             tok => {
                 self.unread(tok);

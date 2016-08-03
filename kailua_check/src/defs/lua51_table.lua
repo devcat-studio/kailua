@@ -4,10 +4,10 @@
 --# assume global `table`:
 --#     {
 --#         `concat` = function({const string|number}, string?, integer?, integer?) -> string;
---#         -- TODO ah fuck, needs overloading with function({var any}, integer, any)
---#         `insert` = function({var any}, any);
+--#         -- TODO ah fuck, needs overloading with function({any}, integer, any)
+--#         `insert` = function({any}, any);
 --#         `maxn` = function({const any}) -> integer;
---#         `remove` = function({var any}, integer?) -> any?;
---#         `sort` = function({var any}, (function(WHATEVER, WHATEVER) -> boolean)?);
+--#         `remove` = function({any}, integer?) -> any?;
+--#         `sort` = function({any}, (function(WHATEVER, WHATEVER) -> boolean)?);
 --#     }
 

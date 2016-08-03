@@ -114,12 +114,12 @@ impl Lattice for Functions {
                 // a1 /\ a2 <: b === a1 <: b OR a2 <: b
                 //for i in a { try!(err_on_instantiation(ctx, |ctx| i.assert_sub(b, ctx))); }
                 //true
-                unimplemented!()
+                false
             }
             (&Functions::Multi(ref _a), &Functions::Multi(ref _b)) => {
                 // a1 /\ a2 <: b1 /\ b2 === (a1 /\ a2 <: b1) AND (a1 /\ a2 <: b2)
                 //                      === (a1 <: b1 OR a2 <: b1) AND (a1 <: b2 OR a2 <: b2)
-                unimplemented!()
+                false
             }
         };
 

@@ -154,12 +154,12 @@ impl Lattice for Unioned {
         let count = if self.tables.is_some() { 1 } else { 0 } +
                     if self.functions.is_some() { 1 } else { 0 } +
                     if self.tvar.is_some() { 1 } else { 0 };
-        if count > 1 { unimplemented!() }
+        if count > 1 { return error_not_sub(self, other); }
 
         let count = if other.tables.is_some() { 1 } else { 0 } +
                     if other.functions.is_some() { 1 } else { 0 } +
                     if other.tvar.is_some() { 1 } else { 0 };
-        if count > 1 { unimplemented!() }
+        if count > 1 { return error_not_sub(self, other); }
 
         try!(self.tables.assert_sub(&other.tables, ctx));
         try!(self.functions.assert_sub(&other.functions, ctx));
@@ -187,7 +187,7 @@ impl Lattice for Unioned {
                 // XXX if we have a type variable in the union,
                 // the type variable essentially eschews all differences between two input types
                 // and there is no error condition except for conflicting instantiation.
-                unimplemented!(),
+                return error_not_eq(self, other),
             (None, _, None, _) => {}
         }
 

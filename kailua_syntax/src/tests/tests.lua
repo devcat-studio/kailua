@@ -37,8 +37,8 @@ local a, b
 
 --8<-- local-comma-1
 local a --: integer
-    , b --: var WHATEVER
---! [Local([`a`: _ Integer, `b`: Var Dynamic], [])]
+    , b --: WHATEVER
+--! [Local([`a`: _ Integer, `b`: _ Dynamic], [])]
 
 --8<-- local-comma-2
 local a, --: const table
@@ -60,28 +60,28 @@ local a = f() --: integer
 --! [Local([`a`: _ Integer], [`f`()])]
 
 --8<-- local-type-in-same-line-2
-local a, b = f() --: integer, var string
---! [Local([`a`: _ Integer, `b`: Var String], [`f`()])]
+local a, b = f() --: integer, string
+--! [Local([`a`: _ Integer, `b`: _ String], [`f`()])]
 
 --8<-- local-type-in-same-line-3
-local a, b, c = f() --: integer, var string, const {}
---! [Local([`a`: _ Integer, `b`: Var String, `c`: Const EmptyTable], [`f`()])]
+local a, b, c = f() --: integer, string, const {}
+--! [Local([`a`: _ Integer, `b`: _ String, `c`: Const EmptyTable], [`f`()])]
 
 --8<-- local-duplicate-types-in-same-line-1
 local a, b, c --: const {}
-              = f() --: integer, var string, const {}
+              = f() --: integer, string, const {}
 --@^ Error: The type specification cannot appear both at variable names and after the `local` declaration
 --! error
 
 --8<-- local-duplicate-types-in-same-line-2
 local a, --: integer
-      b, c = f() --: integer, var string, const {}
+      b, c = f() --: integer, string, const {}
 --@^ Error: The type specification cannot appear both at variable names and after the `local` declaration
 --! error
 
 --8<-- local-duplicate-types-in-same-line-3
 local a, --: integer
-      b, --: var string
+      b, --: string
       c = f() --: const {}
 --@^ Error: The type specification cannot appear both at variable names and after the `local` declaration
 --! error
@@ -89,7 +89,7 @@ local a, --: integer
 --8<-- local-less-types-in-same-line-1
 local a, b,
       c --@< Error: Excess type specifications in the variable names
-      = f() --: integer, var string
+      = f() --: integer, string
 --! error
 
 --8<-- local-less-types-in-same-line-2
@@ -97,18 +97,18 @@ local a,
       b,
       c,
       d --@^-< Error: Excess type specifications in the variable names
-      = f() --: integer, var string
+      = f() --: integer, string
 --! error
 
 --8<-- local-more-types-in-same-line-1
 local a, b = f() --: integer,
-                 --: var string,
+                 --: string,
                  --: const {} --@< Error: Excess type specifications after the `local` declaration
 --! error
 
 --8<-- local-more-types-in-same-line-2
 local a = f() --: integer,
-              --: var string,
+              --: string,
               --: const {} --@^-< Error: Excess type specifications after the `local` declaration
 --! error
 
@@ -184,28 +184,28 @@ a = f() --: integer
 --! [Assign([`a`: _ Integer], [`f`()])]
 
 --8<-- assign-type-in-same-line-2
-a, b = f() --: integer, var string
---! [Assign([`a`: _ Integer, `b`: Var String], [`f`()])]
+a, b = f() --: integer, string
+--! [Assign([`a`: _ Integer, `b`: _ String], [`f`()])]
 
 --8<-- assign-type-in-same-line-3
-a, b, c = f() --: integer, var string, const {}
---! [Assign([`a`: _ Integer, `b`: Var String, `c`: Const EmptyTable], [`f`()])]
+a, b, c = f() --: integer, string, const {}
+--! [Assign([`a`: _ Integer, `b`: _ String, `c`: Const EmptyTable], [`f`()])]
 
 --8<-- assign-duplicate-types-in-same-line-1
 a, b, c --: const {}
-        = f() --: integer, var string, const {}
+        = f() --: integer, string, const {}
 --@^ Error: The type specification cannot appear both at the left hand side and after the assignment
 --! error
 
 --8<-- assign-duplicate-types-in-same-line-2
 a, --: integer
-b, c = f() --: integer, var string, const {}
+b, c = f() --: integer, string, const {}
 --@^ Error: The type specification cannot appear both at the left hand side and after the assignment
 --! error
 
 --8<-- assign-duplicate-types-in-same-line-3
 a, --: integer
-b, --: var string
+b, --: string
 c = f() --: const {}
 --@^ Error: The type specification cannot appear both at the left hand side and after the assignment
 --! error
@@ -213,7 +213,7 @@ c = f() --: const {}
 --8<-- assign-less-types-in-same-line-1
 a, b,
 c --@< Error: Excess type specifications in the left hand side
-= f() --: integer, var string
+= f() --: integer, string
 --! error
 
 --8<-- assign-less-types-in-same-line-2
@@ -221,18 +221,18 @@ a,
 b,
 c,
 d --@^-< Error: Excess type specifications in the left hand side
-= f() --: integer, var string
+= f() --: integer, string
 --! error
 
 --8<-- assign-more-types-in-same-line-1
 a, b = f() --: integer,
-           --: var string,
+           --: string,
            --: const {} --@< Error: Excess type specifications after the assignment
 --! error
 
 --8<-- assign-more-types-in-same-line-2
 a = f() --: integer,
-        --: var string,
+        --: string,
         --: const {} --@^-< Error: Excess type specifications after the assignment
 --! error
 
@@ -427,8 +427,8 @@ do end
 --! error
 
 --8<-- kind-table
-local x --: {b=var string, a=integer, c=const {d=const {}}}
---! [Local([`x`: _ Record(["b": Var String, "a": _ Integer, \
+local x --: {b=string, a=integer, c=const {d=const {}}}
+--! [Local([`x`: _ Record(["b": _ String, "a": _ Integer, \
 --!                        "c": Const Record(["d": Const EmptyTable])])], [])]
 
 --8<-- kind-func
@@ -524,22 +524,22 @@ local x --: {}
 --! [Local([`x`: _ EmptyTable], [])]
 
 --8<-- kind-rec
-local x --: {a = const function (), b = var string,
+local x --: {a = const function (), b = string,
         --:  c = const function (string) -> integer &
         --:                     (string, integer) -> number}?
 --! [Local([`x`: _ Union([Record(["a": Const Func([() -> ()]), \
---!                               "b": Var String, \
+--!                               "b": _ String, \
 --!                               "c": Const Func([(String) -> Integer, \
 --!                                                (String, Integer) -> Number])\
 --!                              ]), Nil])], [])]
 
 --8<-- kind-tuple
-local x --: {const function (); var string;
+local x --: {const function (); string;
         --:  const function (string) -> integer &
         --:                 (string, integer) -> number;
         --: }?
 --! [Local([`x`: _ Union([Tuple([Const Func([() -> ()]), \
---!                              Var String, \
+--!                              _ String, \
 --!                              Const Func([(String) -> Integer, \
 --!                                          (String, Integer) -> Number])\
 --!                             ]), Nil])], [])]
@@ -561,8 +561,8 @@ local x --: {WHATEVER;WHATEVER;}
 --! [Local([`x`: _ Tuple([_ Dynamic, _ Dynamic])], [])]
 
 --8<-- kind-array
-local x --: {var integer}
---! [Local([`x`: _ Array(Var Integer)], [])]
+local x --: {integer}
+--! [Local([`x`: _ Array(_ Integer)], [])]
 
 --8<-- kind-map
 local x --: {[string] = const integer}
@@ -581,9 +581,9 @@ local x --: {[string?] = integer?}
 --! [Local([`x`: _ Map(Union([String, Nil]), _ Union([Integer, Nil]))], [])]
 
 --8<-- kind-nested-table
-local x --: {[integer] = const {var {[string] = {integer, integer}?}}}
+local x --: {[integer] = const {{[string] = {integer, integer}?}}}
 --! [Local([`x`: _ Map(Integer, \
---!                    Const Array(Var Map(String, \
+--!                    Const Array(_ Map(String, \
 --!                                        _ Union([Tuple([_ Integer, _ Integer]), \
 --!                                                 Nil]))))], [])]
 
@@ -1021,7 +1021,7 @@ function p(# --@< Fatal: Expected an argument name, `)` or `...`, got `#`
 ) -- highlighting fix
 
 --8<-- argtype-slot
-function p(...) --: var integer --@< Error: Variadic argument specifier cannot have modifiers
+function p(...) --: const integer --@< Error: Variadic argument specifier cannot have modifiers
 end
 --! error
 
