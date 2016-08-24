@@ -16,8 +16,13 @@ mod parser;
 
 pub fn parse_chunk(source: &Source, span: Span,
                    report: &Report) -> kailua_diag::Result<Spanned<Block>> {
-    let lexer = lex::Lexer::new(source.iter_bytes_from_span(span), &report);
-    let parser = parser::Parser::new(lexer, &report);
-    parser.into_chunk()
+    if let Some(iter) = source.iter_from_span(span) {
+        let lexer = lex::Lexer::new(iter, &report);
+        let parser = parser::Parser::new(lexer, &report);
+        parser.into_chunk()
+    } else {
+        use kailua_diag::Reporter;
+        report.fatal(span, message::NoFileForSpan {}).done()
+    }
 }
 

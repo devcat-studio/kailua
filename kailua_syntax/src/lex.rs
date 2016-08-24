@@ -4,7 +4,9 @@ use std::fmt;
 
 use message as m;
 use kailua_diag as diag;
-use kailua_diag::{SourceBytes, Pos, Span, Spanned, WithLoc, Report, Reporter, Localize, Localized};
+use kailua_diag::{SourceDataIter, SourceData, Pos, Span, Spanned, WithLoc};
+use kailua_diag::{Report, Reporter, Localize, Localized};
+use kailua_diag::SourceData::{U8, U16};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tok {
@@ -165,9 +167,9 @@ define_keywords! { Keyword:
 }
 
 pub struct Lexer<'a> {
-    bytes: SourceBytes<'a>,
+    bytes: SourceDataIter<'a>,
     last_pos: Pos,
-    last_byte: u8,
+    last_data: SourceData,
     lookahead: bool,
     meta: bool,
     meta_span: Span,
@@ -175,14 +177,16 @@ pub struct Lexer<'a> {
     report: &'a Report,
 }
 
-fn is_digit(c: u8) -> bool { b'0' <= c && c <= b'9' }
+fn is_digit(c: SourceData) -> bool {
+    match c { U8(b'0'...b'9') => true, _ => false }
+}
 
 impl<'a> Lexer<'a> {
-    pub fn new(bytes: SourceBytes<'a>, report: &'a Report) -> Lexer<'a> {
+    pub fn new(bytes: SourceDataIter<'a>, report: &'a Report) -> Lexer<'a> {
         Lexer {
             bytes: bytes,
             last_pos: Pos::dummy(),
-            last_byte: b'\0',
+            last_data: U8(b'\0'),
             lookahead: false,
             meta: false,
             meta_span: Span::dummy(),
@@ -195,14 +199,21 @@ impl<'a> Lexer<'a> {
         if self.lookahead { self.last_pos } else { self.bytes.pos() }
     }
 
-    fn read(&mut self) -> Option<u8> {
+    fn read(&mut self) -> Option<SourceData> {
         if self.lookahead {
             self.lookahead = false;
-            Some(self.last_byte)
+            Some(self.last_data)
         } else {
             self.last_pos = self.bytes.pos();
             if let Some(c) = self.bytes.next() {
-                self.last_byte = c;
+                // normalize ASCII letters to U8, so that we can easily check against them
+                let c = match c {
+                    U8(v) => U8(v),
+                    U16(v @ 0x00...0x7f) => U8(v as u8),
+                    U16(v) => U16(v),
+                };
+
+                self.last_data = c;
                 Some(c)
             } else {
                 None
@@ -210,15 +221,15 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn unread(&mut self, last: u8) {
+    fn unread(&mut self, last: SourceData) {
         assert!(!self.lookahead, "only one lookahead byte is supported");
         assert!(!self.last_pos.is_dummy());
-        assert_eq!(self.last_byte, last);
+        assert_eq!(self.last_data, last);
         self.lookahead = true;
     }
 
-    fn try<Cond>(&mut self, mut cond: Cond) -> Option<u8>
-            where Cond: FnMut(u8) -> bool {
+    fn try<Cond>(&mut self, mut cond: Cond) -> Option<SourceData>
+            where Cond: FnMut(SourceData) -> bool {
         if let Some(c) = self.read() {
             if cond(c) {
                 Some(c)
@@ -232,7 +243,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn scan_while<Cond, F>(&mut self, mut cond: Cond, mut f: F)
-            where Cond: FnMut(u8) -> bool, F: FnMut(u8) {
+            where Cond: FnMut(SourceData) -> bool, F: FnMut(SourceData) {
         while let Some(c) = self.read() {
             if !cond(c) {
                 self.unread(c);
@@ -242,9 +253,54 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    // here comes a fun part! we know that c is almost correct UTF-16,
+    // but for the purpose of reporting and everything else
+    // we need to transcode it into a byte sequence, preferably UTF-8.
+    // this also means that, when we see a bad surrogate, we should bail out...
+    fn translate_u16<F>(&mut self, lastpos: Pos, c: u16, mut f: F) -> diag::Result<()>
+            where F: FnMut(u8) {
+        match c {
+            // high surrogate
+            0xd800...0xdbff => {
+                if let Some(U16(c2 @ 0xdc00...0xdfff)) = self.read() {
+                    // std::char::encode_utf8 is not yet stable ;(
+                    let c = 0x10000 + ((c as u32 & 0x3ff << 10) | (c2 as u32 & 0x3ff));
+                    f(0b1111_0000 | (c >> 18 & 0x07) as u8);
+                    f(0b1000_0000 | (c >> 12 & 0x3f) as u8);
+                    f(0b1000_0000 | (c >>  6 & 0x3f) as u8);
+                    f(0b1000_0000 | (c       & 0x3f) as u8);
+                } else {
+                    return self.report.fatal(lastpos..self.pos(), m::BadSurrogate {}).done();
+                }
+            }
+
+            // low surrogate (invalid at this position)
+            0xdc00...0xdfff => {
+                return self.report.fatal(lastpos..self.pos(), m::BadSurrogate {}).done();
+            }
+
+            0x0000...0x007f => {
+                f(c as u8);
+            }
+
+            0x0080...0x07ff => {
+                f(0b1100_0000 | (c >> 6 & 0x1f) as u8);
+                f(0b1000_0000 | (c      & 0x3f) as u8);
+            }
+
+            _ => {
+                f(0b1110_0000 | (c >> 12 & 0x0f) as u8);
+                f(0b1000_0000 | (c >>  6 & 0x3f) as u8);
+                f(0b1000_0000 | (c       & 0x3f) as u8);
+            }
+        }
+
+        Ok(())
+    }
+
     fn count_equals(&mut self) -> i32 {
         let mut v = 0;
-        self.scan_while(|c| c == b'=', |_| v += 1);
+        self.scan_while(|c| c == U8(b'='), |_| v += 1);
         v
     }
 
@@ -254,7 +310,7 @@ impl<'a> Lexer<'a> {
             where F: FnMut(u8) {
         let opening_level = self.count_equals();
         match self.read() {
-            Some(b'[') => {}
+            Some(U8(b'[')) => {}
             Some(c) => {
                 self.unread(c);
                 return self.report.fatal(begin..self.pos(), m::UnclosedOpeningLongBracket {})
@@ -268,10 +324,10 @@ impl<'a> Lexer<'a> {
         loop {
             let lastpos = self.pos();
             match self.read() {
-                Some(b']') => {
+                Some(U8(b']')) => {
                     let closing_level = self.count_equals();
                     match self.read() {
-                        Some(b']') if opening_level == closing_level => break,
+                        Some(U8(b']')) if opening_level == closing_level => break,
                         Some(c) => {
                             // reconstruct previously read bytes
                             f(b']');
@@ -285,13 +341,14 @@ impl<'a> Lexer<'a> {
                         }
                     }
                 },
-                Some(b'\r') | Some(b'\n') if self.meta => {
+                Some(U8(b'\r')) | Some(U8(b'\n')) if self.meta => {
                     return self.report.fatal(begin..lastpos, // do not include newlines
                                              m::NoNewlineInLongStringInMeta {})
                                       .note(self.meta_span, m::MetaStart {})
                                       .done();
                 },
-                Some(c) => f(c),
+                Some(U8(c)) => f(c),
+                Some(U16(c)) => try!(self.translate_u16(lastpos, c, &mut f)),
                 None => {
                     return self.report.fatal(self.pos(), m::PrematureEofInLongString {})
                                       .note(begin, m::LongStringStart {})
@@ -308,25 +365,27 @@ impl<'a> Lexer<'a> {
         loop {
             let lastpos = self.pos();
             match self.read() {
-                Some(b'\\') => match self.read() {
-                    Some(b'a')  => f(b'\x07'),
-                    Some(b'b')  => f(b'\x08'),
-                    Some(b'f')  => f(b'\x0c'),
-                    Some(b'n')  => f(b'\n'),
-                    Some(b'r')  => f(b'\r'),
-                    Some(b't')  => f(b'\t'),
-                    Some(b'v')  => f(b'\x0b'),
-                    Some(b'\\') => f(b'\\'),
-                    Some(b'\'') => f(b'\''),
-                    Some(b'"')  => f(b'"'),
-                    Some(b'\n') => f(b'\n'),
-                    Some(c) if c == quote => f(c), // to account for `foo\`foo` in the Kailua block
-                    Some(d @ b'0'...b'9') => { // up to three digits
+                Some(U8(b'\\')) => match self.read() {
+                    Some(U8(b'a'))  => f(b'\x07'),
+                    Some(U8(b'b'))  => f(b'\x08'),
+                    Some(U8(b'f'))  => f(b'\x0c'),
+                    Some(U8(b'n'))  => f(b'\n'),
+                    Some(U8(b'r'))  => f(b'\r'),
+                    Some(U8(b't'))  => f(b'\t'),
+                    Some(U8(b'v'))  => f(b'\x0b'),
+                    Some(U8(b'\\')) => f(b'\\'),
+                    Some(U8(b'\'')) => f(b'\''),
+                    Some(U8(b'"'))  => f(b'"'),
+                    Some(U8(b'\n')) => f(b'\n'),
+                    Some(U8(c)) if c == quote => {
+                        f(c) // to account for `foo\`foo` in the Kailua block
+                    },
+                    Some(U8(d @ b'0'...b'9')) => { // up to three digits
                         let mut n = d - b'0';
                         if let Some(d) = self.try(is_digit) {
-                            n = n * 10 + (d - b'0');
+                            n = n * 10 + (d.u8() - b'0');
                             if let Some(d) = self.try(is_digit) {
-                                let n_ = n as u32 * 10 + (d - b'0') as u32;
+                                let n_ = n as u32 * 10 + (d.u8() - b'0') as u32;
                                 if n_ < 256 {
                                     n = n_ as u8;
                                 } else {
@@ -347,8 +406,9 @@ impl<'a> Lexer<'a> {
                                           .done();
                     },
                 },
-                Some(c) if c == quote => break,
-                Some(c) => f(c),
+                Some(U8(c)) if c == quote => break,
+                Some(U8(c)) => f(c),
+                Some(U16(c)) => try!(self.translate_u16(lastpos, c, &mut f)),
                 None => {
                     return self.report.fatal(self.pos(), m::PrematureEofInString {})
                                       .note(begin, m::StringStart {})
@@ -364,9 +424,11 @@ impl<'a> Lexer<'a> {
             // skip any whitespace
             if self.meta {
                 // need to check for newline in the meta block
-                self.scan_while(|c| c == b' ' || c == b'\t', |_| {});
+                self.scan_while(|c| c == U8(b' ') || c == U8(b'\t'), |_| {});
             } else {
-                self.scan_while(|c| c == b' ' || c == b'\t' || c == b'\r' || c == b'\n', |_| {});
+                self.scan_while(|c| c == U8(b' ') || c == U8(b'\t') ||
+                                    c == U8(b'\r') || c == U8(b'\n'),
+                                |_| {});
             }
 
             let begin = self.pos();
@@ -391,12 +453,14 @@ impl<'a> Lexer<'a> {
 
             match self.read() {
                 // names
-                Some(c @ b'A'...b'Z') | Some(c @ b'a'...b'z') | Some(c @ b'_') => {
+                Some(U8(c @ b'A'...b'Z')) | Some(U8(c @ b'a'...b'z')) | Some(U8(c @ b'_')) => {
                     let mut name = vec![c];
                     self.scan_while(
-                        |c| match c { b'A'...b'Z' | b'a'...b'z' | b'0'...b'9' | b'_' => true,
-                                      _ => false },
-                        |c| name.push(c));
+                        |c| match c {
+                            U8(b'A'...b'Z') | U8(b'a'...b'z') | U8(b'0'...b'9') | U8(b'_') => true,
+                            _ => false,
+                        },
+                        |c| name.push(c.u8()));
 
                     if let Some(keyword) = Keyword::from(&name, self.meta) {
                         return tok!(Keyword(keyword));
@@ -406,14 +470,16 @@ impl<'a> Lexer<'a> {
                 }
 
                 // numbers
-                Some(c @ b'0'...b'9') => {
-                    if c == b'0' && self.try(|c| c == b'x').is_some() {
+                Some(U8(c @ b'0'...b'9')) => {
+                    if c == b'0' && self.try(|c| c == U8(b'x')).is_some() {
                         // hexadecimal
                         let mut num = Vec::new();
                         self.scan_while(
-                            |c| match c { b'A'...b'F' | b'a'...b'f' | b'0'...b'9' => true,
-                                          _ => false },
-                            |c| num.push(c));
+                            |c| match c {
+                                U8(b'A'...b'F') | U8(b'a'...b'f') | U8(b'0'...b'9') => true,
+                                _ => false,
+                            },
+                            |c| num.push(c.u8()));
 
                         let s = str::from_utf8(&num).unwrap();
                         if s.len() <= 16 {
@@ -433,17 +499,17 @@ impl<'a> Lexer<'a> {
                         }
                     } else {
                         let mut num = vec![c];
-                        self.scan_while(is_digit, |c| num.push(c));
-                        if let Some(c) = self.try(|c| c == b'.') {
-                            num.push(c);
-                            self.scan_while(is_digit, |c| num.push(c));
+                        self.scan_while(is_digit, |c| num.push(c.u8()));
+                        if let Some(c) = self.try(|c| c == U8(b'.')) {
+                            num.push(c.u8());
+                            self.scan_while(is_digit, |c| num.push(c.u8()));
                         }
-                        if let Some(c) = self.try(|c| c == b'e' || c == b'E') {
-                            num.push(c);
-                            if let Some(c) = self.try(|c| c == b'-') {
-                                num.push(c);
+                        if let Some(c) = self.try(|c| c == U8(b'e') || c == U8(b'E')) {
+                            num.push(c.u8());
+                            if let Some(c) = self.try(|c| c == U8(b'-')) {
+                                num.push(c.u8());
                             }
-                            self.scan_while(is_digit, |c| num.push(c));
+                            self.scan_while(is_digit, |c| num.push(c.u8()));
                         }
 
                         if let Ok(s) = str::from_utf8(&num) {
@@ -457,16 +523,16 @@ impl<'a> Lexer<'a> {
                 }
 
                 // strings
-                Some(q @ b'\'') | Some(q @ b'"') => {
+                Some(U8(q @ b'\'')) | Some(U8(q @ b'"')) => {
                     let mut s = Vec::new();
                     try!(self.scan_quoted_string(begin, q, |c| s.push(c)));
                     return tok!(Str(s));
                 }
 
-                Some(b'[') => {
+                Some(U8(b'[')) => {
                     if let Some(c) = self.read() {
                         self.unread(c);
-                        if c == b'=' || c == b'[' {
+                        if c == U8(b'=') || c == U8(b'[') {
                             let mut s = Vec::new();
                             try!(self.scan_long_bracket(begin, |c| s.push(c)));
                             return tok!(Str(s));
@@ -475,11 +541,11 @@ impl<'a> Lexer<'a> {
                     return tok!(LBracket);
                 }
 
-                Some(b'-') => match self.read() {
-                    Some(b'-') => {
+                Some(U8(b'-')) => match self.read() {
+                    Some(U8(b'-')) => {
                         match self.read() {
-                            Some(b'[') => {
-                                if let Some(c) = self.try(|c| c == b'[' || c == b'=') {
+                            Some(U8(b'[')) => {
+                                if let Some(c) = self.try(|c| c == U8(b'[') || c == U8(b'=')) {
                                     // long comment
                                     self.unread(c);
                                     try!(self.scan_long_bracket(begin, |_| {}));
@@ -490,79 +556,79 @@ impl<'a> Lexer<'a> {
                             // Kailua extensions
                             // meta comment inside meta comment is tokenized but does not nest 
                             // and thus is going to cause a parser error (intentional).
-                            Some(b'#') => return tok!(meta: DashDashHash),
-                            Some(b':') => return tok!(meta: DashDashColon),
-                            Some(b'>') => return tok!(meta: DashDashGt),
-                            Some(b'v') => return tok!(meta: DashDashV),
+                            Some(U8(b'#')) => return tok!(meta: DashDashHash),
+                            Some(U8(b':')) => return tok!(meta: DashDashColon),
+                            Some(U8(b'>')) => return tok!(meta: DashDashGt),
+                            Some(U8(b'v')) => return tok!(meta: DashDashV),
 
                             Some(c) => { self.unread(c); }
                             None => {}
                         }
 
                         // short comment
-                        self.scan_while(|c| c != b'\r' && c != b'\n', |_| {});
+                        self.scan_while(|c| c != U8(b'\r') && c != U8(b'\n'), |_| {});
                         // do NOT read an excess newline, may be the end of meta block
                         continue;
                     }
 
                     // Kailua extensions
-                    Some(b'>') if self.meta => return tok!(DashGt),
+                    Some(U8(b'>')) if self.meta => return tok!(DashGt),
 
                     Some(c) => { self.unread(c); return tok!(Dash); }
                     None => { return tok!(Dash); }
                 },
 
-                Some(b'+') => return tok!(Plus),
-                Some(b'*') => return tok!(Star),
-                Some(b'/') => return tok!(Slash),
-                Some(b'%') => return tok!(Percent),
-                Some(b'^') => return tok!(Caret),
-                Some(b'#') => return tok!(Hash),
-                Some(b'=') => {
-                    if let Some(_) = self.try(|c| c == b'=') { return tok!(EqEq); }
+                Some(U8(b'+')) => return tok!(Plus),
+                Some(U8(b'*')) => return tok!(Star),
+                Some(U8(b'/')) => return tok!(Slash),
+                Some(U8(b'%')) => return tok!(Percent),
+                Some(U8(b'^')) => return tok!(Caret),
+                Some(U8(b'#')) => return tok!(Hash),
+                Some(U8(b'=')) => {
+                    if let Some(_) = self.try(|c| c == U8(b'=')) { return tok!(EqEq); }
                     return tok!(Eq);
                 },
-                Some(b'~') => {
-                    if let Some(_) = self.try(|c| c == b'=') { return tok!(TildeEq); }
+                Some(U8(b'~')) => {
+                    if let Some(_) = self.try(|c| c == U8(b'=')) { return tok!(TildeEq); }
                     return self.report.fatal(begin..self.pos(), m::UnexpectedChar {}).done();
                 },
-                Some(b'<') => {
-                    if let Some(_) = self.try(|c| c == b'=') { return tok!(LtEq); }
+                Some(U8(b'<')) => {
+                    if let Some(_) = self.try(|c| c == U8(b'=')) { return tok!(LtEq); }
                     return tok!(Lt);
                 },
-                Some(b'>') => {
-                    if let Some(_) = self.try(|c| c == b'=') { return tok!(GtEq); }
+                Some(U8(b'>')) => {
+                    if let Some(_) = self.try(|c| c == U8(b'=')) { return tok!(GtEq); }
                     return tok!(Gt);
                 },
-                Some(b'(') => return tok!(LParen),
-                Some(b')') => return tok!(RParen),
-                Some(b'{') => return tok!(LBrace),
-                Some(b'}') => return tok!(RBrace),
-                Some(b']') => return tok!(RBracket),
-                Some(b';') => return tok!(Semicolon),
-                Some(b':') => return tok!(Colon),
-                Some(b',') => return tok!(Comma),
-                Some(b'.') => {
-                    if let Some(_) = self.try(|c| c == b'.') {
-                        if let Some(_) = self.try(|c| c == b'.') { return tok!(DotDotDot); }
+                Some(U8(b'(')) => return tok!(LParen),
+                Some(U8(b')')) => return tok!(RParen),
+                Some(U8(b'{')) => return tok!(LBrace),
+                Some(U8(b'}')) => return tok!(RBrace),
+                Some(U8(b']')) => return tok!(RBracket),
+                Some(U8(b';')) => return tok!(Semicolon),
+                Some(U8(b':')) => return tok!(Colon),
+                Some(U8(b',')) => return tok!(Comma),
+                Some(U8(b'.')) => {
+                    if let Some(_) = self.try(|c| c == U8(b'.')) {
+                        if let Some(_) = self.try(|c| c == U8(b'.')) { return tok!(DotDotDot); }
                         return tok!(DotDot);
                     }
                     return tok!(Dot);
                 },
 
                 // Kailua extensions
-                Some(q @ b'`') if self.meta => {
+                Some(U8(q @ b'`')) if self.meta => {
                     let mut s = Vec::new();
                     try!(self.scan_quoted_string(begin, q, |c| s.push(c)));
                     return tok!(Name(s));
                 }
-                Some(b'\r') | Some(b'\n') if self.meta => {
+                Some(U8(b'\r')) | Some(U8(b'\n')) if self.meta => {
                     self.meta = false;
                     return tok!(Newline);
                 },
-                Some(b'?') if self.meta => return tok!(Ques),
-                Some(b'|') if self.meta => return tok!(Pipe),
-                Some(b'&') if self.meta => return tok!(Amp),
+                Some(U8(b'?')) if self.meta => return tok!(Ques),
+                Some(U8(b'|')) if self.meta => return tok!(Pipe),
+                Some(U8(b'&')) if self.meta => return tok!(Amp),
 
                 Some(_) => {
                     return self.report.fatal(begin..self.pos(), m::UnexpectedChar {}).done();

@@ -21,7 +21,7 @@ use std::error::Error;
 use std::collections::HashMap;
 use regex::Regex;
 use term::StderrTerminal;
-use kailua_diag::{Source, Kind, Span, Report, CollectedReport};
+use kailua_diag::{Source, SourceFile, Kind, Span, Report, CollectedReport};
 
 pub trait Testing {
     fn run(&self, source: Rc<RefCell<Source>>, span: Span, filespans: &HashMap<String, Span>,
@@ -463,10 +463,12 @@ impl<T: Testing> Tester<T> {
     fn test(&mut self, test: Test) {
         // prepare the source
         let mut source = Source::new();
-        let inputspan = source.add_string(MAIN_PATH, test.input.join("\n").as_bytes());
+        let input = SourceFile::from_u8(MAIN_PATH.to_owned(), test.input.join("\n").into_bytes());
+        let inputspan = source.add(input);
         let mut filespans = HashMap::new();
         for (file, text) in test.files.iter() {
-            filespans.insert(file.to_owned(), source.add_string(file, text.join("\n").as_bytes()));
+            let srcfile = SourceFile::from_u8(file.to_owned(), text.join("\n").into_bytes());
+            filespans.insert(file.to_owned(), source.add(srcfile));
         }
 
         let source = Rc::new(RefCell::new(source));
@@ -501,7 +503,7 @@ impl<T: Testing> Tester<T> {
                 *reportset.entry(key).or_insert(0isize) += 1;
             }
             for &(kind, span, ref msg) in &collected {
-                let pos = source.file_from_span(span).and_then(|file| {
+                let pos = source.get_file(span.unit()).and_then(|file| {
                     file.lines_from_span(span).map(|(begin, _, end)| {
                         (file.path().to_owned(), begin + 1, end + 1)
                     })

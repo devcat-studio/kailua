@@ -15,8 +15,8 @@ struct Testing {
 
 impl Testing {
     fn new() -> Testing {
-        let span_pattern = regex::Regex::new(r"@(?:_|[0-9a-f]+(?:-[0-9a-f]+)?)").unwrap();
-        assert_eq!(span_pattern.replace_all("[X@1, Y@3a-4f0]@_", ""), "[X, Y]");
+        let span_pattern = regex::Regex::new(r"@(?:_|\d+(?:/\d+(?:-\d+)?)?)").unwrap();
+        assert_eq!(span_pattern.replace_all("[X@1, Y@3/40-978]@_", ""), "[X, Y]");
         Testing { span_pattern: span_pattern }
     }
 }

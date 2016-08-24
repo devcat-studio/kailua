@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::path::{Path, PathBuf};
 
-use kailua_diag::{Span, Spanned, Source, Report, ConsoleReport};
+use kailua_diag::{Span, Spanned, Source, SourceFile, Report, ConsoleReport};
 use kailua_syntax::{parse_chunk, Block};
 
 struct Options {
@@ -42,8 +42,11 @@ impl Options {
             let path = self.root.join(path);
             debug!("trying to load {:?}", path);
 
-            match self.source.borrow_mut().add_file(&path) {
-                Ok(span) => return Ok(Some(span)),
+            match SourceFile::from_file(&path) {
+                Ok(file) => {
+                    let span = self.source.borrow_mut().add(file);
+                    return Ok(Some(span));
+                }
                 Err(e) => {
                     if e.kind() == io::ErrorKind::NotFound { continue; }
                     return Err(e.to_string());
@@ -91,7 +94,8 @@ impl kailua_check::Options for Options {
 
 fn parse_and_check(mainpath: &Path) -> Result<(), String> {
     let mut source = Source::new();
-    let filespan = try!(source.add_file(mainpath).map_err(|e| e.to_string()));
+    let file = try!(SourceFile::from_file(mainpath).map_err(|e| e.to_string()));
+    let filespan = source.add(file);
     let source = Rc::new(RefCell::new(source));
     let report = Rc::new(ConsoleReport::new(source.clone()));
     let mut context = kailua_check::Context::new(report.clone());

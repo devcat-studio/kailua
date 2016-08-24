@@ -2,7 +2,17 @@ use lex::Tok;
 use ast::Name;
 use parser::Expectable;
 
+define_msg! { pub NoFileForSpan:
+    "ko" => "주어진 코드 범위에 대응하는 소스 파일이 존재하지 않습니다",
+    _    => "There exists no source file corresponding to given span",
+}
+
 // lexer messages
+
+define_msg! { pub BadSurrogate:
+    "ko" => "잘못된 UTF-16 서로게이트열이 파일에 포함되어 있습니다",
+    _    => "The file contains a bad UTF-16 surrogate sequence",
+}
 
 define_msg! { pub PrematureEofInString:
     "ko" => "문자열을 읽던 중 파일이 끝났습니다",

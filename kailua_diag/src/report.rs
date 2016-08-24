@@ -1,3 +1,4 @@
+use std::char;
 use std::str;
 use std::cmp;
 use std::result;
@@ -5,7 +6,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use unicode_width::UnicodeWidthChar;
 
-use source::{Source, Span, Pos};
+use source::{Source, SourceSlice, Span, Pos};
 use dummy_term::{stderr_or_dummy};
 use term::{color, StderrTerminal};
 use message::{Localize, Localized, get_message_language};
@@ -139,13 +140,22 @@ impl<'a, T> ReportMore<'a, T> {
     pub fn done(self) -> Result<T> { self.result }
 }
 
-fn strip_newline(mut s: &[u8]) -> &[u8] {
-    loop {
-        match s.last() {
-            Some(&b'\r') | Some(&b'\n') => { s = &s[..s.len()-1]; }
-            _ => return s,
-        }
+fn strip_newline(mut s: SourceSlice) -> SourceSlice {
+    match s {
+        SourceSlice::U8(ref mut s) => loop {
+            match s.last() {
+                Some(&b'\r') | Some(&b'\n') => { *s = &s[..s.len()-1]; }
+                _ => { break; }
+            }
+        },
+        SourceSlice::U16(ref mut s) => loop {
+            match s.last() {
+                Some(&0x0a) | Some(&0x0d) => { *s = &s[..s.len()-1]; }
+                _ => { break; }
+            }
+        },
     }
+    s
 }
 
 pub struct ConsoleReport {
@@ -181,37 +191,74 @@ impl ConsoleReport {
         let off = pos.to_usize() - linespan.begin().to_usize();
 
         let source = self.source.borrow();
-        let line = strip_newline(source.bytes_from_span(linespan));
-        if let Ok(line) = str::from_utf8(line) {
-            // it is a UTF-8 string, use unicode-width
+        let line = strip_newline(source.slice_from_span(linespan).unwrap());
+
+        fn seek<T, Iter, Width>(off: usize, iter: Iter, len: usize, tab: T, width: Width) -> usize
+            where T: PartialEq, Iter: Iterator<Item=(usize, T)>, Width: Fn(&T) -> usize
+        {
             let mut lastcol = 0;
             let mut col = 0;
-            for (i, c) in line.char_indices() {
-                if off < i { return lastcol; } // the last character was at (or contained) pos
+
+            for (i, c) in iter {
+                if off < i {
+                    // previous start offset <= off < current start offset
+                    return lastcol;
+                }
                 lastcol = col;
-                if c == '\t' {
+                if c == tab {
                     // assume 8-space tabs (common in terminals)
                     col = (col + 8) & !7; // 0..7->8, 8..15->16, ...
                 } else {
-                    col += c.width_cjk().unwrap_or(1);
+                    col += width(&c);
                 }
             }
-            // the else case is possible if pos points past the newlines
-            if off < line.len() { lastcol } else { col }
-        } else {
-            // otherwise it is in the legacy encodings.
-            // fortunately for us the column width and byte width for those encodings
-            // generally agrees to each other, so we just use the byte offset
-            let mut col = 0;
-            for (i, &c) in line.iter().enumerate() {
-                if off <= i { return col; }
-                if c == b'\t' {
-                    col = (col + 8) & !7;
-                } else {
-                    col += 1;
-                }
+
+            if off < len {
+                return lastcol;
             }
+
+            // the offset *may* exceed `len` (the entire end offset),
+            // when the iterator has stripped a newline and the offset points past that newline
             col
+        }
+
+        match line {
+            SourceSlice::U8(line) => {
+                if let Ok(line) = str::from_utf8(line) {
+                    // it is a UTF-8 string, use unicode-width
+                    seek(off, line.char_indices(), line.len(), '\t',
+                         |c| c.width_cjk().unwrap_or(1))
+                } else {
+                    // otherwise it is in the legacy encodings.
+                    // fortunately for us the column width and byte width for those encodings
+                    // generally agrees to each other, so we just use the byte offset
+                    seek(off, line.iter().cloned().enumerate(), line.len(), b'\t', |_| 1)
+                }
+            }
+
+            SourceSlice::U16(line) => {
+                // we assume that the U16 lines are almost UTF-16.
+
+                // char::decode_utf16 itself doesn't directly give an u16 offset...
+                type DecodeUtf16Result = ::std::result::Result<char, char::DecodeUtf16Error>;
+                struct Iter<I> { iter: I, cur: usize }
+                impl<I: Iterator<Item=DecodeUtf16Result>> Iterator for Iter<I> {
+                    type Item = (usize, DecodeUtf16Result);
+                    fn next(&mut self) -> Option<(usize, DecodeUtf16Result)> {
+                        let cur = self.cur;
+                        if let Some(c) = self.iter.next() {
+                            self.cur += if let Ok('\u{10000}'...'\u{10ffff}') = c { 2 } else { 1 };
+                            Some((cur, c))
+                        } else {
+                            None
+                        }
+                    }
+                }
+
+                let iter = Iter { iter: char::decode_utf16(line.iter().cloned()), cur: 0 };
+                seek(off, iter, line.len(), Ok('\t'),
+                     |c| c.as_ref().ok().unwrap_or(&'\u{fffd}').width_cjk().unwrap_or(1))
+            }
         }
     }
 
@@ -258,7 +305,7 @@ impl Report for ConsoleReport {
         let source = self.source.borrow();
 
         let mut codeinfo = None;
-        if let Some(f) = source.file_from_span(span) {
+        if let Some(f) = source.get_file(span.unit()) {
             if let Some((beginline, mut spans, endline)) = f.lines_from_span(span) {
                 let beginspan = spans.next().unwrap();
                 let begincol = self.calculate_column(beginspan, span.begin());
@@ -315,34 +362,40 @@ impl Report for ConsoleReport {
                 let _ = term.reset();
             };
 
-            let write_bytes = |term: Term, bytes: &[u8], begin, end| {
-                if let Ok(line) = str::from_utf8(bytes) {
-                    let mut col = 0;
-                    if begin > 0 {
-                        let _ = term.write(&self.expand_tab_in_str(&line[..begin], &mut col));
+            let write_slice = |term: Term, slice: SourceSlice, begin, end| {
+                macro_rules! write_marked {
+                    (self.$method:ident($line:expr)) => ({
+                        let line = $line;
+                        let mut col = 0;
+                        if begin > 0 {
+                            let _ = term.write(&self.$method(&line[..begin], &mut col));
+                        }
+                        let _ = term.fg(bright);
+                        let _ = term.write(&self.$method(&line[begin..end], &mut col));
+                        let _ = term.reset();
+                        if end < line.len() {
+                            let _ = term.write(&self.$method(&line[end..], &mut col));
+                        }
+                    })
+                }
+
+                match slice {
+                    SourceSlice::U8(bytes) => {
+                        if let Ok(line) = str::from_utf8(bytes) {
+                            write_marked!(self.expand_tab_in_str(line));
+                        } else {
+                            write_marked!(self.expand_tab_in_bytes(bytes));
+                        }
                     }
-                    let _ = term.fg(bright);
-                    let _ = term.write(&self.expand_tab_in_str(&line[begin..end], &mut col));
-                    let _ = term.reset();
-                    if end < bytes.len() {
-                        let _ = term.write(&self.expand_tab_in_str(&line[end..], &mut col));
-                    }
-                } else {
-                    let mut col = 0;
-                    if begin > 0 {
-                        let _ = term.write(&self.expand_tab_in_bytes(&bytes[..begin], &mut col));
-                    }
-                    let _ = term.fg(bright);
-                    let _ = term.write(&self.expand_tab_in_bytes(&bytes[begin..end], &mut col));
-                    let _ = term.reset();
-                    if end < bytes.len() {
-                        let _ = term.write(&self.expand_tab_in_bytes(&bytes[end..], &mut col));
+                    SourceSlice::U16(chars) => {
+                        let line = String::from_utf16_lossy(chars);
+                        write_marked!(self.expand_tab_in_str(line));
                     }
                 }
             };
 
             if beginline == endline {
-                let bytes = strip_newline(source.bytes_from_span(beginspan));
+                let slice = strip_newline(source.slice_from_span(beginspan).unwrap());
                 let beginoff = span.begin().to_usize() - beginspan.begin().to_usize();
                 let endoff = span.end().to_usize() - beginspan.begin().to_usize();
 
@@ -352,7 +405,7 @@ impl Report for ConsoleReport {
                 // 123 | aaaaXXXXXbbb   begincol < endcol
                 //     |     ^^^^^
                 write_lineno(term, beginline);
-                write_bytes(term, bytes, beginoff, endoff);
+                write_slice(term, slice, beginoff, endoff);
                 write_newline(term);
                 write_lineno_empty(term);
                 let _ = term.fg(bright);
@@ -366,10 +419,11 @@ impl Report for ConsoleReport {
             } else {
                 // 123 | aaaaXXXXXXXX
                 //     |     ^ from here...
-                let beginbytes = strip_newline(source.bytes_from_span(beginspan));
+                let beginslice = strip_newline(source.slice_from_span(beginspan).unwrap());
+                let beginlen = beginslice.len();
                 let beginoff = span.begin().to_usize() - beginspan.begin().to_usize();
                 write_lineno(term, beginline);
-                write_bytes(term, beginbytes, beginoff, beginbytes.len());
+                write_slice(term, beginslice, beginoff, beginlen);
                 write_newline(term);
                 write_lineno_empty(term);
                 let _ = term.fg(bright);
@@ -389,10 +443,10 @@ impl Report for ConsoleReport {
                 //
                 // 321 | XXXXXbbbbb     endcol > 0
                 //     |     ^ to here
-                let endbytes = strip_newline(source.bytes_from_span(endspan));
+                let endslice = strip_newline(source.slice_from_span(endspan).unwrap());
                 let endoff = span.end().to_usize() - endspan.begin().to_usize();
                 write_lineno(term, endline);
-                write_bytes(term, endbytes, 0, endoff);
+                write_slice(term, endslice, 0, endoff);
                 write_newline(term);
                 write_lineno_empty(term);
                 let _ = term.fg(bright);
