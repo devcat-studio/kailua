@@ -11,6 +11,7 @@ use kailua_diag::SourceData::{U8, U16};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tok {
     Error, // dummy token
+    Comment,
     Punct(Punct),
     Keyword(Keyword),
     Num(f64),
@@ -24,6 +25,8 @@ impl Localize for Tok {
         match (lang, self) {
             ("ko", &Tok::Error)      => write!(f, "잘못된 문자"),
             (_,    &Tok::Error)      => write!(f, "an invalid character"),
+            ("ko", &Tok::Comment)    => write!(f, "주석"),
+            (_,    &Tok::Comment)    => write!(f, "a comment"),
             (_,    &Tok::Punct(p))   => write!(f, "{}", Localized::new(&p, lang)),
             (_,    &Tok::Keyword(w)) => write!(f, "{}", Localized::new(&w, lang)),
             ("ko", &Tok::Num(_))     => write!(f, "숫자"),
@@ -434,6 +437,7 @@ impl<'a> Lexer<'a> {
             let begin = self.pos();
 
             macro_rules! tok {
+                (@token Comment)          => (Tok::Comment);
                 (@token Keyword($e:expr)) => (Tok::Keyword($e));
                 (@token Name($e:expr))    => (Tok::Name($e));
                 (@token Num($e:expr))     => (Tok::Num($e));
@@ -549,7 +553,7 @@ impl<'a> Lexer<'a> {
                                     // long comment
                                     self.unread(c);
                                     try!(self.scan_long_bracket(begin, |_| {}));
-                                    continue;
+                                    return tok!(Comment);
                                 }
                             }
 
@@ -568,7 +572,7 @@ impl<'a> Lexer<'a> {
                         // short comment
                         self.scan_while(|c| c != U8(b'\r') && c != U8(b'\n'), |_| {});
                         // do NOT read an excess newline, may be the end of meta block
-                        continue;
+                        return tok!(Comment);
                     }
 
                     // Kailua extensions

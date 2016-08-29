@@ -95,14 +95,20 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn _next(&mut self) -> Option<Spanned<Tok>> {
-        let next = self.iter.next();
-        if false { // useful for debugging
-            if let Some(ref t) = next {
-                println!("got {:?}", *t);
-                let _ = self.note(t.span, format!("got {:?}", t.base)).done();
+        loop {
+            let next = self.iter.next();
+
+            if false { // useful for debugging
+                if let Some(ref t) = next {
+                    println!("got {:?}", *t);
+                    let _ = self.note(t.span, format!("got {:?}", t.base)).done();
+                }
             }
+
+            // comments should be ignored in the parser
+            if let Some(Spanned { base: Tok::Comment, .. }) = next { continue; }
+            return next;
         }
-        next
     }
 
     fn _read(&mut self) -> (ElidedTokens, Spanned<Tok>) {
