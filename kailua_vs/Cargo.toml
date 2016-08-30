@@ -1,0 +1,17 @@
+[package]
+name = "kailua_vs"
+version = "0.1.0"
+authors = ["Kang Seonghoon <public+git@mearie.org>"]
+
+[lib]
+name = "KailuaVSNative"
+crate-type = ["cdylib"]
+
+[dependencies]
+widestring = "0.2.1"
+kailua_diag = { path = "../kailua_diag" }
+kailua_syntax = { path = "../kailua_syntax" }
+
+[profile.release]
+lto = true
+
