@@ -19,14 +19,24 @@ define_msg! { pub PrematureEofInString:
     _    => "Premature end of file in a string",
 }
 
-define_msg! { pub UnclosedOpeningLongBracket:
+define_msg! { pub UnclosedOpeningLongString:
     "ko" => "긴 문자열을 여는 `[`가 제대로 닫히지 않았습니다",
-    _    => "Opening long bracket should end with `[`",
+    _    => "Opening long bracket in a string should end with `[`",
 }
 
 define_msg! { pub PrematureEofInLongString:
     "ko" => "긴 문자열을 읽던 중 파일이 끝났습니다",
     _    => "Premature end of file in a long string",
+}
+
+define_msg! { pub PrematureEofInLongComment:
+    "ko" => "긴 주석을 읽던 중 파일이 끝났습니다",
+    _    => "Premature end of file in a long comment",
+}
+
+define_msg! { pub NoNewlineInLongCommentInMeta:
+    "ko" => "카일루아 블록 안에 있는 긴 주석에는 개행 문자가 들어갈 수 없습니다",
+    _    => "A newline is disallowed in a long comment inside the meta block",
 }
 
 define_msg! { pub NoNewlineInLongStringInMeta:
@@ -47,6 +57,11 @@ define_msg! { pub StringStart:
 define_msg! { pub LongStringStart:
     "ko" => "긴 문자열 리터럴은 여기서 시작되었습니다",
     _    => "The long string started here",
+}
+
+define_msg! { pub LongCommentStart:
+    "ko" => "긴 주석은 여기서 시작되었습니다",
+    _    => "The long comment started here",
 }
 
 define_msg! { pub MetaStart:

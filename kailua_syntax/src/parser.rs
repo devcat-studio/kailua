@@ -16,7 +16,7 @@ pub struct Parser<'a, T> {
     iter: iter::Fuse<T>,
 
     // the lookahead stream (in this order)
-    elided_newline: bool,
+    elided_newline: Option<Span>, // same to ElidedTokens below
     lookahead: Option<Spanned<Tok>>,
     lookahead2: Option<Spanned<Tok>>,
     // ...follows self.iter.next()
@@ -58,8 +58,10 @@ impl Expectable for EOF {
     fn check_token(&self, tok: &Tok) -> bool { tok == &Tok::EOF }
 }
 
+// represents a sequence of elided tokens (one or more (newline + meta begin)s) when Some.
+// the span is used to reconstruct the token for meta beginning.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-struct ElidedTokens(bool);
+struct ElidedTokens(Option<Span>);
 
 enum AtomicKind { One(Spanned<Kind>), Seq(Seq<Spanned<Kind>>) }
 
@@ -78,7 +80,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     pub fn new(iter: T, report: &'a Report) -> Parser<'a, T> {
         let mut parser = Parser {
             iter: iter.fuse(),
-            elided_newline: false,
+            elided_newline: None,
             lookahead: None,
             lookahead2: None,
             last_span: Span::dummy(),
@@ -116,7 +118,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                             .or_else(|| self._next());
 
         let mut elided = self.elided_newline;
-        self.elided_newline = false;
+        self.elided_newline = None;
         if let Some(meta) = self.ignore_after_newline {
             // lookahead2 can definitely be made empty, let's simplify the assumption
             assert_eq!(self.lookahead, None);
@@ -126,7 +128,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 let next2 = self.lookahead.take().or_else(|| self._next());
                 if next2.as_ref().map(|t| &t.base) == Some(&Tok::Punct(meta)) {
                     // we can ignore them, but we may have another ignorable tokens there
-                    elided = true;
+                    elided = Some(next2.unwrap().span);
                     assert_eq!(self.lookahead, None); // yeah, we are now sure
                     next = self._next();
                 } else {
@@ -137,7 +139,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             }
         } else {
             // token elision should have been handled by self.end_meta_comment
-            assert_eq!(elided, false);
+            assert_eq!(elided, None);
         }
 
         (ElidedTokens(elided), next.expect("Parser::read tried to read past EOF"))
@@ -171,9 +173,16 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn unread(&mut self, tok: (ElidedTokens, Spanned<Tok>)) {
+        let elided = tok.0;
         self._unread(tok);
-        self.last_span = self.last_span2;
-        self.last_span2 = Span::dummy();
+
+        // if we can, reconstruct the last span from the last elided token
+        if let ElidedTokens(Some(span)) = elided {
+            self.last_span = span;
+        } else {
+            self.last_span = self.last_span2;
+            self.last_span2 = Span::dummy();
+        }
     }
 
     fn peek<'b>(&'b mut self) -> &'b Spanned<Tok> {
@@ -230,22 +239,22 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         // if the next token (sans elided newline-meta pairs) is a newline, it's the end.
         // otherwise a newline token may have been elided; try to reconstruct if possible.
         let elided = self.elided_newline;
-        self.elided_newline = false; // may_expect requires this
+        self.elided_newline = None; // may_expect requires this
         if !self.may_expect(Punct::Newline) {
             // ...and may_expect may have set this again!
-            let elided = elided || self.elided_newline;
-            self.elided_newline = false;
+            let elided = self.elided_newline.or(elided);
+            self.elided_newline = None;
 
-            if !elided {
+            if let Some(metaspan) = elided {
+                // newline (implicitly consumed) - meta - original lookahead
+                assert_eq!(self.lookahead2, None);
+                self.lookahead2 = self.lookahead.take();
+                self.lookahead = Some(Tok::Punct(meta).with_loc(metaspan));
+            } else {
                 let next = self.peek().clone();
                 try!(self.error(next.span, m::NoNewline { read: &next.base }).done());
                 return self.skip_meta_comment(meta);
             }
-
-            // newline (implicitly consumed) - meta - original lookahead
-            assert_eq!(self.lookahead2, None);
-            self.lookahead2 = self.lookahead.take();
-            self.lookahead = Some(Tok::Punct(meta).with_loc(Span::dummy()));
         }
 
         self.ignore_after_newline = None;
@@ -255,13 +264,25 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     // consumes a newline, used for error recovery
     fn skip_meta_comment(&mut self, meta: Punct) -> diag::Result<()> {
         assert_eq!(self.ignore_after_newline, Some(meta));
-        while try!(self.read()).1.base != Tok::Punct(Punct::Newline) {}
+        loop {
+            match try!(self.read()) {
+                (_, Spanned { base: Tok::Punct(Punct::Newline), .. }) => {
+                    break;
+                }
+                (elided, Spanned { base: Tok::EOF, span }) => {
+                    // we need to keep the EOF to the queue, otherwise `read` will hit past EOF
+                    self.unread((elided, Tok::EOF.with_loc(span)));
+                    break;
+                },
+                _ => {}
+            }
+        }
         self.ignore_after_newline = None;
         Ok(())
     }
 
     fn dummy_kind(&self) -> Spanned<Kind> {
-        Box::new(K::Dynamic).with_loc(Span::dummy())
+        Box::new(K::Dynamic).without_loc()
     }
 
     fn builtin_kind(&self, name: &[u8]) -> Option<K> {
@@ -1625,7 +1646,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
         // a following `?` are equal to `| nil`
         if self.may_expect(Punct::Ques) {
-            let nil = Box::new(K::Nil).with_loc(Span::dummy());
+            let nil = Box::new(K::Nil).without_loc();
             kind = Box::new(K::Union(vec![kind, nil])).with_loc(begin..self.last_pos());
         }
 
@@ -1771,7 +1792,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 // it is possible to have `--: { a = foo,
                 //                         --:   b = bar }
                 //                         --: --> return_type`. seems harmless though.
-                self.elided_newline = false;
+                self.elided_newline = None;
             }
             Ok(Some(spec.with_loc(metabegin..metaend)))
         } else {
@@ -1805,7 +1826,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             } else {
                 assert_eq!(self.ignore_after_newline, Some(Punct::DashDashColon));
                 self.ignore_after_newline = None;
-                self.elided_newline = false;
+                self.elided_newline = None;
             }
             Ok(Some(specs.with_loc(metabegin..metaend)))
         } else {

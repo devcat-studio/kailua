@@ -369,7 +369,7 @@ do end
 --! [Do([])]
 
 --8<-- directive-long-comment-multiline
---# --[[foo --@< Fatal: A newline is disallowed in a long string inside the meta block
+--# --[[foo --@< Error: A newline is disallowed in a long comment inside the meta block
 --# --foo]] --@^ Note: The meta block started here
 do end
 --! error
@@ -905,48 +905,103 @@ function foo.bar(self, x) end
 --! error
 
 --8<-- long-string-incomplete-1
-f([==== [ --@< Fatal: Opening long bracket should end with `[`
+f([==== [ --@< Error: Opening long bracket in a string should end with `[`
+          --@^ Fatal: Expected `)`, got `[`
 --! error
 
 --&
 ) -- highlighting fix
 
 --8<-- long-string-incomplete-2
-f([==== --@< Fatal: Opening long bracket should end with `[`
+f([==== --@< Error: Opening long bracket in a string should end with `[`
+        --@^ Fatal: Expected `)`, got the end of file
 --! error
 
 --&
 ) -- highlighting fix
 
 --8<-- long-string-incomplete-3
-f([====[ --@< Fatal: Premature end of file in a long string
+f([====[ --@< Error: Premature end of file in a long string
          --@^ Note: The long string started here
+         --@^^ Fatal: Expected `)`, got the end of file
 --! error
 
 --&
 ]====]) -- highlighting fix
 
 --8<-- long-string-incomplete-4
-f([====[foo] --@< Fatal: Premature end of file in a long string
+f([====[foo] --@< Error: Premature end of file in a long string
              --@^ Note: The long string started here
+             --@^^ Fatal: Expected `)`, got the end of file
 --! error
 
 --&
 ]====]) -- highlighting fix
 
+--8<-- long-comment-incomplete-1
+-- unlike long-string-incomplete-1 this is not an error!
+f(--[==== [
+)
+--! [Void(`f`())]
+
+--8<-- long-comment-incomplete-1-eof
+--[==== [
+--! []
+
+--8<-- long-comment-incomplete-2
+-- unlike long-string-incomplete-2 this is not an error!
+f(--[====
+)
+--! [Void(`f`())]
+
+--8<-- long-comment-incomplete-2-eof
+--[====
+--! []
+
+--8<-- long-comment-incomplete-3
+--@vvv Error: Premature end of file in a long comment
+--@v Note: The long comment started here
+f(--[====[
+) --@< Fatal: Expected `)`, got the end of file
+--! error
+
+--&
+]====] -- highlighting fix
+
+--8<-- long-comment-incomplete-4
+--@vvv Error: Premature end of file in a long comment
+--@v Note: The long comment started here
+f(--[====[foo]
+) --@< Fatal: Expected `)`, got the end of file
+--! error
+
+--&
+]====] -- highlighting fix
+
+--8<-- meta-eof
+--@vv Error: Expected a single type, got a newline
+--@v Error: Expected a newline, got the end of file
+--# assume p:
+--&
+--! error
+
 --8<-- meta-long-string
---# assume p: [[xxx   --@< Fatal: A newline is disallowed in a long string inside the meta block
+--# assume p: [[xxx   --@< Error: A newline is disallowed in a long string inside the meta block
 --#             yyy]] --@^ Note: The meta block started here
+                      --@^ Error: Expected a newline, got a name
 --! error
 
 --8<-- meta-long-comment-1
---# assume p: --[[xxx   --@< Fatal: A newline is disallowed in a long string inside the meta block
+--# assume p: --[[xxx   --@< Error: A newline is disallowed in a long comment inside the meta block
 --#               yyy]] --@^ Note: The meta block started here
+                        --@^ Error: Expected a newline, got `]`
 --! error
 
 --8<-- meta-long-comment-2
---# assume p: --[[xxx   --@< Fatal: A newline is disallowed in a long string inside the meta block
+--# assume p: --[[xxx   --@< Error: A newline is disallowed in a long comment inside the meta block
                   yyy]] --@^ Note: The meta block started here
+                        --@^^-^ Error: Expected a single type, got a newline
+                        --@^^ Error: Expected a newline, got a name
 --! error
 
 --8<-- string-wrong-escape

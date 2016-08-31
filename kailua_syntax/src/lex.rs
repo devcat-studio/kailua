@@ -309,19 +309,30 @@ impl<'a> Lexer<'a> {
 
     // assumes that the first `[` is already read and
     // the next character in the lookahead is either `=` or `[`.
-    fn scan_long_bracket<F>(&mut self, begin: Pos, mut f: F) -> diag::Result<()>
+    //
+    // returns true only if the long bracket was successfully scanned.
+    // unclosed_open diag can be set to None to indicate that this is not an error condition.
+    fn scan_long_bracket<F>(&mut self, begin: Pos, mut f: F,
+                            unclosed_open: Option<&Localize>,
+                            premature_eof: &Localize,
+                            long_bracket_start: &Localize,
+                            no_newline_in_meta: &Localize) -> diag::Result<bool>
             where F: FnMut(u8) {
         let opening_level = self.count_equals();
         match self.read() {
             Some(U8(b'[')) => {}
             Some(c) => {
                 self.unread(c);
-                return self.report.fatal(begin..self.pos(), m::UnclosedOpeningLongBracket {})
-                                  .done();
+                if let Some(unclosed_open) = unclosed_open {
+                    try!(self.report.error(begin..self.pos(), unclosed_open).done());
+                }
+                return Ok(false);
             }
             None => {
-                return self.report.fatal(begin..self.pos(), m::UnclosedOpeningLongBracket {})
-                                  .done();
+                if let Some(unclosed_open) = unclosed_open {
+                    try!(self.report.error(begin..self.pos(), unclosed_open).done());
+                }
+                return Ok(false);
             }
         }
         loop {
@@ -338,28 +349,34 @@ impl<'a> Lexer<'a> {
                             self.unread(c); // may be the start of closing bracket
                         },
                         None => {
-                            return self.report.fatal(self.pos(), m::PrematureEofInLongString {})
-                                              .note(begin, m::LongStringStart {})
-                                              .done();
+                            try!(self.report.error(self.pos(), premature_eof)
+                                            .note(begin, long_bracket_start)
+                                            .done());
+                            return Ok(false);
                         }
                     }
                 },
-                Some(U8(b'\r')) | Some(U8(b'\n')) if self.meta => {
-                    return self.report.fatal(begin..lastpos, // do not include newlines
-                                             m::NoNewlineInLongStringInMeta {})
-                                      .note(self.meta_span, m::MetaStart {})
-                                      .done();
+                Some(c @ U8(b'\r')) | Some(c @ U8(b'\n')) if self.meta => {
+                    // the meta block should be closed later, so we need to unread
+                    self.unread(c);
+
+                    // do not include newlines in the report span, however
+                    try!(self.report.error(begin..lastpos, no_newline_in_meta)
+                                    .note(self.meta_span, m::MetaStart {})
+                                    .done());
+                    return Ok(false);
                 },
                 Some(U8(c)) => f(c),
                 Some(U16(c)) => try!(self.translate_u16(lastpos, c, &mut f)),
                 None => {
-                    return self.report.fatal(self.pos(), m::PrematureEofInLongString {})
-                                      .note(begin, m::LongStringStart {})
-                                      .done();
+                    try!(self.report.error(self.pos(), premature_eof)
+                                    .note(begin, long_bracket_start)
+                                    .done());
+                    return Ok(false);
                 }
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     // assumes that the first quote is already read
@@ -538,7 +555,12 @@ impl<'a> Lexer<'a> {
                         self.unread(c);
                         if c == U8(b'=') || c == U8(b'[') {
                             let mut s = Vec::new();
-                            try!(self.scan_long_bracket(begin, |c| s.push(c)));
+                            try!(self.scan_long_bracket(
+                                    begin, |c| s.push(c),
+                                    Some(&m::UnclosedOpeningLongString {}),
+                                    &m::PrematureEofInLongString {},
+                                    &m::LongStringStart {},
+                                    &m::NoNewlineInLongStringInMeta {}));
                             return tok!(Str(s));
                         }
                     }
@@ -552,7 +574,17 @@ impl<'a> Lexer<'a> {
                                 if let Some(c) = self.try(|c| c == U8(b'[') || c == U8(b'=')) {
                                     // long comment
                                     self.unread(c);
-                                    try!(self.scan_long_bracket(begin, |_| {}));
+                                    let was_long = try!(self.scan_long_bracket(
+                                            begin, |_| {},
+                                            None,
+                                            &m::PrematureEofInLongComment {},
+                                            &m::LongCommentStart {},
+                                            &m::NoNewlineInLongCommentInMeta {}));
+                                    if !was_long {
+                                        // this turned out to be just a simple short comment
+                                        self.scan_while(|c| c != U8(b'\r') && c != U8(b'\n'),
+                                                        |_| {});
+                                    }
                                     return tok!(Comment);
                                 }
                             }
