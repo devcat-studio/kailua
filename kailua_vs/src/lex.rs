@@ -3,7 +3,7 @@ use std::ptr;
 use std::panic::{self, AssertUnwindSafe};
 use source::VSSource;
 use report::VSReport;
-use kailua_diag::{Span, Spanned};
+use kailua_diag::{Span, Spanned, Report};
 use kailua_syntax::{Tok, Punct, Keyword, Lexer};
 
 macro_rules! define_token_type {
@@ -126,11 +126,10 @@ pub struct VSTokenStream {
 }
 
 impl VSTokenStream {
-    pub fn new(source: &VSSource, span: Span) -> Option<Box<VSTokenStream>> {
+    pub fn new(source: &VSSource, span: Span, report: &Report) -> Option<Box<VSTokenStream>> {
         let source = source.source().lock().unwrap();
         if let Some(iter) = source.iter_from_span(span) {
-            let report = VSReport::new(); // TODO
-            let lexer = Lexer::new(iter, &report);
+            let lexer = Lexer::new(iter, report);
             let tokens: Vec<_> = lexer.collect();
             assert!(!tokens.is_empty());
             Some(Box::new(VSTokenStream { tokens: tokens, cursor: 0 }))
@@ -151,17 +150,21 @@ impl VSTokenStream {
 
 #[no_mangle]
 pub extern "C" fn kailua_token_stream_new(src: *const VSSource,
-                                          span: *const Span) -> *mut VSTokenStream {
+                                          span: *const Span,
+                                          report: *const VSReport) -> *mut VSTokenStream {
     if src.is_null() { return ptr::null_mut(); }
     if span.is_null() { return ptr::null_mut(); }
+    if report.is_null() { return ptr::null_mut(); }
 
     let src: &VSSource = unsafe { mem::transmute(src) };
     let span = unsafe { *span };
+    let report: &VSReport = unsafe { mem::transmute(report) };
 
     let src = AssertUnwindSafe(src);
     let span = AssertUnwindSafe(span);
+    let report = AssertUnwindSafe(report);
     panic::catch_unwind(move || {
-        let stream = VSTokenStream::new(&src, span.0);
+        let stream = VSTokenStream::new(&src, span.0, &report.proxy());
         unsafe { mem::transmute(stream) }
     }).unwrap_or(ptr::null_mut())
 }

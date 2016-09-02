@@ -1,4 +1,5 @@
 ﻿using System;
+using Microsoft.VisualStudio.Text;
 
 namespace Kailua.Native
 {
@@ -43,6 +44,20 @@ namespace Kailua.Native
         public bool Equals(Span other)
         {
             return this.unit == other.unit && this.begin == other.begin && this.end == other.end;
+        }
+
+        public SnapshotSpan AttachSnapshot(ITextSnapshot snapshot)
+        {
+            if (this.IsValid)
+            {
+                var begin = (int)this.begin;
+                var end = (int)this.end;
+                return new SnapshotSpan(snapshot, begin, end - begin);
+            }
+            else
+            {
+                return new SnapshotSpan();
+            }
         }
     }
 }

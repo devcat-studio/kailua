@@ -10,7 +10,7 @@ namespace Kailua.Native
         [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern void kailua_token_stream_free(IntPtr stream);
 
-        public TokenStreamHandle() : base(IntPtr.Zero, true) { }
+        public TokenStreamHandle() : base(IntPtr.Zero, false) { }
 
         public override bool IsInvalid
         {
@@ -47,7 +47,8 @@ namespace Kailua.Native
         [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern TokenStreamHandle kailua_token_stream_new(
             SourceHandle source,
-            ref Span span);
+            ref Span span,
+            ReportHandle report);
 
         [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern TokenType kailua_token_stream_next(
@@ -57,9 +58,9 @@ namespace Kailua.Native
         internal TokenStreamHandle native;
         internal TokenTypeAndSpan last;
 
-        public TokenStream(Source source, Span span)
+        public TokenStream(Source source, Span span, Report report)
         {
-            this.native = kailua_token_stream_new(source.native, ref span);
+            this.native = kailua_token_stream_new(source.native, ref span, report.native);
             if (this.native.IsInvalid)
             {
                 throw new NativeException("internal error while finding a source code to tokenize");

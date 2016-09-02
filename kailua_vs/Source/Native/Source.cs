@@ -8,7 +8,7 @@ namespace Kailua.Native
         [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern void kailua_source_free(IntPtr src);
 
-        public SourceHandle() : base(IntPtr.Zero, true) {}
+        public SourceHandle() : base(IntPtr.Zero, false) {}
 
         public override bool IsInvalid
         {

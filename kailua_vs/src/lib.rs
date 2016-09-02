@@ -6,6 +6,7 @@ extern crate widestring;
 extern crate kailua_diag;
 extern crate kailua_syntax;
 
+#[warn(non_snake_case)] pub mod util;
 #[warn(non_snake_case)] pub mod source;
 #[warn(non_snake_case)] pub mod report;
 #[warn(non_snake_case)] pub mod lex;
