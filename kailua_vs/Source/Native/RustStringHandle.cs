@@ -8,7 +8,7 @@ namespace Kailua.Native
         [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern void kailua_strbuf_free(IntPtr buf);
 
-        public RustStringHandle() : base(IntPtr.Zero, false) { }
+        private RustStringHandle() : base(IntPtr.Zero, true) { }
 
         public override bool IsInvalid
         {

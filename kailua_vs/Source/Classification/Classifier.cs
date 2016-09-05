@@ -141,7 +141,7 @@
             foreach (var tagSpan in this.aggregator.GetTags(spans))
             {
                 var span = tagSpan.Span.GetSpans(snapshot)[0];
-                var classification = tokenTypeToClassification(tagSpan.Tag.type);
+                var classification = tokenTypeToClassification(tagSpan.Tag.Type);
                 if (classification != null)
                 {
                     yield return new TagSpan<ClassificationTag>(span, new ClassificationTag(classification));

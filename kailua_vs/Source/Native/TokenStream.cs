@@ -10,7 +10,7 @@ namespace Kailua.Native
         [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern void kailua_token_stream_free(IntPtr stream);
 
-        public TokenStreamHandle() : base(IntPtr.Zero, false) { }
+        private TokenStreamHandle() : base(IntPtr.Zero, true) { }
 
         public override bool IsInvalid
         {

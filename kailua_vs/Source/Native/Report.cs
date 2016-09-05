@@ -11,7 +11,7 @@ namespace Kailua.Native
         [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern void kailua_report_free(IntPtr report);
 
-        public ReportHandle() : base(IntPtr.Zero, false) { }
+        private ReportHandle() : base(IntPtr.Zero, true) { }
 
         public override bool IsInvalid
         {

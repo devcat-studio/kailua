@@ -153,7 +153,10 @@ pub extern "C" fn kailua_report_get_next(report: *const VSReport, kind: *mut VSR
     panic::catch_unwind(move || {
         let mut msgstr = WideCString::new();
         let ret = report.get_next(kind.0, span.0, &mut msgstr);
-        *msg.0 = msgstr.into_raw();
+        //*msg.0 = msgstr.into_raw(); // TODO upstream is incorrect
+        let mut msgstr = msgstr.into_vec_with_nul();
+        *msg.0 = msgstr.as_mut_ptr();
+        mem::forget(msgstr);
         ret
     }).unwrap_or(-1)
 }
