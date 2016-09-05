@@ -1,10 +1,10 @@
-﻿namespace Kailua
-{
-    using System.ComponentModel.Composition;
-    using Microsoft.VisualStudio.Text;
-    using Microsoft.VisualStudio.Text.Tagging;
-    using Microsoft.VisualStudio.Utilities;
+﻿using System.ComponentModel.Composition;
+using Microsoft.VisualStudio.Text;
+using Microsoft.VisualStudio.Text.Tagging;
+using Microsoft.VisualStudio.Utilities;
 
+namespace Kailua
+{
     [Export(typeof(ITaggerProvider))]
     [ContentType("kailua")]
     [TagType(typeof(ErrorTag))]

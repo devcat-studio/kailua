@@ -1,14 +1,14 @@
-﻿namespace Kailua
-{
-    using System;
-    using System.Collections.Generic;
-    using System.ComponentModel.Composition;
-    using Microsoft.VisualStudio.Text;
-    using Microsoft.VisualStudio.Text.Classification;
-    using Microsoft.VisualStudio.Text.Tagging;
-    using Microsoft.VisualStudio.Utilities;
-    using Kailua.Native;
+﻿using System;
+using System.Collections.Generic;
+using System.ComponentModel.Composition;
+using Microsoft.VisualStudio.Text;
+using Microsoft.VisualStudio.Text.Classification;
+using Microsoft.VisualStudio.Text.Tagging;
+using Microsoft.VisualStudio.Utilities;
+using Kailua.Native;
 
+namespace Kailua
+{
     [Export(typeof(ITaggerProvider))]
     [TagType(typeof(ClassificationTag))]
     [ContentType("kailua")]
