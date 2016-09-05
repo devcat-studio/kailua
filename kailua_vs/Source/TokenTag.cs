@@ -221,7 +221,7 @@
             // TODO think about optimizing O(n) traversal
             foreach (var tag in tags)
             {
-                if (spans.OverlapsWith(tag.Span))
+                if (spans.IntersectsWith(tag.Span))
                 {
                     yield return tag;
                 }
@@ -245,7 +245,7 @@
             // TODO think about optimizing O(n) traversal
             foreach (var tag in errors)
             {
-                if (spans.OverlapsWith(tag.Span))
+                if (spans.IntersectsWith(tag.Span))
                 {
                     yield return tag;
                 }

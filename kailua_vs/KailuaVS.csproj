@@ -120,6 +120,7 @@
     <Compile Include="Source\Classification\ClassificationFormat.cs" />
     <Compile Include="Source\Classification\ClassificationType.cs" />
     <Compile Include="Source\ErrorTag.cs" />
+    <Compile Include="Source\ErrorQuickInfo.cs" />
     <Compile Include="Source\TokenTag.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Source\Classification\Classifier.cs" />
