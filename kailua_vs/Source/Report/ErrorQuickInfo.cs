@@ -19,18 +19,18 @@ namespace Kailua
 
         public IQuickInfoSource TryCreateQuickInfoSource(ITextBuffer buffer)
         {
-            var tagAggregator = aggregatorFactory.CreateTagAggregator<ErrorTag>(buffer);
+            var tagAggregator = aggregatorFactory.CreateTagAggregator<ReportTag>(buffer);
             return new ErrorQuickInfoSource(buffer, tagAggregator);
         }
     }
 
     public class ErrorQuickInfoSource : IQuickInfoSource
     {
-        private ITagAggregator<ErrorTag> aggregator;
+        private ITagAggregator<ReportTag> aggregator;
         private ITextBuffer buffer;
         private bool disposed = false;
 
-        public ErrorQuickInfoSource(ITextBuffer buffer, ITagAggregator<ErrorTag> aggregator)
+        public ErrorQuickInfoSource(ITextBuffer buffer, ITagAggregator<ReportTag> aggregator)
         {
             this.buffer = buffer;
             this.aggregator = aggregator;
@@ -52,8 +52,9 @@ namespace Kailua
                 return;
             }
 
-            // only use a single error tag detected
-            var querySpan = new SnapshotSpan(triggerPoint, 1);
+            var veryEnd = triggerPoint.Position == triggerPoint.Snapshot.Length;
+            var querySpan = new SnapshotSpan(triggerPoint, veryEnd ? 0 : 1);
+
             var tags = aggregator.GetTags(querySpan);
             foreach (var tag in tags)
             {
@@ -64,8 +65,9 @@ namespace Kailua
                     continue;
                 }
 
+                // only use the first error tag detected
                 applicableToSpan = this.buffer.CurrentSnapshot.CreateTrackingSpan(tagSpan, SpanTrackingMode.EdgeExclusive);
-                quickInfoContent.Add(tag.Tag.ToolTipContent);
+                quickInfoContent.Add(tag.Tag.Data.Message);
                 break;
             }
         }
