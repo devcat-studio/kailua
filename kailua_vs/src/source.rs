@@ -38,7 +38,6 @@ impl VSSource {
         let mut source = self.source.lock().unwrap();
         let file = SourceFile::from_u16(path.to_string_lossy(), data.into_vec());
         let filespan = source.add(file);
-        println!("add_string returns {:?}", filespan);
         span.map(|span| *span = filespan);
     }
 }

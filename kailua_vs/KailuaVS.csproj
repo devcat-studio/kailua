@@ -110,6 +110,7 @@
     <Compile Include="Source\Classification\ClassificationTypeName.cs" />
     <Compile Include="Source\Native\RustStringHandle.cs" />
     <Compile Include="Source\Native\Report.cs" />
+    <Compile Include="Source\Native\ParseTree.cs" />
     <Compile Include="Source\Native\TokenType.cs" />
     <Compile Include="Source\Native\Unit.cs" />
     <Compile Include="Source\Native\Pos.cs" />

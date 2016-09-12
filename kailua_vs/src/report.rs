@@ -1,7 +1,5 @@
-use std::cmp;
 use std::mem;
 use std::ptr;
-use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Mutex;
 use std::sync::mpsc::{self, Sender, Receiver};
@@ -70,7 +68,6 @@ impl VSReport {
         let inner = self.inner.lock().unwrap();
         Rc::new(VSReportProxy {
             lang: inner.lang.clone(),
-            maxkind: Cell::new(None),
             sender: inner.sender.clone(),
         })
     }
@@ -96,7 +93,6 @@ impl VSReport {
 
 struct VSReportProxy {
     lang: String,
-    maxkind: Cell<Option<Kind>>,
     sender: Sender<Diag>,
 }
 
@@ -104,14 +100,12 @@ impl Report for VSReportProxy {
     fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> kailua_diag::Result<()> {
         let msg = Localized::new(msg, &self.lang).to_string();
         let diag = Diag { kind: kind, span: span, msg: msg };
-        self.sender.send(diag).expect("VSReportProxy::add_span failed to send diags");
 
-        // maxkind is local to the current proxy instance
-        if let Some(maxkind) = self.maxkind.get() {
-            self.maxkind.set(Some(cmp::max(maxkind, kind)));
-        } else {
-            self.maxkind.set(Some(kind));
-        }
+        // it is totally possible that the receiver has been already disconnected;
+        // this happens when C# has caught an exception or has reached the error limit.
+        // it's no point to continue from now on, so we translate SendError to Stop.
+        try!(self.sender.send(diag).map_err(|_| Stop));
+
         if kind == Kind::Fatal { Err(Stop) } else { Ok(()) }
     }
 }

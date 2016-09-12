@@ -20,6 +20,14 @@ namespace Kailua.Native
             }
         }
 
+        public void Leak()
+        {
+            lock (this)
+            {
+                this.SetHandle(IntPtr.Zero);
+            }
+        }
+
         protected override bool ReleaseHandle()
         {
             lock (this)
@@ -42,48 +50,28 @@ namespace Kailua.Native
         }
     }
 
-    public class TokenStream : IDisposable, IEnumerable<TokenTypeAndSpan>, IEnumerator<TokenTypeAndSpan>
+    internal class TokenStreamEnumerator : IDisposable, IEnumerator<TokenTypeAndSpan>
     {
-        [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern TokenStreamHandle kailua_token_stream_new(
-            SourceHandle source,
-            ref Span span,
-            ReportHandle report);
-
         [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern TokenType kailua_token_stream_next(
             TokenStreamHandle stream,
             out Span span);
 
-        internal TokenStreamHandle native;
+        internal TokenStream stream;
         internal TokenTypeAndSpan last;
 
-        public TokenStream(Source source, Span span, Report report)
+        internal TokenStreamEnumerator(TokenStream stream)
         {
-            this.native = kailua_token_stream_new(source.native, ref span, report.native);
-            if (this.native.IsInvalid)
-            {
-                throw new NativeException("internal error while finding a source code to tokenize");
-            }
+            this.stream = stream;
         }
 
-        IEnumerator IEnumerable.GetEnumerator()
-        {
-            return this;
-        }
-
-        IEnumerator<TokenTypeAndSpan> IEnumerable<TokenTypeAndSpan>.GetEnumerator()
-        {
-            return this;
-        }
-
-        bool IEnumerator.MoveNext()
+        public bool MoveNext()
         {
             Span span;
             TokenType ret;
-            lock (this.native)
+            lock (this.stream.native)
             {
-                ret = kailua_token_stream_next(this.native, out span);
+                ret = kailua_token_stream_next(this.stream.native, out span);
             }
             if (ret == TokenType.Dead)
             {
@@ -93,7 +81,7 @@ namespace Kailua.Native
             return ret != TokenType.EOF;
         }
 
-        void IEnumerator.Reset()
+        public void Reset()
         {
             throw new NotImplementedException();
         }
@@ -106,6 +94,40 @@ namespace Kailua.Native
         TokenTypeAndSpan IEnumerator<TokenTypeAndSpan>.Current
         {
             get { return this.last; }
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
+    public class TokenStream : IDisposable, IEnumerable<TokenTypeAndSpan>
+    {
+        [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern TokenStreamHandle kailua_token_stream_new(
+            SourceHandle source,
+            ref Span span,
+            ReportHandle report);
+
+        internal TokenStreamHandle native;
+
+        public TokenStream(Source source, Span span, Report report)
+        {
+            this.native = kailua_token_stream_new(source.native, ref span, report.native);
+            if (this.native.IsInvalid)
+            {
+                throw new NativeException("internal error while finding a source code to tokenize");
+            }
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return new TokenStreamEnumerator(this);
+        }
+
+        IEnumerator<TokenTypeAndSpan> IEnumerable<TokenTypeAndSpan>.GetEnumerator()
+        {
+            return new TokenStreamEnumerator(this);
         }
 
         public void Dispose()

@@ -99,6 +99,16 @@ namespace Kailua
                         var span = token.Span.AttachSnapshot(snapshot);
                         tokens.Add(new TagSpan<TokenTag>(span, new TokenTag(token.Type)));
                     }
+
+                    try
+                    {
+                        var tree = new Native.ParseTree(stream, report);
+                        // for now we discard tree immediately, probably we can use it later
+                    }
+                    catch (Native.NativeException _)
+                    {
+                        // ignore any error here
+                    }
                 }
 
                 // grab all reported errors

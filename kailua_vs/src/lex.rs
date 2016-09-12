@@ -138,6 +138,10 @@ impl VSTokenStream {
         }
     }
 
+    pub fn into_tokens(self) -> Vec<Spanned<Tok>> {
+        self.tokens
+    }
+
     pub fn next(&mut self, span: &mut Span) -> VSTokenType {
         let token = &self.tokens[self.cursor];
         if self.cursor + 1 < self.tokens.len() {
