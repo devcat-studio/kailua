@@ -116,18 +116,7 @@ namespace Kailua
                         break;
                     }
 
-                    var span = data.Value.Span.AttachSnapshot(snapshot);
-                    if (span.IsEmpty)
-                    {
-                        // a point span should be converted to something visible in VS
-                        var start = span.Start.Position;
-                        if (start == snapshot.Length && start > 0)
-                        {
-                            --start; // do not go past EOF
-                        }
-                        span = new SnapshotSpan(snapshot, start, 1);
-                    }
-
+                    var span = data.Value.Span.AttachSnapshotNonEmpty(snapshot);
                     var path = data.Value.Span.IsValid ? sourcePath : null;
                     reports.Add(new TagSpan<ReportTag>(span, new ReportTag(data.Value, path)));
                 }

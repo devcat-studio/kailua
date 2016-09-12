@@ -48,16 +48,40 @@ namespace Kailua.Native
 
         public SnapshotSpan AttachSnapshot(ITextSnapshot snapshot)
         {
-            if (this.IsValid)
-            {
-                var begin = (int)this.begin;
-                var end = (int)this.end;
-                return new SnapshotSpan(snapshot, begin, end - begin);
-            }
-            else
+            if (!this.IsValid)
             {
                 return new SnapshotSpan();
             }
+
+            var begin = (int)this.begin;
+            var end = (int)this.end;
+            return new SnapshotSpan(snapshot, begin, end - begin);
+        }
+
+        public SnapshotSpan AttachSnapshotNonEmpty(ITextSnapshot snapshot)
+        {
+            if (!this.IsValid)
+            {
+                return new SnapshotSpan();
+            }
+
+            var begin = (int)this.begin;
+            var end = (int)this.end;
+
+            // a point span should be converted to something visible in VS
+            if (begin == end)
+            {
+                if (begin == snapshot.Length && begin > 0)
+                {
+                    --begin; // do not go past EOF
+                }
+                else if (end < snapshot.Length)
+                {
+                    ++end;
+                }
+            }
+
+            return new SnapshotSpan(snapshot, begin, end - begin);
         }
     }
 }

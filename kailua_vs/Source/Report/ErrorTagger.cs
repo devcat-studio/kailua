@@ -42,6 +42,9 @@ namespace Kailua
 
             this.aggregator.TagsChanged += errorTagsChanged;
             this.aggregator.BatchedTagsChanged += batchedErrorTagsChanged;
+
+            // the initial buffer may already contain errors
+            refreshErrorList();
         }
 
         internal String reportKindToErrorType(Native.ReportKind kind)
@@ -73,12 +76,33 @@ namespace Kailua
         {
             // update the current error list to that of the current snapshot and most recent reports
             // (this should be batched, otherwise it will get recursively called!)
-            // TODO actually, the line number can be calculated straight from Source itself, so we don't really need Snapshot
+            refreshErrorList();
+        }
+
+        internal void refreshErrorList()
+        {
             var snapshot = this.buffer.CurrentSnapshot;
             var invalidatedSpan = new SnapshotSpan(snapshot, 0, snapshot.Length);
+
+            const int MaxErrorCount = 100;
+
             this.errorListProvider.Tasks.Clear();
+            int errorCount = 0;
             foreach (var reportSpan in this.aggregator.GetTags(invalidatedSpan))
             {
+                // error list window is slow with tons of errors
+                if (errorCount++ >= MaxErrorCount)
+                {
+                    this.errorListProvider.Tasks.Add(new ErrorTask
+                    {
+                        Category = TaskCategory.User,
+                        ErrorCategory = TaskErrorCategory.Message,
+                        Text = String.Format(Properties.Strings.ErrorLimitExceeded, MaxErrorCount),
+                    });
+                    break;
+                }
+
+                // TODO actually, the line number can be calculated straight from Source itself, so we don't really need Snapshot
                 this.errorListProvider.AddReport(snapshot, reportSpan.Tag.Data, reportSpan.Tag.Path);
             }
             this.errorListProvider.Show();
