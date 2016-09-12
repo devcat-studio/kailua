@@ -9,7 +9,7 @@ use std::str;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::collections::HashMap;
-use kailua_diag::{Source, Span, Spanned, Report};
+use kailua_diag::{Source, Span, Spanned, Report, TrackMaxKind};
 use kailua_syntax::{Block, parse_chunk};
 use kailua_check::{Options, Context, CheckResult, check_from_chunk};
 
@@ -26,7 +26,7 @@ impl kailua_test::Testing for Testing {
         struct Opts {
             source: Rc<RefCell<Source>>,
             filespans: HashMap<String, Span>,
-            report: Rc<Report>,
+            report: Rc<TrackMaxKind<Rc<Report>>>,
         }
 
         impl Options for Opts {
@@ -39,6 +39,7 @@ impl kailua_test::Testing for Testing {
             }
         }
 
+        let report = Rc::new(TrackMaxKind::new(report));
         let opts = Rc::new(RefCell::new(Opts { source: source, filespans: filespans.clone(),
                                                report: report.clone() }));
         match check_from_chunk(&mut Context::new(report.clone()), &chunk, opts) {

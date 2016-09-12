@@ -44,27 +44,22 @@ pub type Result<T> = result::Result<T, Stop>;
 
 pub trait Report {
     fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> Result<()>;
-    fn can_continue(&self) -> bool;
 }
 
 impl<'a, R: Report> Report for &'a R {
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
-    fn can_continue(&self) -> bool { (**self).can_continue() }
 }
 
 impl<'a, R: Report> Report for &'a mut R {
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
-    fn can_continue(&self) -> bool { (**self).can_continue() }
 }
 
 impl<'a> Report for &'a Report {
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
-    fn can_continue(&self) -> bool { (**self).can_continue() }
 }
 
 impl<'a> Report for Rc<Report> {
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
-    fn can_continue(&self) -> bool { (**self).can_continue() }
 }
 
 pub trait Reporter: Report + Sized {
@@ -161,7 +156,6 @@ fn strip_newline(mut s: SourceSlice) -> SourceSlice {
 pub struct ConsoleReport {
     source: Rc<RefCell<Source>>,
     term: RefCell<Box<StderrTerminal>>,
-    maxkind: Cell<Option<Kind>>,
     lang: String,
 }
 
@@ -175,7 +169,6 @@ impl ConsoleReport {
         ConsoleReport {
             source: source,
             term: RefCell::new(stderr_or_dummy()),
-            maxkind: Cell::new(None),
             lang: lang,
         }
     }
@@ -462,17 +455,7 @@ impl Report for ConsoleReport {
             }
         }
 
-        if let Some(maxkind) = self.maxkind.get() {
-            self.maxkind.set(Some(cmp::max(maxkind, kind)));
-        } else {
-            self.maxkind.set(Some(kind));
-        }
-
         if kind == Kind::Fatal { Err(Stop) } else { Ok(()) }
-    }
-
-    fn can_continue(&self) -> bool {
-        self.maxkind.get() < Some(Kind::Error)
     }
 }
 
@@ -497,16 +480,44 @@ impl Report for CollectedReport {
         self.collected.borrow_mut().push((kind, span, msg));
         if kind == Kind::Fatal { Err(Stop) } else { Ok(()) }
     }
-
-    fn can_continue(&self) -> bool {
-        self.collected.borrow().iter().all(|&(kind, _, _)| kind < Kind::Error)
-    }
 }
 
 pub struct NoReport;
 
 impl Report for NoReport {
     fn add_span(&self, _kind: Kind, _span: Span, _msg: &Localize) -> Result<()> { Err(Stop) }
-    fn can_continue(&self) -> bool { true }
+}
+
+pub struct TrackMaxKind<R: Report> {
+    report: R,
+    maxkind: Cell<Option<Kind>>,
+}
+
+impl<R: Report> TrackMaxKind<R> {
+    pub fn new(report: R) -> TrackMaxKind<R> {
+        TrackMaxKind {
+            report: report,
+            maxkind: Cell::new(None),
+        }
+    }
+
+    pub fn can_continue(&self) -> bool {
+        self.maxkind.get() < Some(Kind::Error)
+    }
+
+    pub fn into_inner(self) -> R {
+        self.report
+    }
+}
+
+impl<R: Report> Report for TrackMaxKind<R> {
+    fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> Result<()> {
+        if let Some(maxkind) = self.maxkind.get() {
+            self.maxkind.set(Some(cmp::max(maxkind, kind)));
+        } else {
+            self.maxkind.set(Some(kind));
+        }
+        self.report.add_span(kind, span, msg)
+    }
 }
 

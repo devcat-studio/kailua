@@ -9,7 +9,7 @@ pub use message::{Localize, Localized, get_message_language};
 pub use source::{Pos, Span, Spanned, WithLoc};
 pub use source::{Source, SourceFile, SourceData, SourceDataIter, SourceLineSpans};
 pub use report::{Kind, Stop, Result, Report, ReportMore, Reporter};
-pub use report::{ConsoleReport, CollectedReport, NoReport};
+pub use report::{ConsoleReport, CollectedReport, NoReport, TrackMaxKind};
 
 mod message;
 mod source;

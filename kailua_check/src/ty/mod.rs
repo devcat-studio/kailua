@@ -129,9 +129,6 @@ impl<'a> Report for &'a mut TypeResolver {
     fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> kailua_diag::Result<()> {
         (**self).add_span(kind, span, msg)
     }
-    fn can_continue(&self) -> bool {
-        (**self).can_continue()
-    }
 }
 
 pub trait TypeContext: Report {
@@ -165,9 +162,6 @@ pub trait TypeContext: Report {
 impl<'a> Report for &'a mut TypeContext {
     fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> kailua_diag::Result<()> {
         (**self).add_span(kind, span, msg)
-    }
-    fn can_continue(&self) -> bool {
-        (**self).can_continue()
     }
 }
 
@@ -264,9 +258,6 @@ struct NoTypeContext;
 impl Report for NoTypeContext {
     fn add_span(&self, _kind: Kind, _span: Span, _msg: &Localize) -> kailua_diag::Result<()> {
         Ok(()) // ignore any report
-    }
-    fn can_continue(&self) -> bool {
-        panic!("can_continue() is not supposed to be called here");
     }
 }
 

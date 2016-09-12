@@ -114,10 +114,6 @@ impl Report for VSReportProxy {
         }
         if kind == Kind::Fatal { Err(Stop) } else { Ok(()) }
     }
-
-    fn can_continue(&self) -> bool {
-        self.maxkind.get() < Some(Kind::Error)
-    }
 }
 
 #[no_mangle]

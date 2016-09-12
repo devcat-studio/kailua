@@ -70,10 +70,6 @@ impl<'a, T> Report for Parser<'a, T> {
         if k >= diag::Kind::Error { self.cannot_continue.set(true); }
         self.report.add_span(k, s, m)
     }
-
-    fn can_continue(&self) -> bool {
-        self.report.can_continue()
-    }
 }
 
 impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
@@ -1955,10 +1951,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         if !self.cannot_continue.get() {
             // do not try to expect EOF on error
             try!(self.expect(EOF));
-            Ok(chunk)
-        } else {
-            Err(Stop)
         }
+        Ok(chunk)
     }
 }
 

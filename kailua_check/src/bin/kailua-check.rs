@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::path::{Path, PathBuf};
 
-use kailua_diag::{Span, Spanned, Source, SourceFile, Report, ConsoleReport};
+use kailua_diag::{Span, Spanned, Source, SourceFile, Report, ConsoleReport, TrackMaxKind};
 use kailua_syntax::{parse_chunk, Block};
 
 struct Options {
@@ -97,7 +97,7 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
     let file = try!(SourceFile::from_file(mainpath).map_err(|e| e.to_string()));
     let filespan = source.add(file);
     let source = Rc::new(RefCell::new(source));
-    let report = Rc::new(ConsoleReport::new(source.clone()));
+    let report = Rc::new(TrackMaxKind::new(ConsoleReport::new(source.clone())));
     let mut context = kailua_check::Context::new(report.clone());
     let root = mainpath.parent().unwrap_or(&Path::new(".."));
     let opts = Rc::new(RefCell::new(Options::new(source, root.to_owned(), report.clone())));

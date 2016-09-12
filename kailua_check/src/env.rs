@@ -574,7 +574,6 @@ impl Report for Context {
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> kailua_diag::Result<()> {
         self.report.add_span(k, s, m)
     }
-    fn can_continue(&self) -> bool { self.report.can_continue() }
 }
 
 impl TypeContext for Context {
@@ -1475,9 +1474,6 @@ impl<'ctx> Env<'ctx> {
 impl<'ctx> Report for Env<'ctx> {
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> kailua_diag::Result<()> {
         self.context.report.add_span(k, s, m)
-    }
-    fn can_continue(&self) -> bool {
-        self.context.report.can_continue()
     }
 }
 
