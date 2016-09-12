@@ -8,7 +8,7 @@ name = "KailuaVSNative"
 crate-type = ["cdylib"]
 
 [dependencies]
-widestring = "0.2.1"
+widestring = "0.2.2"
 kailua_diag = { path = "../kailua_diag" }
 kailua_syntax = { path = "../kailua_syntax" }
 
