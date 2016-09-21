@@ -120,6 +120,8 @@
     <Compile Include="Source\Native\TokenStream.cs" />
     <Compile Include="Source\Classification\ClassificationFormat.cs" />
     <Compile Include="Source\Classification\ClassificationType.cs" />
+    <Compile Include="Source\Project\Project.cs" />
+    <Compile Include="Source\Project\ProjectCache.cs" />
     <Compile Include="Source\Report\ErrorTagger.cs" />
     <Compile Include="Source\Report\ErrorQuickInfo.cs" />
     <Compile Include="Source\Report\ReportErrorListProvider.cs" />
