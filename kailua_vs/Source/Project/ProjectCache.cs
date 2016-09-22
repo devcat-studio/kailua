@@ -56,7 +56,7 @@ namespace Kailua
                 }
             }
 
-            public int OnItemAdded(uint itemidParent, uint itemidSiblingPrev, uint itemidAdded)
+            int IVsHierarchyEvents.OnItemAdded(uint itemidParent, uint itemidSiblingPrev, uint itemidAdded)
             {
                 string fileName;
                 if (this.getOpenFileNameFromItemId(itemidAdded, out fileName))
@@ -66,7 +66,7 @@ namespace Kailua
                 return VSConstants.S_OK;
             }
 
-            public int OnItemDeleted(uint itemid)
+            int IVsHierarchyEvents.OnItemDeleted(uint itemid)
             {
                 string fileName;
                 if (this.getOpenFileNameFromItemId(itemid, out fileName))
@@ -78,22 +78,22 @@ namespace Kailua
 
             #region placeholder IVsHierarchyEvents methods
 
-            public int OnInvalidateIcon(IntPtr hicon)
+            int IVsHierarchyEvents.OnInvalidateIcon(IntPtr hicon)
             {
                 return VSConstants.S_OK;
             }
 
-            public int OnInvalidateItems(uint itemidParent)
+            int IVsHierarchyEvents.OnInvalidateItems(uint itemidParent)
             {
                 return VSConstants.S_OK;
             }
 
-            public int OnItemsAppended(uint itemidParent)
+            int IVsHierarchyEvents.OnItemsAppended(uint itemidParent)
             {
                 return VSConstants.S_OK;
             }
 
-            public int OnPropertyChanged(uint itemid, int propid, uint flags)
+            int IVsHierarchyEvents.OnPropertyChanged(uint itemid, int propid, uint flags)
             {
                 return VSConstants.S_OK;
             }
@@ -197,14 +197,14 @@ namespace Kailua
             }
         }
 
-        public int OnAfterOpenProject(IVsHierarchy pHierarchy, int fAdded)
+        int IVsSolutionEvents.OnAfterOpenProject(IVsHierarchy pHierarchy, int fAdded)
         {
             var hierarchyObserver = new HierarchyObserver(this, pHierarchy);
             this.hierarchyObservers.Add(pHierarchy, hierarchyObserver);
             return VSConstants.S_OK;
         }
 
-        public int OnBeforeCloseProject(IVsHierarchy pHierarchy, int fRemoved)
+        int IVsSolutionEvents.OnBeforeCloseProject(IVsHierarchy pHierarchy, int fRemoved)
         {
             Debug.Assert(this.hierarchyObservers.Remove(pHierarchy));
             return VSConstants.S_OK;
@@ -212,49 +212,49 @@ namespace Kailua
 
         #region placeholder IVsSolutionEvents methods
 
-        public int OnAfterCloseSolution(object pUnkReserved)
+        int IVsSolutionEvents.OnAfterCloseSolution(object pUnkReserved)
         {
             return VSConstants.S_OK;
         }
 
-        public int OnAfterLoadProject(IVsHierarchy pStubHierarchy, IVsHierarchy pRealHierarchy)
+        int IVsSolutionEvents.OnAfterLoadProject(IVsHierarchy pStubHierarchy, IVsHierarchy pRealHierarchy)
         {
             return VSConstants.S_OK;
         }
 
-        public int OnAfterOpenSolution(object pUnkReserved, int fNewSolution)
+        int IVsSolutionEvents.OnAfterOpenSolution(object pUnkReserved, int fNewSolution)
         {
             return VSConstants.S_OK;
         }
 
-        public int OnBeforeCloseSolution(object pUnkReserved)
+        int IVsSolutionEvents.OnBeforeCloseSolution(object pUnkReserved)
         {
             return VSConstants.S_OK;
         }
 
-        public int OnBeforeUnloadProject(IVsHierarchy pRealHierarchy, IVsHierarchy pStubHierarchy)
+        int IVsSolutionEvents.OnBeforeUnloadProject(IVsHierarchy pRealHierarchy, IVsHierarchy pStubHierarchy)
         {
             return VSConstants.S_OK;
         }
 
-        public int OnQueryCloseProject(IVsHierarchy pHierarchy, int fRemoving, ref int pfCancel)
+        int IVsSolutionEvents.OnQueryCloseProject(IVsHierarchy pHierarchy, int fRemoving, ref int pfCancel)
         {
             return VSConstants.S_OK;
         }
 
-        public int OnQueryCloseSolution(object pUnkReserved, ref int pfCancel)
+        int IVsSolutionEvents.OnQueryCloseSolution(object pUnkReserved, ref int pfCancel)
         {
             return VSConstants.S_OK;
         }
 
-        public int OnQueryUnloadProject(IVsHierarchy pRealHierarchy, ref int pfCancel)
+        int IVsSolutionEvents.OnQueryUnloadProject(IVsHierarchy pRealHierarchy, ref int pfCancel)
         {
             return VSConstants.S_OK;
         }
 
         #endregion
 
-        public int OnAfterFirstDocumentLock(uint docCookie, uint dwRDTLockType, uint dwReadLocksRemaining, uint dwEditLocksRemaining)
+        int IVsRunningDocTableEvents.OnAfterFirstDocumentLock(uint docCookie, uint dwRDTLockType, uint dwReadLocksRemaining, uint dwEditLocksRemaining)
         {
             if ((dwRDTLockType & (int)_VSRDTFLAGS.RDT_EditLock) != 0)
             {
@@ -275,7 +275,7 @@ namespace Kailua
             return VSConstants.S_OK;
         }
 
-        public int OnBeforeLastDocumentUnlock(uint docCookie, uint dwRDTLockType, uint dwReadLocksRemaining, uint dwEditLocksRemaining)
+        int IVsRunningDocTableEvents.OnBeforeLastDocumentUnlock(uint docCookie, uint dwRDTLockType, uint dwReadLocksRemaining, uint dwEditLocksRemaining)
         {
             if ((dwRDTLockType & (int)_VSRDTFLAGS.RDT_EditLock) != 0)
             {
@@ -298,27 +298,44 @@ namespace Kailua
 
         #region placeholder IVsRunningDocTableEvents methods
 
-        public int OnAfterAttributeChange(uint docCookie, uint grfAttribs)
+        int IVsRunningDocTableEvents.OnAfterAttributeChange(uint docCookie, uint grfAttribs)
         {
             return VSConstants.S_OK;
         }
 
-        public int OnAfterDocumentWindowHide(uint docCookie, IVsWindowFrame pFrame)
+        int IVsRunningDocTableEvents.OnAfterDocumentWindowHide(uint docCookie, IVsWindowFrame pFrame)
         {
             return VSConstants.S_OK;
         }
 
-        public int OnAfterSave(uint docCookie)
+        int IVsRunningDocTableEvents.OnAfterSave(uint docCookie)
         {
             return VSConstants.S_OK;
         }
 
-        public int OnBeforeDocumentWindowShow(uint docCookie, int fFirstShow, IVsWindowFrame pFrame)
+        int IVsRunningDocTableEvents.OnBeforeDocumentWindowShow(uint docCookie, int fFirstShow, IVsWindowFrame pFrame)
         {
             return VSConstants.S_OK;
         }
 
         #endregion
+
+        public IEnumerable<IVsHierarchy> GetProjects(String fileName)
+        {
+            // this is O(n) over the projects, but we ain't gonna have tons of projects anyway
+            var projects = new List<Project>();
+            foreach (var hierarchy in this.ProjectHierarchies)
+            {
+                HierarchyObserver hierarchyObserver;
+                if (this.hierarchyObservers.TryGetValue(hierarchy, out hierarchyObserver))
+                {
+                    if (hierarchyObserver.openFileItemIds.ContainsKey(fileName))
+                    {
+                        yield return hierarchy;
+                    }
+                }
+            }
+        }
 
         public void Dispose()
         {
@@ -349,17 +366,9 @@ namespace Kailua
                 yield break;
             }
 
-            var projects = new List<Project>();
-            foreach (var hierarchy in observer.ProjectHierarchies)
+            foreach (var hierarchy in observer.GetProjects(document.FilePath))
             {
-                ProjectObserver.HierarchyObserver hierarchyObserver;
-                if (observer.hierarchyObservers.TryGetValue(hierarchy, out hierarchyObserver))
-                {
-                    if (hierarchyObserver.openFileItemIds.ContainsKey(document.FilePath))
-                    {
-                        yield return Get(getProjectFromHierarchy(hierarchy));
-                    }
-                }
+                yield return Get(getProjectFromHierarchy(hierarchy));
             }
         }
 
