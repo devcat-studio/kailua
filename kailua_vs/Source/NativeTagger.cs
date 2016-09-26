@@ -4,8 +4,6 @@ using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Tagging;
-using Microsoft.VisualStudio.Text.Adornments;
-using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Utilities;
 
 namespace Kailua
@@ -81,54 +79,52 @@ namespace Kailua
 
                 var sourceText = snapshot.GetText();
 
-                var sourcePath = "<unsaved>";
-                ITextDocument document;
-                if (this.buffer.Properties.TryGetProperty(typeof(ITextDocument), out document))
+                string sourcePath;
+                var project = ProjectCache.GetAnyProject(buffer, out sourcePath);
+                if (project != null)
                 {
-                    sourcePath = document.FilePath;
-                }
+                    var file = project[sourcePath];
+                    file.SourceText = sourceText;
 
-                var source = new Native.Source();
-                var report = new Native.Report();
-                var nativeSpan = source.AddString(sourcePath, sourceText);
-                if (nativeSpan.IsValid)
-                {
-                    var stream = new Native.TokenStream(source, nativeSpan, report);
-                    foreach (Native.TokenTypeAndSpan token in stream)
-                    {
-                        var span = token.Span.AttachSnapshot(snapshot);
-                        tokens.Add(new TagSpan<TokenTag>(span, new TokenTag(token.Type)));
-                    }
-
+                    // get tokens
                     try
                     {
-                        var tree = new Native.ParseTree(stream, report);
+                        var task = file.TokenStreamTask;
+                        var stream = task.Result;
+                        foreach (Native.TokenTypeAndSpan token in stream)
+                        {
+                            var span = token.Span.AttachSnapshot(snapshot);
+                            tokens.Add(new TagSpan<TokenTag>(span, new TokenTag(token.Type)));
+                        }
+                    }
+                    catch (AggregateException)
+                    {
+                    }
+
+                    // get parse tree
+                    try
+                    {
+                        var tree = file.ParseTreeTask.Result;
                         // for now we discard tree immediately, probably we can use it later
+                        var _ = tree;
                     }
-                    catch (Native.NativeException _)
+                    catch (AggregateException)
                     {
-                        // ignore any error here
-                    }
-                }
-
-                // grab all reported errors
-                while (true)
-                {
-                    var data = report.GetNext();
-                    if (data == null)
-                    {
-                        break;
                     }
 
-                    // for now, ignore unspanned reports (TODO)
-                    if (!data.Value.Span.IsValid)
+                    // grab all reported errors so far
+                    foreach (var data in file.ReportData)
                     {
-                        break;
-                    }
+                        // for now, ignore unspanned reports (TODO)
+                        if (!data.Span.IsValid)
+                        {
+                            break;
+                        }
 
-                    var span = data.Value.Span.AttachSnapshotNonEmpty(snapshot);
-                    var path = data.Value.Span.IsValid ? sourcePath : null;
-                    reports.Add(new TagSpan<ReportTag>(span, new ReportTag(data.Value, path)));
+                        var span = data.Span.AttachSnapshotNonEmpty(snapshot);
+                        var path = data.Span.IsValid ? sourcePath : null;
+                        reports.Add(new TagSpan<ReportTag>(span, new ReportTag(data, path)));
+                    }
                 }
 
                 // invalidate the entire buffer

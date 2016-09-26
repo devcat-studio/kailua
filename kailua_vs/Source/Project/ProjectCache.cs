@@ -1,9 +1,7 @@
 ﻿using System;
 using System.Diagnostics;
 using System.Collections.Generic;
-using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using Microsoft.VisualStudio;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Shell;
@@ -11,68 +9,131 @@ using Microsoft.VisualStudio.Shell.Interop;
 
 namespace Kailua
 {
-    // observes all documents with edit lock and corresponding projects in the current solution
-    internal class ProjectObserver : IDisposable, IVsSolutionEvents, IVsRunningDocTableEvents
+    internal class ProjectObserver : IDisposable, IVsSolutionEvents
     {
-        internal IVsRunningDocumentTable rdt;
-        internal IVsSolution solution;
-        private uint rdtEventCookie;
-        private uint solutionEventcookie;
-        internal HashSet<string> openFileNames;
-        internal ConditionalWeakTable<IVsHierarchy, HierarchyObserver> hierarchyObservers;
+        private static EnvDTE.Project getProjectFromHierarchy(IVsHierarchy hierarchy)
+        {
+            object projObj;
+            Trace.Assert(hierarchy.GetProperty(VSConstants.VSITEMID_ROOT, (int)__VSHPROPID.VSHPROPID_ExtObject, out projObj) == VSConstants.S_OK);
+            EnvDTE.Project project = projObj as EnvDTE.Project;
+            Trace.Assert(project != null);
+            return project;
+        }
 
         internal class HierarchyObserver : IDisposable, IVsHierarchyEvents
         {
             public ProjectObserver observer;
             public WeakReference<IVsHierarchy> hierarchy;
+            public EnvDTE.Project project;
             public uint eventCookie;
-            public Dictionary<string, uint> openFileItemIds;
+
+            public Dictionary<uint, string> fileItemIds;
+            public Dictionary<string, uint> fileNames;
 
             public HierarchyObserver(ProjectObserver observer, IVsHierarchy hierarchy)
             {
                 this.observer = observer;
                 this.hierarchy = new WeakReference<IVsHierarchy>(hierarchy);
-                this.openFileItemIds = new Dictionary<string, uint>();
+                this.project = getProjectFromHierarchy(hierarchy);
 
-                Debug.Assert(hierarchy.AdviseHierarchyEvents(this, out this.eventCookie) == VSConstants.S_OK);
+                this.fileItemIds = new Dictionary<uint, string>();
+                this.fileNames = new Dictionary<string, uint>();
+
+                // trigger initial events for already existing items
+                foreach (var itemId in this.enumerateHierarchyFiles(hierarchy, VSConstants.VSITEMID_ROOT))
+                {
+                    this.onFileAdded(itemId);
+                }
+
+                Trace.Assert(hierarchy.AdviseHierarchyEvents(this, out this.eventCookie) == VSConstants.S_OK);
             }
 
-            private bool getOpenFileNameFromItemId(uint itemId, out string fileName)
+            private IEnumerable<uint> enumerateHierarchyFiles(IVsHierarchy hierarchy, uint itemId)
+            {
+                yield return itemId;
+
+                // note that this should traverse all children, not only visible ones
+                // (it seems that VS puts the first file added to the "other files" pseudo-project as invisible, somehow)
+                object child = null;
+                int ret = hierarchy.GetProperty(itemId, (int)__VSHPROPID.VSHPROPID_FirstChild, out child);
+                while (ret == VSConstants.S_OK && child != null)
+                {
+                    if (child is int && (uint)(int)child == VSConstants.VSITEMID_NIL)
+                    {
+                        break; // no more sibling nodes
+                    }
+
+                    uint childItemId = Convert.ToUInt32(child);
+                    foreach (var subItemId in this.enumerateHierarchyFiles(hierarchy, childItemId))
+                    {
+                        yield return subItemId;
+                    }
+
+                    child = null;
+                    ret = hierarchy.GetProperty(childItemId, (int)__VSHPROPID.VSHPROPID_NextSibling, out child);
+                }
+            }
+
+            private bool getFileNameFromItemId(uint itemId, out string fileName)
             {
                 IVsHierarchy hierarchy;
-                if (!this.hierarchy.TryGetTarget(out hierarchy))
+                if (this.hierarchy.TryGetTarget(out hierarchy))
                 {
-                    fileName = null;
-                    return false;
+                    // check if the item refers to a regular file
+                    Guid typeGuid;
+                    int ret = hierarchy.GetGuidProperty(itemId, (int)__VSHPROPID.VSHPROPID_TypeGuid, out typeGuid);
+                    if (ret == VSConstants.S_OK && typeGuid == VSConstants.ItemTypeGuid.PhysicalFile_guid)
+                    {
+                        return hierarchy.GetCanonicalName(itemId, out fileName) == VSConstants.S_OK;
+                    }
                 }
 
-                if (hierarchy.GetCanonicalName(itemId, out fileName) == VSConstants.S_OK)
+                fileName = null;
+                return false;
+            }
+
+            private void onFileAdded(uint itemId)
+            {
+                // only keep the regular files
+                string fileName;
+                if (!this.getFileNameFromItemId(itemId, out fileName))
                 {
-                    return this.observer.openFileNames.Contains(fileName);
+                    return;
                 }
-                else
+
+                this.fileItemIds.Add(itemId, fileName);
+                this.fileNames.Add(fileName, itemId);
+
+                if (this.observer.FileAdded != null)
                 {
-                    return false;
+                    this.observer.FileAdded(this.project, fileName);
+                }
+            }
+
+            private void onFileRemoved(uint itemId)
+            {
+                string fileName;
+                if (this.fileItemIds.TryGetValue(itemId, out fileName))
+                {
+                    this.fileItemIds.Remove(itemId);
+                    this.fileNames.Remove(fileName);
+                }
+
+                if (this.observer.FileRemoved != null)
+                {
+                    this.observer.FileRemoved(this.project, fileName);
                 }
             }
 
             int IVsHierarchyEvents.OnItemAdded(uint itemidParent, uint itemidSiblingPrev, uint itemidAdded)
             {
-                string fileName;
-                if (this.getOpenFileNameFromItemId(itemidAdded, out fileName))
-                {
-                    this.openFileItemIds.Add(fileName, itemidAdded);
-                }
+                this.onFileAdded(itemidAdded);
                 return VSConstants.S_OK;
             }
 
             int IVsHierarchyEvents.OnItemDeleted(uint itemid)
             {
-                string fileName;
-                if (this.getOpenFileNameFromItemId(itemid, out fileName))
-                {
-                    this.openFileItemIds.Remove(fileName);
-                }
+                this.onFileRemoved(itemid);
                 return VSConstants.S_OK;
             }
 
@@ -105,29 +166,27 @@ namespace Kailua
                 IVsHierarchy hierarchy;
                 if (this.hierarchy.TryGetTarget(out hierarchy))
                 {
-                    Debug.Assert(hierarchy.UnadviseHierarchyEvents(this.eventCookie) == VSConstants.S_OK);
+                    Trace.Assert(hierarchy.UnadviseHierarchyEvents(this.eventCookie) == VSConstants.S_OK);
                 }
             }
         }
 
+        private bool initialized = false;
+        internal IVsSolution solution;
+        private uint solutionEventcookie;
+        internal ConditionalWeakTable<IVsHierarchy, HierarchyObserver> hierarchyObservers;
+
         public ProjectObserver()
         {
-            this.rdt = Package.GetGlobalService(typeof(IVsRunningDocumentTable)) as IVsRunningDocumentTable;
-            Debug.Assert(this.rdt != null);
-
             this.solution = Package.GetGlobalService(typeof(SVsSolution)) as IVsSolution;
-            Debug.Assert(this.solution != null);
+            Trace.Assert(this.solution != null);
 
-            this.openFileNames = new HashSet<string>();
             this.hierarchyObservers = new ConditionalWeakTable<IVsHierarchy, HierarchyObserver>();
 
-            Debug.Assert(this.rdt.AdviseRunningDocTableEvents(this, out this.rdtEventCookie) == VSConstants.S_OK);
-            Debug.Assert(this.solution.AdviseSolutionEvents(this, out this.solutionEventcookie) == VSConstants.S_OK);
-
-            this.populateProjects();
+            Trace.Assert(this.solution.AdviseSolutionEvents(this, out this.solutionEventcookie) == VSConstants.S_OK);
         }
 
-        public IEnumerable<IVsHierarchy> ProjectHierarchies
+        private IEnumerable<IVsHierarchy> ProjectHierarchies
         {
             get
             {
@@ -145,57 +204,28 @@ namespace Kailua
             }
         }
 
-        // returns false if this document should be excluded from the observer's view
-        private bool getDocumentFromCookie(uint docCookie, out string fileName, out IVsHierarchy hierarchy, out uint itemId, out bool hasEditLock)
+        public void Init()
         {
-            uint flags;
-            uint readLockCount;
-            uint editLockCount;
-            IntPtr docData;
-
-            Debug.Assert(this.rdt.GetDocumentInfo(
-                docCookie, out flags, out readLockCount, out editLockCount,
-                out fileName, out hierarchy, out itemId, out docData) == VSConstants.S_OK);
-            if (docData != IntPtr.Zero)
+            if (this.initialized)
             {
-                Marshal.Release(docData);
+                return;
             }
 
-            // exclude virtual documents and those without edit lock
-            if ((flags & (int)_VSRDTFLAGS.RDT_VirtualDocument) != 0)
+            // populate projects
+            foreach (var hierarchy in this.ProjectHierarchies)
             {
-                hierarchy = null;
-                itemId = 0;
-                hasEditLock = false;
-                return false;
+                this.hierarchyObservers.Add(hierarchy, new HierarchyObserver(this, hierarchy));
             }
 
-            hasEditLock = (editLockCount > 0);
-            return true;
+            this.initialized = true;
         }
 
-        private void populateProjects()
-        {
-            IEnumRunningDocuments rdtEnum;
-            Debug.Assert(this.rdt.GetRunningDocumentsEnum(out rdtEnum) == VSConstants.S_OK);
-            rdtEnum.Reset();
+        public delegate void FileAddedEventHandler(EnvDTE.Project project, string fileName);
+        public delegate void FileRemovedEventHandler(EnvDTE.Project project, string fileName);
 
-            uint[] cookie = new uint[1];
-            uint fetched;
-            while (rdtEnum.Next(1, cookie, out fetched) == VSConstants.S_OK)
-            {
-                string fileName;
-                IVsHierarchy hierarchy;
-                uint itemId;
-                bool hasEditLock;
-                if (this.getDocumentFromCookie(cookie[0], out fileName, out hierarchy, out itemId, out hasEditLock) && hasEditLock)
-                {
-                    // initialize the hierarchy observer as needed
-                    var observer = this.hierarchyObservers.GetValue(hierarchy, delegate(IVsHierarchy h) { return new HierarchyObserver(this, h); });
-                    observer.openFileItemIds.Add(fileName, itemId);
-                }
-            }
-        }
+        // these are called only after the initial population finishes
+        public event FileAddedEventHandler FileAdded;
+        public event FileRemovedEventHandler FileRemoved;
 
         int IVsSolutionEvents.OnAfterOpenProject(IVsHierarchy pHierarchy, int fAdded)
         {
@@ -206,7 +236,8 @@ namespace Kailua
 
         int IVsSolutionEvents.OnBeforeCloseProject(IVsHierarchy pHierarchy, int fRemoved)
         {
-            Debug.Assert(this.hierarchyObservers.Remove(pHierarchy));
+            // the project may not have been loaded if no document in that project has ever been opened
+            this.hierarchyObservers.Remove(pHierarchy);
             return VSConstants.S_OK;
         }
 
@@ -254,74 +285,10 @@ namespace Kailua
 
         #endregion
 
-        int IVsRunningDocTableEvents.OnAfterFirstDocumentLock(uint docCookie, uint dwRDTLockType, uint dwReadLocksRemaining, uint dwEditLocksRemaining)
+        public IEnumerable<EnvDTE.Project> GetProjects(String fileName)
         {
-            if ((dwRDTLockType & (int)_VSRDTFLAGS.RDT_EditLock) != 0)
-            {
-                string fileName;
-                IVsHierarchy hierarchy;
-                uint itemId;
-                bool hasEditLock; // ignored, we already know it's in the observer's view
-                if (this.getDocumentFromCookie(docCookie, out fileName, out hierarchy, out itemId, out hasEditLock))
-                {
-                    HierarchyObserver hierarchyObserver;
-                    if (this.hierarchyObservers.TryGetValue(hierarchy, out hierarchyObserver))
-                    {
-                        this.openFileNames.Add(fileName);
-                        hierarchyObserver.openFileItemIds.Add(fileName, itemId);
-                    }
-                }
-            }
-            return VSConstants.S_OK;
-        }
+            this.Init();
 
-        int IVsRunningDocTableEvents.OnBeforeLastDocumentUnlock(uint docCookie, uint dwRDTLockType, uint dwReadLocksRemaining, uint dwEditLocksRemaining)
-        {
-            if ((dwRDTLockType & (int)_VSRDTFLAGS.RDT_EditLock) != 0)
-            {
-                string fileName;
-                IVsHierarchy hierarchy;
-                uint itemId;
-                bool hasEditLock; // ignored, we already know it's in the observer's view
-                if (this.getDocumentFromCookie(docCookie, out fileName, out hierarchy, out itemId, out hasEditLock))
-                {
-                    HierarchyObserver hierarchyObserver;
-                    if (this.hierarchyObservers.TryGetValue(hierarchy, out hierarchyObserver))
-                    {
-                        this.openFileNames.Remove(fileName);
-                        hierarchyObserver.openFileItemIds.Remove(fileName);
-                    }
-                }
-            }
-            return VSConstants.S_OK;
-        }
-
-        #region placeholder IVsRunningDocTableEvents methods
-
-        int IVsRunningDocTableEvents.OnAfterAttributeChange(uint docCookie, uint grfAttribs)
-        {
-            return VSConstants.S_OK;
-        }
-
-        int IVsRunningDocTableEvents.OnAfterDocumentWindowHide(uint docCookie, IVsWindowFrame pFrame)
-        {
-            return VSConstants.S_OK;
-        }
-
-        int IVsRunningDocTableEvents.OnAfterSave(uint docCookie)
-        {
-            return VSConstants.S_OK;
-        }
-
-        int IVsRunningDocTableEvents.OnBeforeDocumentWindowShow(uint docCookie, int fFirstShow, IVsWindowFrame pFrame)
-        {
-            return VSConstants.S_OK;
-        }
-
-        #endregion
-
-        public IEnumerable<IVsHierarchy> GetProjects(String fileName)
-        {
             // this is O(n) over the projects, but we ain't gonna have tons of projects anyway
             var projects = new List<Project>();
             foreach (var hierarchy in this.ProjectHierarchies)
@@ -329,33 +296,41 @@ namespace Kailua
                 HierarchyObserver hierarchyObserver;
                 if (this.hierarchyObservers.TryGetValue(hierarchy, out hierarchyObserver))
                 {
-                    if (hierarchyObserver.openFileItemIds.ContainsKey(fileName))
+                    if (hierarchyObserver.fileNames.ContainsKey(fileName))
                     {
-                        yield return hierarchy;
+                        yield return hierarchyObserver.project;
                     }
                 }
             }
+            yield break;
         }
 
         public void Dispose()
         {
-            Debug.Assert(this.rdt.UnadviseRunningDocTableEvents(this.rdtEventCookie) == VSConstants.S_OK);
-            Debug.Assert(this.solution.UnadviseSolutionEvents(this.solutionEventcookie) == VSConstants.S_OK);
+            Trace.Assert(this.solution.UnadviseSolutionEvents(this.solutionEventcookie) == VSConstants.S_OK);
         }
     }
 
     public class ProjectCache
     {
         private static readonly ConditionalWeakTable<EnvDTE.Project, Project> table = new ConditionalWeakTable<EnvDTE.Project, Project>();
-        private static readonly ProjectObserver observer = new ProjectObserver();
+        private static readonly ProjectObserver observer;
 
-        private static EnvDTE.Project getProjectFromHierarchy(IVsHierarchy hierarchy)
+        static ProjectCache()
         {
-            object projObj;
-            Debug.Assert(hierarchy.GetProperty(VSConstants.VSITEMID_ROOT, (int)__VSHPROPID.VSHPROPID_ExtObject, out projObj) == VSConstants.S_OK);
-            EnvDTE.Project project = projObj as EnvDTE.Project;
-            Debug.Assert(project != null);
-            return project;
+            observer = new ProjectObserver();
+
+            // translate observer events to project events
+            observer.FileAdded += delegate(EnvDTE.Project project, string fileName)
+            {
+                Get(project).OnFileAdded(fileName);
+            };
+            observer.FileRemoved += delegate(EnvDTE.Project project, string fileName)
+            {
+                Get(project).OnFileRemoved(fileName);
+            };
+
+            observer.Init();
         }
 
         public static IEnumerable<Project> GetProjects(ITextBuffer buffer)
@@ -366,14 +341,39 @@ namespace Kailua
                 yield break;
             }
 
-            foreach (var hierarchy in observer.GetProjects(document.FilePath))
+            foreach (var project in observer.GetProjects(document.FilePath))
             {
-                yield return Get(getProjectFromHierarchy(hierarchy));
+                yield return Get(project);
             }
+        }
+
+        public static Project GetAnyProject(ITextBuffer buffer, out string path)
+        {
+            ITextDocument document;
+            if (!buffer.Properties.TryGetProperty(typeof(ITextDocument), out document))
+            {
+                path = null;
+                return null;
+            }
+
+            path = document.FilePath;
+            foreach (var project in observer.GetProjects(path))
+            {
+                // XXX do not try multiple times when the file is shared by multiple projects
+                // ideally we should have one ProjectFile per unique file path, but that's annoying and rare anyway
+                // while inefficient this should be correct at least
+                return Get(project);
+            }
+            return null;
         }
 
         public static Project Get(EnvDTE.Project project)
         {
+            if (project == null)
+            {
+                throw new ArgumentNullException("project");
+            }
+
             // this is thread-safe, though it may create Project multiple times
             return table.GetValue(project, p => new Project(p));
         }

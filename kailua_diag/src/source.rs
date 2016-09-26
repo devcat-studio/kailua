@@ -685,6 +685,21 @@ impl Source {
         span
     }
 
+    pub fn replace(&mut self, unit: Unit, mut file: SourceFile) -> Option<Span> {
+        if unit.is_dummy() || unit.unit >= self.next_unit {
+            return None;
+        }
+
+        file.set_unit(unit.unit);
+        let span = file.span();
+        self.files.insert(unit.unit, file);
+        Some(span)
+    }
+
+    pub fn remove(&mut self, unit: Unit) -> Option<SourceFile> {
+        self.files.remove(&unit.unit)
+    }
+
     pub fn files(&self) -> hash_map::Values<u32, SourceFile> {
         self.files.values()
     }

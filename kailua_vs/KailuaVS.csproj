@@ -107,6 +107,7 @@
     <Reference Include="WindowsBase" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Source\Log.cs" />
     <Compile Include="Source\Classification\ClassificationTypeName.cs" />
     <Compile Include="Source\Native\RustStringHandle.cs" />
     <Compile Include="Source\Native\Report.cs" />
@@ -120,6 +121,7 @@
     <Compile Include="Source\Native\TokenStream.cs" />
     <Compile Include="Source\Classification\ClassificationFormat.cs" />
     <Compile Include="Source\Classification\ClassificationType.cs" />
+    <Compile Include="Source\Project\ProjectFile.cs" />
     <Compile Include="Source\Project\Project.cs" />
     <Compile Include="Source\Project\ProjectCache.cs" />
     <Compile Include="Source\Report\ErrorTagger.cs" />

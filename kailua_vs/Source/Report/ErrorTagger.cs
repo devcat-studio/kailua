@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Diagnostics;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using Microsoft.VisualStudio.Text;
@@ -81,6 +80,14 @@ namespace Kailua
 
         internal void refreshErrorList()
         {
+            string sourcePath;
+            var project = ProjectCache.GetAnyProject(this.buffer, out sourcePath);
+            if (project == null)
+            {
+                return;
+            }
+            var source = project.Source;
+
             var snapshot = this.buffer.CurrentSnapshot;
             var invalidatedSpan = new SnapshotSpan(snapshot, 0, snapshot.Length);
 
@@ -103,9 +110,8 @@ namespace Kailua
                 }
 
                 // TODO actually, the line number can be calculated straight from Source itself, so we don't really need Snapshot
-                this.errorListProvider.AddReport(snapshot, reportSpan.Tag.Data, reportSpan.Tag.Path);
+                this.errorListProvider.AddReport(source, reportSpan.Tag.Data, reportSpan.Tag.Path);
             }
-            this.errorListProvider.Show();
         }
 
         public event EventHandler<SnapshotSpanEventArgs> TagsChanged;

@@ -1,12 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
-using System.Collections.Generic;
-using System.ComponentModel.Composition;
-using Microsoft.VisualStudio.Text;
-using Microsoft.VisualStudio.Text.Tagging;
-using Microsoft.VisualStudio.Text.Adornments;
 using Microsoft.VisualStudio.Shell;
-using Microsoft.VisualStudio.Utilities;
 
 namespace Kailua
 {
@@ -23,7 +17,7 @@ namespace Kailua
             // a valid IServiceProvider can only be retrieved via DTE interface
             var dte2 = Package.GetGlobalService(typeof(EnvDTE.DTE)) as EnvDTE80.DTE2;
             var sp = (Microsoft.VisualStudio.OLE.Interop.IServiceProvider)dte2;
-            Debug.Assert(sp != null, "failed to retrieve VS shell service provider");
+            Trace.Assert(sp != null, "failed to retrieve VS shell service provider");
             return new ServiceProvider(sp);
         }
 
@@ -43,28 +37,30 @@ namespace Kailua
         }
 
         // TODO sourcePath should really be reconstructed from ReportData, we still don't have stable Source interface
-        public void AddReport(ITextSnapshot snapshot, Native.ReportData data, String sourcePath)
+        public void AddReport(Native.Source source, Native.ReportData data, string sourcePath)
         {
-            var span = data.Span.AttachSnapshot(snapshot);
-
             var task = new ErrorTask();
             task.Category = TaskCategory.User;
             task.ErrorCategory = reportKindToTaskErrorCategory(data.Kind);
             task.Text = data.Message;
             if (data.Span.IsValid)
             {
-                var spanLine = span.Start.GetContainingLine();
-                task.Line = spanLine.LineNumber;
-                task.Column = span.Start - spanLine.Start;
-                task.Document = sourcePath;
-                // TODO set task.HierarchyItem if possible
-                task.Navigate += (object sender, EventArgs e) =>
+                Native.Span lineSpan;
+                int lineNo = source.LineFromPos(data.Span.Begin, out lineSpan);
+                if (lineNo > 0)
                 {
-                    var errorTask = sender as ErrorTask;
-                    errorTask.Line += 1; // Navigate expects 1-based line number
-                    this.Navigate(errorTask, new Guid(EnvDTE.Constants.vsViewKindCode));
-                    errorTask.Line -= 1;
-                };
+                    task.Line = lineNo - 1; // 0-based
+                    task.Column = data.Span.Begin.Offset - lineSpan.Begin.Offset;
+                    task.Document = sourcePath;
+                    // TODO set task.HierarchyItem if possible
+                    task.Navigate += (object sender, EventArgs e) =>
+                    {
+                        var errorTask = sender as ErrorTask;
+                        errorTask.Line += 1; // Navigate expects 1-based line number
+                        this.Navigate(errorTask, new Guid(EnvDTE.Constants.vsViewKindCode));
+                        errorTask.Line -= 1;
+                    };
+                }
             }
 
             this.Tasks.Add(task);
