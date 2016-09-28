@@ -120,4 +120,10 @@
   <data name="ErrorLimitExceeded" xml:space="preserve">
     <value>Too many errors, only the first {0} errors are displayed</value>
   </data>
+  <data name="MultipleEntryPoints" xml:space="preserve">
+    <value>There seems multiple entry point files detected</value>
+  </data>
+  <data name="NoEntryPoint" xml:space="preserve">
+    <value>There seems no entry point file detected</value>
+  </data>
 </root>

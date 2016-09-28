@@ -35,6 +35,10 @@ namespace Kailua.Native
             TokenStreamHandle stream,
             ReportHandle report);
 
+        [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int kailua_parse_tree_has_prim_open(
+            ParseTreeHandle tree);
+
         internal ParseTreeHandle native;
 
         public ParseTree(TokenStream stream, Report report)
@@ -44,6 +48,23 @@ namespace Kailua.Native
             if (this.native.IsInvalid)
             {
                 throw new NativeException("internal error while parsing a token stream");
+            }
+        }
+
+        public bool HasPrimitiveOpen
+        {
+            get
+            {
+                int ret;
+                lock (this.native)
+                {
+                    ret = kailua_parse_tree_has_prim_open(this.native);
+                }
+                if (ret < 0)
+                {
+                    throw new NativeException("internal error while checking if the parse tree has a primitive `open`");
+                }
+                return ret != 0;
             }
         }
 

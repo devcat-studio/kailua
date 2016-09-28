@@ -36,13 +36,6 @@ namespace Kailua
             this.parseTreeTask = null;
         }
 
-        private Task<T> taskFromResult<T>(T result)
-        {
-            var taskSource = new TaskCompletionSource<T>();
-            taskSource.SetResult(result);
-            return taskSource.Task;
-        }
-
         public List<Native.ReportData> ReportData
         {
             get { return this.reportData; }
@@ -55,6 +48,11 @@ namespace Kailua
 
             set
             {
+                if (this.BeforeReset != null)
+                {
+                    this.BeforeReset();
+                }
+
                 lock (this.syncLock)
                 {
                     this.resetUnlocked();
@@ -69,7 +67,7 @@ namespace Kailua
             {
                 lock (this.syncLock)
                 {
-                    this.ensureSourceSpanTaskUnlocked(true);
+                    this.ensureSourceSpanTaskUnlocked(sync: true);
                     return this.sourceSpanTask;
                 }
             }
@@ -81,7 +79,7 @@ namespace Kailua
             {
                 lock (this.syncLock)
                 {
-                    this.ensureTokenStreamTaskUnlocked(true);
+                    this.ensureTokenStreamTaskUnlocked(sync: true);
                     return this.tokenStreamTask;
                 }
             }
@@ -96,10 +94,15 @@ namespace Kailua
                     throw new ArgumentNullException("TokenStream");
                 }
 
+                if (this.BeforeReset != null)
+                {
+                    this.BeforeReset();
+                }
+
                 lock (this.syncLock)
                 {
                     this.resetUnlocked();
-                    this.tokenStreamTask = taskFromResult(value);
+                    this.tokenStreamTask = Task.FromResult(value);
                 }
             }
         }
@@ -110,7 +113,7 @@ namespace Kailua
             {
                 lock (this.syncLock)
                 {
-                    this.ensureParseTreeTaskUnlocked(false);
+                    this.ensureParseTreeTaskUnlocked(sync: false);
                     return this.parseTreeTask;
                 }
             }
@@ -125,13 +128,22 @@ namespace Kailua
                     throw new ArgumentNullException("ParseTree");
                 }
 
+                if (this.BeforeReset != null)
+                {
+                    this.BeforeReset();
+                }
+
                 lock (this.syncLock)
                 {
                     this.resetUnlocked();
-                    this.parseTreeTask = taskFromResult(value);
+                    this.parseTreeTask = Task.FromResult(value);
                 }
             }
         }
+
+        public event ResetHandler BeforeReset;
+
+        public delegate void ResetHandler();
 
         private void resetUnlocked()
         {
@@ -226,7 +238,7 @@ namespace Kailua
 
             if (sync)
             {
-                this.sourceSpanTask = this.taskFromResult(job());
+                this.sourceSpanTask = Task.FromResult(job());
             }
             else
             {
@@ -252,6 +264,11 @@ namespace Kailua
                     var sourceSpan = task.Result;
                     return new Native.TokenStream(this.project.Source, sourceSpan, report);
                 }
+                catch (Exception e)
+                {
+                    Log.Write("failed to tokenize {0}", this.path);
+                    throw;
+                }
                 finally
                 {
                     // may continue to return reports even on error
@@ -261,7 +278,7 @@ namespace Kailua
 
             if (sync)
             {
-                this.tokenStreamTask = this.taskFromResult(job(this.sourceSpanTask));
+                this.tokenStreamTask = Task.FromResult(job(this.sourceSpanTask));
             }
             else
             {
@@ -287,6 +304,11 @@ namespace Kailua
                     var stream = task.Result;
                     return new Native.ParseTree(stream, report);
                 }
+                catch (Exception e)
+                {
+                    Log.Write("failed to parse {0}", this.path);
+                    throw;
+                }
                 finally
                 {
                     // may continue to return reports even on error
@@ -296,7 +318,7 @@ namespace Kailua
 
             if (sync)
             {
-                this.parseTreeTask = this.taskFromResult(job(this.tokenStreamTask));
+                this.parseTreeTask = Task.FromResult(job(this.tokenStreamTask));
             }
             else
             {

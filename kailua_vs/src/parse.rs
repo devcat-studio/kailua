@@ -4,7 +4,7 @@ use std::panic::{self, AssertUnwindSafe};
 use lex::VSTokenStream;
 use report::VSReport;
 use kailua_diag::{Spanned, Report};
-use kailua_syntax::{Block, Parser};
+use kailua_syntax::{Block, St, Parser};
 
 pub struct VSParseTree {
     chunk: Spanned<Block>,
@@ -18,6 +18,15 @@ impl VSParseTree {
             Some(Box::new(VSParseTree { chunk: chunk }))
         } else {
             None
+        }
+    }
+
+    // search for directives like `--# open lua51` likely in the entry point
+    // TODO should really (transitively) check for `--# set lang_version = "5.1"` or so
+    fn has_primitive_open(&self) -> i32 {
+        match self.chunk.base.first().map(|st| &*st.base) {
+            Some(&St::KailuaOpen(ref name)) if name.starts_with(&b"lua5"[..]) => 1,
+            _ => 0,
         }
     }
 }
@@ -38,6 +47,17 @@ pub extern "C" fn kailua_parse_tree_new(stream: *mut VSTokenStream,
         let tree = VSParseTree::new(stream.0, &report.proxy());
         unsafe { mem::transmute(tree) }
     }).unwrap_or(ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "C" fn kailua_parse_tree_has_prim_open(tree: *const VSParseTree) -> i32 {
+    if tree.is_null() { return -1; }
+    let tree: &VSParseTree = unsafe { mem::transmute(tree) };
+
+    let tree = AssertUnwindSafe(tree);
+    panic::catch_unwind(move || {
+        tree.has_primitive_open()
+    }).unwrap_or(-1)
 }
 
 #[no_mangle]

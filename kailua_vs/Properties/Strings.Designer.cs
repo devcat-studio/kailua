@@ -68,5 +68,23 @@ namespace Kailua.Properties {
                 return ResourceManager.GetString("ErrorLimitExceeded", resourceCulture);
             }
         }
+        
+        /// <summary>
+        ///   There seems multiple entry point files detected과(와) 유사한 지역화된 문자열을 찾습니다.
+        /// </summary>
+        internal static string MultipleEntryPoints {
+            get {
+                return ResourceManager.GetString("MultipleEntryPoints", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   There seems no entry point file detected과(와) 유사한 지역화된 문자열을 찾습니다.
+        /// </summary>
+        internal static string NoEntryPoint {
+            get {
+                return ResourceManager.GetString("NoEntryPoint", resourceCulture);
+            }
+        }
     }
 }
