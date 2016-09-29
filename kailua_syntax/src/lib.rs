@@ -17,8 +17,8 @@ mod parser;
 
 pub fn parse_chunk(source: &Source, span: Span,
                    report: &Report) -> kailua_diag::Result<Spanned<Block>> {
-    if let Some(iter) = source.iter_from_span(span) {
-        let lexer = lex::Lexer::new(iter, &report);
+    if let Some(mut iter) = source.iter_from_span(span) {
+        let lexer = lex::Lexer::new(&mut iter, &report);
         let parser = parser::Parser::new(lexer, &report);
         parser.into_chunk()
     } else {

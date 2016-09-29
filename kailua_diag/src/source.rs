@@ -69,7 +69,7 @@ impl Pos {
 impl fmt::Debug for Pos {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if f.alternate() {
-            if self.pos == 0 {
+            if self.unit == 0 {
                 write!(f, "@_")
             } else {
                 write!(f, "@{}/{}", self.unit, self.pos)
@@ -614,19 +614,20 @@ enum SourceSliceIter<'a> {
 pub enum SourceData {
     U8(u8),
     U16(u16),
+    EOF,
 }
 
 impl SourceData {
     pub fn u8(&self) -> u8 {
         match *self {
             SourceData::U8(v) => v,
-            SourceData::U16(_) => panic!("SourceData::u8 called with U16"),
+            SourceData::U16(_) | SourceData::EOF => panic!("SourceData::u8 called with U16/EOF"),
         }
     }
 
     pub fn u16(&self) -> u16 {
         match *self {
-            SourceData::U8(_) => panic!("SourceData::u16 called with U8"),
+            SourceData::U8(_) | SourceData::EOF => panic!("SourceData::u16 called with U8/EOF"),
             SourceData::U16(v) => v,
         }
     }
@@ -636,6 +637,7 @@ impl SourceData {
 pub struct SourceDataIter<'a> {
     iter: SourceSliceIter<'a>,
     pos: Pos,
+    eof_sent: bool,
 }
 
 impl<'a> SourceDataIter<'a> {
@@ -643,7 +645,7 @@ impl<'a> SourceDataIter<'a> {
 }
 
 impl<'a> Iterator for SourceDataIter<'a> {
-    type Item = SourceData;
+    type Item = Spanned<SourceData>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let next = match self.iter {
@@ -651,18 +653,23 @@ impl<'a> Iterator for SourceDataIter<'a> {
             SourceSliceIter::U16(ref mut iter) => iter.next().map(|&v| SourceData::U16(v)),
         };
         if let Some(c) = next {
+            let prevpos = self.pos;
             self.pos.pos += 1;
-            Some(c)
+            Some(c.with_loc(prevpos..self.pos))
+        } else if !self.eof_sent {
+            self.eof_sent = true;
+            Some(SourceData::EOF.with_loc(self.pos))
         } else {
             None
         }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        match self.iter {
+        let (lo, hi) = match self.iter {
             SourceSliceIter::U8(ref iter) => iter.size_hint(),
             SourceSliceIter::U16(ref iter) => iter.size_hint(),
-        }
+        };
+        (lo.saturating_add(1), hi.and_then(|hi| hi.checked_add(1)))
     }
 }
 
@@ -722,7 +729,7 @@ impl Source {
             Some(SourceSlice::U16(data)) => SourceSliceIter::U16(data.iter()),
             None => return None,
         };
-        Some(SourceDataIter { iter: iter, pos: span.begin() })
+        Some(SourceDataIter { iter: iter, pos: span.begin(), eof_sent: false })
     }
 
     pub fn get_file(&self, unit: Unit) -> Option<&SourceFile> {
