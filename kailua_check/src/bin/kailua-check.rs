@@ -56,11 +56,13 @@ impl Options {
 
         Ok(None)
     }
+
+    fn chunk_from_span(&self, span: Span) -> Result<Spanned<Block>, String> {
+        parse_chunk(&self.source.borrow(), span, &*self.report).map_err(|_| format!("parse error"))
+    }
 }
 
 impl kailua_check::Options for Options {
-    fn source(&self) -> &RefCell<Source> { &*self.source }
-
     fn set_package_path(&mut self, path: &[u8]) -> Result<(), String> {
         let path = try!(str::from_utf8(path).map_err(|e| e.to_string()));
         self.package_path = path.split(";").map(|s| s.to_owned()).collect();
@@ -83,9 +85,7 @@ impl kailua_check::Options for Options {
         if span.is_none() { span = try!(self.search_file(&path, &self.package_cpath, "")); }
 
         if let Some(span) = span {
-            let chunk = try!(parse_chunk(&self.source.borrow(), span,
-                                         &*self.report).map_err(|_| format!("parse error")));
-            Ok(chunk)
+            self.chunk_from_span(span)
         } else {
             Err(format!("module not found"))
         }
@@ -101,7 +101,8 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
     let mut context = kailua_check::Context::new(report.clone());
     let root = mainpath.parent().unwrap_or(&Path::new(".."));
     let opts = Rc::new(RefCell::new(Options::new(source, root.to_owned(), report.clone())));
-    try!(kailua_check::check_from_span(&mut context, filespan, opts));
+    let filechunk = try!(opts.borrow().chunk_from_span(filespan));
+    try!(kailua_check::check_from_chunk(&mut context, &filechunk, opts));
     if report.can_continue() {
         Ok(())
     } else {

@@ -14,13 +14,23 @@ pub struct Unit {
     unit: u32,
 }
 
+const BUILTIN_UNIT: u32 = 0xffffffff;
+
 impl Unit {
     pub fn dummy() -> Unit {
         Unit { unit: 0 }
     }
 
+    pub fn builtin() -> Unit {
+        Unit { unit: BUILTIN_UNIT }
+    }
+
     pub fn is_dummy(&self) -> bool {
         self.unit == 0
+    }
+
+    pub fn is_source_dependent(&self) -> bool {
+        self.unit > 0 && self.unit < BUILTIN_UNIT
     }
 
     pub fn to_usize(&self) -> usize {
@@ -33,6 +43,8 @@ impl fmt::Debug for Unit {
         if f.alternate() {
             if self.unit == 0 {
                 write!(f, "@_")
+            } else if self.unit == BUILTIN_UNIT {
+                write!(f, "@<builtin>")
             } else {
                 write!(f, "@{}", self.unit)
             }
@@ -53,8 +65,16 @@ impl Pos {
         Pos { unit: 0, pos: 0 }
     }
 
+    pub fn builtin() -> Pos {
+        Pos { unit: BUILTIN_UNIT, pos: 0 }
+    }
+
     pub fn is_dummy(&self) -> bool {
-        self.unit == 0
+        self.unit().is_dummy()
+    }
+
+    pub fn is_source_dependent(&self) -> bool {
+        self.unit().is_source_dependent()
     }
 
     pub fn unit(&self) -> Unit {
@@ -71,6 +91,8 @@ impl fmt::Debug for Pos {
         if f.alternate() {
             if self.unit == 0 {
                 write!(f, "@_")
+            } else if self.unit == BUILTIN_UNIT {
+                write!(f, "@<builtin>")
             } else {
                 write!(f, "@{}/{}", self.unit, self.pos)
             }
@@ -106,8 +128,16 @@ impl Span {
         Span { unit: 0, begin: 0, end: 0 }
     }
 
+    pub fn builtin() -> Span {
+        Span { unit: BUILTIN_UNIT, begin: 0, end: 0 }
+    }
+
     pub fn is_dummy(&self) -> bool {
-        self.unit == 0
+        self.unit().is_dummy()
+    }
+
+    pub fn is_source_dependent(&self) -> bool {
+        self.unit().is_source_dependent()
     }
 
     pub fn to_pos(&self) -> Pos {
@@ -184,6 +214,8 @@ impl fmt::Debug for Span {
         if f.alternate() {
             if self.unit == 0 {
                 write!(f, "@_")
+            } else if self.unit == BUILTIN_UNIT {
+                write!(f, "@<builtin>")
             } else if self.begin == self.end {
                 write!(f, "@{}/{}", self.unit, self.begin)
             } else {
@@ -640,10 +672,6 @@ pub struct SourceDataIter<'a> {
     eof_sent: bool,
 }
 
-impl<'a> SourceDataIter<'a> {
-    pub fn pos(&self) -> Pos { self.pos }
-}
-
 impl<'a> Iterator for SourceDataIter<'a> {
     type Item = Spanned<SourceData>;
 
@@ -654,7 +682,9 @@ impl<'a> Iterator for SourceDataIter<'a> {
         };
         if let Some(c) = next {
             let prevpos = self.pos;
-            self.pos.pos += 1;
+            if !self.pos.is_dummy() {
+                self.pos.pos += 1;
+            }
             Some(c.with_loc(prevpos..self.pos))
         } else if !self.eof_sent {
             self.eof_sent = true;
@@ -689,11 +719,12 @@ impl Source {
         let span = file.span();
         self.files.insert(self.next_unit, file);
         self.next_unit += 1;
+        assert!(Unit { unit: self.next_unit }.is_source_dependent());
         span
     }
 
     pub fn replace(&mut self, unit: Unit, mut file: SourceFile) -> Option<Span> {
-        if unit.is_dummy() || unit.unit >= self.next_unit {
+        if !unit.is_source_dependent() || unit.unit >= self.next_unit {
             return None;
         }
 

@@ -185,7 +185,7 @@ fn is_digit(c: SourceData) -> bool {
     match c { U8(b'0'...b'9') => true, _ => false }
 }
 
-impl<'a> Lexer<'a, > {
+impl<'a> Lexer<'a> {
     pub fn new(bytes: &'a mut Iterator<Item=Spanned<SourceData>>,
                report: &'a Report) -> Lexer<'a> {
         let first = bytes.next().expect("Lexer should have got at least one token");

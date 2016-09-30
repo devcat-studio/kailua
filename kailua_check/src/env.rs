@@ -7,8 +7,8 @@ use std::rc::Rc;
 use std::collections::{HashMap, HashSet};
 use vec_map::VecMap;
 
-use kailua_diag::{self, SourceFile, Kind, Span, Spanned, Report, Reporter, WithLoc, Localize};
-use kailua_syntax::{Name, parse_chunk};
+use kailua_diag::{self, Kind, Span, Spanned, Report, Reporter, WithLoc, Localize};
+use kailua_syntax::Name;
 use diag::{CheckResult, unquotable_name};
 use ty::{Ty, TySeq, T, Slot, F, TVar, Mark, Lattice, Builtin, Displayed, Display};
 use ty::{TypeContext, TypeResolver, ClassId, Class, Functions, Function, Key};
@@ -463,14 +463,8 @@ impl Context {
             // one library may consist of multiple files, so we defer duplicate check
             for def in defs {
                 if self.opened.insert(def.name.to_owned()) {
-                    let name = format!("<internal: {}>", def.name);
-                    let chunk = {
-                        let opts = opts.borrow();
-                        let file = SourceFile::from_u8(name, def.code.to_owned());
-                        let span = opts.source().borrow_mut().add(file);
-                        let chunk = parse_chunk(&opts.source().borrow(), span, &*self.report);
-                        try!(chunk.map_err(|_| format!("parse error")))
-                    };
+                    // the built-in code is parsed independently and has no usable span
+                    let chunk = def.to_chunk();
                     let mut env = Env::new(self, opts.clone());
                     let mut checker = Checker::new(&mut env);
                     try!(checker.visit(&chunk))

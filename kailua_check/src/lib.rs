@@ -23,16 +23,6 @@ mod env;
 mod defs;
 mod check;
 
-pub fn check_from_span(context: &mut Context, span: kailua_diag::Span,
-                       opts: Rc<RefCell<Options>>) -> CheckResult<()> {
-    let chunk = {
-        let opts = opts.borrow();
-        let chunk = kailua_syntax::parse_chunk(&opts.source().borrow(), span, context.report());
-        try!(chunk.map_err(|_| format!("parse error")))
-    };
-    check_from_chunk(context, &chunk, opts)
-}
-
 pub fn check_from_chunk(context: &mut Context,
                         chunk: &kailua_diag::Spanned<kailua_syntax::Block>,
                         opts: Rc<RefCell<Options>>) -> CheckResult<()> {

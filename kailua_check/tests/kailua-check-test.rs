@@ -30,7 +30,6 @@ impl kailua_test::Testing for Testing {
         }
 
         impl Options for Opts {
-            fn source(&self) -> &RefCell<Source> { &*self.source }
             fn require_block(&mut self, path: &[u8]) -> CheckResult<Spanned<Block>> {
                 let path = try!(str::from_utf8(path).map_err(|_| format!("bad require name")));
                 let span = *try!(self.filespans.get(path).ok_or_else(|| format!("no such module")));
