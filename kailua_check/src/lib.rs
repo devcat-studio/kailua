@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 pub use diag::{Error, CheckResult};
 pub use ty::*;
-pub use options::Options;
+pub use options::{Options, FsOptions, FsSource};
 pub use env::Context;
 pub use check::Checker;
 

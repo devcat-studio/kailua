@@ -185,6 +185,15 @@ fn is_digit(c: SourceData) -> bool {
     match c { U8(b'0'...b'9') => true, _ => false }
 }
 
+fn normalize_data(c: SourceData) -> SourceData {
+    // normalize ASCII letters to U8, so that we can easily check against them
+    match c {
+        U8(v) => U8(v),
+        U16(v) => if v < 0x80 { U8(v as u8) } else { U16(v) },
+        EOF => EOF,
+    }
+}
+
 impl<'a> Lexer<'a> {
     pub fn new(bytes: &'a mut Iterator<Item=Spanned<SourceData>>,
                report: &'a Report) -> Lexer<'a> {
@@ -193,7 +202,7 @@ impl<'a> Lexer<'a> {
             bytes: bytes,
             pos: first.span.end(),
             last_pos: first.span.begin(),
-            last_data: first.base,
+            last_data: normalize_data(first.base),
             lookahead: true,
             meta: false,
             meta_span: Span::dummy(),
@@ -217,14 +226,7 @@ impl<'a> Lexer<'a> {
         } else {
             self.last_pos = self.pos;
             if let Some(Spanned { span, base: c }) = self.bytes.next() {
-                // normalize ASCII letters to U8, so that we can easily check against them
-                let c = match c {
-                    U8(v) => U8(v),
-                    U16(v @ 0x00...0x7f) => U8(v as u8),
-                    U16(v) => U16(v),
-                    EOF => EOF,
-                };
-
+                let c = normalize_data(c);
                 self.pos = span.end();
                 self.last_data = c;
                 c

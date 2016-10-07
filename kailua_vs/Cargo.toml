@@ -11,6 +11,7 @@ crate-type = ["cdylib"]
 widestring = "0.2.2"
 kailua_diag = { path = "../kailua_diag" }
 kailua_syntax = { path = "../kailua_syntax" }
+kailua_check = { path = "../kailua_check" }
 
 [profile.release]
 lto = true

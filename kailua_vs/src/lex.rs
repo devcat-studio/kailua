@@ -128,8 +128,8 @@ pub struct VSTokenStream {
 impl VSTokenStream {
     pub fn new(source: &VSSource, span: Span, report: &Report) -> Option<Box<VSTokenStream>> {
         let source = source.source().write().unwrap();
-        if let Some(iter) = source.iter_from_span(span) {
-            let lexer = Lexer::new(iter, report);
+        if let Some(mut iter) = source.iter_from_span(span) {
+            let lexer = Lexer::new(&mut iter, report);
             let tokens: Vec<_> = lexer.collect();
             assert!(!tokens.is_empty()); // should include EOF
             Some(Box::new(VSTokenStream { tokens: tokens, cursor: 0 }))

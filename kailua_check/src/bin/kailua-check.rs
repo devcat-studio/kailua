@@ -9,100 +9,53 @@ use std::io;
 use std::env;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use kailua_diag::{Span, Spanned, Source, SourceFile, Report, ConsoleReport, TrackMaxKind};
+use kailua_diag::{Spanned, Source, SourceFile, Report, ConsoleReport, TrackMaxKind};
 use kailua_syntax::{parse_chunk, Block};
+use kailua_check::{FsSource, FsOptions, Context, check_from_chunk};
 
-struct Options {
+struct LocalFsSource {
     source: Rc<RefCell<Source>>,
-    root: PathBuf,
     report: Rc<Report>,
-    package_path: Vec<String>,
-    package_cpath: Vec<String>,
 }
 
-impl Options {
-    fn new(source: Rc<RefCell<Source>>, root: PathBuf, report: Rc<Report>) -> Options {
-        Options {
-            source: source,
-            root: root,
-            report: report,
-
-            // by default, local files only
-            package_path: vec!["?.lua".into()],
-            package_cpath: vec![],
-        }
-    }
-
-    fn search_file(&self, path: &str, search_paths: &[String],
-                   suffix: &str) -> Result<Option<Span>, String> {
-        for template in search_paths {
-            let path = template.replace('?', &path) + suffix;
-            let path = self.root.join(path);
-            debug!("trying to load {:?}", path);
-
-            match SourceFile::from_file(&path) {
-                Ok(file) => {
-                    let span = self.source.borrow_mut().add(file);
-                    return Ok(Some(span));
+impl FsSource for LocalFsSource {
+    fn chunk_from_path(&self, resolved_path: &Path) -> Result<Option<Spanned<Block>>, String> {
+        match SourceFile::from_file(resolved_path) {
+            Ok(file) => {
+                let mut source = self.source.borrow_mut();
+                let span = source.add(file);
+                if let Ok(chunk) = parse_chunk(&source, span, &*self.report) {
+                    Ok(Some(chunk))
+                } else {
+                    Err(format!("parse error"))
                 }
-                Err(e) => {
-                    if e.kind() == io::ErrorKind::NotFound { continue; }
-                    return Err(e.to_string());
+            }
+            Err(e) => {
+                if e.kind() == io::ErrorKind::NotFound {
+                    Ok(None)
+                } else {
+                    Err(e.to_string())
                 }
-            };
-        }
-
-        Ok(None)
-    }
-
-    fn chunk_from_span(&self, span: Span) -> Result<Spanned<Block>, String> {
-        parse_chunk(&self.source.borrow(), span, &*self.report).map_err(|_| format!("parse error"))
-    }
-}
-
-impl kailua_check::Options for Options {
-    fn set_package_path(&mut self, path: &[u8]) -> Result<(), String> {
-        let path = try!(str::from_utf8(path).map_err(|e| e.to_string()));
-        self.package_path = path.split(";").map(|s| s.to_owned()).collect();
-        Ok(())
-    }
-
-    fn set_package_cpath(&mut self, path: &[u8]) -> Result<(), String> {
-        let path = try!(str::from_utf8(path).map_err(|e| e.to_string()));
-        self.package_cpath = path.split(";").map(|s| s.to_owned()).collect();
-        Ok(())
-    }
-
-    fn require_block(&mut self, path: &[u8]) -> Result<Spanned<Block>, String> {
-        let path = try!(str::from_utf8(path).map_err(|e| e.to_string()));
-
-        let mut span = None;
-        if span.is_none() { span = try!(self.search_file(&path, &self.package_path, ".kailua")); }
-        if span.is_none() { span = try!(self.search_file(&path, &self.package_cpath, ".kailua")); }
-        if span.is_none() { span = try!(self.search_file(&path, &self.package_path, "")); }
-        if span.is_none() { span = try!(self.search_file(&path, &self.package_cpath, "")); }
-
-        if let Some(span) = span {
-            self.chunk_from_span(span)
-        } else {
-            Err(format!("module not found"))
+            }
         }
     }
 }
 
 fn parse_and_check(mainpath: &Path) -> Result<(), String> {
-    let mut source = Source::new();
-    let file = try!(SourceFile::from_file(mainpath).map_err(|e| e.to_string()));
-    let filespan = source.add(file);
-    let source = Rc::new(RefCell::new(source));
+    let source = Rc::new(RefCell::new(Source::new()));
     let report = Rc::new(TrackMaxKind::new(ConsoleReport::new(source.clone())));
-    let mut context = kailua_check::Context::new(report.clone());
+    let mut context = Context::new(report.clone());
+
+    let fssource = LocalFsSource { source: source, report: report.clone() };
+    let filechunk = try!(fssource.chunk_from_path(mainpath));
+    let filechunk = try!(filechunk.ok_or_else(|| format!("cannot found the main path")));
+
     let root = mainpath.parent().unwrap_or(&Path::new(".."));
-    let opts = Rc::new(RefCell::new(Options::new(source, root.to_owned(), report.clone())));
-    let filechunk = try!(opts.borrow().chunk_from_span(filespan));
-    try!(kailua_check::check_from_chunk(&mut context, &filechunk, opts));
+    let opts = Rc::new(RefCell::new(FsOptions::new(fssource, root.to_owned())));
+
+    try!(check_from_chunk(&mut context, &filechunk, opts));
     if report.can_continue() {
         Ok(())
     } else {

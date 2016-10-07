@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.VisualStudio.Text;
+using Kailua.Util.Extensions;
 
 namespace Kailua
 {
@@ -15,6 +17,7 @@ namespace Kailua
         internal CancellationTokenSource cts;
         internal Native.Report report;
         internal List<Native.ReportData> reportData;
+        private ITextSnapshot sourceSnapshot;
         private string sourceText;
         private Task<Native.Span> sourceSpanTask;
         private Task<Native.TokenStream> tokenStreamTask;
@@ -30,15 +33,92 @@ namespace Kailua
             this.cts = null;
             this.report = null;
             this.reportData = new List<Native.ReportData>();
+            this.sourceSnapshot = null;
             this.sourceText = null;
             this.sourceSpanTask = null;
             this.tokenStreamTask = null;
             this.parseTreeTask = null;
         }
 
-        public List<Native.ReportData> ReportData
+        public string Path
         {
-            get { return this.reportData; }
+            get { return this.path; }
+        }
+
+        public Native.Unit Unit
+        {
+            get { return this.unit; }
+        }
+
+        public IEnumerable<Native.ReportData> ReportData
+        {
+            get
+            {
+                // they should be read atomically
+                List<Native.ReportData> reportData;
+                ITextSnapshot sourceSnapshot;
+                lock (this.syncLock)
+                {
+                    reportData = this.reportData;
+                    sourceSnapshot = this.sourceSnapshot;
+                }
+
+                foreach (var data_ in reportData)
+                {
+                    var data = data_;
+                    data.Snapshot = sourceSnapshot;
+                    yield return data;
+                }
+            }
+        }
+
+        // this can be set to null to make it read directly from the filesystem
+        public ITextSnapshot SourceSnapshot
+        {
+            get
+            {
+                return this.sourceSnapshot;
+            }
+
+            set
+            {
+                if (this.BeforeReset != null)
+                {
+                    this.BeforeReset();
+                }
+
+                lock (this.syncLock)
+                {
+                    this.resetUnlocked();
+                    if (value != null)
+                    {
+                        this.sourceSnapshot = value;
+                        this.sourceText = value.GetText();
+                    }
+                }
+            }
+        }
+
+        // this can be set to null to make it read directly from the filesystem
+        public SnapshotSpan SourceSnapshotSpan
+        {
+            set
+            {
+                if (this.BeforeReset != null)
+                {
+                    this.BeforeReset();
+                }
+
+                lock (this.syncLock)
+                {
+                    this.resetUnlocked();
+                    if (value != null)
+                    {
+                        this.sourceSnapshot = value.Snapshot;
+                        this.sourceText = value.GetText();
+                    }
+                }
+            }
         }
 
         // this can be set to null to make it read directly from the filesystem
@@ -161,23 +241,11 @@ namespace Kailua
             }
             this.reportData.Clear();
 
+            this.sourceSnapshot = null;
             this.sourceText = null;
             this.sourceSpanTask = null;
             this.tokenStreamTask = null;
             this.parseTreeTask = null;
-        }
-
-        private void readReportData(Native.Report report, List<Native.ReportData> reportData)
-        {
-            while (true)
-            {
-                var data = report.GetNext();
-                if (data == null)
-                {
-                    break;
-                }
-                reportData.Add(data.Value);
-            }
         }
 
         private void ensureReportUnlocked()
@@ -231,6 +299,7 @@ namespace Kailua
 
                     this.unit = span.Unit; // only used in this task, so no synchronization required
                     Debug.Assert(this.unit.IsValid);
+                    Trace.Assert(this.project.units.TryAdd(this.unit, this));
                 }
 
                 return span;
@@ -238,7 +307,7 @@ namespace Kailua
 
             if (sync)
             {
-                this.sourceSpanTask = Task.FromResult(job());
+                this.sourceSpanTask = job.CreateSyncTask();
             }
             else
             {
@@ -262,23 +331,29 @@ namespace Kailua
                 try
                 {
                     var sourceSpan = task.Result;
-                    return new Native.TokenStream(this.project.Source, sourceSpan, report);
-                }
-                catch (Exception e)
-                {
-                    Log.Write("failed to tokenize {0}", this.path);
-                    throw;
+                    try
+                    {
+                        return new Native.TokenStream(this.project.Source, sourceSpan, report);
+                    }
+                    catch (Exception e)
+                    {
+                        Log.Write("failed to tokenize {0}: {1}", this.path, e);
+                        throw;
+                    }
                 }
                 finally
                 {
                     // may continue to return reports even on error
-                    this.readReportData(report, reportData);
+                    foreach (var data in report)
+                    {
+                        reportData.Add(data);
+                    }
                 }
             };
 
             if (sync)
             {
-                this.tokenStreamTask = Task.FromResult(job(this.sourceSpanTask));
+                this.tokenStreamTask = job.CreateSyncTask(this.sourceSpanTask);
             }
             else
             {
@@ -302,23 +377,29 @@ namespace Kailua
                 try
                 {
                     var stream = task.Result;
-                    return new Native.ParseTree(stream, report);
-                }
-                catch (Exception e)
-                {
-                    Log.Write("failed to parse {0}", this.path);
-                    throw;
+                    try
+                    {
+                        return new Native.ParseTree(stream, report);
+                    }
+                    catch (Exception e)
+                    {
+                        Log.Write("failed to parse {0}: {1}", this.path, e);
+                        throw;
+                    }
                 }
                 finally
                 {
                     // may continue to return reports even on error
-                    this.readReportData(report, reportData);
+                    foreach (var data in report)
+                    {
+                        reportData.Add(data);
+                    }
                 }
             };
 
             if (sync)
             {
-                this.parseTreeTask = Task.FromResult(job(this.tokenStreamTask));
+                this.parseTreeTask = job.CreateSyncTask(this.tokenStreamTask);
             }
             else
             {
@@ -331,6 +412,13 @@ namespace Kailua
             lock (this.syncLock)
             {
                 this.resetUnlocked();
+            }
+
+            if (this.unit.IsValid)
+            {
+                ProjectFile projectFile;
+                Trace.Assert(this.project.units.TryRemove(this.unit, out projectFile));
+                Debug.Assert(projectFile == this);
             }
         }
     }

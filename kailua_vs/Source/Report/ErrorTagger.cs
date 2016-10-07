@@ -80,8 +80,7 @@ namespace Kailua
 
         internal void refreshErrorList()
         {
-            string sourcePath;
-            var project = ProjectCache.GetAnyProject(this.buffer, out sourcePath);
+            var project = ProjectCache.GetAnyProject(this.buffer);
             if (project == null)
             {
                 return;
@@ -97,6 +96,11 @@ namespace Kailua
             int errorCount = 0;
             foreach (var reportSpan in this.aggregator.GetTags(invalidatedSpan))
             {
+                if (!reportSpan.Tag.DisplayInErrorList)
+                {
+                    continue;
+                }
+
                 // error list window is slow with tons of errors
                 if (errorCount++ >= MaxErrorCount)
                 {
@@ -122,6 +126,11 @@ namespace Kailua
 
             foreach (var reportSpan in this.aggregator.GetTags(spans))
             {
+                if (!reportSpan.Tag.DisplayInEditor)
+                {
+                    continue;
+                }
+
                 var span = reportSpan.Span.GetSpans(snapshot)[0];
                 var errorType = reportKindToErrorType(reportSpan.Tag.Data.Kind);
                 if (errorType != null)

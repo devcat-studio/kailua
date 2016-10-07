@@ -1,6 +1,9 @@
 ﻿using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Globalization;
+using Microsoft.VisualStudio.Text;
 
 namespace Kailua.Native
 {
@@ -42,6 +45,7 @@ namespace Kailua.Native
         private ReportKind kind;
         private Span span;
         private String message;
+        private ITextSnapshot snapshot; // optional, used to convert Native.Span to SnapshotSpan
 
         public ReportKind Kind
         {
@@ -58,15 +62,52 @@ namespace Kailua.Native
             get { return this.message; }
         }
 
-        internal ReportData(ReportKind kind, Span span, String msg)
+        public ITextSnapshot Snapshot
+        {
+            get { return this.snapshot; }
+            set { this.snapshot = value; }
+        }
+
+        public SnapshotSpan? SnapshotSpan
+        {
+            get
+            {
+                if (this.snapshot != null && this.span.IsValid)
+                {
+                    return this.span.AttachSnapshot(this.snapshot);
+                }
+                else
+                {
+                    return null;
+                }
+            }
+        }
+
+        public SnapshotSpan? SnapshotSpanNonEmpty
+        {
+            get
+            {
+                if (this.snapshot != null && this.span.IsValid)
+                {
+                    return this.span.AttachSnapshotNonEmpty(this.snapshot);
+                }
+                else
+                {
+                    return null;
+                }
+            }
+        }
+
+        internal ReportData(ReportKind kind, Span span, String msg, ITextSnapshot snapshot = null)
         {
             this.kind = kind;
             this.span = span;
             this.message = msg;
+            this.snapshot = snapshot;
         }
     }
 
-    public class Report : IDisposable
+    public class Report : IDisposable, IEnumerable<ReportData>
     {
         [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern ReportHandle kailua_report_new(
@@ -115,6 +156,24 @@ namespace Kailua.Native
             {
                 return new ReportData(kind, span, msg.String);
             }
+        }
+
+        public IEnumerator<ReportData> GetEnumerator()
+        {
+            while (true)
+            {
+                var data = this.GetNext();
+                if (data == null)
+                {
+                    yield break;
+                }
+                yield return data.Value;
+            }
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return this.GetEnumerator();
         }
 
         public void Dispose()

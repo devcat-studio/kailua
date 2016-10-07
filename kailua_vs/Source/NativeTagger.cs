@@ -5,6 +5,7 @@ using System.ComponentModel.Composition;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Tagging;
 using Microsoft.VisualStudio.Utilities;
+using Kailua.Util.Extensions;
 
 namespace Kailua
 {
@@ -36,11 +37,15 @@ namespace Kailua
     {
         public Native.ReportData Data { get; private set; }
         public String Path { get; private set; }
+        public bool DisplayInErrorList { get; private set; }
+        public bool DisplayInEditor { get; private set; }
 
-        public ReportTag(Native.ReportData data, String path)
+        public ReportTag(Native.ReportData data, String path, bool displayInErrorList = true, bool displayInEditor = true)
         {
             this.Data = data;
             this.Path = path;
+            this.DisplayInErrorList = displayInErrorList;
+            this.DisplayInEditor = displayInEditor;
         }
     }
 
@@ -79,12 +84,12 @@ namespace Kailua
 
                 var sourceText = snapshot.GetText();
 
-                string sourcePath;
-                var project = ProjectCache.GetAnyProject(buffer, out sourcePath);
+                string sourcePath = this.buffer.GetFilePath();
+                var project = (sourcePath != null ? ProjectCache.GetAnyProject(sourcePath) : null);
                 if (project != null)
                 {
                     var file = project[sourcePath];
-                    file.SourceText = sourceText;
+                    file.SourceSnapshot = snapshot;
 
                     // get tokens
                     try
@@ -116,14 +121,13 @@ namespace Kailua
                     foreach (var data in file.ReportData)
                     {
                         // for now, ignore unspanned reports (TODO)
-                        if (!data.Span.IsValid)
+                        var span = data.SnapshotSpanNonEmpty;
+                        if (!span.HasValue)
                         {
-                            break;
+                            continue;
                         }
 
-                        var span = data.Span.AttachSnapshotNonEmpty(snapshot);
-                        var path = data.Span.IsValid ? sourcePath : null;
-                        reports.Add(new TagSpan<ReportTag>(span, new ReportTag(data, path)));
+                        reports.Add(new TagSpan<ReportTag>(span.Value, new ReportTag(data, sourcePath)));
                     }
                 }
 

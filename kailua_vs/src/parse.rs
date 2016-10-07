@@ -21,6 +21,10 @@ impl VSParseTree {
         }
     }
 
+    pub fn to_chunk(&self) -> Spanned<Block> {
+        self.chunk.clone() // XXX copy
+    }
+
     // search for directives like `--# open lua51` likely in the entry point
     // TODO should really (transitively) check for `--# set lang_version = "5.1"` or so
     fn has_primitive_open(&self) -> i32 {

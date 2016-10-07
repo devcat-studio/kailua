@@ -110,6 +110,7 @@
   <ItemGroup>
     <Compile Include="Source\Log.cs" />
     <Compile Include="Source\Classification\ClassificationTypeName.cs" />
+    <Compile Include="Source\Native\Checker.cs" />
     <Compile Include="Source\Native\RustStringHandle.cs" />
     <Compile Include="Source\Native\Report.cs" />
     <Compile Include="Source\Native\ParseTree.cs" />
@@ -122,6 +123,8 @@
     <Compile Include="Source\Native\TokenStream.cs" />
     <Compile Include="Source\Classification\ClassificationFormat.cs" />
     <Compile Include="Source\Classification\ClassificationType.cs" />
+    <Compile Include="Source\Project\ProjectObserver.cs" />
+    <Compile Include="Source\Project\ProjectReportTagger.cs" />
     <Compile Include="Source\Project\ProjectUIThread.cs" />
     <Compile Include="Source\Project\ProjectFile.cs" />
     <Compile Include="Source\Project\Project.cs" />
@@ -142,6 +145,8 @@
       <DesignTime>True</DesignTime>
       <DependentUpon>Strings.resx</DependentUpon>
     </Compile>
+    <Compile Include="Source\Util\TaskExtension.cs" />
+    <Compile Include="Source\Util\TextBufferExtensions.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="source.extension.vsixmanifest">

@@ -621,7 +621,7 @@ fn test_source_file() {
                    vec![mk_span(0, 3), mk_span(3, 4)]);
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum SourceSlice<'a> {
     U8(&'a [u8]),
     U16(&'a [u16]),
