@@ -5,11 +5,12 @@ using Task = System.Threading.Tasks.Task;
 
 namespace Kailua
 {
-    public class ProjectUIThread
+    public class ProjectUIThread : IDisposable
     {
         internal WeakReference<Project> project;
         internal ReportErrorListProvider errorListProvider;
         private IList<Native.ReportData> lastReportData;
+        private bool disposed = false;
         private object syncLock = new object();
 
         public ProjectUIThread(Project project)
@@ -54,7 +55,7 @@ namespace Kailua
                 while (true)
                 {
                     Project project;
-                    if (!this.project.TryGetTarget(out project))
+                    if (this.disposed || !this.project.TryGetTarget(out project))
                     {
                         // the project is dead, no need to continue
                         break;
@@ -75,6 +76,15 @@ namespace Kailua
                     await Task.Delay(1000);
                 }
             });
+        }
+
+        public void Dispose()
+        {
+            lock (this.syncLock)
+            {
+                this.disposed = true;
+                this.errorListProvider.Dispose();
+            }
         }
     }
 }

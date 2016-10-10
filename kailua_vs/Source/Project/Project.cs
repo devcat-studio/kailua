@@ -133,6 +133,14 @@ namespace Kailua
             this.checkTask = null;
         }
 
+        private void notifyReportDataChanged()
+        {
+            if (this.ReportDataChanged != null)
+            {
+                this.ReportDataChanged(this.reportData);
+            }
+        }
+
         private void ensureCheckTaskUnlocked()
         {
             if (this.checkTask != null)
@@ -155,17 +163,38 @@ namespace Kailua
             var pairs = new List<Tuple<string, ProjectFile>>();
             foreach (var file in this.files)
             {
-                // this is a core bit, ParseTreeTask will activate the parsing job and any prerequisites
+                var fileNameNoCase = file.Key.ToLowerInvariant();
+                if (!(fileNameNoCase.EndsWith(".lua") || fileNameNoCase.EndsWith(".kailua")))
+                {
+                    continue;
+                }
+
+                // this is a core bit, ParseTreeTaskAsync will activate the parsing job and any prerequisites
                 // asynchonrously, as opposed to TokenStreamTask which tends to be synchronous.
                 // it *will* block if other thread is running TokenStreamTask synchronously, but only momentarily.
-                parents.Add(file.Value.ParseTreeTask);
+                parents.Add(file.Value.ParseTreeTaskAsync);
                 pairs.Add(Tuple.Create(file.Key, file.Value));
             }
 
             this.checkTask = Task.Factory.ContinueWhenAll(parents.ToArray(), tasks =>
             {
                 // this may fault, which is fine---we cannot check without parsed trees
-                var trees = (from task in tasks select task.Result).ToArray();
+                var trees = new List<Native.ParseTree>();
+                foreach (var e in pairs.Zip(tasks, Tuple.Create))
+                {
+                    var fileName = e.Item1.Item1;
+                    var task = e.Item2;
+                    try
+                    {
+                        trees.Add(task.Result);
+                    }
+                    catch (AggregateException)
+                    {
+                        Log.Write("the checking cannot proceed due to the parsing error at {0}", fileName);
+                        this.notifyReportDataChanged();
+                        throw;
+                    }
+                }
 
                 // wait for a short amount of time, and if the cancel is requested restart the timer
                 Task.Delay(500, this.cts.Token).Wait();
@@ -203,10 +232,7 @@ namespace Kailua
                                 Native.Span.Dummy,
                                 Properties.Strings.MultipleEntryPoints);
                             this.reportData.Add(reportData);
-                            if (this.ReportDataChanged != null)
-                            {
-                                this.ReportDataChanged(this.reportData);
-                            }
+                            this.notifyReportDataChanged();
 
                             throw new Exception();
                         }
@@ -222,10 +248,7 @@ namespace Kailua
                         Native.Span.Dummy,
                         Properties.Strings.NoEntryPoint);
                     this.reportData.Add(reportData);
-                    if (this.ReportDataChanged != null)
-                    {
-                        this.ReportDataChanged(this.reportData);
-                    }
+                    this.notifyReportDataChanged();
 
                     throw new Exception();
                 }
@@ -271,7 +294,7 @@ namespace Kailua
                 }
                 catch (Exception ee)
                 {
-                    Log.Write("failed to check {0}: {1}", this.name, ee);
+                    Log.Write("failed to check {0}: {1}", this.name, ee.Message);
                     throw;
                 }
                 finally
@@ -288,10 +311,7 @@ namespace Kailua
                         this.reportData.Add(data);
                     }
 
-                    if (this.ReportDataChanged != null)
-                    {
-                        this.ReportDataChanged(this.reportData);
-                    }
+                    this.notifyReportDataChanged();
                 }
             }, this.cts.Token, TaskContinuationOptions.None, TaskScheduler.Default);
         }
@@ -309,6 +329,7 @@ namespace Kailua
             }
 
             this.source.Dispose();
+            this.uiThread.Dispose();
         }
     }
 }

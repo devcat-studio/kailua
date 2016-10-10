@@ -219,12 +219,14 @@ namespace Kailua
             this.initialized = true;
         }
 
-        public delegate void FileAddedEventHandler(EnvDTE.Project project, string fileName);
-        public delegate void FileRemovedEventHandler(EnvDTE.Project project, string fileName);
+        public delegate void FileEventHandler(EnvDTE.Project project, string fileName);
+        public delegate void ProjectCloseEventHandler(EnvDTE.Project project);
 
         // these are called only after the initial population finishes
-        public event FileAddedEventHandler FileAdded;
-        public event FileRemovedEventHandler FileRemoved;
+        public event FileEventHandler FileAdded;
+        public event FileEventHandler FileRemoved;
+
+        public event ProjectCloseEventHandler ProjectClosed;
 
         int IVsSolutionEvents.OnAfterOpenProject(IVsHierarchy pHierarchy, int fAdded)
         {
@@ -236,7 +238,15 @@ namespace Kailua
         int IVsSolutionEvents.OnBeforeCloseProject(IVsHierarchy pHierarchy, int fRemoved)
         {
             // the project may not have been loaded if no document in that project has ever been opened
-            this.hierarchyObservers.Remove(pHierarchy);
+            HierarchyObserver hierarchyObserver;
+            if (this.hierarchyObservers.TryGetValue(pHierarchy, out hierarchyObserver))
+            {
+                this.hierarchyObservers.Remove(pHierarchy);
+                if (this.ProjectClosed != null)
+                {
+                    this.ProjectClosed(hierarchyObserver.project);
+                }
+            }
             return VSConstants.S_OK;
         }
 

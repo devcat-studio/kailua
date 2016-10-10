@@ -24,6 +24,11 @@ namespace Kailua
             {
                 Get(project).OnFileRemoved(fileName);
             };
+            observer.ProjectClosed += delegate(EnvDTE.Project project)
+            {
+                Get(project).Dispose();
+                table.Remove(project);
+            };
 
             observer.Init();
         }

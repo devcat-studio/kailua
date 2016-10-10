@@ -71,7 +71,7 @@ namespace Kailua
         {
             lock (this.updateLock)
             {
-                if (this.lastSnapshot != null && this.lastSnapshot == snapshot)
+                if (Object.ReferenceEquals(this.lastSnapshot, snapshot))
                 {
                     tokens = this.lastTokens;
                     reports = this.lastReports;
@@ -157,7 +157,7 @@ namespace Kailua
             }
 
             var snapshot = this.buffer.CurrentSnapshot;
-            Debug.Assert(snapshot == spans[0].Snapshot);
+            Debug.Assert(Object.ReferenceEquals(snapshot, spans[0].Snapshot));
 
             List<TagSpan<TokenTag>> tokens;
             List<TagSpan<ReportTag>> reports;
@@ -181,7 +181,7 @@ namespace Kailua
             }
 
             var snapshot = this.buffer.CurrentSnapshot;
-            // XXX not sure if snapshot == spans[i].Snapshot?
+            Debug.Assert(Object.ReferenceEquals(snapshot, spans[0].Snapshot));
 
             List<TagSpan<TokenTag>> tokens;
             List<TagSpan<ReportTag>> reports;

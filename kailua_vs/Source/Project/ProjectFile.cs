@@ -193,6 +193,23 @@ namespace Kailua
             {
                 lock (this.syncLock)
                 {
+                    // XXX originally it was async, but it seemed to cause a hard-to-understand sync issue in WPF (!).
+                    // more specifically, the editor caret somehow goes to a SnapshotSpan with an invalid ITextSnapshot.
+                    // the span does not seem to originate from Kailua, so we believe it's a delicate sync issue
+                    // arising from the use of P/Invoke in other threads and task yields from the UI thread.
+                    // since the issue does not reproduce when P/Invoke is used in the UI thread, we use this workaround.
+                    this.ensureParseTreeTaskUnlocked(sync: true);
+                    return this.parseTreeTask;
+                }
+            }
+        }
+
+        public Task<Native.ParseTree> ParseTreeTaskAsync
+        {
+            get
+            {
+                lock (this.syncLock)
+                {
                     this.ensureParseTreeTaskUnlocked(sync: false);
                     return this.parseTreeTask;
                 }
@@ -337,7 +354,9 @@ namespace Kailua
                     }
                     catch (Exception e)
                     {
-                        Log.Write("failed to tokenize {0}: {1}", this.path, e);
+#if DEBUG
+                        Log.Write("failed to tokenize {0}: {1}", this.path, e.Message);
+#endif
                         throw;
                     }
                 }
@@ -383,7 +402,9 @@ namespace Kailua
                     }
                     catch (Exception e)
                     {
-                        Log.Write("failed to parse {0}: {1}", this.path, e);
+#if DEBUG
+                        Log.Write("failed to parse {0}: {1}", this.path, e.Message);
+#endif
                         throw;
                     }
                 }
@@ -418,7 +439,7 @@ namespace Kailua
             {
                 ProjectFile projectFile;
                 Trace.Assert(this.project.units.TryRemove(this.unit, out projectFile));
-                Debug.Assert(projectFile == this);
+                Debug.Assert(Object.ReferenceEquals(projectFile, this)); 
             }
         }
     }

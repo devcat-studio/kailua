@@ -71,7 +71,7 @@ namespace Kailua
             }
 
             var snapshot = this.buffer.CurrentSnapshot;
-            Debug.Assert(snapshot == spans[0].Snapshot);
+            Debug.Assert(Object.ReferenceEquals(snapshot, spans[0].Snapshot));
 
             String fileName = this.buffer.GetFilePath() ?? "";
             foreach (var entry in this.reportsPerProject)
