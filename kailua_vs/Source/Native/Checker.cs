@@ -96,9 +96,15 @@ namespace Kailua.Native
             lock (this.native)
             {
                 this.lastException = null;
-                ret = kailua_checker_exec(this.native, mainpath, mainpath.Length);
-                lastException = this.lastException;
-                this.lastException = null;
+                try
+                {
+                    ret = kailua_checker_exec(this.native, mainpath, mainpath.Length);
+                }
+                finally
+                {
+                    lastException = this.lastException;
+                    this.lastException = null;
+                }
             }
             if (ret < 0)
             {
@@ -106,7 +112,6 @@ namespace Kailua.Native
             }
             else if (lastException != null)
             {
-                Debug.Assert(ret != 0);
                 throw lastException;
             }
             return (ret == 0);

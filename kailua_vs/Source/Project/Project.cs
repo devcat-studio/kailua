@@ -13,6 +13,8 @@ namespace Kailua
     public class Project : IDisposable
     {
         internal string name;
+        internal WeakReference<EnvDTE.Project> dteProject;
+
         internal ConcurrentDictionary<string, ProjectFile> files;
         internal ConcurrentDictionary<Native.Unit, ProjectFile> units;
         internal ProjectUIThread uiThread;
@@ -21,7 +23,7 @@ namespace Kailua
 
         internal CancellationTokenSource cts;
         internal Native.Report report;
-        internal List<Native.ReportData> reportData;
+        internal List<ReportData> reportData;
         internal Dictionary<string, Native.Unit> tempUnits;
         internal Native.Checker checker;
         private Task checkTask;
@@ -29,7 +31,9 @@ namespace Kailua
 
         public Project(EnvDTE.Project project)
         {
-            this.name = project.FullName;
+            this.name = project.Name;
+            this.dteProject = new WeakReference<EnvDTE.Project>(project);
+
             this.files = new ConcurrentDictionary<string, ProjectFile>();
             this.units = new ConcurrentDictionary<Native.Unit, ProjectFile>();
 
@@ -42,7 +46,7 @@ namespace Kailua
             this.checker = null;
             this.checkTask = null;
 
-            this.uiThread = new ProjectUIThread(this);
+            this.uiThread = new ProjectUIThread(this, project);
         }
 
         public Native.Source Source
@@ -128,16 +132,16 @@ namespace Kailua
                 this.report = null;
             }
             // reallocation required, different threads may hold a handle to the previous list
-            this.reportData = new List<Native.ReportData>();
+            this.reportData = new List<ReportData>();
 
             this.checkTask = null;
         }
 
-        private void notifyReportDataChanged()
+        private void notifyReportDataChanged(IList<ReportData> reportData)
         {
             if (this.ReportDataChanged != null)
             {
-                this.ReportDataChanged(this.reportData);
+                this.ReportDataChanged(reportData);
             }
         }
 
@@ -176,6 +180,7 @@ namespace Kailua
                 pairs.Add(Tuple.Create(file.Key, file.Value));
             }
 
+            var reportData = this.reportData;
             this.checkTask = Task.Factory.ContinueWhenAll(parents.ToArray(), tasks =>
             {
                 // this may fault, which is fine---we cannot check without parsed trees
@@ -191,7 +196,7 @@ namespace Kailua
                     catch (AggregateException)
                     {
                         Log.Write("the checking cannot proceed due to the parsing error at {0}", fileName);
-                        this.notifyReportDataChanged();
+                        this.notifyReportDataChanged(reportData);
                         throw;
                     }
                 }
@@ -227,12 +232,11 @@ namespace Kailua
                         {
                             Log.Write("multiple entry points detected, stopping");
 
-                            var reportData = new Native.ReportData(
+                            var data = new ReportData(
                                 Native.ReportKind.Fatal,
-                                Native.Span.Dummy,
-                                Properties.Strings.MultipleEntryPoints);
-                            this.reportData.Add(reportData);
-                            this.notifyReportDataChanged();
+                                String.Format(Properties.Strings.MultipleEntryPoints, this.name));
+                            reportData.Add(data);
+                            this.notifyReportDataChanged(reportData);
 
                             throw new Exception();
                         }
@@ -243,12 +247,11 @@ namespace Kailua
                 {
                     Log.Write("no entry points detected, stopping");
 
-                    var reportData = new Native.ReportData(
+                    var data = new ReportData(
                         Native.ReportKind.Fatal,
-                        Native.Span.Dummy,
-                        Properties.Strings.NoEntryPoint);
-                    this.reportData.Add(reportData);
-                    this.notifyReportDataChanged();
+                        String.Format(Properties.Strings.NoEntryPoint, this.name));
+                    reportData.Add(data);
+                    this.notifyReportDataChanged(reportData);
 
                     throw new Exception();
                 }
@@ -264,7 +267,8 @@ namespace Kailua
 
                 // we need to keep the temporary list of spans that requested but not in the project
                 // so that we deallocate them after the checking.
-                var fileNameToTempTrees = new Dictionary<string, Native.ParseTree>();
+                var fileNameToTempTrees = new Dictionary<string, Tuple<Native.Span, Native.ParseTree>>();
+                var tempUnitToFileNames = new Dictionary<Native.Unit, string>();
                 var report = new Native.Report();
                 try
                 {
@@ -272,15 +276,36 @@ namespace Kailua
                     {
                         // try to return the existing tree
                         Native.ParseTree tree;
-                        if (fileNameToTrees.TryGetValue(path, out tree) || fileNameToTempTrees.TryGetValue(path, out tree))
+                        if (fileNameToTrees.TryGetValue(path, out tree))
                         {
                             return tree;
                         }
+                        Tuple<Native.Span, Native.ParseTree> spanAndTree;
+                        if (fileNameToTempTrees.TryGetValue(path, out spanAndTree))
+                        {
+                            return spanAndTree.Item2;
+                        }
+
+#if DEBUG
+                        Log.Write("the checker requires an external dependency {0}", path);
+#endif
 
                         // otherwise parse on demand
-                        var span = this.source.AddFile(path);
+                        // failure to find the file is not a hard error, everything else is fatal
+                        Native.Span span;
+                        try
+                        {
+                            span = this.source.AddFile(path);
+                        }
+                        catch (Native.NativeException)
+                        {
+                            return null;
+                        }
                         var stream = new Native.TokenStream(this.source, span, report);
-                        return new Native.ParseTree(stream, report);
+                        var newTree = new Native.ParseTree(stream, report);
+                        fileNameToTempTrees.Add(path, Tuple.Create(span, newTree));
+                        tempUnitToFileNames.Add(span.Unit, path);
+                        return newTree;
                     }, report);
 
                     if (checker.Execute(entryFileName))
@@ -300,23 +325,43 @@ namespace Kailua
                 finally
                 {
                     // attach the saved snapshot to the span
-                    foreach (var data_ in report)
+                    foreach (var nativeData in report)
                     {
-                        var data = data_;
-                        ITextSnapshot snapshot;
-                        if (unitToSnapshot.TryGetValue(data.Span.Unit, out snapshot))
+                        // there might be multiple ways to get the correct ReportData depending on the source
+                        ReportData data;
+                        ITextSnapshot snapshot = null;
+                        if (unitToSnapshot.TryGetValue(nativeData.Span.Unit, out snapshot))
                         {
-                            data.Snapshot = snapshot;
+                            data = new ReportData(this.source, nativeData, snapshot);
                         }
-                        this.reportData.Add(data);
+                        else
+                        {
+                            String fileName;
+                            if (tempUnitToFileNames.TryGetValue(nativeData.Span.Unit, out fileName))
+                            {
+                                data = new ReportData(this.source, fileName, nativeData);
+                            }
+                            else
+                            {
+                                data = new ReportData(nativeData);
+                            }
+                        }
+                        reportData.Add(data);
                     }
 
-                    this.notifyReportDataChanged();
+                    // remove any temporarily added units from the source
+                    // (should do this later, as ReportData depends on the source)
+                    foreach (var spanAndTree in fileNameToTempTrees.Values)
+                    {
+                        this.source.Remove(spanAndTree.Item1.Unit);
+                    }
+
+                    this.notifyReportDataChanged(reportData);
                 }
             }, this.cts.Token, TaskContinuationOptions.None, TaskScheduler.Default);
         }
 
-        public delegate void ReportDataChangedHandler(IList<Native.ReportData> reportData);
+        public delegate void ReportDataChangedHandler(IList<ReportData> reportData);
 
         public event ReportDataChangedHandler ReportDataChanged;
 
@@ -325,7 +370,7 @@ namespace Kailua
             // the final signal to reset the UI thread
             if (this.ReportDataChanged != null)
             {
-                this.ReportDataChanged(new List<Native.ReportData>());
+                this.ReportDataChanged(new List<ReportData>());
             }
 
             this.source.Dispose();

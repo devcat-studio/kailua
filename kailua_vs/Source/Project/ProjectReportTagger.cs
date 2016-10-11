@@ -27,12 +27,12 @@ namespace Kailua
     internal sealed class ProjectReportTagger : ITagger<ReportTag>
     {
         ITextBuffer buffer;
-        SortedDictionary<Project, List<Native.ReportData>> reportsPerProject;
+        SortedDictionary<Project, List<ReportData>> reportsPerProject;
 
         internal ProjectReportTagger(ITextBuffer buffer)
         {
             this.buffer = buffer;
-            this.reportsPerProject = new SortedDictionary<Project, List<Native.ReportData>>();
+            this.reportsPerProject = new SortedDictionary<Project, List<ReportData>>();
 
             // XXX for now, only subscribe to the projects which initially contained the current file
             string fileName = buffer.GetFilePath();
@@ -40,7 +40,7 @@ namespace Kailua
             {
                 foreach (var project in ProjectCache.GetProjects(fileName))
                 {
-                    project.ReportDataChanged += delegate(IList<Native.ReportData> reportData)
+                    project.ReportDataChanged += delegate(IList<ReportData> reportData)
                     {
                         reportsPerProject[project] = reportData.ToList();
 
@@ -73,7 +73,6 @@ namespace Kailua
             var snapshot = this.buffer.CurrentSnapshot;
             Debug.Assert(Object.ReferenceEquals(snapshot, spans[0].Snapshot));
 
-            String fileName = this.buffer.GetFilePath() ?? "";
             foreach (var entry in this.reportsPerProject)
             {
                 var project = entry.Key;
@@ -85,13 +84,19 @@ namespace Kailua
                         continue;
                     }
 
+                    // should only return reports relevant to this buffer
+                    if (!Object.ReferenceEquals(reportSpan.Value.Snapshot.TextBuffer, this.buffer))
+                    {
+                        continue;
+                    }
+
                     // reportSpan may refer to the incorrect snapshot
                     var span = reportSpan.Value.TranslateTo(snapshot, SpanTrackingMode.EdgeExclusive);
                     if (spans.IntersectsWith(span))
                     {
                         // checker errors go through a separate error list, but the error tagger itself
                         // will duplicate them into its own error list unless disabled.
-                        var tag = new ReportTag(data, fileName, displayInErrorList: false);
+                        var tag = new ReportTag(data, displayInErrorList: false);
                         yield return new TagSpan<ReportTag>(span, tag);
                     }
                 }

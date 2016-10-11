@@ -37,7 +37,14 @@ namespace Kailua
         {
             this.buffer = buffer;
             this.aggregator = aggregator;
-            this.errorListProvider = new ReportErrorListProvider();
+
+            var project = ProjectCache.GetAnyProject(buffer);
+            EnvDTE.Project dteProject = null;
+            if (project != null)
+            {
+                project.dteProject.TryGetTarget(out dteProject);
+            }
+            this.errorListProvider = new ReportErrorListProvider(dteProject);
 
             this.aggregator.TagsChanged += errorTagsChanged;
             this.aggregator.BatchedTagsChanged += batchedErrorTagsChanged;
@@ -114,7 +121,7 @@ namespace Kailua
                 }
 
                 // TODO actually, the line number can be calculated straight from Source itself, so we don't really need Snapshot
-                this.errorListProvider.AddReport(source, reportSpan.Tag.Data, reportSpan.Tag.Path);
+                this.errorListProvider.AddReport(reportSpan.Tag.Data);
             }
         }
 

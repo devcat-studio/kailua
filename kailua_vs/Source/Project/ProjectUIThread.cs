@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using Microsoft.VisualStudio.Shell;
+using Kailua.Util.Extensions;
 using Task = System.Threading.Tasks.Task;
 
 namespace Kailua
@@ -9,20 +10,20 @@ namespace Kailua
     {
         internal WeakReference<Project> project;
         internal ReportErrorListProvider errorListProvider;
-        private IList<Native.ReportData> lastReportData;
+        private IList<ReportData> lastReportData;
         private bool disposed = false;
         private object syncLock = new object();
 
-        public ProjectUIThread(Project project)
+        public ProjectUIThread(Project project, EnvDTE.Project dteProject)
         {
             project.ReportDataChanged += this.OnReportDataChanged;
             this.project = new WeakReference<Project>(project);
-            this.errorListProvider = new ReportErrorListProvider();
+            this.errorListProvider = new ReportErrorListProvider(dteProject);
             this.lastReportData = null;
             this.Launch();
         }
 
-        internal void OnReportDataChanged(IList<Native.ReportData> reportData)
+        internal void OnReportDataChanged(IList<ReportData> reportData)
         {
             lock (this.syncLock)
             {
@@ -30,18 +31,12 @@ namespace Kailua
             }
         }
 
-        private void updateErrorListUnlocked(Project project, IList<Native.ReportData> reportData)
+        private void updateErrorListUnlocked(Project project, IList<ReportData> reportData)
         {
             this.errorListProvider.Tasks.Clear();
             foreach (var data in reportData)
             {
-                String fileName = "";
-                ProjectFile projectFile;
-                if (project.units.TryGetValue(data.Span.Unit, out projectFile))
-                {
-                    fileName = projectFile.Path;
-                }
-                this.errorListProvider.AddReport(project.Source, data, fileName);
+                this.errorListProvider.AddReport(data);
             }
         }
 

@@ -16,7 +16,7 @@ namespace Kailua
 
         internal CancellationTokenSource cts;
         internal Native.Report report;
-        internal List<Native.ReportData> reportData;
+        internal List<ReportData> reportData;
         private ITextSnapshot sourceSnapshot;
         private string sourceText;
         private Task<Native.Span> sourceSpanTask;
@@ -32,7 +32,7 @@ namespace Kailua
 
             this.cts = null;
             this.report = null;
-            this.reportData = new List<Native.ReportData>();
+            this.reportData = new List<ReportData>();
             this.sourceSnapshot = null;
             this.sourceText = null;
             this.sourceSpanTask = null;
@@ -50,12 +50,12 @@ namespace Kailua
             get { return this.unit; }
         }
 
-        public IEnumerable<Native.ReportData> ReportData
+        public IEnumerable<ReportData> ReportData
         {
             get
             {
                 // they should be read atomically
-                List<Native.ReportData> reportData;
+                List<ReportData> reportData;
                 ITextSnapshot sourceSnapshot;
                 lock (this.syncLock)
                 {
@@ -63,10 +63,8 @@ namespace Kailua
                     sourceSnapshot = this.sourceSnapshot;
                 }
 
-                foreach (var data_ in reportData)
+                foreach (var data in reportData)
                 {
-                    var data = data_;
-                    data.Snapshot = sourceSnapshot;
                     yield return data;
                 }
             }
@@ -256,13 +254,22 @@ namespace Kailua
                 this.report.Dispose();
                 this.report = null;
             }
-            this.reportData.Clear();
+            this.reportData = new List<ReportData>();
 
             this.sourceSnapshot = null;
             this.sourceText = null;
             this.sourceSpanTask = null;
             this.tokenStreamTask = null;
             this.parseTreeTask = null;
+        }
+
+        private void addReportsUnlocked(List<ReportData> reportData, Native.Report report)
+        {
+            foreach (var nativeData in report)
+            {
+                var data = new ReportData(project.Source, nativeData, this.sourceSnapshot);
+                reportData.Add(data);
+            }
         }
 
         private void ensureReportUnlocked()
@@ -357,16 +364,13 @@ namespace Kailua
 #if DEBUG
                         Log.Write("failed to tokenize {0}: {1}", this.path, e.Message);
 #endif
-                        throw;
+                        throw e;
                     }
                 }
                 finally
                 {
                     // may continue to return reports even on error
-                    foreach (var data in report)
-                    {
-                        reportData.Add(data);
-                    }
+                    this.addReportsUnlocked(reportData, report);
                 }
             };
 
@@ -405,16 +409,13 @@ namespace Kailua
 #if DEBUG
                         Log.Write("failed to parse {0}: {1}", this.path, e.Message);
 #endif
-                        throw;
+                        throw e;
                     }
                 }
                 finally
                 {
                     // may continue to return reports even on error
-                    foreach (var data in report)
-                    {
-                        reportData.Add(data);
-                    }
+                    this.addReportsUnlocked(reportData, report);
                 }
             };
 

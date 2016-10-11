@@ -70,7 +70,7 @@ namespace Kailua.Properties {
         }
         
         /// <summary>
-        ///   There seems multiple entry point files detected과(와) 유사한 지역화된 문자열을 찾습니다.
+        ///   There seems multiple entry point files detected in the project {0}과(와) 유사한 지역화된 문자열을 찾습니다.
         /// </summary>
         internal static string MultipleEntryPoints {
             get {
@@ -79,7 +79,7 @@ namespace Kailua.Properties {
         }
         
         /// <summary>
-        ///   There seems no entry point file detected과(와) 유사한 지역화된 문자열을 찾습니다.
+        ///   There seems no entry point file detected in the project {0}과(와) 유사한 지역화된 문자열을 찾습니다.
         /// </summary>
         internal static string NoEntryPoint {
             get {

@@ -3,7 +3,6 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Globalization;
-using Microsoft.VisualStudio.Text;
 
 namespace Kailua.Native
 {
@@ -42,68 +41,16 @@ namespace Kailua.Native
 
     public struct ReportData
     {
-        private ReportKind kind;
-        private Span span;
-        private String message;
-        private ITextSnapshot snapshot; // optional, used to convert Native.Span to SnapshotSpan
+        public ReportKind Kind { get; private set; }
+        public Span Span { get; private set; }
+        public String Message { get; private set; }
 
-        public ReportKind Kind
+        internal ReportData(ReportKind kind, Span span, String msg)
+            : this()
         {
-            get { return this.kind; }
-        }
-
-        public Span Span
-        {
-            get { return this.span; }
-        }
-
-        public String Message
-        {
-            get { return this.message; }
-        }
-
-        public ITextSnapshot Snapshot
-        {
-            get { return this.snapshot; }
-            set { this.snapshot = value; }
-        }
-
-        public SnapshotSpan? SnapshotSpan
-        {
-            get
-            {
-                if (this.snapshot != null && this.span.IsValid)
-                {
-                    return this.span.AttachSnapshot(this.snapshot);
-                }
-                else
-                {
-                    return null;
-                }
-            }
-        }
-
-        public SnapshotSpan? SnapshotSpanNonEmpty
-        {
-            get
-            {
-                if (this.snapshot != null && this.span.IsValid)
-                {
-                    return this.span.AttachSnapshotNonEmpty(this.snapshot);
-                }
-                else
-                {
-                    return null;
-                }
-            }
-        }
-
-        internal ReportData(ReportKind kind, Span span, String msg, ITextSnapshot snapshot = null)
-        {
-            this.kind = kind;
-            this.span = span;
-            this.message = msg;
-            this.snapshot = snapshot;
+            this.Kind = kind;
+            this.Span = span;
+            this.Message = msg;
         }
     }
 

@@ -121,9 +121,9 @@
     <value>Too many errors, only the first {0} errors are displayed</value>
   </data>
   <data name="MultipleEntryPoints" xml:space="preserve">
-    <value>There seems multiple entry point files detected</value>
+    <value>There seems multiple entry point files detected in the project {0}</value>
   </data>
   <data name="NoEntryPoint" xml:space="preserve">
-    <value>There seems no entry point file detected</value>
+    <value>There seems no entry point file detected in the project {0}</value>
   </data>
 </root>

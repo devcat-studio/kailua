@@ -35,15 +35,13 @@ namespace Kailua
 
     public class ReportTag : ITag
     {
-        public Native.ReportData Data { get; private set; }
-        public String Path { get; private set; }
+        public ReportData Data { get; private set; }
         public bool DisplayInErrorList { get; private set; }
         public bool DisplayInEditor { get; private set; }
 
-        public ReportTag(Native.ReportData data, String path, bool displayInErrorList = true, bool displayInEditor = true)
+        public ReportTag(ReportData data, bool displayInErrorList = true, bool displayInEditor = true)
         {
             this.Data = data;
-            this.Path = path;
             this.DisplayInErrorList = displayInErrorList;
             this.DisplayInEditor = displayInEditor;
         }
@@ -127,7 +125,7 @@ namespace Kailua
                             continue;
                         }
 
-                        reports.Add(new TagSpan<ReportTag>(span.Value, new ReportTag(data, sourcePath)));
+                        reports.Add(new TagSpan<ReportTag>(span.Value, new ReportTag(data)));
                     }
                 }
 
