@@ -278,7 +278,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn dummy_kind(&self) -> Spanned<Kind> {
-        Box::new(K::Dynamic).without_loc()
+        Box::new(K::Oops).without_loc()
     }
 
     fn builtin_kind(&self, name: &[u8]) -> Option<K> {
@@ -391,16 +391,6 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn try_parse_stmt(&mut self) -> diag::Result<Option<Spanned<Stmt>>> {
-        // if there exists a spec stmt return it first.
-        // a spec may be empty, so loop until no spec exists or a spec is found.
-        loop {
-            match try!(self.try_parse_kailua_spec()) {
-                Some(Some(spec)) => return Ok(Some(spec)),
-                Some(None) => continue,
-                None => break,
-            }
-        }
-
         let begin = self.pos();
 
         let funcspec = try!(self.try_parse_kailua_func_spec());
@@ -413,6 +403,16 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             };
             if !allowed {
                 try!(self.error(funcspec.span, m::MissingFuncDeclAfterFuncSpec {}).done());
+            }
+        }
+
+        // if there exists a spec stmt return it first.
+        // a spec may be empty, so loop until no spec exists or a spec is found.
+        loop {
+            match try!(self.try_parse_kailua_spec()) {
+                Some(Some(spec)) => return Ok(Some(spec)),
+                Some(None) => continue,
+                None => break,
             }
         }
 

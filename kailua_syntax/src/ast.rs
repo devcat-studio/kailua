@@ -407,6 +407,7 @@ impl fmt::Debug for FuncKind {
 // not "type" to avoid a conflict (and it's not really a type but a spec that leads to a type)
 #[derive(Clone, PartialEq)]
 pub enum K {
+    Oops,
     Dynamic,
     Any,
     Nil,
@@ -436,6 +437,7 @@ pub enum K {
 impl fmt::Debug for K {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
+            K::Oops               => write!(f, "Oops"),
             K::Dynamic            => write!(f, "Dynamic"),
             K::Any                => write!(f, "Any"),
             K::Nil                => write!(f, "Nil"),

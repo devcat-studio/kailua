@@ -78,7 +78,7 @@ impl<'a> T<'a> {
         };
 
         match *kind {
-            K::Dynamic           => Ok(T::Dynamic),
+            K::Oops | K::Dynamic => Ok(T::Dynamic),
             K::Any               => Ok(T::All),
             K::Nil               => Ok(T::Nil),
             K::Boolean           => Ok(T::Boolean),

@@ -71,26 +71,27 @@ local a, b, c = f() --: integer, string, const {}
 local a, b, c --: const {}
               = f() --: integer, string, const {}
 --@^ Error: The type specification cannot appear both at variable names and after the `local` declaration
---! error
+f()
+--! [Local([`a`, `b`, `c`: Const EmptyTable], [`f`()]), Void(`f`())]
 
 --8<-- local-duplicate-types-in-same-line-2
 local a, --: integer
       b, c = f() --: integer, string, const {}
 --@^ Error: The type specification cannot appear both at variable names and after the `local` declaration
---! error
+--! [Local([`a`: _ Integer, `b`, `c`], [`f`()])]
 
 --8<-- local-duplicate-types-in-same-line-3
 local a, --: integer
       b, --: string
       c = f() --: const {}
 --@^ Error: The type specification cannot appear both at variable names and after the `local` declaration
---! error
+--! [Local([`a`: _ Integer, `b`: _ String, `c`], [`f`()])]
 
 --8<-- local-less-types-in-same-line-1
 local a, b,
       c --@< Error: Excess type specifications in the variable names
       = f() --: integer, string
---! error
+--! [Local([`a`, `b`, `c`], [`f`()])]
 
 --8<-- local-less-types-in-same-line-2
 local a,
@@ -98,19 +99,19 @@ local a,
       c,
       d --@^-< Error: Excess type specifications in the variable names
       = f() --: integer, string
---! error
+--! [Local([`a`, `b`, `c`, `d`], [`f`()])]
 
 --8<-- local-more-types-in-same-line-1
 local a, b = f() --: integer,
                  --: string,
                  --: const {} --@< Error: Excess type specifications after the `local` declaration
---! error
+--! [Local([`a`, `b`], [`f`()])]
 
 --8<-- local-more-types-in-same-line-2
 local a = f() --: integer,
               --: string,
               --: const {} --@^-< Error: Excess type specifications after the `local` declaration
---! error
+--! [Local([`a`], [`f`()])]
 
 --8<-- assign-1-1
 a = f()
@@ -195,26 +196,26 @@ a, b, c = f() --: integer, string, const {}
 a, b, c --: const {}
         = f() --: integer, string, const {}
 --@^ Error: The type specification cannot appear both at the left hand side and after the assignment
---! error
+--! [Assign([`a`, `b`, `c`: Const EmptyTable], [`f`()])]
 
 --8<-- assign-duplicate-types-in-same-line-2
 a, --: integer
 b, c = f() --: integer, string, const {}
 --@^ Error: The type specification cannot appear both at the left hand side and after the assignment
---! error
+--! [Assign([`a`: _ Integer, `b`, `c`], [`f`()])]
 
 --8<-- assign-duplicate-types-in-same-line-3
 a, --: integer
 b, --: string
 c = f() --: const {}
 --@^ Error: The type specification cannot appear both at the left hand side and after the assignment
---! error
+--! [Assign([`a`: _ Integer, `b`: _ String, `c`], [`f`()])]
 
 --8<-- assign-less-types-in-same-line-1
 a, b,
 c --@< Error: Excess type specifications in the left hand side
 = f() --: integer, string
---! error
+--! [Assign([`a`, `b`, `c`], [`f`()])]
 
 --8<-- assign-less-types-in-same-line-2
 a,
@@ -222,19 +223,19 @@ b,
 c,
 d --@^-< Error: Excess type specifications in the left hand side
 = f() --: integer, string
---! error
+--! [Assign([`a`, `b`, `c`, `d`], [`f`()])]
 
 --8<-- assign-more-types-in-same-line-1
 a, b = f() --: integer,
            --: string,
            --: const {} --@< Error: Excess type specifications after the assignment
---! error
+--! [Assign([`a`, `b`], [`f`()])]
 
 --8<-- assign-more-types-in-same-line-2
 a = f() --: integer,
         --: string,
         --: const {} --@^-< Error: Excess type specifications after the assignment
---! error
+--! [Assign([`a`], [`f`()])]
 
 --8<-- func-argtype
 local function r(p --: integer
@@ -372,7 +373,7 @@ do end
 --# --[[foo --@< Error: A newline is disallowed in a long comment inside the meta block
 --# --foo]] --@^ Note: The meta block started here
 do end
---! error
+--! [Do([])]
 
 --8<-- assume
 --# assume a: string
@@ -401,7 +402,7 @@ do end
 --# assume a:
 --# assume b: string --@< Error: Expected a single type, got a keyword `assume`
                      --@^ Error: Expected a newline, got a name
---! error
+--! [KailuaAssume(Local, `a`, _, Oops)]
 
 --8<-- assume-global-local
 --# assume global a: {x=string}
@@ -419,12 +420,12 @@ do end
 
 --8<-- quoted-assume-assume
 --# `assume` `assume`: WHATEVER --@< Error: Expected a newline, got a name
---! error
+--! []
 
 --8<-- assume-builtin-rejected
 --# assume a: WHATEVER = "foo" --@< Error: Expected a newline, got `=`
 --# assume b: WHATEVER
---! error
+--! [KailuaAssume(Local, `a`, _, Dynamic)]
 
 --8<-- kind-table
 local x --: {b=string, a=integer, c=const {d=const {}}}
@@ -460,11 +461,11 @@ local x --: function () -> (integer...) & (integer, boolean...)->(string?, WHATE
 
 --8<-- kind-func-seq-without-parens
 local x --: function () -> integer... --@< Error: Expected a newline, got `...`
---! error
+--! [Local([`x`: _ Func([() -> Integer])], [])]
 
 --8<-- kind-func-or-without-parens
 local x --: function (boolean...) | string? --@< Error: Expected a newline, got `|`
---! error
+--! [Local([`x`: _ Func([(Boolean...) -> ()])], [])]
 
 --8<-- kind-func-or
 local x --: (function (boolean...)) | string?
@@ -491,7 +492,7 @@ local x --: userdata
 
 --8<-- kind-seq-outside-func
 local x --: (integer, string) --@< Error: Expected a single type, not type sequence
---! error
+--! [Local([`x`: _ Oops], [])]
 
 --8<-- kind-paren
 local x --: (integer)
@@ -614,12 +615,12 @@ local x --: [type] function(any)
 --8<-- kind-attr-dup
 local x --: [builtin] [builtin] string --@< Error: Expected a single type, got `[`
                                        --@^ Error: Expected a newline, got a name
---! error
+--! [Local([`x`: _ Oops], [])]
 
 --8<-- kind-attr-seq
 local x --: function() -> [builtin] (string, string)
 --@^ Error: Cannot attach the type attribute (like [name]) to the type sequence
---! error
+--! [Local([`x`: _ Func([() -> (String, String)])], [])]
 
 --8<-- funcspec
 --v ()
@@ -631,31 +632,31 @@ function foo() end
 --v (a: integer,
 --v  b: string) --@^-< Error: Excess arguments in the function specification
 function foo() end
---! error
+--! [FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ String], [])]
 
 --8<-- funcspec-more-arity-2
 --v (a: integer,
 --v  b: string) --@< Error: Excess arguments in the function specification
 function foo(a) end
---! error
+--! [FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ String], [])]
 
 --8<-- funcspec-wrong-name
 --v (a: integer)
 function foo(b) end --@< Error: Mismatching argument name in the function specification
                     --@^^ Note: The corresponding argument was here
---! error
+--! [FuncDecl(Global, `foo`, [`a`: _ Integer], [])]
 
 --8<-- funcspec-less-arity-1
 --v ()
 function foo(a,
              b) end --@^-< Error: Excess arguments in the function declaration
---! error
+--! [FuncDecl(Global, `foo`, [], [])]
 
 --8<-- funcspec-less-arity-2
 --v (a: integer)
 function foo(a,
              b) end --@< Error: Excess arguments in the function declaration
---! error
+--! [FuncDecl(Global, `foo`, [`a`: _ Integer], [])]
 
 --8<-- funcspec-swapped-name
 --v (a: integer, b: integer)
@@ -663,7 +664,7 @@ function foo(b, a) end --@< Error: Mismatching argument name in the function spe
                        --@^^ Note: The corresponding argument was here
                        --@^^ Error: Mismatching argument name in the function specification
                        --@^^^^ Note: The corresponding argument was here
---! error
+--! [FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ Integer], [])]
 
 --8<-- funcspec-1
 --v (a: integer)
@@ -756,7 +757,7 @@ end
 function foo() --> string
     --@^ Error: Inline return type specification cannot appear with the function specification
 end --@^^^ Note: The function specification appeared here
---! error
+--! [FuncDecl(Global, `foo`, [], [])]
 
 --8<-- funcspec-and-argtype-rettype-1
 --v (a: integer)
@@ -765,7 +766,7 @@ function foo(a) --: integer --> string
 end --@^^^ Note: The function specification appeared here
     --@^^^ Error: Inline return type specification cannot appear with the function specification
     --@^^^^^ Note: The function specification appeared here
---! error
+--! [FuncDecl(Global, `foo`, [`a`: _ Integer], [])]
 
 --8<-- funcspec-and-argtype-rettype-2
 --v (a: integer, b: boolean)
@@ -774,37 +775,37 @@ function foo(a, --: integer --@< Error: Inline argument type specification canno
              b) --> string  --@< Error: Inline return type specification cannot appear with the function specification
                             --@^^^^ Note: The function specification appeared here
 end
---! error
+--! [FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ Boolean], [])]
 
 --8<-- funcspec-before-nothing
 --v () --@< Error: No function declaration after the function specification
---! error
+--! []
 
 --8<-- funcspec-before-local
 --v () --@< Error: No function declaration after the function specification
 local v = 42
---! error
+--! [Local([`v`], [42])]
 
 --8<-- funcspec-before-local-recover
 --v () --@< Error: No function declaration after the function specification
 local v = 42
 --v () --@< Error: No function declaration after the function specification
---! error
+--! [Local([`v`], [42])]
 
 --8<-- funcspec-before-assume
 --v () --@< Error: No function declaration after the function specification
 --# assume x: integer
---! error
+--! [KailuaAssume(Local, `x`, _, Integer)]
 
 --8<-- funcspec-before-for
 --v () --@< Error: No function declaration after the function specification
 for i = 1, 3 do end
---! error
+--! [For(`i`, 1, 3, None, [])]
 
 --8<-- funcspec-before-expr-inline
 f(--v () --@< Error: No function literal after the function specification
   g())
---! error
+--! [Void(`f`(`g`()))]
 
 --8<-- argtype-inline
 function foo(a, --: integer
@@ -817,19 +818,19 @@ end
 function foo(a, b, ...) --: string --@< Error: Inline variadic argument type specification cannot appear with the function specification
                                    --@^^ Note: The corresponding argument in the function specification was here
 end
---! error
+--! [FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ Boolean, ...: String], [])]
 
 --8<-- funcspec-less-varargs
 --v (a: integer, b: boolean)
 function foo(a, b, ...) --@< Error: Variadic arguments appear in the function but not in the function specification
 end
---! error
+--! [FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ Boolean], [])]
 
 --8<-- funcspec-more-varargs
 --v (a: integer, b: boolean, ...: string) --@< Error: Variadic arguments appear in the function specification but not in the function itself
 function foo(a, b)
 end
---! error
+--! [FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ Boolean, ...: String], [])]
 
 --8<-- funcspec-varargs
 --v (a: integer, b: boolean, ...: string)
@@ -852,14 +853,14 @@ end
 --8<-- funcspec-method-no-self-1
 --v () --@< Error: The first argument in the function specification for a method is not `self`
 function foo:bar() end
---! error
+--! [MethodDecl([`foo`, `bar`], Some(self), [], [])]
 
 --8<-- funcspec-method-no-self-2
 --@v-vv Error: The first argument in the function specification for a method is not `self`
 --v (x: integer,
 --v  y: string)
 function foo:bar(x, y) end
---! error
+--! [MethodDecl([`foo`, `bar`], Some(self), [`x`: _ Integer, `y`: _ String], [])]
 
 --8<-- funcspec-method-self
 --v (self)
@@ -881,18 +882,18 @@ function foo:bar() end
                        --@^ Error: Excess arguments in the function specification
 function foo.bar(x) end --@< Error: Mismatching argument name in the function specification
                         --@^^^ Note: The corresponding argument was here
---! error
+--! [MethodDecl([`foo`, `bar`], None, [`self`, `x`: _ Integer], [])]
 
 --8<-- funcspec-non-method-self-2
 --v (self, x: integer) --@< Error: Arguments in the function specification are missing their types
 function foo.bar(self, x) end
---! error
+--! [MethodDecl([`foo`, `bar`], None, [`self`, `x`: _ Integer], [])]
 
 --8<-- funcspec-non-method-self-typed-1
 --v (self: table, x: integer) --@< Error: Excess arguments in the function specification
 function foo.bar(x) end --@< Error: Mismatching argument name in the function specification
                         --@^^ Note: The corresponding argument was here
---! error
+--! [MethodDecl([`foo`, `bar`], None, [`self`: _ Table, `x`: _ Integer], [])]
 
 --8<-- funcspec-non-method-self-typed-2
 --v (self: table, x: integer)
@@ -983,35 +984,37 @@ f(--[====[foo]
 --@v Error: Expected a newline, got the end of file
 --# assume p:
 --&
---! error
+--! [KailuaAssume(Local, `p`, _, Oops)]
 
 --8<-- meta-long-string
 --# assume p: [[xxx   --@< Error: A newline is disallowed in a long string inside the meta block
 --#             yyy]] --@^ Note: The meta block started here
                       --@^ Error: Expected a newline, got a name
---! error
+f()
+--! [KailuaAssume(Local, `p`, _, String("xxx   ")), Void(`f`())]
 
 --8<-- meta-long-comment-1
 --# assume p: --[[xxx   --@< Error: A newline is disallowed in a long comment inside the meta block
 --#               yyy]] --@^ Note: The meta block started here
                         --@^ Error: Expected a newline, got `]`
---! error
+f()
+--! [KailuaAssume(Local, `p`, _, `yyy`), Void(`f`())]
 
 --8<-- meta-long-comment-2
 --# assume p: --[[xxx   --@< Error: A newline is disallowed in a long comment inside the meta block
                   yyy]] --@^ Note: The meta block started here
                         --@^^-^ Error: Expected a single type, got a newline
                         --@^^ Error: Expected a newline, got a name
---! error
+--! [KailuaAssume(Local, `p`, _, Oops)]
 
 --8<-- string-wrong-escape
 f('foo\xyz') --@< Error: Unrecognized escape sequence in a string
---! error
+--! [Void(`f`("fooyz"))]
 
 --8<-- string-wrong-escape-recover
 f('foo\xyz', 'bar\zyx') --@< Error: Unrecognized escape sequence in a string
                         --@^ Error: Unrecognized escape sequence in a string
---! error
+--! [Void(`f`("fooyz", "baryx"))]
 
 --8<-- string-incomplete-escape
 f('foo\ --@< Fatal: Premature end of file in a string
@@ -1058,7 +1061,9 @@ f(@3) --@< Fatal: Unexpected character
 
 --8<-- assume-excess
 --# assume p: integer f --@< Error: Expected a newline, got a name
---! error
+f()
+--# assume q: integer g --@< Error: Expected a newline, got a name
+--! [KailuaAssume(Local, `p`, _, Integer), Void(`f`()), KailuaAssume(Local, `q`, _, Integer)]
 
 --8<-- for-of
 for a of x --@< Fatal: Expected `=`, `,`, `in` or `--:` after `for NAME`, got a name
@@ -1078,7 +1083,7 @@ function p(# --@< Fatal: Expected an argument name, `)` or `...`, got `#`
 --8<-- argtype-slot
 function p(...) --: const integer --@< Error: Variadic argument specifier cannot have modifiers
 end
---! error
+--! [FuncDecl(Global, `p`, [...: Integer] -> _, [])]
 
 --8<-- table-invalid-char
 f({x#}) --@< Fatal: Expected `,`, `;` or `}`, got `#`
@@ -1113,38 +1118,38 @@ a, *b = 5 --@< Fatal: Expected a left-hand-side expression, got `*`
 --! error
 
 --8<-- assume-invalid-char
---# assume x: # --@< Error: Expected a single type, got `#`
---! error
+--# assume x: #foo --@< Error: Expected a single type, got `#`
+--! [KailuaAssume(Local, `x`, _, Oops)]
 
 --8<-- assume-seq-varargs-1
 --# assume x: (...) --@< Error: `...` should be preceded with a kind in the ordinary kinds
                     --@^ Error: Expected a single type, not type sequence
---! error
+--! [KailuaAssume(Local, `x`, _, Oops)]
 
 --8<-- assume-seq-1
 --# assume x: (string...) --@< Error: Expected a single type, not type sequence
---! error
+--! [KailuaAssume(Local, `x`, _, Oops)]
 
 --8<-- assume-seq-varargs-2
 --# assume x: (integer, ...) --@< Error: `...` should be preceded with a kind in the ordinary kinds
                              --@^ Error: Expected a single type, not type sequence
---! error
+--! [KailuaAssume(Local, `x`, _, Oops)]
 
 --8<-- assume-seq-2
 --# assume x: (integer, string) --@< Error: Expected a single type, not type sequence
---! error
+--! [KailuaAssume(Local, `x`, _, Oops)]
 
 --8<-- assume-seq-varargs-3
 --# assume x: (integer, string...) --@< Error: Expected a single type, not type sequence
---! error
+--! [KailuaAssume(Local, `x`, _, Oops)]
 
 --8<-- assume-seq-invalid-char
 --# assume x: (integer, #) --@< Fatal: Expected a type, got `#`
 --! error
 
 --8<-- assume-func-invalid-char
---# assume x: function () -> # --@< Error: Expected a single type or type sequence, got `#`
---! error
+--# assume x: function () -> #foo --@< Error: Expected a single type or type sequence, got `#`
+--! [KailuaAssume(Local, `x`, _, Func([() -> Oops]))]
 
 --8<-- assume-named
 --# assume x: whatever
@@ -1161,7 +1166,7 @@ a, *b = 5 --@< Fatal: Expected a left-hand-side expression, got `*`
 --8<-- assume-rec-duplicate-name
 --# assume x: {x = integer, x = string} --@< Error: Duplicate record field `x` in the type specification
                                         --@^ Note: The first duplicate appeared here
---! error
+--! [KailuaAssume(Local, `x`, _, Record(["x": _ Integer, "x": _ String]))]
 
 --8<-- assume-rec-duplicate-name-recover
 --# assume x: {x = integer,
@@ -1172,7 +1177,11 @@ a, *b = 5 --@< Fatal: Expected a left-hand-side expression, got `*`
 --#                         --@^^^^^ Note: The first duplicate appeared here
 --#            y = number}  --@< Error: Duplicate record field `y` in the type specification
                             --@^^^^ Note: The first duplicate appeared here
---! error
+--! [KailuaAssume(Local, `x`, _, Record(["x": _ Integer, \
+--!                                      "x": _ String, \
+--!                                      "y": _ Table, \
+--!                                      "x": _ Boolean, \
+--!                                      "y": _ Number]))]
 
 --8<-- assume-builtin-and-literal-recover
 --# assume x: WHATEVER = hello --@< Error: Expected a newline, got `=`
@@ -1222,13 +1231,13 @@ f(                                      --@< Fatal: Expected `)`, got the end of
 --8<-- alias-builtin
 --# type any = integer --@< Error: Cannot redefine a builtin type
 --# assume x: {any}
---! error
+--! [KailuaType(`any`, Integer), KailuaAssume(Local, `x`, _, Array(_ Any))]
 
 --8<-- alias-incomplete
 --# type int =
 --# assume x: {int} --@< Error: Expected a single type, got a keyword `assume`
                     --@^ Error: Expected a newline, got a name
---! error
+--! [KailuaType(`int`, Oops)]
 
 --8<-- kind-error
 --# type x = error
