@@ -1456,8 +1456,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         try!(self.expect(Punct::LParen));
         let args = try!(self.parse_kailua_kindlist());
         try!(self.expect(Punct::RParen));
-        let returns = if self.may_expect(Punct::DashGt) {
-            // "(" ... ")" "->" ...
+        let returns = if self.may_expect(Punct::DashDashGt) {
+            // "(" ... ")" "-->" ...
             try!(self.parse_kailua_kind_seq())
         } else {
             // "(" ... ")"
@@ -1857,19 +1857,20 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 attrs.push(attr);
             }
 
-            // "(" [NAME ":" KIND] {"," NAME ":" KIND} ["," "..."] ")" ["->" KIND]
+            // function "(" [NAME ":" KIND] {"," NAME ":" KIND} ["," "..."] ")" ["-->" KIND]
             let begin = self.pos();
             let has_sig = if attrs.is_empty() {
                 // force reading signatures if no attributes are present
-                try!(self.expect(Punct::LParen));
+                try!(self.expect(Keyword::Function));
                 true
             } else {
-                self.may_expect(Punct::LParen)
+                self.may_expect(Keyword::Function)
             };
             let sig = if has_sig {
+                try!(self.expect(Punct::LParen));
                 let args = try!(self.parse_kailua_namekindlist());
                 try!(self.expect(Punct::RParen));
-                let returns = if self.may_expect(Punct::DashGt) {
+                let returns = if self.may_expect(Punct::DashDashGt) {
                     try!(self.parse_kailua_kind_seq())
                 } else {
                     Seq { head: Vec::new(), tail: None }

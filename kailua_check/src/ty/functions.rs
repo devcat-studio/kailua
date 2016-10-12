@@ -31,13 +31,13 @@ impl Function {
         try!(write!(f, "function"));
         try!(write_tyseq(&self.args, f));
         match (self.returns.head.len(), self.returns.tail.is_some()) {
-            (0, false) => write!(f, " -> ()"),
+            (0, false) => write!(f, " --> ()"),
             (1, false) => {
-                try!(write!(f, " -> "));
+                try!(write!(f, " --> "));
                 write_ty(&self.returns.head[0], f)
             },
             (_, _) => {
-                try!(write!(f, " -> "));
+                try!(write!(f, " --> "));
                 write_tyseq(&self.returns, f)
             },
         }

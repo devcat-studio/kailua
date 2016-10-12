@@ -15,21 +15,21 @@ do break; end; break
 
 --8<-- func
 function r(p) --[[...]] end
---! [FuncDecl(Global, `r`, [`p`] -> _, [])]
+--! [FuncDecl(Global, `r`, [`p`] --> _, [])]
 
 --8<-- local-func
 local function r(p,...)
 
 end
---! [FuncDecl(Local, `r`, [`p`, ...: _] -> _, [])]
+--! [FuncDecl(Local, `r`, [`p`, ...: _] --> _, [])]
 
 --8<-- func-in-table
 function a.b.c(p) --[[...]] end
---! [MethodDecl([`a`, `b`, `c`], None, [`p`] -> _, [])]
+--! [MethodDecl([`a`, `b`, `c`], None, [`p`] --> _, [])]
 
 --8<-- method
 function a.b:c(p) --[[...]] end
---! [MethodDecl([`a`, `b`, `c`], Some(self), [`p`] -> _, [])]
+--! [MethodDecl([`a`, `b`, `c`], Some(self), [`p`] --> _, [])]
 
 --8<-- local
 local a, b
@@ -242,13 +242,13 @@ local function r(p --: integer
                 )
 
 end
---! [FuncDecl(Local, `r`, [`p`: _ Integer] -> _, [])]
+--! [FuncDecl(Local, `r`, [`p`: _ Integer] --> _, [])]
 
 --8<-- func-argtype-rettype
 local function r(p, q) --: integer --> string
 
 end
---! [FuncDecl(Local, `r`, [`p`, `q`: _ Integer] -> String, [])]
+--! [FuncDecl(Local, `r`, [`p`, `q`: _ Integer] --> String, [])]
 
 --8<-- funccall
 f()
@@ -442,34 +442,34 @@ local x --: function | string?
 
 --8<-- kind-func-0
 local x --: function()
---! [Local([`x`: _ Func([() -> ()])], [])]
+--! [Local([`x`: _ Func([() --> ()])], [])]
 
 --8<-- kind-func-0-explicit
-local x --: function()->()
---! [Local([`x`: _ Func([() -> ()])], [])]
+local x --: function()-->()
+--! [Local([`x`: _ Func([() --> ()])], [])]
 
 --8<-- kind-func-0-and-2
-local x --: function () & (integer, boolean...)->string?
---! [Local([`x`: _ Func([() -> (), \
---!                      (Integer, Boolean...) -> Union([String, Nil])])], [])]
+local x --: function () & (integer, boolean...)-->string?
+--! [Local([`x`: _ Func([() --> (), \
+--!                      (Integer, Boolean...) --> Union([String, Nil])])], [])]
 
 --8<-- kind-func-0-and-2-seq
-local x --: function () -> (integer...) & (integer, boolean...)->(string?, WHATEVER...)
---! [Local([`x`: _ Func([() -> (Integer...), \
---!                      (Integer, Boolean...) -> (Union([String, Nil]), Dynamic...)\
+local x --: function () --> (integer...) & (integer, boolean...)-->(string?, WHATEVER...)
+--! [Local([`x`: _ Func([() --> (Integer...), \
+--!                      (Integer, Boolean...) --> (Union([String, Nil]), Dynamic...)\
 --!                     ])], [])]
 
 --8<-- kind-func-seq-without-parens
-local x --: function () -> integer... --@< Error: Expected a newline, got `...`
---! [Local([`x`: _ Func([() -> Integer])], [])]
+local x --: function () --> integer... --@< Error: Expected a newline, got `...`
+--! [Local([`x`: _ Func([() --> Integer])], [])]
 
 --8<-- kind-func-or-without-parens
 local x --: function (boolean...) | string? --@< Error: Expected a newline, got `|`
---! [Local([`x`: _ Func([(Boolean...) -> ()])], [])]
+--! [Local([`x`: _ Func([(Boolean...) --> ()])], [])]
 
 --8<-- kind-func-or
 local x --: (function (boolean...)) | string?
---! [Local([`x`: _ Union([Func([(Boolean...) -> ()]), Union([String, Nil])])], [])]
+--! [Local([`x`: _ Union([Func([(Boolean...) --> ()]), Union([String, Nil])])], [])]
 
 --8<-- kind-any-func
 local x --: `function`
@@ -526,23 +526,23 @@ local x --: {}
 
 --8<-- kind-rec
 local x --: {a = const function (), b = string,
-        --:  c = const function (string) -> integer &
-        --:                     (string, integer) -> number}?
---! [Local([`x`: _ Union([Record(["a": Const Func([() -> ()]), \
+        --:  c = const function (string) --> integer &
+        --:                     (string, integer) --> number}?
+--! [Local([`x`: _ Union([Record(["a": Const Func([() --> ()]), \
 --!                               "b": _ String, \
---!                               "c": Const Func([(String) -> Integer, \
---!                                                (String, Integer) -> Number])\
+--!                               "c": Const Func([(String) --> Integer, \
+--!                                                (String, Integer) --> Number])\
 --!                              ]), Nil])], [])]
 
 --8<-- kind-tuple
 local x --: {const function (); string;
-        --:  const function (string) -> integer &
-        --:                 (string, integer) -> number;
+        --:  const function (string) --> integer &
+        --:                 (string, integer) --> number;
         --: }?
---! [Local([`x`: _ Union([Tuple([Const Func([() -> ()]), \
+--! [Local([`x`: _ Union([Tuple([Const Func([() --> ()]), \
 --!                              _ String, \
---!                              Const Func([(String) -> Integer, \
---!                                          (String, Integer) -> Number])\
+--!                              Const Func([(String) --> Integer, \
+--!                                          (String, Integer) --> Number])\
 --!                             ]), Nil])], [])]
 
 --8<-- kind-tuple-1
@@ -594,7 +594,7 @@ local x --: [builtin] string
 
 --8<-- kind-attr-2
 local x --: [builtin] function(any)
---! [Local([`x`: _ [`builtin`] Func([(Any) -> ()])], [])]
+--! [Local([`x`: _ [`builtin`] Func([(Any) --> ()])], [])]
 
 --8<-- kind-attr-paren
 local x --: ([builtin] (string))
@@ -610,7 +610,7 @@ local x --: [built-in] string --@< Fatal: Expected `]`, got `-`
 
 --8<-- kind-attr-keyword
 local x --: [type] function(any)
---! [Local([`x`: _ [`type`] Func([(Any) -> ()])], [])]
+--! [Local([`x`: _ [`type`] Func([(Any) --> ()])], [])]
 
 --8<-- kind-attr-dup
 local x --: [builtin] [builtin] string --@< Error: Expected a single type, got `[`
@@ -618,48 +618,48 @@ local x --: [builtin] [builtin] string --@< Error: Expected a single type, got `
 --! [Local([`x`: _ Oops], [])]
 
 --8<-- kind-attr-seq
-local x --: function() -> [builtin] (string, string)
+local x --: function() --> [builtin] (string, string)
 --@^ Error: Cannot attach the type attribute (like [name]) to the type sequence
---! [Local([`x`: _ Func([() -> (String, String)])], [])]
+--! [Local([`x`: _ Func([() --> (String, String)])], [])]
 
 --8<-- funcspec
---v ()
+--v function()
 function foo() end
 --! [FuncDecl(Global, `foo`, [], [])]
 -- note that the return is specified (not `_`)
 
 --8<-- funcspec-more-arity-1
---v (a: integer,
---v  b: string) --@^-< Error: Excess arguments in the function specification
+--v function(a: integer,
+--v          b: string) --@^-< Error: Excess arguments in the function specification
 function foo() end
 --! [FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ String], [])]
 
 --8<-- funcspec-more-arity-2
---v (a: integer,
---v  b: string) --@< Error: Excess arguments in the function specification
+--v function(a: integer,
+--v          b: string) --@< Error: Excess arguments in the function specification
 function foo(a) end
 --! [FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ String], [])]
 
 --8<-- funcspec-wrong-name
---v (a: integer)
+--v function(a: integer)
 function foo(b) end --@< Error: Mismatching argument name in the function specification
                     --@^^ Note: The corresponding argument was here
 --! [FuncDecl(Global, `foo`, [`a`: _ Integer], [])]
 
 --8<-- funcspec-less-arity-1
---v ()
+--v function()
 function foo(a,
              b) end --@^-< Error: Excess arguments in the function declaration
 --! [FuncDecl(Global, `foo`, [], [])]
 
 --8<-- funcspec-less-arity-2
---v (a: integer)
+--v function(a: integer)
 function foo(a,
              b) end --@< Error: Excess arguments in the function declaration
 --! [FuncDecl(Global, `foo`, [`a`: _ Integer], [])]
 
 --8<-- funcspec-swapped-name
---v (a: integer, b: integer)
+--v function(a: integer, b: integer)
 function foo(b, a) end --@< Error: Mismatching argument name in the function specification
                        --@^^ Note: The corresponding argument was here
                        --@^^ Error: Mismatching argument name in the function specification
@@ -667,54 +667,54 @@ function foo(b, a) end --@< Error: Mismatching argument name in the function spe
 --! [FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ Integer], [])]
 
 --8<-- funcspec-1
---v (a: integer)
+--v function(a: integer)
 local function foo(a) end
 --! [FuncDecl(Local, `foo`, [`a`: _ Integer], [])]
 
 --8<-- funcspec-1-seq-1
---v (a: integer) -> (WHATEVER...)
+--v function(a: integer) --> (WHATEVER...)
 local function foo(a) end
---! [FuncDecl(Local, `foo`, [`a`: _ Integer] -> [Dynamic...], [])]
+--! [FuncDecl(Local, `foo`, [`a`: _ Integer] --> [Dynamic...], [])]
 
 --8<-- funcspec-1-seq-2
---v (a: integer) -> (string, WHATEVER...)
+--v function(a: integer) --> (string, WHATEVER...)
 local function foo(a) end
---! [FuncDecl(Local, `foo`, [`a`: _ Integer] -> [String, Dynamic...], [])]
+--! [FuncDecl(Local, `foo`, [`a`: _ Integer] --> [String, Dynamic...], [])]
 
 --8<-- funcspec-inline
-(--v (a: const integer,
- --v  ...)
- --v -> string
+(--v function(a: const integer,
+ --v          ...)
+ --v         --> string
  function(a, ...) end)()
---! [Void(Func([`a`: Const Integer, ...: _] -> String, [])())]
+--! [Void(Func([`a`: Const Integer, ...: _] --> String, [])())]
 
 --8<-- funcspec-attr-1
---v [no_check] ()
+--v [no_check] function()
 function foo() end
 --! [FuncDecl(Global, `foo`, [`no_check`] [], [])]
 
 --8<-- funcspec-attr-2
 --v [no_check]
---v ()
+--v function()
 function foo() end
 --! [FuncDecl(Global, `foo`, [`no_check`] [], [])]
 
 --8<-- funcspec-attr-multi-1
---v [no_check] [self_destruct] ()
+--v [no_check] [self_destruct] function()
 function foo() end
 --! [FuncDecl(Global, `foo`, [`no_check`] [`self_destruct`] [], [])]
 
 --8<-- funcspec-attr-multi-2
 --v [no_check]
 --v [self_destruct]
---v ()
+--v function()
 function foo() end
 --! [FuncDecl(Global, `foo`, [`no_check`] [`self_destruct`] [], [])]
 
 --8<-- funcspec-attr-only
 --v [no_check]
 function foo() end
---! [FuncDecl(Global, `foo`, [`no_check`] [] -> _, [])]
+--! [FuncDecl(Global, `foo`, [`no_check`] [] --> _, [])]
 -- note the trailing `_`, which indicates that there was no pre-signature
 
 --8<-- funcspec-attr-incomplete
@@ -723,7 +723,12 @@ function foo() end
 --! error
 
 --8<-- funcspec-no-empty
---v --@<-v Fatal: Expected `(`, got a newline
+--v --@<-v Fatal: Expected a keyword `function`, got a newline
+function foo() end
+--! error
+
+--8<-- funcspec-no-bare-parens
+--v () --@< Fatal: Expected a keyword `function`, got `(`
 function foo() end
 --! error
 
@@ -735,32 +740,32 @@ end
 --8<-- rettype-string
 function foo() --> string
 end
---! [FuncDecl(Global, `foo`, [] -> String, [])]
+--! [FuncDecl(Global, `foo`, [] --> String, [])]
 
 --8<-- rettype-string-parens
 function foo() --> ((((string))))
 end
---! [FuncDecl(Global, `foo`, [] -> String, [])]
+--! [FuncDecl(Global, `foo`, [] --> String, [])]
 
 --8<-- rettype-seq-1
 function foo() --> (WHATEVER...)
 end
---! [FuncDecl(Global, `foo`, [] -> [Dynamic...], [])]
+--! [FuncDecl(Global, `foo`, [] --> [Dynamic...], [])]
 
 --8<-- rettype-seq-2
 function foo() --> (string, WHATEVER...)
 end
---! [FuncDecl(Global, `foo`, [] -> [String, Dynamic...], [])]
+--! [FuncDecl(Global, `foo`, [] --> [String, Dynamic...], [])]
 
 --8<-- funcspec-and-rettype
---v ()
+--v function()
 function foo() --> string
     --@^ Error: Inline return type specification cannot appear with the function specification
 end --@^^^ Note: The function specification appeared here
 --! [FuncDecl(Global, `foo`, [], [])]
 
 --8<-- funcspec-and-argtype-rettype-1
---v (a: integer)
+--v function(a: integer)
 function foo(a) --: integer --> string
     --@^ Error: Inline argument type specification cannot appear with the function specification
 end --@^^^ Note: The function specification appeared here
@@ -769,7 +774,7 @@ end --@^^^ Note: The function specification appeared here
 --! [FuncDecl(Global, `foo`, [`a`: _ Integer], [])]
 
 --8<-- funcspec-and-argtype-rettype-2
---v (a: integer, b: boolean)
+--v function(a: integer, b: boolean)
 function foo(a, --: integer --@< Error: Inline argument type specification cannot appear with the function specification
                             --@^^ Note: The function specification appeared here
              b) --> string  --@< Error: Inline return type specification cannot appear with the function specification
@@ -778,32 +783,32 @@ end
 --! [FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ Boolean], [])]
 
 --8<-- funcspec-before-nothing
---v () --@< Error: No function declaration after the function specification
+--v function() --@< Error: No function declaration after the function specification
 --! []
 
 --8<-- funcspec-before-local
---v () --@< Error: No function declaration after the function specification
+--v function() --@< Error: No function declaration after the function specification
 local v = 42
 --! [Local([`v`], [42])]
 
 --8<-- funcspec-before-local-recover
---v () --@< Error: No function declaration after the function specification
+--v function() --@< Error: No function declaration after the function specification
 local v = 42
---v () --@< Error: No function declaration after the function specification
+--v function() --@< Error: No function declaration after the function specification
 --! [Local([`v`], [42])]
 
 --8<-- funcspec-before-assume
---v () --@< Error: No function declaration after the function specification
+--v function() --@< Error: No function declaration after the function specification
 --# assume x: integer
 --! [KailuaAssume(Local, `x`, _, Integer)]
 
 --8<-- funcspec-before-for
---v () --@< Error: No function declaration after the function specification
+--v function() --@< Error: No function declaration after the function specification
 for i = 1, 3 do end
 --! [For(`i`, 1, 3, None, [])]
 
 --8<-- funcspec-before-expr-inline
-f(--v () --@< Error: No function literal after the function specification
+f(--v function() --@< Error: No function literal after the function specification
   g())
 --! [Void(`f`(`g`()))]
 
@@ -811,92 +816,95 @@ f(--v () --@< Error: No function literal after the function specification
 function foo(a, --: integer
              b, ...) --: string
 end
---! [FuncDecl(Global, `foo`, [`a`: _ Integer, `b`, ...: String] -> _, [])]
+--! [FuncDecl(Global, `foo`, [`a`: _ Integer, `b`, ...: String] --> _, [])]
 
 --8<-- funcspec-and-argtype
---v (a: integer, b: boolean, ...: string)
-function foo(a, b, ...) --: string --@< Error: Inline variadic argument type specification cannot appear with the function specification
-                                   --@^^ Note: The corresponding argument in the function specification was here
+--v function(a: integer, b: boolean, ...: string)
+function foo(a, b, ...) --: string
+    --@^ Error: Inline variadic argument type specification cannot appear with the function specification
+    --@^^^ Note: The corresponding argument in the function specification was here
 end
 --! [FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ Boolean, ...: String], [])]
 
 --8<-- funcspec-less-varargs
---v (a: integer, b: boolean)
-function foo(a, b, ...) --@< Error: Variadic arguments appear in the function but not in the function specification
+--v function(a: integer, b: boolean)
+function foo(a, b, ...)
+    --@^ Error: Variadic arguments appear in the function but not in the function specification
 end
 --! [FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ Boolean], [])]
 
 --8<-- funcspec-more-varargs
---v (a: integer, b: boolean, ...: string) --@< Error: Variadic arguments appear in the function specification but not in the function itself
+--@v Error: Variadic arguments appear in the function specification but not in the function itself
+--v function(a: integer, b: boolean, ...: string)
 function foo(a, b)
 end
 --! [FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ Boolean, ...: String], [])]
 
 --8<-- funcspec-varargs
---v (a: integer, b: boolean, ...: string)
+--v function(a: integer, b: boolean, ...: string)
 function foo(a, b, ...)
 end
 --! [FuncDecl(Global, `foo`, [`a`: _ Integer, `b`: _ Boolean, ...: String], [])]
 
 --8<-- funcspec-varargs-0
---v (...: string)
+--v function(...: string)
 function foo(...)
 end
 --! [FuncDecl(Global, `foo`, [...: String], [])]
 
 --8<-- local-funcspec-varargs-0
---v (...: string)
+--v function(...: string)
 local function foo(...)
 end
 --! [FuncDecl(Local, `foo`, [...: String], [])]
 
 --8<-- funcspec-method-no-self-1
---v () --@< Error: The first argument in the function specification for a method is not `self`
+--v function() --@< Error: The first argument in the function specification for a method is not `self`
 function foo:bar() end
 --! [MethodDecl([`foo`, `bar`], Some(self), [], [])]
 
 --8<-- funcspec-method-no-self-2
 --@v-vv Error: The first argument in the function specification for a method is not `self`
---v (x: integer,
---v  y: string)
+--v function(x: integer,
+--v          y: string)
 function foo:bar(x, y) end
 --! [MethodDecl([`foo`, `bar`], Some(self), [`x`: _ Integer, `y`: _ String], [])]
 
 --8<-- funcspec-method-self
---v (self)
+--v function(self)
 function foo:bar() end
 --! [MethodDecl([`foo`, `bar`], Some(self), [], [])]
 
 --8<-- funcspec-method-self-typed
---v (self: table)
+--v function(self: table)
 function foo:bar() end
 --! [MethodDecl([`foo`, `bar`], Some(self: _ Table), [], [])]
 
 --8<-- funcspec-method-self-typed-with-modf
---v (self: const table)
+--v function(self: const table)
 function foo:bar() end
 --! [MethodDecl([`foo`, `bar`], Some(self: Const Table), [], [])]
 
 --8<-- funcspec-non-method-self-1
---v (self, x: integer) --@< Error: Arguments in the function specification are missing their types
-                       --@^ Error: Excess arguments in the function specification
+--v function(self, x: integer) --@< Error: Arguments in the function specification are missing their types
+                               --@^ Error: Excess arguments in the function specification
 function foo.bar(x) end --@< Error: Mismatching argument name in the function specification
                         --@^^^ Note: The corresponding argument was here
 --! [MethodDecl([`foo`, `bar`], None, [`self`, `x`: _ Integer], [])]
 
 --8<-- funcspec-non-method-self-2
---v (self, x: integer) --@< Error: Arguments in the function specification are missing their types
+--v function(self, x: integer) --@< Error: Arguments in the function specification are missing their types
 function foo.bar(self, x) end
 --! [MethodDecl([`foo`, `bar`], None, [`self`, `x`: _ Integer], [])]
 
 --8<-- funcspec-non-method-self-typed-1
---v (self: table, x: integer) --@< Error: Excess arguments in the function specification
+--v function(self: table, x: integer) --@< Error: Excess arguments in the function specification
 function foo.bar(x) end --@< Error: Mismatching argument name in the function specification
                         --@^^ Note: The corresponding argument was here
 --! [MethodDecl([`foo`, `bar`], None, [`self`: _ Table, `x`: _ Integer], [])]
 
 --8<-- funcspec-non-method-self-typed-2
---v (self: table, x: integer)
+--v function(self: table, x: integer)
 function foo.bar(self, x) end
 --! [MethodDecl([`foo`, `bar`], None, [`self`: _ Table, `x`: _ Integer], [])]
 
@@ -1083,7 +1091,7 @@ function p(# --@< Fatal: Expected an argument name, `)` or `...`, got `#`
 --8<-- argtype-slot
 function p(...) --: const integer --@< Error: Variadic argument specifier cannot have modifiers
 end
---! [FuncDecl(Global, `p`, [...: Integer] -> _, [])]
+--! [FuncDecl(Global, `p`, [...: Integer] --> _, [])]
 
 --8<-- table-invalid-char
 f({x#}) --@< Fatal: Expected `,`, `;` or `}`, got `#`
@@ -1148,8 +1156,8 @@ a, *b = 5 --@< Fatal: Expected a left-hand-side expression, got `*`
 --! error
 
 --8<-- assume-func-invalid-char
---# assume x: function () -> #foo --@< Error: Expected a single type or type sequence, got `#`
---! [KailuaAssume(Local, `x`, _, Func([() -> Oops]))]
+--# assume x: function () --> #foo --@< Error: Expected a single type or type sequence, got `#`
+--! [KailuaAssume(Local, `x`, _, Func([() --> Oops]))]
 
 --8<-- assume-named
 --# assume x: whatever
@@ -1250,4 +1258,19 @@ f(                                      --@< Fatal: Expected `)`, got the end of
 --8<-- kind-error-or-string
 --# type x = error | 'whatever'
 --! [KailuaType(`x`, Union([Error, String("whatever")]))]
+
+--8<-- lua51-goto-as-a-name
+--# open lua51
+goto = 42
+--! [KailuaOpen(`lua51`), Assign([`goto`], [42])]
+
+--8<-- lua51-goto-as-a-name-in-meta-1
+--# open lua51
+--# type goto = integer --@< Fatal: Expected a name, got a keyword `goto`
+--! error
+
+--8<-- lua51-goto-as-a-name-in-meta-2
+--# open lua51
+--# type `goto` = integer
+--! [KailuaOpen(`lua51`), KailuaType(`goto`, Integer)]
 

@@ -189,12 +189,12 @@ impl fmt::Debug for Sig {
         try!(write!(f, "]"));
         if let Some(ref returns) = self.returns {
             if returns.head.len() == 1 && returns.tail.is_none() {
-                try!(write!(f, " -> {:?}", returns.head[0]));
+                try!(write!(f, " --> {:?}", returns.head[0]));
             } else if !(returns.head.is_empty() && returns.tail.is_none()) {
-                try!(write!(f, " -> {:?}", *returns));
+                try!(write!(f, " --> {:?}", *returns));
             }
         } else {
-            try!(write!(f, " -> _"));
+            try!(write!(f, " --> _"));
         }
         Ok(())
     }
@@ -396,9 +396,9 @@ impl fmt::Debug for FuncKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         try!(write!(f, "({:-?})", self.args));
         if self.returns.head.len() == 1 && self.returns.tail.is_none() {
-            try!(write!(f, " -> {:?}", self.returns.head[0]));
+            try!(write!(f, " --> {:?}", self.returns.head[0]));
         } else {
-            try!(write!(f, " -> ({:-?})", self.returns));
+            try!(write!(f, " --> ({:-?})", self.returns));
         }
         Ok(())
     }

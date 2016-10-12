@@ -88,7 +88,7 @@ local x = p + 'foo' --@< Error: `"foo"` is not a subtype of `number`
 
 --8<-- add-number-func
 local function p() end
-local x = p + 'foo' --@< Error: `function() -> ()` is not a subtype of `number`
+local x = p + 'foo' --@< Error: `function() --> ()` is not a subtype of `number`
 --! error
 
 --8<-- lt-number-integer-1
@@ -135,7 +135,7 @@ local x = p < q --@< Error: Operand `(number|"hello")` to < operator should be e
 
 --8<-- lt-func-number
 local function p() end
-local x = p < 3.14 --@< Error: Cannot apply < operator to `<currently> function() -> ()` and `number`
+local x = p < 3.14 --@< Error: Cannot apply < operator to `<currently> function() --> ()` and `number`
 --! error
 
 --8<-- unknown-type
@@ -236,26 +236,26 @@ local p = x:hello()
 --! ok
 
 --8<-- methodcall-rec-2
-local x = {hello = --v (a: table, b: integer)
+local x = {hello = --v function(a: table, b: integer)
                    function(a, b) end}
 local p = x:hello() --@< Error: `nil` is not a subtype of `integer`
 --! error
 
 --8<-- methodcall-rec-3
-local x = {hello = --v (a: table, b: integer)
+local x = {hello = --v function(a: table, b: integer)
                    function(a, b) end}
 local p = x:hello(4)
 --! ok
 
 --8<-- methodcall-rec-4
-local x = {hello = --v (a: table, b: integer)
+local x = {hello = --v function(a: table, b: integer)
                    function(a, b) end}
 local p = x:hello('string') --@< Error: `"string"` is not a subtype of `integer`
 --! error
 
 --8<-- methodcall-rec-5
 local x = {hello = function() end}
-local p = x:hello() --@< Error: `{hello = function() -> ()}` is not a subtype of `nil`
+local p = x:hello() --@< Error: `{hello = function() --> ()}` is not a subtype of `nil`
 -- XXX error is bad, should mention about the method call
 --! error
 
@@ -264,7 +264,7 @@ local s = (42):char() --@< Error: Tried to index a non-table type `42`
 --! error
 
 --8<-- index-func
-local p = (function() end)[3] --@< Error: Tried to index a non-table type `function() -> ()`
+local p = (function() end)[3] --@< Error: Tried to index a non-table type `function() --> ()`
 --! error
 
 --8<-- currently-nil-to-string
@@ -846,19 +846,19 @@ y = 54
 --! ok
 
 --8<-- func-returns-rec-1
---v () -> {a=integer}
+--v function() --> {a=integer}
 local function p() return {a=4} end
 local x = p().a + 5
 --! ok
 
 --8<-- func-returns-rec-2
---v () -> {a=integer}
+--v function() --> {a=integer}
 local function p() return {a=4} end
 local x = p().a.b --@< Error: Tried to index a non-table type `integer`
 --! error
 
 --8<-- func-returns-rec-2-span
---v () -> {a=integer}
+--v function() --> {a=integer}
 local function p() return {a=4} end
 local x = p().a
 local y = x.b --@< Error: Tried to index a non-table type `<currently> integer`
@@ -870,42 +870,42 @@ local x = p().a + 5
 --! ok
 
 --8<-- func-returns-seq
---v () -> (integer, integer)
+--v function() --> (integer, integer)
 local function p()
     return 3, 4
 end
 --! ok
 
 --8<-- func-returns-seq-error
---v () -> (integer, string)
+--v function() --> (integer, string)
 local function p()
     return 3, 4 --@< Error: `4` is not a subtype of `string`
 end
 --! error
 
 --8<-- func-returns-seq-with-nil
---v () -> (integer, nil)
+--v function() --> (integer, nil)
 local function p()
     return 3
 end
 --! ok
 
 --8<-- func-returns-with-nil
---v () -> integer
+--v function() --> integer
 local function p()
     return 3, nil
 end
 --! ok
 
 --8<-- func-returns-seq-union
---v (n: boolean) -> (string|nil, string|nil)
+--v function(n: boolean) --> (string|nil, string|nil)
 local function p(n)
     if n then return 'string' else return nil, 'error' end
 end
 --! ok
 
 --8<-- func-returns-wrong
---v ()
+--v function()
 local function f()
     return 'foo'
     --@^ Error: `"foo"` is not a subtype of `nil`
@@ -988,31 +988,31 @@ local c = {p(), bar = p()} --: {[integer|string] = integer}
 local function p()
     return 1, 'string', false
 end
---v (a: number, b: integer, c: number, d: integer, e: string, f: boolean)
+--v function(a: number, b: integer, c: number, d: integer, e: string, f: boolean)
 local function q(a,b,c,d,e,f) end
 q(3.14, p(), -42, p())
 --! ok
 
 --8<-- func-varargs-type-1
---v (...: integer)
+--v function(...: integer)
 local function p(...) end
 p(1, 2, 3)
 --! ok
 
 --8<-- func-varargs-type-2
---v (...: integer)
+--v function(...: integer)
 local function p(...) end
 p(1, false, 3) --@< Error: `false` is not a subtype of `(nil|integer)`
 --! error
 
 --8<-- func-varargs-type-with-nil
---v (...: integer)
+--v function(...: integer)
 local function p(...) end
 p(1, 2, 3, nil, nil, nil)
 --! ok
 
 -->8-- func-varargs-type-delegated
---v (...: string)
+--v function(...: string)
 function f(...)
 end
 function g(...)
@@ -1429,28 +1429,28 @@ p[1] = 42
 --! ok
 
 --8<-- for-in-simple-iter-1
---# assume func: const function() -> number?
+--# assume func: const function() --> number?
 for x in func do
     local a = x * 3
 end
 --! ok
 
 --8<-- for-in-simple-iter-2
---# assume func: const function() -> number    -- technically infinite loop
+--# assume func: const function() --> number    -- technically infinite loop
 for x in func do
     local a = x * 3
 end
 --! ok
 
 --8<-- for-in-simple-iter-3
---# assume func: const function() -> number|string
+--# assume func: const function() --> number|string
 for x in func do
     local a = x * 3 --@< Error: `(number|string)` is not a subtype of `number`
 end
 --! error
 
 --8<-- for-in-stateful-iter-1
---# assume func: const function({const integer}, integer?) -> integer?
+--# assume func: const function({const integer}, integer?) --> integer?
 --# assume state: const {const integer}
 --# assume first: const integer?
 for x in func, state, first do
@@ -1459,7 +1459,7 @@ end
 --! ok
 
 --8<-- for-in-stateful-iter-2
---# assume func: const function({const integer}, integer|string?) -> integer?
+--# assume func: const function({const integer}, integer|string?) --> integer?
 --# assume state: const {const integer}
 --# assume first: const integer|string     -- the first value is silently discard
 for x in func, state, first do
@@ -1468,7 +1468,7 @@ end
 --! ok
 
 --8<-- for-in-multi-1
---# assume func: const function({const integer}, integer|string?) -> (integer?, string)
+--# assume func: const function({const integer}, integer|string?) --> (integer?, string)
 --# assume state: const {const integer}
 --# assume first: const integer?
 for x, y in func, state, first do
@@ -1478,7 +1478,7 @@ end
 --! ok
 
 --8<-- for-in-multi-2
---# assume func: const function({const integer}, integer|string?) -> (integer?, string?)
+--# assume func: const function({const integer}, integer|string?) --> (integer?, string?)
 --# assume state: const {const integer}
 --# assume first: const integer?
 for x, y in func, state, first do
@@ -1937,7 +1937,7 @@ p.a.b() --@< Error: Cannot index `const {}` with `"b"`
 --! error
 
 --8<-- methodcall-string-meta-table
---# assume blah: [string_meta] { byte = function(string) -> integer }
+--# assume blah: [string_meta] { byte = function(string) --> integer }
 local x = ('f'):byte() --: integer
 --! ok
 
@@ -1960,9 +1960,9 @@ local x = ('f'):byte() --: integer
 --! error
 
 --8<-- string-meta-redefine
---# assume blah: [string_meta] { byte = function(string) -> integer }
+--# assume blah: [string_meta] { byte = function(string) --> integer }
 --@^ Note: A metatable for `string` type has been previously defined here
---# assume blah2: [string_meta] { lower = function(string) -> string }
+--# assume blah2: [string_meta] { lower = function(string) --> string }
 --@^ Error: A metatable for `string` type cannot be defined more than once and in general should only be set via `--# open` directive
 --! error
 
@@ -2034,7 +2034,7 @@ end
 
 --8<-- no-check
 --v [no_check]
---v (x: integer) -> integer
+--v function(x: integer) --> integer
 function foo(x)
     return x + "string"
 end
@@ -2042,7 +2042,7 @@ end
 
 --8<-- no-check-func-type
 --v [no_check]
---v (x: integer) -> integer
+--v function(x: integer) --> integer
 function foo(x)
     return x + "string"
 end
@@ -2062,13 +2062,13 @@ local c = foo('hi') --: integer
 foo = {}
 
 --v [no_check]
---v (self: integer, x: integer) -> integer
+--v function(self: integer, x: integer) --> integer
 function foo:bar(x)
     return x + "string"
 end
 
 -- this is an error because `self` type is not affected by [no_check]
---@v Error: `{bar = <currently> function(integer, integer) -> integer}` is not a subtype of `integer`
+--@v Error: `{bar = <currently> function(integer, integer) --> integer}` is not a subtype of `integer`
 local a = foo:bar(3) --: integer
 
 --! error
@@ -2100,7 +2100,7 @@ end
 --8<-- no-check-untyped-self
 foo = {}
 --v [no_check]
---v (self, x: integer) -> boolean --@< Error: [no_check] attribute requires the `self` argument to be typed
+--v function(self, x: integer) --> boolean --@< Error: [no_check] attribute requires the `self` argument to be typed
 function foo:bar(x)
     return x + "string"
 end
@@ -2108,7 +2108,7 @@ end
 
 --8<-- lua51-string-add-method
 --# open lua51
---v (self: string) -> string
+--v function(self: string) --> string
 function string:trim()
     return self:gsub('^%s+', ''):gsub('%s+$', '')
 end

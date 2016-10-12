@@ -76,6 +76,12 @@ define_puncts! { Punct |lang|:
     Lt          "`<`",
     Gt          "`>`",
     Eq          "`=`",
+    Amp         "`&`",  // reserved for 5.3+, never generated
+    Tilde       "`~`",  // reserved for 5.3+, never generated
+    Pipe        "`|`",  // reserved for 5.3+, never generated
+    LtLt        "`<<`", // reserved for 5.3+, never generated
+    GtGt        "`>>`", // reserved for 5.3+, never generated
+    SlashSlash  "`//`", // reserved for 5.3+, never generated
     LParen      "`(`",
     RParen      "`)`",
     LBrace      "`{`",
@@ -84,6 +90,7 @@ define_puncts! { Punct |lang|:
     RBracket    "`]`",
     Semicolon   "`;`",
     Colon       "`:`",
+    ColonColon  "`::`", // reserved for 5.2+, never generated
     Comma       "`,`",
     Dot         "`.`",
     DotDot      "`..`",
@@ -95,9 +102,7 @@ define_puncts! { Punct |lang|:
     DashDashColon   "`--:`",
     DashDashGt      "`-->`",
     Ques            "`?`",
-    Pipe            "`|`",
-    Amp             "`&`",
-    DashGt          "`->`",
+    Bang            "`!`",
     Newline         match lang { "ko" => "개행문자", _ => "a newline" },
 }
 
@@ -143,6 +148,7 @@ define_keywords! { Keyword:
         False       b"false",
         For         b"for",
         Function    b"function",
+        // Goto should be here, but see below
         If          b"if",
         In          b"in",
         Local       b"local",
@@ -161,11 +167,18 @@ define_keywords! { Keyword:
         Assume      b"assume",
         Const       b"const",
         Global      b"global",
+        Map         b"map",
         Module      b"module",
         Once        b"once",
         Open        b"open",
         Type        b"type",
         Var         b"var",
+        Vector      b"vector",
+
+        // this is _not_ a Kailua extension, but reserved to ensure that
+        // the name should be escaped even in a metablock of the Lua 5.1 mode.
+        // it is technically treated as like a keyword elsewhere.
+        Goto        b"goto",        // reserved for 5.2+
     }
 }
 
@@ -616,9 +629,6 @@ impl<'a> Lexer<'a> {
                         // do NOT read an excess newline, may be the end of meta block
                         return tok!(Comment);
                     }
-
-                    // Kailua extensions
-                    U8(b'>') if self.meta => return tok!(DashGt),
 
                     c @ U8(_) | c @ U16(_) => { self.unread(c); return tok!(Dash); }
                     EOF => { return tok!(Dash); }
