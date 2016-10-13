@@ -1637,10 +1637,12 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             }
         };
 
-        // a following `?` are equal to `| nil`
+        // postfix type operators cannot appear twice in a row
+        // (can work around with parens, but still not well-formed and the checker will error)
         if self.may_expect(Punct::Ques) {
-            let nil = Box::new(K::Nil).without_loc();
-            kind = Box::new(K::Union(vec![kind, nil])).with_loc(begin..self.last_pos());
+            kind = Box::new(K::WithNil(kind)).with_loc(begin..self.last_pos());
+        } else if self.may_expect(Punct::Bang) {
+            kind = Box::new(K::WithoutNil(kind)).with_loc(begin..self.last_pos());
         }
 
         Ok(Some(AtomicKind::One(kind)))

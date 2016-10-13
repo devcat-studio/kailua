@@ -436,9 +436,9 @@ local x --: {b=string, a=integer, c=const {d=const {}}}
 local x --: function
 --! [Local([`x`: _ Function], [])]
 
---8<-- kind-func-or-string-or-nil
+--8<-- kind-func-or-string-opt
 local x --: function | string?
---! [Local([`x`: _ Union([Function, Union([String, Nil])])], [])]
+--! [Local([`x`: _ Union([Function, String?])], [])]
 
 --8<-- kind-func-0
 local x --: function()
@@ -450,11 +450,11 @@ local x --: function()-->()
 
 --8<-- kind-func-2
 local x --: function(integer, boolean...)-->string?
---! [Local([`x`: _ Func((Integer, Boolean...) --> Union([String, Nil]))], [])]
+--! [Local([`x`: _ Func((Integer, Boolean...) --> String?)], [])]
 
 --8<-- kind-func-2-seq
 local x --: function(integer, boolean...)-->(string?, WHATEVER...)
---! [Local([`x`: _ Func((Integer, Boolean...) --> (Union([String, Nil]), Dynamic...))], [])]
+--! [Local([`x`: _ Func((Integer, Boolean...) --> (String?, Dynamic...))], [])]
 
 --8<-- kind-func-seq-without-parens
 local x --: function () --> integer... --@< Error: Expected a newline, got `...`
@@ -466,7 +466,7 @@ local x --: function (boolean...) | string? --@< Error: Expected a newline, got 
 
 --8<-- kind-func-or
 local x --: (function (boolean...)) | string?
---! [Local([`x`: _ Union([Func((Boolean...) --> ()), Union([String, Nil])])], [])]
+--! [Local([`x`: _ Union([Func((Boolean...) --> ()), String?])], [])]
 
 --8<-- kind-any-func
 local x --: `function`
@@ -495,20 +495,20 @@ local x --: (integer, string) --@< Error: Expected a single type, not type seque
 local x --: (integer)
 --! [Local([`x`: _ Integer], [])]
 
---8<-- kind-paren-or-nil
+--8<-- kind-paren-opt
 local x --: (integer)?
---! [Local([`x`: _ Union([Integer, Nil])], [])]
+--! [Local([`x`: _ Integer?], [])]
 
---8<-- kind-paren-or-nil-multiline-1
+--8<-- kind-paren-opt-multiline-1
 local x --:
         --: (integer)?
---! [Local([`x`: _ Union([Integer, Nil])], [])]
+--! [Local([`x`: _ Integer?], [])]
 
---8<-- kind-paren-or-nil-multiline-2
+--8<-- kind-paren-opt-multiline-2
 local x --: (
         --:   integer
         --: )?
---! [Local([`x`: _ Union([Integer, Nil])], [])]
+--! [Local([`x`: _ Integer?], [])]
 
 --8<-- kind-paren-multiline-recover
 local x --: (
@@ -524,19 +524,19 @@ local x --: {}
 --8<-- kind-rec
 local x --: {a = const function (), b = string,
         --:  c = const function (string, integer) --> number}?
---! [Local([`x`: _ Union([Record(["a": Const Func(() --> ()), \
---!                               "b": _ String, \
---!                               "c": Const Func((String, Integer) --> Number)\
---!                              ]), Nil])], [])]
+--! [Local([`x`: _ Record(["a": Const Func(() --> ()), \
+--!                        "b": _ String, \
+--!                        "c": Const Func((String, Integer) --> Number)\
+--!                       ])?], [])]
 
 --8<-- kind-tuple
 local x --: {const function (); string;
         --:  const function (string, integer) --> number;
         --: }?
---! [Local([`x`: _ Union([Tuple([Const Func(() --> ()), \
---!                              _ String, \
---!                              Const Func((String, Integer) --> Number)\
---!                             ]), Nil])], [])]
+--! [Local([`x`: _ Tuple([Const Func(() --> ()), \
+--!                       _ String, \
+--!                       Const Func((String, Integer) --> Number)\
+--!                      ])?], [])]
 
 --8<-- kind-tuple-1
 local x --: {WHATEVER}
@@ -570,16 +570,15 @@ local x --: {[string] = integer|boolean}
 local x --: {[string|boolean] = integer|boolean}
 --! [Local([`x`: _ Map(Union([String, Boolean]), _ Union([Integer, Boolean]))], [])]
 
---8<-- kind-map-or-nil
+--8<-- kind-map-opt
 local x --: {[string?] = integer?}
---! [Local([`x`: _ Map(Union([String, Nil]), _ Union([Integer, Nil]))], [])]
+--! [Local([`x`: _ Map(String?, _ Integer?)], [])]
 
 --8<-- kind-nested-table
 local x --: {[integer] = const {{[string] = {integer, integer}?}}}
 --! [Local([`x`: _ Map(Integer, \
 --!                    Const Array(_ Map(String, \
---!                                        _ Union([Tuple([_ Integer, _ Integer]), \
---!                                                 Nil]))))], [])]
+--!                                      _ Tuple([_ Integer, _ Integer])?)))], [])]
 
 --8<-- kind-attr-1
 local x --: [builtin] string
