@@ -19,6 +19,11 @@ define_msg! { pub PrematureEofInString:
     _    => "Premature end of file in a string",
 }
 
+define_msg! { pub UnescapedNewlineInString:
+    "ko" => "문자열에 탈출되지 않은 개행 문자가 들어 있습니다",
+    _    => "Unescaped newline in a string",
+}
+
 define_msg! { pub UnclosedOpeningLongString:
     "ko" => "긴 문자열을 여는 `[`가 제대로 닫히지 않았습니다",
     _    => "Opening long bracket in a string should end with `[`",

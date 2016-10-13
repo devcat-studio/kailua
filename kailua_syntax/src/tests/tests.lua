@@ -1008,6 +1008,21 @@ f()
                         --@^^ Error: Expected a newline, got a name
 --! [KailuaAssume(Local, `p`, _, Oops)]
 
+--8<-- string-multi-line
+f('foo\
+bar')
+--! [Void(`f`("foo\nbar"))]
+
+--8<-- string-multi-line-recover
+f('foo)
+) --@< Error: Unescaped newline in a string
+  --@^^ Note: The string started here
+g()
+--! [Void(`f`("foo)")), Void(`g`())]
+
+--&
+') -- highlighting fix
+
 --8<-- string-wrong-escape
 f('foo\xyz') --@< Error: Unrecognized escape sequence in a string
 --! [Void(`f`("fooyz"))]
@@ -1018,19 +1033,22 @@ f('foo\xyz', 'bar\zyx') --@< Error: Unrecognized escape sequence in a string
 --! [Void(`f`("fooyz", "baryx"))]
 
 --8<-- string-incomplete-escape
-f('foo\ --@< Fatal: Premature end of file in a string
+f('foo\ --@< Error: Premature end of file in a string
         --@^ Note: The string started here
+        --@^^ Fatal: Expected `)`, got the end of file
 --! error
 
 --&
 ') -- highlighting fix
 
 --8<-- string-incomplete
-f('foo --@< Fatal: Premature end of file in a string
-       --@^ Note: The string started here
+--@vvv Error: Premature end of file in a string
+--@vv Note: The string started here
+--@v Fatal: Expected `)`, got the end of file
+f('foo
+--&
 --! error
 
---&
 ') -- highlighting fix
 
 --8<-- number-long
@@ -1039,26 +1057,32 @@ f(0x12345678901234567)
 -- relies on std's correct f64 rounding
 
 --8<-- number-incomplete-exp-1
-f(3e --@< Fatal: Invalid number
+f(3e --@< Error: Invalid number
+     --@^ Fatal: Expected `)`, got the end of file
 --! error
 
 --&
 ) -- highlighting fix
 
+--8<-- number-incomplete-exp-1-recover
+f(3e) --@< Error: Invalid number
+--! [Void(`f`())]
+
 --8<-- number-incomplete-exp-2
-f(3e+ --@< Fatal: Invalid number
+f(3e+ --@< Error: Invalid number
+      --@^ Fatal: Expected `)`, got `+`
 --! error
 
 --&
 ) -- highlighting fix
 
 --8<-- invalid-char-1
-f(~3) --@< Fatal: Unexpected character
---! error
+f(~3) --@< Error: Unexpected character
+--! [Void(`f`(3))]
 
 --8<-- invalid-char-2
-f(@3) --@< Fatal: Unexpected character
---! error
+f(@3) --@< Error: Unexpected character
+--! [Void(`f`(3))]
 
 --8<-- assume-excess
 --# assume p: integer f --@< Error: Expected a newline, got a name

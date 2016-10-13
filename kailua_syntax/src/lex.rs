@@ -78,7 +78,7 @@ define_puncts! { Punct |lang|:
     Eq          "`=`",
     Amp         "`&`",  // reserved for 5.3+, never generated
     Tilde       "`~`",  // reserved for 5.3+, never generated
-    Pipe        "`|`",  // reserved for 5.3+, never generated
+    Pipe        "`|`",  // reserved for 5.3+, only generated in meta
     LtLt        "`<<`", // reserved for 5.3+, never generated
     GtGt        "`>>`", // reserved for 5.3+, never generated
     SlashSlash  "`//`", // reserved for 5.3+, never generated
@@ -303,13 +303,21 @@ impl<'a> Lexer<'a> {
                     f(0b1000_0000 | (c >>  6 & 0x3f) as u8);
                     f(0b1000_0000 | (c       & 0x3f) as u8);
                 } else {
-                    return self.report.fatal(lastpos..self.pos(), m::BadSurrogate {}).done();
+                    try!(self.report.error(lastpos..self.pos(), m::BadSurrogate {}).done());
+                    // emit U+FEFF
+                    f(0xeb);
+                    f(0xbb);
+                    f(0xbf);
                 }
             }
 
             // low surrogate (invalid at this position)
             0xdc00...0xdfff => {
-                return self.report.fatal(lastpos..self.pos(), m::BadSurrogate {}).done();
+                try!(self.report.error(lastpos..self.pos(), m::BadSurrogate {}).done());
+                // emit U+FEFF
+                f(0xeb);
+                f(0xbb);
+                f(0xbf);
             }
 
             0x0000...0x007f => {
@@ -420,7 +428,7 @@ impl<'a> Lexer<'a> {
                     U8(b'\\') => f(b'\\'),
                     U8(b'\'') => f(b'\''),
                     U8(b'"')  => f(b'"'),
-                    U8(b'\n') => f(b'\n'),
+                    U8(b'\r') | U8(b'\n') => f(b'\n'),
                     U8(c) if c == quote => {
                         f(c) // to account for `foo\`foo` in the Kailua block
                     },
@@ -443,20 +451,32 @@ impl<'a> Lexer<'a> {
                         try!(self.report.error(lastpos..self.pos(),
                                                m::UnrecognizedEscapeInString {})
                                         .done());
+                        // skip this character
                     },
                     EOF => {
-                        return self.report.fatal(self.pos(), m::PrematureEofInString {})
-                                          .note(begin, m::StringStart {})
-                                          .done();
+                        self.unread(EOF); // should translate to Tok::EOF in the caller
+                        try!(self.report.error(self.pos(), m::PrematureEofInString {})
+                                        .note(begin, m::StringStart {})
+                                        .done());
+                        break;
                     },
+                },
+                U8(b'\r') | U8(b'\n') => {
+                    try!(self.report.error(self.pos(), m::UnescapedNewlineInString {})
+                                    .note(begin, m::StringStart {})
+                                    .done());
+                    // return without adding a newline, it's more likely that the quote is missing
+                    break;
                 },
                 U8(c) if c == quote => break,
                 U8(c) => f(c),
                 U16(c) => try!(self.translate_u16(lastpos, c, &mut f)),
                 EOF => {
-                    return self.report.fatal(self.pos(), m::PrematureEofInString {})
-                                      .note(begin, m::StringStart {})
-                                      .done();
+                    self.unread(EOF); // should translate to Tok::EOF in the caller
+                    try!(self.report.error(self.pos(), m::PrematureEofInString {})
+                                    .note(begin, m::StringStart {})
+                                    .done());
+                    break;
                 },
             }
         }
@@ -563,7 +583,8 @@ impl<'a> Lexer<'a> {
                             }
                         }
 
-                        return self.report.fatal(begin..self.pos(), m::InvalidNumber {}).done();
+                        try!(self.report.error(begin..self.pos(), m::InvalidNumber {}).done());
+                        // continue reading other tokens
                     }
                 }
 
@@ -646,7 +667,8 @@ impl<'a> Lexer<'a> {
                 },
                 U8(b'~') => {
                     if let Some(_) = self.try(|c| c == U8(b'=')) { return tok!(TildeEq); }
-                    return self.report.fatal(begin..self.pos(), m::UnexpectedChar {}).done();
+                    try!(self.report.error(begin..self.pos(), m::UnexpectedChar {}).done());
+                    // continue reading other tokens
                 },
                 U8(b'<') => {
                     if let Some(_) = self.try(|c| c == U8(b'=')) { return tok!(LtEq); }
@@ -683,11 +705,11 @@ impl<'a> Lexer<'a> {
                     return tok!(Newline);
                 },
                 U8(b'?') if self.meta => return tok!(Ques),
+                U8(b'!') if self.meta => return tok!(Bang),
                 U8(b'|') if self.meta => return tok!(Pipe),
-                U8(b'&') if self.meta => return tok!(Amp),
 
                 U8(_) | U16(_) => {
-                    return self.report.fatal(begin..self.pos(), m::UnexpectedChar {}).done();
+                    try!(self.report.error(begin..self.pos(), m::UnexpectedChar {}).done());
                 },
                 EOF => {
                     if self.meta { // the last line should be closed by the (dummy) Newline token
