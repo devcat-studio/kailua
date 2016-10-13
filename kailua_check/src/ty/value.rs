@@ -95,6 +95,8 @@ impl<'a> T<'a> {
             K::Thread            => Ok(T::Thread),
             K::UserData          => Ok(T::UserData),
             K::Named(ref name)   => resolv.ty_from_name(name),
+            K::WithNil(ref k)    => Ok(try!(T::from(k, resolv)) | T::Nil), // XXX for now
+            K::WithoutNil(ref k) => Ok(try!(T::from(k, resolv))), // XXX for now
             K::Error(..)         => Err(format!("error type not yet supported in checker")),
 
             K::Record(ref fields) => {
@@ -126,19 +128,12 @@ impl<'a> T<'a> {
                 Ok(T::Tables(Cow::Owned(Tables::Map(Box::new(try!(T::from(k, resolv))), slot))))
             },
 
-            K::Func(ref funcs) => {
-                let mut ftys = Vec::new();
-                for func in funcs {
-                    ftys.push(Function {
-                        args: try!(TySeq::from_kind_seq(&func.args, resolv)),
-                        returns: try!(TySeq::from_kind_seq(&func.returns, resolv)),
-                    });
-                }
-                if ftys.len() == 1 {
-                    Ok(T::Functions(Cow::Owned(Functions::Simple(ftys.pop().unwrap()))))
-                } else {
-                    Ok(T::Functions(Cow::Owned(Functions::Multi(ftys))))
-                }
+            K::Func(ref func) => {
+                let func = Function {
+                    args: try!(TySeq::from_kind_seq(&func.args, resolv)),
+                    returns: try!(TySeq::from_kind_seq(&func.returns, resolv)),
+                };
+                Ok(T::Functions(Cow::Owned(Functions::Simple(func))))
             }
 
             K::Union(ref kinds) => {

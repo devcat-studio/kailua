@@ -103,11 +103,6 @@ define_msg! { pub CallToInexactType<'a> { func: T<'a> }:
     _    => "The type `{func}` is callable but not known enough to call",
 }
 
-define_msg! { pub CallToOverloadedFunc<'a> { func: T<'a> }:
-    "ko" => "오버로딩된 함수 타입 `{func}`은(는) 아직 지원되지 않습니다",
-    _    => "Overloaded function `{func}` is not yet supported",
-}
-
 define_msg! { pub CallToAnyFunc<'a> { func: T<'a> }:
     "ko" => "`{func}` 타입은 다운캐스팅하지 않으면 호출할 수 없습니다",
     _    => "Cannot call `{func}` without downcasting",

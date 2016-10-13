@@ -290,11 +290,6 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 }
                 f.returns.clone()
             }
-            Functions::Multi(ref _funcs) => { // TODO
-                try!(self.env.error(func, m::CallToOverloadedFunc { func: self.display(func) })
-                             .done());
-                return Ok(TySeq::dummy());
-            }
             Functions::All => {
                 try!(self.env.error(func, m::CallToAnyFunc { func: self.display(func) }).done());
                 return Ok(TySeq::dummy());

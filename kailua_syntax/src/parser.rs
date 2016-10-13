@@ -1473,15 +1473,12 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
         let mut kind = match try!(self.read()) {
             (_, Spanned { base: Tok::Keyword(Keyword::Function), span }) => {
-                // either a "function" type or a list of function signatures
+                // either a "function" type or a function signature
                 if self.lookahead(Punct::LParen) {
-                    // function "(" ... ")" ["->" ...] {"&" "(" ... ")" ["->" ...]}
-                    let mut funcs = vec![try!(self.parse_kailua_funckind())];
-                    while self.may_expect(Punct::Amp) {
-                        funcs.push(try!(self.parse_kailua_funckind()));
-                    }
+                    // function "(" ... ")" ["->" ...]
+                    let func = try!(self.parse_kailua_funckind());
                     // cannot be followed by postfix operators
-                    let kind = Box::new(K::Func(funcs)).with_loc(begin..self.last_pos());
+                    let kind = Box::new(K::Func(func)).with_loc(begin..self.last_pos());
                     return Ok(Some(AtomicKind::Seq(Seq { head: vec![kind], tail: None })));
                 } else {
                     Box::new(K::Function).with_loc(span)

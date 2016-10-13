@@ -442,34 +442,31 @@ local x --: function | string?
 
 --8<-- kind-func-0
 local x --: function()
---! [Local([`x`: _ Func([() --> ()])], [])]
+--! [Local([`x`: _ Func(() --> ())], [])]
 
 --8<-- kind-func-0-explicit
 local x --: function()-->()
---! [Local([`x`: _ Func([() --> ()])], [])]
+--! [Local([`x`: _ Func(() --> ())], [])]
 
---8<-- kind-func-0-and-2
-local x --: function () & (integer, boolean...)-->string?
---! [Local([`x`: _ Func([() --> (), \
---!                      (Integer, Boolean...) --> Union([String, Nil])])], [])]
+--8<-- kind-func-2
+local x --: function(integer, boolean...)-->string?
+--! [Local([`x`: _ Func((Integer, Boolean...) --> Union([String, Nil]))], [])]
 
---8<-- kind-func-0-and-2-seq
-local x --: function () --> (integer...) & (integer, boolean...)-->(string?, WHATEVER...)
---! [Local([`x`: _ Func([() --> (Integer...), \
---!                      (Integer, Boolean...) --> (Union([String, Nil]), Dynamic...)\
---!                     ])], [])]
+--8<-- kind-func-2-seq
+local x --: function(integer, boolean...)-->(string?, WHATEVER...)
+--! [Local([`x`: _ Func((Integer, Boolean...) --> (Union([String, Nil]), Dynamic...))], [])]
 
 --8<-- kind-func-seq-without-parens
 local x --: function () --> integer... --@< Error: Expected a newline, got `...`
---! [Local([`x`: _ Func([() --> Integer])], [])]
+--! [Local([`x`: _ Func(() --> Integer)], [])]
 
 --8<-- kind-func-or-without-parens
 local x --: function (boolean...) | string? --@< Error: Expected a newline, got `|`
---! [Local([`x`: _ Func([(Boolean...) --> ()])], [])]
+--! [Local([`x`: _ Func((Boolean...) --> ())], [])]
 
 --8<-- kind-func-or
 local x --: (function (boolean...)) | string?
---! [Local([`x`: _ Union([Func([(Boolean...) --> ()]), Union([String, Nil])])], [])]
+--! [Local([`x`: _ Union([Func((Boolean...) --> ()), Union([String, Nil])])], [])]
 
 --8<-- kind-any-func
 local x --: `function`
@@ -526,23 +523,19 @@ local x --: {}
 
 --8<-- kind-rec
 local x --: {a = const function (), b = string,
-        --:  c = const function (string) --> integer &
-        --:                     (string, integer) --> number}?
---! [Local([`x`: _ Union([Record(["a": Const Func([() --> ()]), \
+        --:  c = const function (string, integer) --> number}?
+--! [Local([`x`: _ Union([Record(["a": Const Func(() --> ()), \
 --!                               "b": _ String, \
---!                               "c": Const Func([(String) --> Integer, \
---!                                                (String, Integer) --> Number])\
+--!                               "c": Const Func((String, Integer) --> Number)\
 --!                              ]), Nil])], [])]
 
 --8<-- kind-tuple
 local x --: {const function (); string;
-        --:  const function (string) --> integer &
-        --:                 (string, integer) --> number;
+        --:  const function (string, integer) --> number;
         --: }?
---! [Local([`x`: _ Union([Tuple([Const Func([() --> ()]), \
+--! [Local([`x`: _ Union([Tuple([Const Func(() --> ()), \
 --!                              _ String, \
---!                              Const Func([(String) --> Integer, \
---!                                          (String, Integer) --> Number])\
+--!                              Const Func((String, Integer) --> Number)\
 --!                             ]), Nil])], [])]
 
 --8<-- kind-tuple-1
@@ -594,7 +587,7 @@ local x --: [builtin] string
 
 --8<-- kind-attr-2
 local x --: [builtin] function(any)
---! [Local([`x`: _ [`builtin`] Func([(Any) --> ()])], [])]
+--! [Local([`x`: _ [`builtin`] Func((Any) --> ())], [])]
 
 --8<-- kind-attr-paren
 local x --: ([builtin] (string))
@@ -610,7 +603,7 @@ local x --: [built-in] string --@< Fatal: Expected `]`, got `-`
 
 --8<-- kind-attr-keyword
 local x --: [type] function(any)
---! [Local([`x`: _ [`type`] Func([(Any) --> ()])], [])]
+--! [Local([`x`: _ [`type`] Func((Any) --> ())], [])]
 
 --8<-- kind-attr-dup
 local x --: [builtin] [builtin] string --@< Error: Expected a single type, got `[`
@@ -620,7 +613,7 @@ local x --: [builtin] [builtin] string --@< Error: Expected a single type, got `
 --8<-- kind-attr-seq
 local x --: function() --> [builtin] (string, string)
 --@^ Error: Cannot attach the type attribute (like [name]) to the type sequence
---! [Local([`x`: _ Func([() --> (String, String)])], [])]
+--! [Local([`x`: _ Func(() --> (String, String))], [])]
 
 --8<-- funcspec
 --v function()
@@ -1157,7 +1150,7 @@ a, *b = 5 --@< Fatal: Expected a left-hand-side expression, got `*`
 
 --8<-- assume-func-invalid-char
 --# assume x: function () --> #foo --@< Error: Expected a single type or type sequence, got `#`
---! [KailuaAssume(Local, `x`, _, Func([() --> Oops]))]
+--! [KailuaAssume(Local, `x`, _, Func(() --> Oops))]
 
 --8<-- assume-named
 --# assume x: whatever
