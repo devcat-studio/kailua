@@ -58,6 +58,42 @@ impl Expectable for EOF {
     fn check_token(&self, tok: &Tok) -> bool { tok == &Tok::EOF }
 }
 
+#[derive(Debug)]
+#[allow(dead_code)]
+enum Skip {
+    None,
+    Upto,
+    Until,
+    UptoForced,
+    UntilForced,
+}
+
+macro_rules! skip_by {
+    (
+        $(Punct::$punct:ident => $pskip:ident $(,)*)*
+        $(Keyword::$keyword:ident => $kwskip:ident $(,)*)*
+    ) => (
+        |parser: &mut Parser<'a, T>| {
+            try!(parser.skip(&|tok| match *tok {
+                $(Tok::Punct(Punct::$punct) => Skip::$pskip,)*
+                $(Tok::Keyword(Keyword::$keyword) => Skip::$kwskip,)*
+                _ => Skip::None,
+            }));
+            Err(Stop::Recover)
+        }
+    )
+}
+
+macro_rules! try_or_recover {
+    ($try:expr; $recover:expr) => (
+        match (|| $try)() {
+            Ok(v) => v,
+            Err(Stop::Fatal) => return Err(Stop::Fatal),
+            Err(Stop::Recover) => $recover,
+        }
+    );
+}
+
 // represents a sequence of elided tokens (one or more (newline + meta begin)s) when Some.
 // the span is used to reconstruct the token for meta beginning.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -145,7 +181,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         let (elided, next) = self._read();
         if next.base == Tok::Error {
             // the lexer should have issued an error already
-            Err(Stop)
+            Err(Stop::Fatal)
         } else {
             self.last_span2 = self.last_span;
             self.last_span = next.span;
@@ -199,6 +235,19 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
+    // same to above but gives the caller a chance to recover from expect error
+    fn try_expect<Tok: Expectable>(&mut self, tok: Tok) -> diag::Result<()> {
+        let read = try!(self.read());
+        if !tok.check_token(&read.1.base) {
+            try!(self.error(read.1.span, m::ExpectFailed { expected: tok, read: &read.1.base })
+                     .done());
+            self.unread(read);
+            Err(Stop::Recover)
+        } else {
+            Ok(())
+        }
+    }
+
     fn lookahead<Tok: Expectable>(&mut self, tok: Tok) -> bool {
         tok.check_token(self.peek())
     }
@@ -212,6 +261,79 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         } else {
             false
         }
+    }
+
+    fn skip(&mut self, stop: &Fn(&Tok) -> Skip) -> diag::Result<()> {
+        #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+        enum Close {
+            RParen,
+            RBrace,
+            RBracket,
+            Newline, // only after meta start
+            End,
+            Until, // only after Repeat
+        }
+
+        fn pop(stack: &mut Vec<Close>, close: Close) {
+            while let Some(top) = stack.pop() {
+                if top == close { break; }
+            }
+        }
+
+        let mut stack = Vec::new();
+        loop {
+            let tok = try!(self.read());
+
+            match tok.1.base {
+                // natural delimiters
+                // no angle brackets, hard to distinguish comparison ops from delimiters
+                Tok::Punct(Punct::LParen) => stack.push(Close::RParen),
+                Tok::Punct(Punct::LBrace) => stack.push(Close::RBrace),
+                Tok::Punct(Punct::LBracket) => stack.push(Close::RBracket),
+                Tok::Punct(Punct::RParen) => pop(&mut stack, Close::RParen),
+                Tok::Punct(Punct::RBrace) => pop(&mut stack, Close::RBrace),
+                Tok::Punct(Punct::RBracket) => pop(&mut stack, Close::RBracket),
+
+                // meta blocks
+                // Newline token is only generated inside a meta block by the lexer
+                Tok::Punct(Punct::DashDashHash) |
+                Tok::Punct(Punct::DashDashV) |
+                Tok::Punct(Punct::DashDashColon) |
+                Tok::Punct(Punct::DashDashGt) => stack.push(Close::Newline),
+                Tok::Punct(Punct::Newline) => pop(&mut stack, Close::Newline),
+
+                // code blocks (mostly ends with End)
+                // Do subsumes While and For as well
+                Tok::Keyword(Keyword::Do) |
+                Tok::Keyword(Keyword::Function) |
+                Tok::Keyword(Keyword::If) => stack.push(Close::End),
+                Tok::Keyword(Keyword::End) => pop(&mut stack, Close::End),
+                Tok::Keyword(Keyword::Repeat) => stack.push(Close::Until),
+                Tok::Keyword(Keyword::Until) => pop(&mut stack, Close::Until),
+
+                Tok::EOF => {
+                    // this is required
+                    self.unread(tok);
+                    break;
+                }
+
+                _ => {}
+            }
+
+            let should_unread = match stop(&tok.1.base) {
+                Skip::None => None,
+                Skip::Until => if stack.is_empty() { Some(true) } else { None },
+                Skip::Upto => if stack.is_empty() { Some(false) } else { None },
+                Skip::UntilForced => Some(true),
+                Skip::UptoForced => Some(false),
+            };
+            if let Some(should_unread) = should_unread {
+                if should_unread { self.unread(tok); }
+                break;
+            }
+        }
+
+        Ok(())
     }
 
     fn pos(&mut self) -> Pos {
@@ -265,9 +387,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 (_, Spanned { base: Tok::Punct(Punct::Newline), .. }) => {
                     break;
                 }
-                (elided, Spanned { base: Tok::EOF, span }) => {
+                tok @ (_, Spanned { base: Tok::EOF, .. }) => {
                     // we need to keep the EOF to the queue, otherwise `read` will hit past EOF
-                    self.unread((elided, Tok::EOF.with_loc(span)));
+                    self.unread(tok);
                     break;
                 },
                 _ => {}
@@ -318,19 +440,20 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn parse_name_or_keyword(&mut self) -> diag::Result<Spanned<Name>> {
-        let tok = try!(self.read());
-        match tok.1.base {
-            Tok::Name(name) => {
+    fn try_name_or_keyword(&mut self) -> diag::Result<Spanned<Name>> {
+        match try!(self.read()) {
+            (_, Spanned { base: Tok::Name(name), span }) => {
                 let name: Name = name.into();
-                Ok(name.with_loc(tok.1.span))
+                Ok(name.with_loc(span))
             }
-            Tok::Keyword(keyword) => {
+            (_, Spanned { base: Tok::Keyword(keyword), span }) => {
                 let name: Name = keyword.name().into();
-                Ok(name.with_loc(tok.1.span))
+                Ok(name.with_loc(span))
             }
-            _ => {
-                self.fatal(tok.1.span, m::NoName { read: &tok.1.base }).done()
+            tok => {
+                try!(self.error(tok.1.span, m::NoName { read: &tok.1.base }).done());
+                self.unread(tok);
+                Err(Stop::Recover)
             }
         }
     }
@@ -1310,9 +1433,12 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     fn try_parse_kailua_attr(&mut self) -> diag::Result<Option<Spanned<Attr>>> {
         let begin = self.pos();
         if self.may_expect(Punct::LBracket) {
+            let until_rbracket =
+                skip_by!(Punct::Newline => UntilForced, Punct::RBracket => Upto);
+
             // `[` NAME `]`
-            let name = try!(self.parse_name_or_keyword());
-            try!(self.expect(Punct::RBracket));
+            let name = try_or_recover!(self.try_name_or_keyword(); return until_rbracket(self));
+            try_or_recover!(self.try_expect(Punct::RBracket); return until_rbracket(self));
             let attr = Attr { name: name };
             Ok(Some(attr.with_loc(begin..self.last_pos())))
         } else {
@@ -1651,7 +1777,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     fn try_parse_kailua_prefixed_kind_seq(&mut self) -> diag::Result<Option<AtomicKind>> {
         let begin = self.pos();
 
-        let attr = try!(self.try_parse_kailua_attr());
+        let attr = try_or_recover!(self.try_parse_kailua_attr(); None);
         if let Some(kindseq) = try!(self.try_parse_kailua_atomic_kind_seq()) {
             let end = self.last_pos();
 
@@ -1752,8 +1878,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         if let Some(kind) = try!(self.try_parse_kailua_kind()) {
             Ok(kind)
         } else {
-            let tok = try!(self.read()).1;
-            try!(self.error(tok.span, m::NoSingleType { read: &tok.base }).done());
+            let tok = try!(self.read());
+            try!(self.error(tok.1.span, m::NoSingleType { read: &tok.1.base }).done());
+            self.unread(tok);
             Ok(self.dummy_kind())
         }
     }
@@ -1852,13 +1979,20 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             self.begin_meta_comment(Punct::DashDashV);
 
             let mut attrs = Vec::new();
-            while let Some(attr) = try!(self.try_parse_kailua_attr()) {
-                attrs.push(attr);
+            let mut attrs_seen = false;
+            loop {
+                match self.try_parse_kailua_attr() {
+                    Ok(Some(attr)) => { attrs_seen = true; attrs.push(attr); }
+                    Ok(None) => break,
+                    Err(Stop::Fatal) => return Err(Stop::Fatal),
+                    // we have seen an attribute but couldn't parse it
+                    Err(Stop::Recover) => { attrs_seen = true; }
+                }
             }
 
             // function "(" [NAME ":" KIND] {"," NAME ":" KIND} ["," "..."] ")" ["-->" KIND]
             let begin = self.pos();
-            let has_sig = if attrs.is_empty() {
+            let has_sig = if !attrs_seen {
                 // force reading signatures if no attributes are present
                 try!(self.expect(Keyword::Function));
                 true

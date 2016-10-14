@@ -401,8 +401,7 @@ do end
 --8<-- assume-incomplete
 --# assume a:
 --# assume b: string --@< Error: Expected a single type, got a keyword `assume`
-                     --@^ Error: Expected a newline, got a name
---! [KailuaAssume(Local, `a`, _, Oops)]
+--! [KailuaAssume(Local, `a`, _, Oops), KailuaAssume(Local, `b`, _, String)]
 
 --8<-- assume-global-local
 --# assume global a: {x=string}
@@ -439,6 +438,10 @@ local x --: function
 --8<-- kind-func-or-string-opt
 local x --: function | string?
 --! [Local([`x`: _ Union([Function, String?])], [])]
+
+--8<-- kind-func-or-string-paren-opt
+local x --: (function | string)?
+--! [Local([`x`: _ Union([Function, String])?], [])]
 
 --8<-- kind-func-0
 local x --: function()
@@ -593,12 +596,18 @@ local x --: ([builtin] (string))
 --! [Local([`x`: _ [`builtin`] String], [])]
 
 --8<-- kind-attr-empty
-local x --: [] string --@< Fatal: Expected a name, got `]`
---! error
+local x --: [] string --@< Error: Expected a name, got `]`
+--! [Local([`x`: _ String], [])]
 
 --8<-- kind-attr-wrong
-local x --: [built-in] string --@< Fatal: Expected `]`, got `-`
---! error
+local x --: [built-in] string --@< Error: Expected `]`, got `-`
+local y --: [built_in] string
+--! [Local([`x`: _ String], []), Local([`y`: _ [`built_in`] String], [])]
+
+--8<-- kind-attr-wrong-recover
+local x --: [built-in(function(i) return _G[i] end] string --@< Error: Expected `]`, got `-`
+local y --: [built_in] string
+--! [Local([`x`: _ String], []), Local([`y`: _ [`built_in`] String], [])]
 
 --8<-- kind-attr-keyword
 local x --: [type] function(any)
@@ -606,7 +615,7 @@ local x --: [type] function(any)
 
 --8<-- kind-attr-dup
 local x --: [builtin] [builtin] string --@< Error: Expected a single type, got `[`
-                                       --@^ Error: Expected a newline, got a name
+                                       --@^ Error: Expected a newline, got `[`
 --! [Local([`x`: _ Oops], [])]
 
 --8<-- kind-attr-seq
@@ -710,9 +719,9 @@ function foo() end
 -- note the trailing `_`, which indicates that there was no pre-signature
 
 --8<-- funcspec-attr-incomplete
---v [no_check --@<-v Fatal: Expected `]`, got a newline
+--v [no_check --@<-v Error: Expected `]`, got a newline
 function foo() end
---! error
+--! [FuncDecl(Global, `foo`, [] --> _, [])]
 
 --8<-- funcspec-no-empty
 --v --@<-v Fatal: Expected a keyword `function`, got a newline
@@ -980,8 +989,7 @@ f(--[====[foo]
 ]====] -- highlighting fix
 
 --8<-- meta-eof
---@vv Error: Expected a single type, got a newline
---@v Error: Expected a newline, got the end of file
+--@v Error: Expected a single type, got a newline
 --# assume p:
 --&
 --! [KailuaAssume(Local, `p`, _, Oops)]
@@ -1004,8 +1012,8 @@ f()
 --# assume p: --[[xxx   --@< Error: A newline is disallowed in a long comment inside the meta block
                   yyy]] --@^ Note: The meta block started here
                         --@^^-^ Error: Expected a single type, got a newline
-                        --@^^ Error: Expected a newline, got a name
---! [KailuaAssume(Local, `p`, _, Oops)]
+                        --@^^ Fatal: Expected `=`, got `]`
+--! error
 
 --8<-- string-multi-line
 f('foo\
@@ -1260,8 +1268,7 @@ f(                                      --@< Fatal: Expected `)`, got the end of
 --8<-- alias-incomplete
 --# type int =
 --# assume x: {int} --@< Error: Expected a single type, got a keyword `assume`
-                    --@^ Error: Expected a newline, got a name
---! [KailuaType(`int`, Oops)]
+--! [KailuaType(`int`, Oops), KailuaAssume(Local, `x`, _, Array(_ `int`))]
 
 --8<-- kind-error
 --# type x = error
