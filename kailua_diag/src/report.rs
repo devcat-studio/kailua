@@ -33,13 +33,7 @@ impl Kind {
 // used to stop the further parsing or type checking
 #[must_use]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub enum Stop {
-    // this cannot be recovered and should terminate immediately
-    Fatal,
-    // the callee will do its best to clean things up,
-    // the caller can choose to recover or terminate immediately
-    Recover,
-}
+pub struct Stop;
 
 // XXX stop gap to aid kailua_check's transition to Stop type
 impl From<Stop> for String {
@@ -72,11 +66,8 @@ pub trait Reporter: Report + Sized {
     fn fatal<Loc: Into<Span>, Msg: Localize, T>(&self, loc: Loc, msg: Msg) -> ReportMore<T> {
         info!("reporting fatal error: {:?}", msg);
         let ret = self.add_span(Kind::Fatal, loc.into(), &msg);
-        if let Err(Stop::Fatal) = ret {
-            ReportMore::new(self, Err(Stop::Fatal))
-        } else {
-            panic!("Report::fatal should always return Err(Stop::Fatal) but returned {:?}", ret)
-        }
+        let ret = ret.map(|_| panic!("Report::fatal should always return Err"));
+        ReportMore::new(self, ret)
     }
 
     fn error<Loc: Into<Span>, Msg: Localize>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
@@ -464,7 +455,7 @@ impl Report for ConsoleReport {
             }
         }
 
-        if kind == Kind::Fatal { Err(Stop::Fatal) } else { Ok(()) }
+        if kind == Kind::Fatal { Err(Stop) } else { Ok(()) }
     }
 }
 
@@ -487,7 +478,7 @@ impl Report for CollectedReport {
     fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> Result<()> {
         let msg = Localized::new(msg, &self.lang).to_string();
         self.collected.borrow_mut().push((kind, span, msg));
-        if kind == Kind::Fatal { Err(Stop::Fatal) } else { Ok(()) }
+        if kind == Kind::Fatal { Err(Stop) } else { Ok(()) }
     }
 }
 
@@ -495,7 +486,7 @@ pub struct NoReport;
 
 impl Report for NoReport {
     fn add_span(&self, _kind: Kind, _span: Span, _msg: &Localize) -> Result<()> {
-        Err(Stop::Fatal)
+        Err(Stop)
     }
 }
 

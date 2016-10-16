@@ -1,11 +1,12 @@
 use std::iter;
 use std::i32;
 use std::fmt;
+use std::result;
 use std::cell::Cell;
 use std::collections::{hash_map, HashMap};
 
 use kailua_diag as diag;
-use kailua_diag::{Pos, Span, Spanned, WithLoc, Report, Reporter, Localize, Stop};
+use kailua_diag::{Pos, Span, Spanned, WithLoc, Report, Localize};
 use message as m;
 use lex::{Tok, Punct, Keyword};
 use ast::{Name, Str, Var, Seq, Presig, Sig, Attr};
@@ -32,6 +33,23 @@ pub struct Parser<'a, T> {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct EOF; // a placeholder arg to `expect`
+
+#[must_use]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Stop {
+    // this cannot be recovered and should terminate immediately
+    Fatal,
+    // the callee will do its best to clean things up,
+    // the caller can choose to recover or terminate immediately
+    Recover,
+}
+
+impl From<diag::Stop> for Stop {
+    fn from(_: diag::Stop) -> Stop { Stop::Fatal }
+}
+
+// parser keeps the internal information to recover as much as possible
+type Result<T> = result::Result<T, Stop>;
 
 impl Localize for EOF {
     fn fmt_localized(&self, f: &mut fmt::Formatter, lang: &str) -> fmt::Result {
@@ -73,11 +91,19 @@ macro_rules! skip_by {
         $(Punct::$punct:ident => $pskip:ident $(,)*)*
         $(Keyword::$keyword:ident => $kwskip:ident $(,)*)*
     ) => (
+        skip_by!($(Punct::$punct => $pskip,)* $(Keyword::$keyword => $kwskip,)* _ => None)
+    );
+
+    (
+        $(Punct::$punct:ident => $pskip:ident $(,)*)*
+        $(Keyword::$keyword:ident => $kwskip:ident $(,)*)*
+        _ => $anyskip:ident $(,)*
+    ) => (
         |parser: &mut Parser<'a, T>| {
             try!(parser.skip(&|tok| match *tok {
                 $(Tok::Punct(Punct::$punct) => Skip::$pskip,)*
                 $(Tok::Keyword(Keyword::$keyword) => Skip::$kwskip,)*
-                _ => Skip::None,
+                _ => Skip::$anyskip,
             }));
             Err(Stop::Recover)
         }
@@ -105,6 +131,56 @@ impl<'a, T> Report for Parser<'a, T> {
     fn add_span(&self, k: diag::Kind, s: Span, m: &Localize) -> diag::Result<()> {
         if k >= diag::Kind::Error { self.cannot_continue.set(true); }
         self.report.add_span(k, s, m)
+    }
+}
+
+// wrappers around kailua_diag::{ReportMore, Reporter}, used to remap `done` method
+#[must_use]
+struct ReportMore<'a, T>(diag::ReportMore<'a, T>);
+
+#[allow(dead_code)]
+impl<'a, U> Parser<'a, U> {
+    fn fatal<Loc: Into<Span>, Msg: Localize, T>(&self, loc: Loc, msg: Msg) -> ReportMore<T> {
+        ReportMore(diag::Reporter::fatal(self, loc, msg))
+    }
+
+    fn error<Loc: Into<Span>, Msg: Localize>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
+        ReportMore(diag::Reporter::error(self, loc, msg))
+    }
+
+    fn warn<Loc: Into<Span>, Msg: Localize>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
+        ReportMore(diag::Reporter::warn(self, loc, msg))
+    }
+
+    fn note<Loc: Into<Span>, Msg: Localize>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
+        ReportMore(diag::Reporter::note(self, loc, msg))
+    }
+}
+
+#[allow(dead_code)]
+impl<'a, T> ReportMore<'a, T> {
+    fn fatal<Loc: Into<Span>, Msg: Localize, U>(self, loc: Loc, msg: Msg) -> ReportMore<'a, U> {
+        ReportMore(self.0.fatal(loc, msg))
+    }
+
+    fn error<Loc: Into<Span>, Msg: Localize>(self, loc: Loc, msg: Msg) -> ReportMore<'a, T> {
+        ReportMore(self.0.error(loc, msg))
+    }
+
+    fn warn<Loc: Into<Span>, Msg: Localize>(self, loc: Loc, msg: Msg) -> ReportMore<'a, T> {
+        ReportMore(self.0.warn(loc, msg))
+    }
+
+    fn note<Loc: Into<Span>, Msg: Localize>(self, loc: Loc, msg: Msg) -> ReportMore<'a, T> {
+        ReportMore(self.0.note(loc, msg))
+    }
+
+    fn note_if<Loc: Into<Span>, Msg: Localize>(self, loc: Loc, msg: Msg) -> ReportMore<'a, T> {
+        ReportMore(self.0.note_if(loc, msg))
+    }
+
+    fn done(self) -> Result<T> {
+        self.0.done().map_err(|_| Stop::Fatal)
     }
 }
 
@@ -177,11 +253,11 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         (ElidedTokens(elided), next.expect("Parser::read tried to read past EOF"))
     }
 
-    fn read(&mut self) -> diag::Result<(ElidedTokens, Spanned<Tok>)> {
+    fn read(&mut self) -> Result<(ElidedTokens, Spanned<Tok>)> {
         let (elided, next) = self._read();
         if next.base == Tok::Error {
             // the lexer should have issued an error already
-            Err(Stop::Fatal)
+            Err(Stop::Recover)
         } else {
             self.last_span2 = self.last_span;
             self.last_span = next.span;
@@ -226,7 +302,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         self.lookahead.as_ref().unwrap()
     }
 
-    fn expect<Tok: Expectable>(&mut self, tok: Tok) -> diag::Result<()> {
+    fn expect<Tok: Expectable>(&mut self, tok: Tok) -> Result<()> {
         let read = try!(self.read()).1;
         if !tok.check_token(&read.base) {
             self.fatal(read.span, m::ExpectFailed { expected: tok, read: &read.base }).done()
@@ -236,7 +312,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     // same to above but gives the caller a chance to recover from expect error
-    fn try_expect<Tok: Expectable>(&mut self, tok: Tok) -> diag::Result<()> {
+    fn try_expect<Tok: Expectable>(&mut self, tok: Tok) -> Result<()> {
         let read = try!(self.read());
         if !tok.check_token(&read.1.base) {
             try!(self.error(read.1.span, m::ExpectFailed { expected: tok, read: &read.1.base })
@@ -263,7 +339,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn skip(&mut self, stop: &Fn(&Tok) -> Skip) -> diag::Result<()> {
+    fn skip(&mut self, stop: &Fn(&Tok) -> Skip) -> Result<()> {
         #[derive(Copy, Clone, PartialEq, Eq, Debug)]
         enum Close {
             RParen,
@@ -351,7 +427,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     // also consumes a newline
-    fn end_meta_comment(&mut self, meta: Punct) -> diag::Result<()> {
+    fn end_meta_comment(&mut self, meta: Punct) -> Result<()> {
         assert_eq!(self.ignore_after_newline, Some(meta));
 
         // if the next token (sans elided newline-meta pairs) is a newline, it's the end.
@@ -380,7 +456,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     // consumes a newline, used for error recovery
-    fn skip_meta_comment(&mut self, meta: Punct) -> diag::Result<()> {
+    fn skip_meta_comment(&mut self, meta: Punct) -> Result<()> {
         assert_eq!(self.ignore_after_newline, Some(meta));
         loop {
             match try!(self.read()) {
@@ -419,7 +495,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn try_parse_name(&mut self) -> diag::Result<Option<Spanned<Name>>> {
+    fn try_parse_name(&mut self) -> Result<Option<Spanned<Name>>> {
         let tok = try!(self.read());
         if let Tok::Name(name) = tok.1.base {
             let name: Name = name.into();
@@ -430,7 +506,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn parse_name(&mut self) -> diag::Result<Spanned<Name>> {
+    fn parse_name(&mut self) -> Result<Spanned<Name>> {
         let tok = try!(self.read());
         if let Tok::Name(name) = tok.1.base {
             let name: Name = name.into();
@@ -440,7 +516,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn try_name_or_keyword(&mut self) -> diag::Result<Spanned<Name>> {
+    fn try_name_or_keyword(&mut self) -> Result<Spanned<Name>> {
         match try!(self.read()) {
             (_, Spanned { base: Tok::Name(name), span }) => {
                 let name: Name = name.into();
@@ -458,7 +534,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn parse_block(&mut self) -> diag::Result<Spanned<Block>> {
+    fn parse_block(&mut self) -> Result<Spanned<Block>> {
         let begin = self.pos();
         let mut stmts = Vec::new();
         while let Some(stmt) = try!(self.try_parse_stmt()) {
@@ -482,7 +558,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                                  note_on_dup: &Localize,
                                                  note_on_less: &Localize,
                                                  note_on_more: &Localize)
-            -> diag::Result<Spanned<Vec<TypeSpec<Spanned<Item>>>>> {
+            -> Result<Spanned<Vec<TypeSpec<Spanned<Item>>>>> {
         if oldspecs.iter().any(|oldspec| oldspec.modf != M::None ||
                                          oldspec.kind.is_some()) {
             try!(self.error(specs.span, note_on_dup).done());
@@ -513,7 +589,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn try_parse_stmt(&mut self) -> diag::Result<Option<Spanned<Stmt>>> {
+    fn try_parse_stmt(&mut self) -> Result<Option<Spanned<Stmt>>> {
         let begin = self.pos();
 
         let funcspec = try!(self.try_parse_kailua_func_spec());
@@ -539,17 +615,34 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             }
         }
 
+        macro_rules! try_or_recover_by {
+            ($try:expr;
+                $(Punct::$punct:ident => $pskip:ident $(,)*)*
+                $(Keyword::$keyword:ident => $kwskip:ident $(,)*)*
+                $(_ => $anyskip:ident $(,)*)*
+            ) => (
+                try_or_recover!($try;
+                    return skip_by!($(Punct::$punct => $pskip,)*
+                                    $(Keyword::$keyword => $kwskip,)*
+                                    $(_ => $anyskip,)*)(self))
+            )
+        }
+
         let stmt = match try!(self.read()) {
             (_, Spanned { base: Tok::Keyword(Keyword::Do), .. }) => {
-                let block = try!(self.parse_block());
+                let block = try_or_recover_by!(self.parse_block(); Keyword::End => Until);
                 try!(self.expect(Keyword::End));
                 Box::new(St::Do(block))
             }
 
             (_, Spanned { base: Tok::Keyword(Keyword::While), .. }) => {
-                let cond = try!(self.parse_exp());
-                try!(self.expect(Keyword::Do));
-                let block = try!(self.parse_block());
+                let (cond, block) = try_or_recover_by!({
+                    let cond = try_or_recover_by!(self.parse_exp();
+                                                  Keyword::Do => Until, Keyword::End => Until);
+                    try!(self.try_expect(Keyword::Do));
+                    let block = try!(self.parse_block());
+                    Ok((cond, block))
+                }; Keyword::End => Until);
                 try!(self.expect(Keyword::End));
                 Box::new(St::While(cond, block))
             }
@@ -801,7 +894,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         Ok(Some(stmt.with_loc(begin..self.last_pos())))
     }
 
-    fn parse_stmt_for_in(&mut self, names: Spanned<Vec<Spanned<Name>>>) -> diag::Result<Stmt> {
+    fn parse_stmt_for_in(&mut self, names: Spanned<Vec<Spanned<Name>>>) -> Result<Stmt> {
         let mut exps = Vec::new();
         let span = try!(self.scan_list(Self::parse_exp, |exp| exps.push(exp)));
         let exps = exps.with_loc(span);
@@ -813,7 +906,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
     fn parse_func_body(&mut self,
                        funcspec: Option<Spanned<(Vec<Spanned<Attr>>, Option<Spanned<Presig>>)>>)
-            -> diag::Result<(Sig, Spanned<Block>)> {
+            -> Result<(Sig, Spanned<Block>)> {
         let mut args = Vec::new();
         let mut varargs = None;
         let returns; // to check the error case
@@ -977,7 +1070,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         Ok((sig, block))
     }
 
-    fn parse_table(&mut self) -> diag::Result<Vec<(Option<Spanned<Exp>>, Spanned<Exp>)>> {
+    fn parse_table(&mut self) -> Result<Vec<(Option<Spanned<Exp>>, Spanned<Exp>)>> {
         let mut fields = Vec::new();
 
         try!(self.expect(Punct::LBrace));
@@ -1039,7 +1132,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         Ok(fields)
     }
 
-    fn try_parse_args(&mut self) -> diag::Result<Option<Spanned<Vec<Spanned<Exp>>>>> {
+    fn try_parse_args(&mut self) -> Result<Option<Spanned<Vec<Spanned<Exp>>>>> {
         let begin = self.pos();
         match try!(self.read()) {
             (_, Spanned { base: Tok::Punct(Punct::LParen), .. }) => {
@@ -1064,7 +1157,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn try_parse_prefix_exp(&mut self) -> diag::Result<Option<Spanned<Exp>>> {
+    fn try_parse_prefix_exp(&mut self) -> Result<Option<Spanned<Exp>>> {
         // any prefixexp starts with name or parenthesized exp
         let mut exp;
         let begin = self.pos();
@@ -1138,7 +1231,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         Ok(Some(exp))
     }
 
-    fn convert_prefix_exp_to_var(&self, exp: Spanned<Exp>) -> Result<Spanned<Var>, Spanned<Exp>> {
+    fn convert_prefix_exp_to_var(&self,
+                                 exp: Spanned<Exp>) -> result::Result<Spanned<Var>, Spanned<Exp>> {
         let span = exp.span;
         let base = *exp.base;
         match base {
@@ -1148,7 +1242,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn try_parse_atomic_exp(&mut self) -> diag::Result<Option<Spanned<Exp>>> {
+    fn try_parse_atomic_exp(&mut self) -> Result<Option<Spanned<Exp>>> {
         let begin = self.pos();
 
         let funcspec = try!(self.try_parse_kailua_func_spec());
@@ -1194,8 +1288,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     fn try_parse_prefix_unary_exp<Term, Op>(&mut self,
                                             mut check_op: Op,
                                             mut try_parse_term: Term)
-            -> diag::Result<Option<Spanned<Exp>>>
-            where Term: FnMut(&mut Self) -> diag::Result<Option<Spanned<Exp>>>,
+            -> Result<Option<Spanned<Exp>>>
+            where Term: FnMut(&mut Self) -> Result<Option<Spanned<Exp>>>,
                   Op: FnMut(&Tok) -> Option<UnOp> {
         let mut ops = Vec::new();
         while let Some(op) = check_op(self.peek()) {
@@ -1220,8 +1314,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     fn try_parse_left_assoc_binary_exp<Term, Op>(&mut self,
                                                  mut check_op: Op,
                                                  mut try_parse_term: Term)
-            -> diag::Result<Option<Spanned<Exp>>>
-            where Term: FnMut(&mut Self) -> diag::Result<Option<Spanned<Exp>>>,
+            -> Result<Option<Spanned<Exp>>>
+            where Term: FnMut(&mut Self) -> Result<Option<Spanned<Exp>>>,
                   Op: FnMut(&Tok) -> Option<BinOp> {
         if let Some(exp) = try!(try_parse_term(self)) {
             let mut exp = exp;
@@ -1244,8 +1338,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     fn try_parse_right_assoc_binary_exp<Term, Op>(&mut self,
                                                   mut check_op: Op,
                                                   mut try_parse_term: Term)
-            -> diag::Result<Option<Spanned<Exp>>>
-            where Term: FnMut(&mut Self) -> diag::Result<Option<Spanned<Exp>>>,
+            -> Result<Option<Spanned<Exp>>>
+            where Term: FnMut(&mut Self) -> Result<Option<Spanned<Exp>>>,
                   Op: FnMut(&Tok) -> Option<BinOp> {
         if let Some(exp) = try!(try_parse_term(self)) {
             // store the terms and process in the reverse order
@@ -1272,7 +1366,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn try_parse_exp(&mut self) -> diag::Result<Option<Spanned<Exp>>> {
+    fn try_parse_exp(&mut self) -> Result<Option<Spanned<Exp>>> {
         macro_rules! make_check_ops {
             ($($name:ident: $ty:ident { $($tokty:ident::$tok:ident => $op:ident),+ $(,)* };)*) => (
                 $(
@@ -1335,7 +1429,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                         parser.try_parse_atomic_exp()))))))))
     }
 
-    fn parse_exp(&mut self) -> diag::Result<Spanned<Exp>> {
+    fn parse_exp(&mut self) -> Result<Spanned<Exp>> {
         if let Some(exp) = try!(self.try_parse_exp()) {
             Ok(exp)
         } else {
@@ -1344,7 +1438,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn try_parse_var(&mut self) -> diag::Result<Option<Spanned<Var>>> {
+    fn try_parse_var(&mut self) -> Result<Option<Spanned<Var>>> {
         if let Some(exp) = try!(self.try_parse_prefix_exp()) {
             let var = self.convert_prefix_exp_to_var(exp).unwrap();
             Ok(Some(var))
@@ -1353,7 +1447,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn parse_var(&mut self) -> diag::Result<Spanned<Var>> {
+    fn parse_var(&mut self) -> Result<Spanned<Var>> {
         if let Some(var) = try!(self.try_parse_var()) {
             Ok(var)
         } else {
@@ -1366,8 +1460,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     // bool is true if it has also consumed `=`
     fn scan_list_with_spec<Item, Scan, F>(&mut self,
                                           mut scan: Scan,
-                                          mut f: F) -> diag::Result<(Span, bool)>
-            where Scan: FnMut(&mut Self) -> diag::Result<Item>,
+                                          mut f: F) -> Result<(Span, bool)>
+            where Scan: FnMut(&mut Self) -> Result<Item>,
                   F: FnMut(TypeSpec<Item>) {
         let begin = self.pos();
         let mut item = try!(scan(self));
@@ -1392,8 +1486,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
     fn scan_list<Item, Scan, F>(&mut self,
                                 mut scan: Scan,
-                                mut f: F) -> diag::Result<Span>
-            where Scan: FnMut(&mut Self) -> diag::Result<Item>,
+                                mut f: F) -> Result<Span>
+            where Scan: FnMut(&mut Self) -> Result<Item>,
                   F: FnMut(Item) {
         let begin = self.pos();
         f(try!(scan(self)));
@@ -1404,7 +1498,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         Ok(Span::new(begin, end))
     }
 
-    fn try_scan_explist<F>(&mut self, mut f: F) -> diag::Result<(Span, bool)>
+    fn try_scan_explist<F>(&mut self, mut f: F) -> Result<(Span, bool)>
             where F: FnMut(Spanned<Exp>) {
         let begin = self.pos();
         if let Some(exp) = try!(self.try_parse_exp()) {
@@ -1430,15 +1524,14 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn try_parse_kailua_attr(&mut self) -> diag::Result<Option<Spanned<Attr>>> {
+    fn try_parse_kailua_attr(&mut self) -> Result<Option<Spanned<Attr>>> {
         let begin = self.pos();
         if self.may_expect(Punct::LBracket) {
-            let until_rbracket =
-                skip_by!(Punct::Newline => UntilForced, Punct::RBracket => Upto);
+            let upto_rbracket = skip_by!(Punct::Newline => UntilForced, Punct::RBracket => Upto);
 
             // `[` NAME `]`
-            let name = try_or_recover!(self.try_name_or_keyword(); return until_rbracket(self));
-            try_or_recover!(self.try_expect(Punct::RBracket); return until_rbracket(self));
+            let name = try_or_recover!(self.try_name_or_keyword(); return upto_rbracket(self));
+            try_or_recover!(self.try_expect(Punct::RBracket); return upto_rbracket(self));
             let attr = Attr { name: name };
             Ok(Some(attr.with_loc(begin..self.last_pos())))
         } else {
@@ -1446,7 +1539,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn parse_kailua_mod(&mut self) -> diag::Result<M> {
+    fn parse_kailua_mod(&mut self) -> Result<M> {
         match try!(self.read()) {
             (_, Spanned { base: Tok::Keyword(Keyword::Const), .. }) => Ok(M::Const),
             tok => {
@@ -1456,7 +1549,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn parse_kailua_slotkind(&mut self) -> diag::Result<Spanned<SlotKind>> {
+    fn parse_kailua_slotkind(&mut self) -> Result<Spanned<SlotKind>> {
         let begin = self.pos();
         let modf = try!(self.parse_kailua_mod());
         let kind = try!(self.parse_kailua_kind());
@@ -1464,7 +1557,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     // may contain ellipsis, the caller is expected to error on unwanted cases
-    fn parse_kailua_kindlist(&mut self) -> diag::Result<Seq<Spanned<Kind>>> {
+    fn parse_kailua_kindlist(&mut self) -> Result<Seq<Spanned<Kind>>> {
         let mut kinds = Vec::new();
         // KIND {"," KIND} ["..."] or empty
         // try to read the first KIND
@@ -1511,8 +1604,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     // the first argument may be `self`, which can have its type omitted
     // may also contain ellipsis, the caller is expected to error on unwanted cases
     fn parse_kailua_namekindlist(&mut self)
-            -> diag::Result<Spanned<Seq<Spanned<TypeSpec<Spanned<Name>>>,
-                                        Spanned<Option<Spanned<Kind>>>>>> {
+            -> Result<Spanned<Seq<Spanned<TypeSpec<Spanned<Name>>>,
+                                  Spanned<Option<Spanned<Kind>>>>>> {
         let mut variadic = None;
         let mut specs = Vec::new();
 
@@ -1577,7 +1670,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         Ok(Seq { head: specs, tail: tail }.with_loc(begin..end))
     }
 
-    fn parse_kailua_funckind(&mut self) -> diag::Result<Spanned<FuncKind>> {
+    fn parse_kailua_funckind(&mut self) -> Result<Spanned<FuncKind>> {
         let begin = self.pos();
         try!(self.expect(Punct::LParen));
         let args = try!(self.parse_kailua_kindlist());
@@ -1594,7 +1687,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     // returns true if it can be followed by postfix operators
-    fn try_parse_kailua_atomic_kind_seq(&mut self) -> diag::Result<Option<AtomicKind>> {
+    fn try_parse_kailua_atomic_kind_seq(&mut self) -> Result<Option<AtomicKind>> {
         let begin = self.pos();
 
         let mut kind = match try!(self.read()) {
@@ -1774,7 +1867,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         Ok(Some(AtomicKind::One(kind)))
     }
 
-    fn try_parse_kailua_prefixed_kind_seq(&mut self) -> diag::Result<Option<AtomicKind>> {
+    fn try_parse_kailua_prefixed_kind_seq(&mut self) -> Result<Option<AtomicKind>> {
         let begin = self.pos();
 
         let attr = try_or_recover!(self.try_parse_kailua_attr(); None);
@@ -1813,7 +1906,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn try_parse_kailua_kind_seq(&mut self) -> diag::Result<Option<Spanned<Seq<Spanned<Kind>>>>> {
+    fn try_parse_kailua_kind_seq(&mut self) -> Result<Option<Spanned<Seq<Spanned<Kind>>>>> {
         let begin = self.pos();
         match try!(self.try_parse_kailua_prefixed_kind_seq()) {
             None => Ok(None),
@@ -1849,7 +1942,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn try_parse_kailua_kind(&mut self) -> diag::Result<Option<Spanned<Kind>>> {
+    fn try_parse_kailua_kind(&mut self) -> Result<Option<Spanned<Kind>>> {
         if let Some(mut kindseq) = try!(self.try_parse_kailua_kind_seq()) {
             if kindseq.base.head.len() == 1 && kindseq.base.tail.is_none() {
                 let first = kindseq.base.head.pop().unwrap();
@@ -1864,7 +1957,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn parse_kailua_kind_seq(&mut self) -> diag::Result<Seq<Spanned<Kind>>> {
+    fn parse_kailua_kind_seq(&mut self) -> Result<Seq<Spanned<Kind>>> {
         if let Some(kindseq) = try!(self.try_parse_kailua_kind_seq()) {
             Ok(kindseq.base)
         } else {
@@ -1874,7 +1967,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn parse_kailua_kind(&mut self) -> diag::Result<Spanned<Kind>> {
+    fn parse_kailua_kind(&mut self) -> Result<Spanned<Kind>> {
         if let Some(kind) = try!(self.try_parse_kailua_kind()) {
             Ok(kind)
         } else {
@@ -1885,8 +1978,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn parse_kailua_kind_with_spanned_modf(&mut self)
-            -> diag::Result<(Spanned<M>, Spanned<Kind>)> {
+    fn parse_kailua_kind_with_spanned_modf(&mut self) -> Result<(Spanned<M>, Spanned<Kind>)> {
         let begin = self.pos();
         let modf = match try!(self.parse_kailua_mod()) {
             M::None => M::None.with_loc(begin), // i.e. the beginning of the kind
@@ -1897,7 +1989,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn try_parse_kailua_type_spec_with_spanned_modf(&mut self)
-            -> diag::Result<Option<Spanned<(Spanned<M>, Spanned<Kind>)>>> {
+            -> Result<Option<Spanned<(Spanned<M>, Spanned<Kind>)>>> {
         let metabegin = self.pos();
         if self.may_expect(Punct::DashDashColon) {
             // allow for `--: { a = foo,
@@ -1922,13 +2014,13 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn try_parse_kailua_type_spec(&mut self) -> diag::Result<Option<Spanned<(M, Spanned<Kind>)>>> {
+    fn try_parse_kailua_type_spec(&mut self) -> Result<Option<Spanned<(M, Spanned<Kind>)>>> {
         let spec = try!(self.try_parse_kailua_type_spec_with_spanned_modf());
         Ok(spec.map(|spec| spec.map(|(m,k)| (m.base, k))))
     }
 
     fn try_parse_kailua_typeseq_spec(&mut self)
-            -> diag::Result<Option<Spanned<Vec<Spanned<(M, Spanned<Kind>)>>>>> {
+            -> Result<Option<Spanned<Vec<Spanned<(M, Spanned<Kind>)>>>>> {
         let metabegin = self.pos();
         if self.may_expect(Punct::DashDashColon) {
             self.begin_meta_comment(Punct::DashDashColon);
@@ -1957,7 +2049,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn try_parse_kailua_rettype_spec(&mut self)
-            -> diag::Result<Option<Spanned<Seq<Spanned<Kind>>>>> {
+            -> Result<Option<Spanned<Seq<Spanned<Kind>>>>> {
         let begin = self.pos();
         if self.may_expect(Punct::DashDashGt) {
             self.begin_meta_comment(Punct::DashDashGt);
@@ -1973,7 +2065,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
     // it may supply only attributes, so we need to return attributes and pre-signatures separately
     fn try_parse_kailua_func_spec(&mut self)
-            -> diag::Result<Option<Spanned<(Vec<Spanned<Attr>>, Option<Spanned<Presig>>)>>> {
+            -> Result<Option<Spanned<(Vec<Spanned<Attr>>, Option<Spanned<Presig>>)>>> {
         let metabegin = self.pos();
         if self.may_expect(Punct::DashDashV) {
             self.begin_meta_comment(Punct::DashDashV);
@@ -2022,7 +2114,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn try_parse_kailua_spec(&mut self) -> diag::Result<Option<Option<Spanned<Stmt>>>> {
+    fn try_parse_kailua_spec(&mut self) -> Result<Option<Option<Spanned<Stmt>>>> {
         let begin = self.pos();
         if self.may_expect(Punct::DashDashHash) {
             self.begin_meta_comment(Punct::DashDashHash);
@@ -2079,12 +2171,12 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     pub fn into_chunk(mut self) -> diag::Result<Spanned<Block>> {
-        let chunk = try!(self.parse_block());
+        let chunk = try!(self.parse_block().map_err(|_| diag::Stop));
         // this check is independent of self.report.can_continue(),
         // as it may have been set even before this call (due to prior `require`s etc).
         if !self.cannot_continue.get() {
             // do not try to expect EOF on error
-            try!(self.expect(EOF));
+            try!(self.expect(EOF).map_err(|_| diag::Stop));
         }
         Ok(chunk)
     }
