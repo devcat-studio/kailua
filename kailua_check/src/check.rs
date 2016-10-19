@@ -722,6 +722,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         debug!("visiting stmt {:?}", *stmt);
 
         match *stmt.base {
+            // it should not happen, but for the purpose of checker, the error nodes are ignored
+            St::Oops => Ok(Exit::None),
+
             St::Void(ref exp) => {
                 try!(self.visit_exp(exp));
                 Ok(Exit::None)
@@ -1337,6 +1340,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         debug!("visiting exp {:?}", *exp);
 
         match *exp.base {
+            // it should not happen, but for the purpose of checker, the error nodes are dummies
+            Ex::Oops => Ok(SlotSeq::dummy()),
+
             Ex::Nil => Ok(SlotSeq::from(T::Nil)),
             Ex::False => Ok(SlotSeq::from(T::False)),
             Ex::True => Ok(SlotSeq::from(T::True)),

@@ -13,6 +13,60 @@
 do break; end; break
 --! [Do([Break]), Break]
 
+--8<-- do-recover
+do
+    @ --@< Error: Unexpected character
+    p()
+end
+q()
+--! [Do([Void(`p`())]), Void(`q`())]
+
+--8<-- while
+while a do b() end c()
+--! [While(`a`, [Void(`b`())]), Void(`c`())]
+
+--8<-- while-recover-1
+while @ --@< Error: Unexpected character
+    x()
+end --@< Error: Expected a keyword `do`, got a keyword `end`
+f()
+--! [While(Oops, []), Void(`f`())]
+
+--8<-- while-recover-2
+while @ do --@< Error: Unexpected character
+           --@^ Error: Expected an expression, got a keyword `do`
+    x()
+end
+f()
+--! [While(Oops, [Void(`x`())]), Void(`f`())]
+
+--8<-- while-recover-3
+while do --@< Error: Expected an expression, got a keyword `do`
+    x()
+end
+f()
+--! [While(Oops, [Void(`x`())]), Void(`f`())]
+
+--8<-- while-recover-4
+while a do
+    @ --@< Error: Unexpected character
+end
+f()
+--! [While(`a`, []), Void(`f`())]
+
+--8<-- top-level-end
+f() end g() --@< Error: Expected a statement, got a keyword `end`
+--! [Void(`f`()), Oops, Void(`g`())]
+
+--8<-- top-level-closing-paren
+f()) g() --@< Error: Expected a statement, got `)`
+--! [Void(`f`()), Oops, Void(`g`())]
+
+--8<-- paren-recover
+f((a@)+(@b)*c) --@< Error: Unexpected character
+               --@^ Error: Unexpected character
+--! [Void(`f`((`a` + (`b` * `c`))))]
+
 --8<-- func
 function r(p) --[[...]] end
 --! [FuncDecl(Global, `r`, [`p`] --> _, [])]
@@ -515,7 +569,7 @@ local x --: (
 
 --8<-- kind-paren-multiline-recover
 local x --: (
-        --:   integer --@< Fatal: Expected `)`, got a newline
+        --:   integer --@< Error: Expected `)`, got a newline
 --! error
 
 --&
@@ -724,12 +778,12 @@ function foo() end
 --! [FuncDecl(Global, `foo`, [] --> _, [])]
 
 --8<-- funcspec-no-empty
---v --@<-v Fatal: Expected a keyword `function`, got a newline
+--v --@<-v Error: Expected a keyword `function`, got a newline
 function foo() end
 --! error
 
 --8<-- funcspec-no-bare-parens
---v () --@< Fatal: Expected a keyword `function`, got `(`
+--v () --@< Error: Expected a keyword `function`, got `(`
 function foo() end
 --! error
 
@@ -911,21 +965,21 @@ function foo.bar(self, x) end
 
 --8<-- assume-multiline-recover
 --# assume a: { integer, string
---#                      boolean --@< Fatal: Expected `,`, `;` or `}`, got a name
---! error
+--#                      boolean --@< Error: Expected `,`, `;` or `}`, got a name
+--! [KailuaAssume(Local, `a`, _, Tuple([_ Integer, _ String]))]
 
 --8<-- long-string-incomplete-1
 f([==== [ --@< Error: Opening long bracket in a string should end with `[`
-          --@^ Fatal: Expected `)`, got `[`
---! error
+          --@^ Error: Expected `)`, got `[`
+--! [Void(`f`(""))]
 
 --&
 ) -- highlighting fix
 
 --8<-- long-string-incomplete-2
 f([==== --@< Error: Opening long bracket in a string should end with `[`
-        --@^ Fatal: Expected `)`, got the end of file
---! error
+        --@^ Error: Expected `)`, got the end of file
+--! [Void(`f`(""))]
 
 --&
 ) -- highlighting fix
@@ -933,8 +987,8 @@ f([==== --@< Error: Opening long bracket in a string should end with `[`
 --8<-- long-string-incomplete-3
 f([====[ --@< Error: Premature end of file in a long string
          --@^ Note: The long string started here
-         --@^^ Fatal: Expected `)`, got the end of file
---! error
+         --@^^ Error: Expected `)`, got the end of file
+--! [Void(`f`(""))]
 
 --&
 ]====]) -- highlighting fix
@@ -942,8 +996,8 @@ f([====[ --@< Error: Premature end of file in a long string
 --8<-- long-string-incomplete-4
 f([====[foo] --@< Error: Premature end of file in a long string
              --@^ Note: The long string started here
-             --@^^ Fatal: Expected `)`, got the end of file
---! error
+             --@^^ Error: Expected `)`, got the end of file
+--! [Void(`f`("foo"))]
 
 --&
 ]====]) -- highlighting fix
@@ -972,8 +1026,8 @@ f(--[====
 --@vvv Error: Premature end of file in a long comment
 --@v Note: The long comment started here
 f(--[====[
-) --@< Fatal: Expected `)`, got the end of file
---! error
+) --@< Error: Expected `)`, got the end of file
+--! [Void(`f`())]
 
 --&
 ]====] -- highlighting fix
@@ -982,8 +1036,8 @@ f(--[====[
 --@vvv Error: Premature end of file in a long comment
 --@v Note: The long comment started here
 f(--[====[foo]
-) --@< Fatal: Expected `)`, got the end of file
---! error
+) --@< Error: Expected `)`, got the end of file
+--! [Void(`f`())]
 
 --&
 ]====] -- highlighting fix
@@ -1012,7 +1066,7 @@ f()
 --# assume p: --[[xxx   --@< Error: A newline is disallowed in a long comment inside the meta block
                   yyy]] --@^ Note: The meta block started here
                         --@^^-^ Error: Expected a single type, got a newline
-                        --@^^ Fatal: Expected `=`, got `]`
+                        --@^^ Error: Expected `=`, got `]`
 --! error
 
 --8<-- string-multi-line
@@ -1042,8 +1096,8 @@ f('foo\xyz', 'bar\zyx') --@< Error: Unrecognized escape sequence in a string
 --8<-- string-incomplete-escape
 f('foo\ --@< Error: Premature end of file in a string
         --@^ Note: The string started here
-        --@^^ Fatal: Expected `)`, got the end of file
---! error
+        --@^^ Error: Expected `)`, got the end of file
+--! [Void(`f`("foo"))]
 
 --&
 ') -- highlighting fix
@@ -1051,10 +1105,10 @@ f('foo\ --@< Error: Premature end of file in a string
 --8<-- string-incomplete
 --@vvv Error: Premature end of file in a string
 --@vv Note: The string started here
---@v Fatal: Expected `)`, got the end of file
+--@v Error: Expected `)`, got the end of file
 f('foo
 --&
---! error
+--! [Void(`f`("foo"))]
 
 ') -- highlighting fix
 
@@ -1065,8 +1119,8 @@ f(0x12345678901234567)
 
 --8<-- number-incomplete-exp-1
 f(3e --@< Error: Invalid number
-     --@^ Fatal: Expected `)`, got the end of file
---! error
+     --@^ Error: Expected `)`, got the end of file
+--! [Void(`f`())]
 
 --&
 ) -- highlighting fix
@@ -1077,8 +1131,8 @@ f(3e) --@< Error: Invalid number
 
 --8<-- number-incomplete-exp-2
 f(3e+ --@< Error: Invalid number
-      --@^ Fatal: Expected `)`, got `+`
---! error
+      --@^ Error: Expected `)`, got `+`
+--! [Void(`f`())]
 
 --&
 ) -- highlighting fix
@@ -1098,8 +1152,8 @@ f()
 --! [KailuaAssume(Local, `p`, _, Integer), Void(`f`()), KailuaAssume(Local, `q`, _, Integer)]
 
 --8<-- for-of
-for a of x --@< Fatal: Expected `=`, `,`, `in` or `--:` after `for NAME`, got a name
---! error
+for a of x --@< Error: Expected `=`, `,`, `in` or `--:` after `for NAME`, got a name
+--! [Oops]
 
 --8<-- local-seq
 local (x, y) = (1, 2) --@< Fatal: Expected a name or `function` after `local`, got `(`
@@ -1118,8 +1172,10 @@ end
 --! [FuncDecl(Global, `p`, [...: Integer] --> _, [])]
 
 --8<-- table-invalid-char
-f({x#}) --@< Fatal: Expected `,`, `;` or `}`, got `#`
---! error
+f({x#}) --@< Error: Expected `,`, `;` or `}`, got `#`
+g({y#}) --@< Error: Expected `,`, `;` or `}`, got `#`
+--! [Void(`f`(Table([(None, `x`)]))), \
+--!  Void(`g`(Table([(None, `y`)])))]
 
 --8<-- index-with-number
 f(x.0) --@< Fatal: Expected a name after `<expression> .`, got a number
@@ -1130,8 +1186,9 @@ f(x:g - 1) --@< Fatal: Expected argument(s) after `<expression> : <name>`, got `
 --! error
 
 --8<-- funccall-invalid-char
-f(2, *3) --@< Fatal: Expected an expression, got `*`
---! error
+f(2, *3) --@< Error: Expected an expression, got `*`
+         --@^ Error: Expected `)`, got `*`
+--! [Void(`f`(2, Oops))]
 
 --8<-- op-invalid-char-1
 f(2 + *3) --@< Fatal: Expected an expression, got `*`
@@ -1151,6 +1208,7 @@ a, *b = 5 --@< Fatal: Expected a left-hand-side expression, got `*`
 
 --8<-- assume-invalid-char
 --# assume x: #foo --@< Error: Expected a single type, got `#`
+                   --@^ Error: Expected a newline, got `#`
 --! [KailuaAssume(Local, `x`, _, Oops)]
 
 --8<-- assume-seq-varargs-1
@@ -1181,6 +1239,7 @@ a, *b = 5 --@< Fatal: Expected a left-hand-side expression, got `*`
 
 --8<-- assume-func-invalid-char
 --# assume x: function () --> #foo --@< Error: Expected a single type or type sequence, got `#`
+                                   --@^ Error: Expected a newline, got a name
 --! [KailuaAssume(Local, `x`, _, Func(() --> Oops))]
 
 --8<-- assume-named
@@ -1188,12 +1247,16 @@ a, *b = 5 --@< Fatal: Expected a left-hand-side expression, got `*`
 --! [KailuaAssume(Local, `x`, _, `whatever`)]
 
 --8<-- assume-rec-invalid-char
---# assume x: {x = integer #} --@< Fatal: Expected `,`, `;` or `}`, got `#`
---! error
+--# assume x: {x = integer #} --@< Error: Expected `,`, `;` or `}`, got `#`
+--# assume y: {y = integer #} --@< Error: Expected `,`, `;` or `}`, got `#`
+--! [KailuaAssume(Local, `x`, _, Record(["x": _ Integer])), \
+--!  KailuaAssume(Local, `y`, _, Record(["y": _ Integer]))]
 
 --8<-- assume-tuple-invalid-char
---# assume x: {integer #} --@< Fatal: Expected `,`, `;` or `}`, got `#`
---! error
+--# assume x: {integer #} --@< Error: Expected `,`, `;` or `}`, got `#`
+--# assume y: {integer #} --@< Error: Expected `,`, `;` or `}`, got `#`
+--! [KailuaAssume(Local, `x`, _, Array(_ Integer)), \
+--!  KailuaAssume(Local, `y`, _, Array(_ Integer))]
 
 --8<-- assume-rec-duplicate-name
 --# assume x: {x = integer, x = string} --@< Error: Duplicate record field `x` in the type specification
@@ -1218,8 +1281,8 @@ a, *b = 5 --@< Fatal: Expected a left-hand-side expression, got `*`
 --8<-- assume-builtin-and-literal-recover
 --# assume x: WHATEVER = hello --@< Error: Expected a newline, got `=`
 --# assume y: "bo\gus"         --@< Error: Unrecognized escape sequence in a string
-f(                             --@< Fatal: Expected `)`, got the end of file
---! error
+f(                             --@< Error: Expected `)`, got the end of file
+--! [KailuaAssume(Local, `x`, _, Dynamic), Void(`f`())]
 
 --&
 ) -- highlighting fix
@@ -1230,8 +1293,8 @@ f(                             --@< Fatal: Expected `)`, got the end of file
 
 --8<-- assume-or-seq-1
 --# assume x: integer | () | nil --@< Error: A sequence of types cannot be inside a union
-f(                               --@< Fatal: Expected `)`, got the end of file
---! error
+f(                               --@< Error: Expected `)`, got the end of file
+--! [KailuaAssume(Local, `x`, _, Union([Integer, Oops, Nil])), Void(`f`())]
 
 --&
 ) -- highlighting fix
@@ -1239,8 +1302,8 @@ f(                               --@< Fatal: Expected `)`, got the end of file
 --8<-- assume-or-seq-2
 --# assume x: integer | (string,
 --#                      boolean) | nil --@^-< Error: A sequence of types cannot be inside a union
-f(                                      --@< Fatal: Expected `)`, got the end of file
---! error
+f(                                      --@< Error: Expected `)`, got the end of file
+--! [KailuaAssume(Local, `x`, _, Union([Integer, Oops, Nil])), Void(`f`())]
 
 --&
 ) -- highlighting fix

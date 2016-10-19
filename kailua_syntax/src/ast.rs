@@ -202,6 +202,8 @@ impl fmt::Debug for Sig {
 
 #[derive(Clone, PartialEq)]
 pub enum Ex {
+    Oops,
+
     // literals
     Nil,
     False,
@@ -224,6 +226,7 @@ pub enum Ex {
 impl fmt::Debug for Ex {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
+            Ex::Oops => write!(f, "Oops"),
             Ex::Nil => write!(f, "nil"),
             Ex::False => write!(f, "false"),
             Ex::True => write!(f, "true"),
@@ -336,6 +339,8 @@ impl fmt::Debug for SelfParam {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum St {
+    Oops,
+
     Void(Spanned<Exp>), // technically not every Exp is valid here, but for simplicity.
     Assign(Spanned<Vec<TypeSpec<Spanned<Var>>>>, Spanned<Vec<Spanned<Exp>>>),
     Do(Spanned<Block>),

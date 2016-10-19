@@ -106,6 +106,11 @@ define_msg! { pub NoExp<'a> { read: &'a Tok }:
     _    => "Expected an expression, got {read}",
 }
 
+define_msg! { pub NoStmt<'a> { read: &'a Tok }:
+    "ko" => "문장이 나와야 하는데 {read}이(가) 나왔습니다",
+    _    => "Expected a statement, got {read}",
+}
+
 define_msg! { pub NoVar<'a> { read: &'a Tok }:
     "ko" => "변수나 인덱스 수식이 나와야 하는데 {read}이(가) 나왔습니다",
     _    => "Expected a left-hand-side expression, got {read}",
@@ -308,5 +313,10 @@ define_msg! { pub AttrToKindSeq:
 define_msg! { pub MissingSelfInFuncSpec:
     "ko" => "메소드의 함수 타입에서 첫 인자가 `self`가 아닙니다",
     _    => "The first argument in the function specification for a method is not `self`",
+}
+
+define_msg! { pub StmtAfterReturnOrBreak:
+    "ko" => "`return`이나 `break` 다음에는 다른 문장이 올 수 없습니다",
+    _    => "`return` or `break` cannot be followed by other statements",
 }
 

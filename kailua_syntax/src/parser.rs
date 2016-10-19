@@ -17,7 +17,7 @@ pub struct Parser<'a, T> {
     iter: iter::Fuse<T>,
 
     // the lookahead stream (in this order)
-    elided_newline: Option<Span>, // same to ElidedTokens below
+    elided_newline: Option<Span>, // same to Side.elided_tokens below
     lookahead: Option<Spanned<Tok>>,
     lookahead2: Option<Spanned<Tok>>,
     // ...follows self.iter.next()
@@ -29,6 +29,34 @@ pub struct Parser<'a, T> {
     ignore_after_newline: Option<Punct>,
     report: &'a Report,
     cannot_continue: Cell<bool>,
+
+    // a list of delimiting pairs which contain the current cursor
+    open_nestings: Vec<Nesting>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum Nesting {
+    // implicitly starts, ends with the EOF
+    // used to simplify the handling of EOF
+    Top,
+    // starts with meta token, ends with newline or other meta token (opens another nesting)
+    Meta,
+    // starts with `(`, ends with `)`
+    Paren,
+    // starts with `{`, ends with `}`
+    Brace,
+    // starts with `[`, ends with `]`
+    Bracket,
+    // starts with `for` or `while`, ends with `do`; normally inside Nesting::End
+    Do,
+    // starts with `if` or `elseif`, ends with `then`; normally inside Nesting::Else
+    Then,
+    // starts with `if` or `elseif`, ends with `elseif` or `else`; normally inside Nesting::End
+    Else,
+    // starts with any block statement, ends with `end`
+    End,
+    // starts with `repeat`, ends with `until`
+    Until,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -76,54 +104,75 @@ impl Expectable for EOF {
     fn check_token(&self, tok: &Tok) -> bool { tok == &Tok::EOF }
 }
 
-#[derive(Debug)]
-#[allow(dead_code)]
-enum Skip {
-    None,
-    Upto,
-    Until,
-    UptoForced,
-    UntilForced,
+trait Recover {
+    fn recover() -> Self;
 }
 
-macro_rules! skip_by {
-    (
-        $(Punct::$punct:ident => $pskip:ident $(,)*)*
-        $(Keyword::$keyword:ident => $kwskip:ident $(,)*)*
-    ) => (
-        skip_by!($(Punct::$punct => $pskip,)* $(Keyword::$keyword => $kwskip,)* _ => None)
-    );
+impl Recover for () {
+    fn recover() -> Self { () }
+}
 
-    (
-        $(Punct::$punct:ident => $pskip:ident $(,)*)*
-        $(Keyword::$keyword:ident => $kwskip:ident $(,)*)*
-        _ => $anyskip:ident $(,)*
-    ) => (
-        |parser: &mut Parser<'a, T>| {
-            try!(parser.skip(&|tok| match *tok {
-                $(Tok::Punct(Punct::$punct) => Skip::$pskip,)*
-                $(Tok::Keyword(Keyword::$keyword) => Skip::$kwskip,)*
-                _ => Skip::$anyskip,
-            }));
-            Err(Stop::Recover)
+impl Recover for K {
+    fn recover() -> Self { K::Oops }
+}
+
+impl Recover for Ex {
+    fn recover() -> Self { Ex::Oops }
+}
+
+impl Recover for St {
+    fn recover() -> Self { St::Oops }
+}
+
+impl<T> Recover for Option<T> {
+    fn recover() -> Self { None }
+}
+
+impl<T> Recover for Vec<T> {
+    fn recover() -> Self { Vec::new() }
+}
+
+impl<T: Recover> Recover for Spanned<T> {
+    fn recover() -> Self {
+        let v: T = Recover::recover();
+        v.without_loc()
+    }
+}
+
+impl<T: Recover> Recover for Box<T> {
+    fn recover() -> Self { Box::new(Recover::recover()) }
+}
+
+macro_rules! lastly {
+    (|$i:ident| $e:expr $(=> $f:expr)+) => (
+        |$i| {
+            let ret = try!($e);
+            $(try!($f);)+
+            Ok(ret)
         }
     )
 }
 
-macro_rules! try_or_recover {
-    ($try:expr; $recover:expr) => (
-        match (|| $try)() {
-            Ok(v) => v,
-            Err(Stop::Fatal) => return Err(Stop::Fatal),
-            Err(Stop::Recover) => $recover,
-        }
-    );
+// `read()` returns this side information along with the token;
+// `unread()` should have been given the same side information.
+#[derive(Clone, Debug)]
+struct Side {
+    // represents a sequence of elided tokens (one or more (newline + meta begin)s) when Some.
+    // the span is used to reconstruct the token for meta beginning.
+    elided_tokens: ElidedTokens,
+
+    // delta information required for rolling parser.open_nestings back
+    nesting_delta: NestingDelta,
 }
 
-// represents a sequence of elided tokens (one or more (newline + meta begin)s) when Some.
-// the span is used to reconstruct the token for meta beginning.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug)]
 struct ElidedTokens(Option<Span>);
+
+#[derive(Clone, Debug)]
+struct NestingDelta {
+    removed: Vec<Nesting>,
+    added: usize,
+}
 
 enum AtomicKind { One(Spanned<Kind>), Seq(Seq<Spanned<Kind>>) }
 
@@ -196,6 +245,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             ignore_after_newline: None,
             report: report,
             cannot_continue: Cell::new(false),
+            open_nestings: vec![Nesting::Top],
         };
         // read the first token and fill the last_span
         let first = parser._next().expect("lexer gave no token");
@@ -208,9 +258,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         loop {
             let next = self.iter.next();
 
-            if false { // useful for debugging
-                if let Some(ref t) = next {
-                    println!("got {:?}", *t);
+            if let Some(ref t) = next {
+                trace!("got {:?}", *t);
+                if false { // useful for debugging
                     let _ = self.note(t.span, format!("got {:?}", t.base)).done();
                 }
             }
@@ -253,19 +303,21 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         (ElidedTokens(elided), next.expect("Parser::read tried to read past EOF"))
     }
 
-    fn read(&mut self) -> Result<(ElidedTokens, Spanned<Tok>)> {
+    fn read(&mut self) -> Result<(Side, Spanned<Tok>)> {
         let (elided, next) = self._read();
+        let delta = self.update_nestings(&next);
         if next.base == Tok::Error {
             // the lexer should have issued an error already
             Err(Stop::Recover)
         } else {
             self.last_span2 = self.last_span;
             self.last_span = next.span;
-            Ok((elided, next))
+            let side = Side { elided_tokens: elided, nesting_delta: delta };
+            Ok((side, next))
         }
     }
 
-    fn _unread(&mut self, (ElidedTokens(elided), tok): (ElidedTokens, Spanned<Tok>)) {
+    fn _unread(&mut self, ElidedTokens(elided): ElidedTokens, tok: Spanned<Tok>) {
         assert!(self.lookahead.is_none() || self.lookahead2.is_none(),
                 "at most two lookahead tokens are supported");
 
@@ -280,39 +332,31 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         self.lookahead = Some(tok);
     }
 
-    fn unread(&mut self, tok: (ElidedTokens, Spanned<Tok>)) {
-        let elided = tok.0;
-        self._unread(tok);
+    fn unread(&mut self, tok: (Side, Spanned<Tok>)) {
+        let (side, tok) = tok;
+        self._unread(side.elided_tokens, tok);
 
         // if we can, reconstruct the last span from the last elided token
-        if let ElidedTokens(Some(span)) = elided {
+        if let ElidedTokens(Some(span)) = side.elided_tokens {
             self.last_span = span;
         } else {
             self.last_span = self.last_span2;
             self.last_span2 = Span::dummy();
         }
+
+        self.revert_nestings(side.nesting_delta);
     }
 
     fn peek<'b>(&'b mut self) -> &'b Spanned<Tok> {
         if self.lookahead.is_none() {
             // do not use `self.read()`; it may fail on an error token, but we can delay that
-            let tok = self._read();
-            self._unread(tok);
+            let (elided, tok) = self._read();
+            self._unread(elided, tok);
         }
         self.lookahead.as_ref().unwrap()
     }
 
     fn expect<Tok: Expectable>(&mut self, tok: Tok) -> Result<()> {
-        let read = try!(self.read()).1;
-        if !tok.check_token(&read.base) {
-            self.fatal(read.span, m::ExpectFailed { expected: tok, read: &read.base }).done()
-        } else {
-            Ok(())
-        }
-    }
-
-    // same to above but gives the caller a chance to recover from expect error
-    fn try_expect<Tok: Expectable>(&mut self, tok: Tok) -> Result<()> {
         let read = try!(self.read());
         if !tok.check_token(&read.1.base) {
             try!(self.error(read.1.span, m::ExpectFailed { expected: tok, read: &read.1.base })
@@ -330,7 +374,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
     fn may_expect<Tok: Expectable>(&mut self, tok: Tok) -> bool {
         if self.lookahead(tok) {
-            let (_elided, next) = self._read();
+            let (_side, next) = self._read();
+            self.update_nestings(&next);
             self.last_span2 = self.last_span;
             self.last_span = next.span;
             true
@@ -339,77 +384,223 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn skip(&mut self, stop: &Fn(&Tok) -> Skip) -> Result<()> {
-        #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-        enum Close {
-            RParen,
-            RBrace,
-            RBracket,
-            Newline, // only after meta start
-            End,
-            Until, // only after Repeat
+    fn update_nestings(&mut self, tok: &Tok) -> NestingDelta {
+        enum Action {
+            None,
+            // push one nesting
+            Push(Nesting),
+            // push two nestings in this order
+            Push2(Nesting, Nesting),
+            // push three nestings in this order
+            Push3(Nesting, Nesting, Nesting),
+            // pop until a particular nesting appears; do nothing if no match
+            Pop(Nesting),
+            // pop until a particular nestings appears,
+            // then push another nesting in place of the popped nesting; do nothing if no match
+            PopAndPush(Nesting, Nesting),
+            // pop until the first nesting appears; push the second nesting if no match
+            PopOrPush(Nesting, Nesting),
         }
 
-        fn pop(stack: &mut Vec<Close>, close: Close) {
-            while let Some(top) = stack.pop() {
-                if top == close { break; }
-            }
-        }
+        let action = match *tok {
+            // natural delimiters
+            // no angle brackets, hard to distinguish comparison ops from delimiters
+            Tok::Punct(Punct::LParen) => Action::Push(Nesting::Paren),
+            Tok::Punct(Punct::LBrace) => Action::Push(Nesting::Brace),
+            Tok::Punct(Punct::LBracket) => Action::Push(Nesting::Bracket),
+            Tok::Punct(Punct::RParen) => Action::Pop(Nesting::Paren),
+            Tok::Punct(Punct::RBrace) => Action::Pop(Nesting::Brace),
+            Tok::Punct(Punct::RBracket) => Action::Pop(Nesting::Bracket),
 
-        let mut stack = Vec::new();
-        loop {
-            let tok = try!(self.read());
+            // meta blocks
+            // Newline token is only generated inside a meta block by the lexer
+            Tok::Punct(Punct::DashDashHash) |
+            Tok::Punct(Punct::DashDashV) |
+            Tok::Punct(Punct::DashDashColon) |
+            Tok::Punct(Punct::DashDashGt) => Action::Push(Nesting::Meta),
+            Tok::Punct(Punct::Newline) => Action::Pop(Nesting::Meta),
 
-            match tok.1.base {
-                // natural delimiters
-                // no angle brackets, hard to distinguish comparison ops from delimiters
-                Tok::Punct(Punct::LParen) => stack.push(Close::RParen),
-                Tok::Punct(Punct::LBrace) => stack.push(Close::RBrace),
-                Tok::Punct(Punct::LBracket) => stack.push(Close::RBracket),
-                Tok::Punct(Punct::RParen) => pop(&mut stack, Close::RParen),
-                Tok::Punct(Punct::RBrace) => pop(&mut stack, Close::RBrace),
-                Tok::Punct(Punct::RBracket) => pop(&mut stack, Close::RBracket),
+            // while, for and do blocks
+            //
+            // while/for ... do ... end
+            // -----------End----------
+            // -------Do-------
+            //
+            // do ... end
+            // ----End---
+            Tok::Keyword(Keyword::While) |
+            Tok::Keyword(Keyword::For) => Action::Push2(Nesting::End, Nesting::Do),
+            Tok::Keyword(Keyword::Do) => Action::PopOrPush(Nesting::Do, Nesting::End),
 
-                // meta blocks
-                // Newline token is only generated inside a meta block by the lexer
-                Tok::Punct(Punct::DashDashHash) |
-                Tok::Punct(Punct::DashDashV) |
-                Tok::Punct(Punct::DashDashColon) |
-                Tok::Punct(Punct::DashDashGt) => stack.push(Close::Newline),
-                Tok::Punct(Punct::Newline) => pop(&mut stack, Close::Newline),
+            // function block
+            //
+            // function [NAME] ( ... ) ... end
+            // -------------End-------------
+            //                 -Paren-
+            Tok::Keyword(Keyword::Function) => Action::Push(Nesting::End),
 
-                // code blocks (mostly ends with End)
-                // Do subsumes While and For as well
-                Tok::Keyword(Keyword::Do) |
-                Tok::Keyword(Keyword::Function) |
-                Tok::Keyword(Keyword::If) => stack.push(Close::End),
-                Tok::Keyword(Keyword::End) => pop(&mut stack, Close::End),
-                Tok::Keyword(Keyword::Repeat) => stack.push(Close::Until),
-                Tok::Keyword(Keyword::Until) => pop(&mut stack, Close::Until),
+            // if blocks
+            //
+            // if ... then ... elseif ... then ... elseif ... then ... else ... end
+            // --------------------------------End---------------------------------
+            // ---------Else---vvvvvv              vvvvvv----Else----------
+            //                 ^^^^^^-----Else-----^^^^^^
+            // ----Then---     ------Then-----     ------Then-----
+            //
+            // `elseif` is a particularly complex token to handle.
+            // it is conceptually closing the if--else nesting but should open one simultaneously.
+            // therefore while the affected nesting does not change per se,
+            // we mark the (conceptual) change in the delta so that the caller can recognize it.
+            Tok::Keyword(Keyword::If) =>
+                Action::Push3(Nesting::End, Nesting::Else, Nesting::Then),
+            Tok::Keyword(Keyword::Then) =>
+                Action::Pop(Nesting::Then),
+            Tok::Keyword(Keyword::Elseif) =>
+                Action::PopAndPush(Nesting::Else, Nesting::Else),
+            Tok::Keyword(Keyword::Else) =>
+                Action::Pop(Nesting::Else),
 
-                Tok::EOF => {
-                    // this is required
-                    self.unread(tok);
-                    break;
+            // repeat-until block
+            //
+            // repeat ... until ...
+            // -----Until------
+            Tok::Keyword(Keyword::Repeat) => Action::Push(Nesting::Until),
+            Tok::Keyword(Keyword::Until) => Action::Pop(Nesting::Until),
+
+            // the universal `end` token
+            Tok::Keyword(Keyword::End) => Action::Pop(Nesting::End),
+
+            // EOF (conceptually forms the top-level nesting)
+            Tok::EOF => Action::Pop(Nesting::Top),
+
+            _ => Action::None,
+        };
+
+        let (removed, added) = match action {
+            Action::None => (Vec::new(), 0),
+
+            Action::Push(e) => {
+                trace!("token {:?} opened a nesting {:?}", *tok, e);
+                self.open_nestings.push(e);
+                (Vec::new(), 1)
+            },
+
+            Action::Push2(e1, e2) => {
+                trace!("token {:?} opened nestings {:?} and {:?}", *tok, e1, e2);
+                self.open_nestings.push(e1);
+                self.open_nestings.push(e2);
+                (Vec::new(), 2)
+            },
+
+            Action::Push3(e1, e2, e3) => {
+                trace!("token {:?} opened nestings {:?}, {:?} and {:?}", *tok, e1, e2, e3);
+                self.open_nestings.push(e1);
+                self.open_nestings.push(e2);
+                self.open_nestings.push(e3);
+                (Vec::new(), 3)
+            },
+
+            Action::Pop(epop) => {
+                if let Some(i) = self.open_nestings.iter().rposition(|&e| e == epop) {
+                    trace!("token {:?} closed a nesting {:?}", *tok, epop);
+                    let removed = self.open_nestings.drain(i..).collect();
+                    (removed, 0)
+                } else {
+                    trace!("token {:?} tried to close a nesting {:?}", *tok, epop);
+                    (Vec::new(), 0)
                 }
+            },
 
-                _ => {}
-            }
+            Action::PopAndPush(epop, epush) => {
+                if let Some(i) = self.open_nestings.iter().rposition(|&e| e == epop) {
+                    trace!("token {:?} closed a nesting {:?} and opened a nesting {:?}",
+                           *tok, epop, epush);
+                    let removed = self.open_nestings.drain(i..).collect();
+                    self.open_nestings.push(epush);
+                    (removed, 1) // intentionally do not check if epop == epush; see above
+                } else {
+                    trace!("token {:?} tried to close a nesting {:?} and open a nesting {:?}",
+                           *tok, epop, epush);
+                    (Vec::new(), 0)
+                }
+            },
 
-            let should_unread = match stop(&tok.1.base) {
-                Skip::None => None,
-                Skip::Until => if stack.is_empty() { Some(true) } else { None },
-                Skip::Upto => if stack.is_empty() { Some(false) } else { None },
-                Skip::UntilForced => Some(true),
-                Skip::UptoForced => Some(false),
-            };
-            if let Some(should_unread) = should_unread {
-                if should_unread { self.unread(tok); }
-                break;
+            Action::PopOrPush(epop, epush) => {
+                if let Some(i) = self.open_nestings.iter().rposition(|&e| e == epop) {
+                    trace!("token {:?} closed a nesting {:?} instead of opening a nesting {:?}",
+                           *tok, epop, epush);
+                    let removed = self.open_nestings.drain(i..).collect();
+                    (removed, 0)
+                } else {
+                    trace!("token {:?} tried to close a nesting {:?} but \
+                            opened a nesting {:?} instead", *tok, epop, epush);
+                    self.open_nestings.push(epush);
+                    (Vec::new(), 1)
+                }
+            },
+        };
+
+        NestingDelta { removed: removed, added: added }
+    }
+
+    fn revert_nestings(&mut self, delta: NestingDelta) {
+        assert!(delta.added <= self.open_nestings.len());
+        let newlen = self.open_nestings.len() - delta.added;
+        self.open_nestings.truncate(newlen);
+        self.open_nestings.extend(delta.removed.into_iter());
+    }
+
+    // ensures that the nesting depth of the pseudo-tree of tokens is lower than the beginning
+    fn recover_retry<F, R>(&mut self, f: F) -> Result<R>
+        where F: FnOnce(&mut Parser<'a, T>) -> Result<R>
+    {
+        let depth = self.open_nestings.len();
+        trace!("set the recover trap, nestings = {:?}", self.open_nestings);
+        let ret = f(self);
+        if ret.is_err() {
+            debug!("recovering from the error, init nestings = {:?}", self.open_nestings);
+            let mut last_tok = None;
+            while self.open_nestings.len() >= depth {
+                if let Ok(tok) = self.read() {
+                    trace!("skipping {:?}, nestings = {:?}", tok.1, self.open_nestings);
+                    last_tok = Some(tok);
+                } else {
+                    // error tokens are ignored
+                    last_tok = None;
+                }
             }
+            if depth - self.open_nestings.len() > 1 {
+                // if the last token has closed too many nestings we need to keep
+                // that last token to allow the further match from the caller.
+                // this case includes a premature EOF, whether reading EOF would close
+                // at least two nestings (the initial nesting, the top-level nesting).
+                if let Some(tok) = last_tok {
+                    self.unread(tok);
+                }
+            }
+            debug!("recovered from the error, final nestings = {:?}", self.open_nestings);
         }
+        ret
+    }
 
-        Ok(())
+    fn recover_with<F, H, R>(&mut self, f: F, handler: H) -> Result<R>
+        where F: FnOnce(&mut Parser<'a, T>) -> Result<R>, H: FnOnce() -> R
+    {
+        match self.recover_retry(f) {
+            Ok(v) => Ok(v),
+            Err(Stop::Recover) => Ok(handler()),
+            Err(Stop::Fatal) => Err(Stop::Fatal),
+        }
+    }
+
+    fn recover<F, R: Recover>(&mut self, f: F) -> Result<R>
+        where F: FnOnce(&mut Parser<'a, T>) -> Result<R>
+    {
+        self.recover_with(f, Recover::recover)
+    }
+
+    fn recover_to_close(&mut self) {
+        let _: Result<()> = self.recover_retry(|_| Err(Stop::Recover));
     }
 
     fn pos(&mut self) -> Pos {
@@ -535,19 +726,73 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn parse_block(&mut self) -> Result<Spanned<Block>> {
+        debug!("parsing block");
+
         let begin = self.pos();
         let mut stmts = Vec::new();
+        let mut pastlast = false;
+        let mut excessspan = None;
         while let Some(stmt) = try!(self.try_parse_stmt()) {
             self.may_expect(Punct::Semicolon);
 
-            // if the statement is the final one, stop parsing
+            // if the statement is the final one, further parsing is an error
             let last = match &*stmt.base {
                 &St::Return(..) | &St::Break => true,
                 _ => false,
             };
 
+            if pastlast {
+                excessspan = Some(excessspan.unwrap_or(Span::dummy()) | stmt.span);
+            }
+            pastlast |= last;
             stmts.push(stmt);
-            if last { break; }
+        }
+
+        if let Some(span) = excessspan {
+            try!(self.error(span, m::StmtAfterReturnOrBreak {}).done());
+        }
+        Ok(stmts.with_loc(begin..self.last_pos()))
+    }
+
+    // unlike `parse_block`, this will try to parse as much as possible until EOF
+    fn parse_block_then_eof(&mut self) -> Result<Spanned<Block>> {
+        debug!("parsing block then EOF");
+
+        let begin = self.pos();
+        let mut stmts = Vec::new();
+        let mut pastlast = false;
+        let mut excessspan = None;
+        loop {
+            let stmt = match try!(self.try_parse_stmt()) {
+                Some(stmt) => stmt,
+                None => {
+                    // try to consume the EOF (and return).
+                    // if we can't, we will discard one token and retry.
+                    if self.may_expect(EOF) { break; }
+                    stmts.push(Recover::recover());
+                    if let Ok(tok) = self.read() {
+                        try!(self.error(tok.1.span, m::NoStmt { read: &tok.1.base }).done());
+                    }
+                    continue;
+                }
+            };
+            self.may_expect(Punct::Semicolon);
+
+            // if the statement is the final one, further parsing is an error
+            let last = match &*stmt.base {
+                &St::Return(..) | &St::Break => true,
+                _ => false,
+            };
+
+            if pastlast {
+                excessspan = Some(excessspan.unwrap_or(Span::dummy()) | stmt.span);
+            }
+            pastlast |= last;
+            stmts.push(stmt);
+        }
+
+        if let Some(span) = excessspan {
+            try!(self.error(span, m::StmtAfterReturnOrBreak {}).done());
         }
         Ok(stmts.with_loc(begin..self.last_pos()))
     }
@@ -590,6 +835,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn try_parse_stmt(&mut self) -> Result<Option<Spanned<Stmt>>> {
+        debug!("parsing stmt");
         let begin = self.pos();
 
         let funcspec = try!(self.try_parse_kailua_func_spec());
@@ -615,48 +861,36 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             }
         }
 
-        macro_rules! try_or_recover_by {
-            ($try:expr;
-                $(Punct::$punct:ident => $pskip:ident $(,)*)*
-                $(Keyword::$keyword:ident => $kwskip:ident $(,)*)*
-                $(_ => $anyskip:ident $(,)*)*
-            ) => (
-                try_or_recover!($try;
-                    return skip_by!($(Punct::$punct => $pskip,)*
-                                    $(Keyword::$keyword => $kwskip,)*
-                                    $(_ => $anyskip,)*)(self))
-            )
-        }
-
         let stmt = match try!(self.read()) {
             (_, Spanned { base: Tok::Keyword(Keyword::Do), .. }) => {
-                let block = try_or_recover_by!(self.parse_block(); Keyword::End => Until);
-                try!(self.expect(Keyword::End));
+                let block = try!(self.recover(
+                    lastly!(|p| p.parse_block() => p.expect(Keyword::End))
+                ));
                 Box::new(St::Do(block))
             }
 
             (_, Spanned { base: Tok::Keyword(Keyword::While), .. }) => {
-                let (cond, block) = try_or_recover_by!({
-                    let cond = try_or_recover_by!(self.parse_exp();
-                                                  Keyword::Do => Until, Keyword::End => Until);
-                    try!(self.try_expect(Keyword::Do));
-                    let block = try!(self.parse_block());
-                    Ok((cond, block))
-                }; Keyword::End => Until);
-                try!(self.expect(Keyword::End));
+                let cond = try!(self.recover(
+                    lastly!(|p| p.parse_exp() => p.expect(Keyword::Do))
+                ));
+                let block = try!(self.recover(
+                    lastly!(|p| p.parse_block() => p.expect(Keyword::End))
+                ));
                 Box::new(St::While(cond, block))
             }
 
             (_, Spanned { base: Tok::Keyword(Keyword::Repeat), .. }) => {
-                let block = try!(self.parse_block());
-                try!(self.expect(Keyword::Until));
+                let block = try!(self.recover(
+                    lastly!(|p| p.parse_block() => p.expect(Keyword::Until))
+                ));
                 let cond = try!(self.parse_exp());
                 Box::new(St::Repeat(block, cond))
             }
 
             (_, Spanned { base: Tok::Keyword(Keyword::If), .. }) => {
-                let cond = try!(self.parse_exp());
-                try!(self.expect(Keyword::Then));
+                let cond = try!(self.recover(
+                    lastly!(|p| p.parse_exp() => p.expect(Keyword::Then))
+                ));
                 let block = try!(self.parse_block());
                 let mut blocks = vec![(cond, block).with_loc(begin..self.last_pos())];
                 let mut begin = self.pos();
@@ -716,8 +950,11 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         try!(self.parse_stmt_for_in(vars.with_loc(span)))
                     }
 
-                    (_, tok) => {
-                        return self.fatal(tok.span, m::NoForInSep { read: &tok.base }).done();
+                    tok => {
+                        try!(self.error(tok.1.span, m::NoForInSep { read: &tok.1.base }).done());
+                        self.unread(tok);
+                        self.recover_to_close();
+                        Recover::recover()
                     }
                 }
             }
@@ -1123,8 +1360,10 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 (_, Spanned { base: Tok::Punct(Punct::Comma), .. }) |
                 (_, Spanned { base: Tok::Punct(Punct::Semicolon), .. }) => {}
                 (_, Spanned { base: Tok::Punct(Punct::RBrace), .. }) => break,
-                (_, tok) => {
-                    return self.fatal(tok.span, m::NoTableSep { read: &tok.base }).done();
+                tok => {
+                    try!(self.error(tok.1.span, m::NoTableSep { read: &tok.1.base }).done());
+                    self.recover_to_close();
+                    break;
                 }
             }
         }
@@ -1137,8 +1376,11 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         match try!(self.read()) {
             (_, Spanned { base: Tok::Punct(Punct::LParen), .. }) => {
                 let mut args = Vec::new();
-                let (span, _) = try!(self.try_scan_explist(|exp| args.push(exp)));
-                try!(self.expect(Punct::RParen));
+                let (span, _) = try!(self.recover_with(
+                    lastly!(|p| p.try_scan_explist(|exp| args.push(exp)) =>
+                                p.expect(Punct::RParen)),
+                    || (Span::dummy(), false)
+                ));
                 Ok(Some(args.with_loc(span)))
             }
             (_, Spanned { base: Tok::Str(s), span }) => {
@@ -1164,8 +1406,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         match try!(self.read()) {
             (_, Spanned { base: Tok::Punct(Punct::LParen), .. }) => {
                 // TODO should we ignore the span for parentheses?
-                exp = try!(self.parse_exp());
-                try!(self.expect(Punct::RParen));
+                exp = try!(self.recover(
+                    lastly!(|p| p.parse_exp() => p.expect(Punct::RParen))
+                ));
             }
             (_, Spanned { base: Tok::Name(name), span }) => {
                 let name: Name = name.into();
@@ -1367,6 +1610,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn try_parse_exp(&mut self) -> Result<Option<Spanned<Exp>>> {
+        debug!("parsing exp");
+
         macro_rules! make_check_ops {
             ($($name:ident: $ty:ident { $($tokty:ident::$tok:ident => $op:ident),+ $(,)* };)*) => (
                 $(
@@ -1433,8 +1678,10 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         if let Some(exp) = try!(self.try_parse_exp()) {
             Ok(exp)
         } else {
-            let tok = try!(self.read()).1;
-            self.fatal(tok.span, m::NoExp { read: &tok.base }).done()
+            let tok = try!(self.read());
+            try!(self.error(tok.1.span, m::NoExp { read: &tok.1.base }).done());
+            self.unread(tok);
+            Ok(Recover::recover())
         }
     }
 
@@ -1527,11 +1774,10 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     fn try_parse_kailua_attr(&mut self) -> Result<Option<Spanned<Attr>>> {
         let begin = self.pos();
         if self.may_expect(Punct::LBracket) {
-            let upto_rbracket = skip_by!(Punct::Newline => UntilForced, Punct::RBracket => Upto);
-
             // `[` NAME `]`
-            let name = try_or_recover!(self.try_name_or_keyword(); return upto_rbracket(self));
-            try_or_recover!(self.try_expect(Punct::RBracket); return upto_rbracket(self));
+            let name = try!(self.recover_retry(
+                lastly!(|p| p.try_name_or_keyword() => p.expect(Punct::RBracket)),
+            ));
             let attr = Attr { name: name };
             Ok(Some(attr.with_loc(begin..self.last_pos())))
         } else {
@@ -1763,14 +2009,17 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                 let slotkind = try!(self.parse_kailua_slotkind());
                                 fields.push((name, slotkind));
                                 // ";" - "," - ";" "}" - "," "}" - "}"
-                                match try!(self.read()).1 {
-                                    Spanned { base: Tok::Punct(Punct::Comma), .. } => {}
-                                    Spanned { base: Tok::Punct(Punct::Semicolon), .. } => {}
-                                    Spanned { base: Tok::Punct(Punct::RBrace), .. } => break,
+                                match try!(self.read()) {
+                                    (_, Spanned { base: Tok::Punct(Punct::Comma), .. }) => {}
+                                    (_, Spanned { base: Tok::Punct(Punct::Semicolon), .. }) => {}
+                                    (_, Spanned { base: Tok::Punct(Punct::RBrace), .. }) => break,
                                     tok => {
-                                        return self.fatal(tok.span,
-                                                          m::NoTableSep { read: &tok.base })
-                                                   .done();
+                                        try!(self.error(tok.1.span,
+                                                        m::NoTableSep { read: &tok.1.base })
+                                                 .done());
+                                        self.unread(tok);
+                                        self.recover_to_close();
+                                        break;
                                     }
                                 }
                                 if self.may_expect(Punct::RBrace) { break; }
@@ -1784,14 +2033,17 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                             loop {
                                 fields.push(try!(self.parse_kailua_slotkind()));
                                 // ";" - "," - ";" "}" - "," "}" - "}"
-                                match try!(self.read()).1 {
-                                    Spanned { base: Tok::Punct(Punct::Comma), .. } => {}
-                                    Spanned { base: Tok::Punct(Punct::Semicolon), .. } => {}
-                                    Spanned { base: Tok::Punct(Punct::RBrace), .. } => break,
+                                match try!(self.read()) {
+                                    (_, Spanned { base: Tok::Punct(Punct::Comma), .. }) => {}
+                                    (_, Spanned { base: Tok::Punct(Punct::Semicolon), .. }) => {}
+                                    (_, Spanned { base: Tok::Punct(Punct::RBrace), .. }) => break,
                                     tok => {
-                                        return self.fatal(tok.span,
-                                                          m::NoTableSep { read: &tok.base })
-                                                   .done();
+                                        try!(self.error(tok.1.span,
+                                                        m::NoTableSep { read: &tok.1.base })
+                                                 .done());
+                                        self.unread(tok);
+                                        self.recover_to_close();
+                                        break;
                                     }
                                 }
                                 sep = true;
@@ -1870,7 +2122,11 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     fn try_parse_kailua_prefixed_kind_seq(&mut self) -> Result<Option<AtomicKind>> {
         let begin = self.pos();
 
-        let attr = try_or_recover!(self.try_parse_kailua_attr(); None);
+        let attr = match self.try_parse_kailua_attr() {
+            Ok(attr) => attr,
+            Err(Stop::Recover) => None,
+            Err(Stop::Fatal) => return Err(Stop::Fatal),
+        };
         if let Some(kindseq) = try!(self.try_parse_kailua_atomic_kind_seq()) {
             let end = self.last_pos();
 
@@ -2171,14 +2427,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     pub fn into_chunk(mut self) -> diag::Result<Spanned<Block>> {
-        let chunk = try!(self.parse_block().map_err(|_| diag::Stop));
-        // this check is independent of self.report.can_continue(),
-        // as it may have been set even before this call (due to prior `require`s etc).
-        if !self.cannot_continue.get() {
-            // do not try to expect EOF on error
-            try!(self.expect(EOF).map_err(|_| diag::Stop));
-        }
-        Ok(chunk)
+        self.parse_block_then_eof().map_err(|_| diag::Stop)
     }
 }
 

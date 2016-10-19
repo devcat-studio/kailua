@@ -13,6 +13,7 @@ name = "kailua-parse-test"
 harness = false
 
 [dependencies]
+log = "0.3"
 custom_derive = "0.1.2"
 newtype_derive = "0.1.2"
 parse-generics-shim = "0.1.0"
