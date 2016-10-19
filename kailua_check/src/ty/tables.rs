@@ -192,27 +192,23 @@ impl Tables {
                     try!(write!(f, "{} = ", name));
                     try!(write_slot(t, f));
                 }
-                // put an additional comma if there is a single numeric field (i.e. `{var T,}`)
-                if nextlen == 2 && fields.len() == 1 {
-                    try!(write!(f, ","));
-                }
                 try!(write!(f, "}}"));
                 Ok(())
             }
 
             Tables::Array(ref t) => {
-                try!(write!(f, "{{"));
+                try!(write!(f, "vector<"));
                 try!(write_slot(t.as_slot_without_nil(), f));
-                try!(write!(f, "}}"));
+                try!(write!(f, ">"));
                 Ok(())
             }
 
             Tables::Map(ref k, ref v) => {
-                try!(write!(f, "{{["));
+                try!(write!(f, "map<"));
                 try!(write_ty(k, f));
-                try!(write!(f, "] = "));
+                try!(write!(f, ", "));
                 try!(write_slot(v.as_slot_without_nil(), f));
-                try!(write!(f, "}}"));
+                try!(write!(f, ">"));
                 Ok(())
             }
         }

@@ -3,11 +3,12 @@
 --# -- TODO lacks genericity (yet)
 --# assume global `table`:
 --#     [currently] {
---#         `concat` = function({const string|number}, string?, integer?, integer?) --> string;
---#         -- TODO ah fuck, needs overloading with function({any}, integer, any)
---#         `insert` = function({any}, any);
---#         `maxn` = function({const any}) --> integer;
---#         `remove` = function({any}, integer?) --> any?;
---#         `sort` = function({any}, (function(WHATEVER, WHATEVER) --> boolean)?);
+--#         `concat` = function(vector<const string|number>, string?,
+--#                             integer?, integer?) --> string;
+--#         -- TODO ah fuck, needs overloading with function(vector<any>, integer, any)
+--#         `insert` = function(vector<any>, any);
+--#         `maxn` = function(vector<const any>) --> integer;
+--#         `remove` = function(vector<any>, integer?) --> any?;
+--#         `sort` = function(vector<any>, (function(WHATEVER, WHATEVER) --> boolean)?);
 --#     }
 

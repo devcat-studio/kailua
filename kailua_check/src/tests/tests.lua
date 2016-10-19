@@ -167,23 +167,23 @@ local p = ({[2] = 4})[3] --@< Error: Cannot index `{2 = 4}` with `3`
 --! error
 
 --8<-- index-map-with-integer
-local t = {[3] = 4, [8] = 5} --: {[integer] = integer}
+local t = {[3] = 4, [8] = 5} --: map<integer, integer>
 local p = t[3]
 --! ok
 
 --8<-- index-map-with-integer-type
-local t = {[3] = 4, [8] = 5} --: {[integer] = integer}
+local t = {[3] = 4, [8] = 5} --: map<integer, integer>
 local p = t[3] + 3 --@< Error: `(nil|integer)` is not a subtype of `number`
 --! error
 
 --8<-- index-map-with-integer-no-key
-local t = {[2] = 4, [8] = 5} --: {[integer] = integer}
+local t = {[2] = 4, [8] = 5} --: map<integer, integer>
 local p = t[3]
 --! ok
 
 --8<-- index-map-with-integer-no-subtype
-local t = {[2] = 4, [8] = 5} --: {[integer] = integer}
-local p = t.string --@< Error: Cannot index `{[integer] = integer}` with `"string"`
+local t = {[2] = 4, [8] = 5} --: map<integer, integer>
+local p = t.string --@< Error: Cannot index `map<integer, integer>` with `"string"`
 --! error
 
 --8<-- index-empty-with-name
@@ -649,7 +649,7 @@ a[2] = 54
 --8<-- var-table-update-with-integer
 local a = {} --: {} -- cannot be changed!
 a[1] = 42
---@^ Error: Cannot adapt the table type `{}` into `{<currently> <unknown type>,}`
+--@^ Error: Cannot adapt the table type `{}` into `{<currently> <unknown type>}`
 --@^^ Note: The table had to be adapted in order to index it with `1`
 a[2] = 54
 --@^ Error: Cannot adapt the table type `{}` into `{2 = <currently> <unknown type>}`
@@ -672,23 +672,23 @@ local a = {}
 local x = 1 --: integer
 a[x] = 42
 -- XXX probably blocked on subtyping of union
-a.what = 54 -- {number} coerced to {[integer|string] = number} in the slot
+a.what = 54 -- vector<number> coerced to map<integer|string, number> in the slot
 --! ok
 
 --8<-- var-array
-local a = {} --: {number}
+local a = {} --: vector<number>
 --! ok
 
 --8<-- var-array-update-with-integer-and-name
-local a = {} --: {number}
+local a = {} --: vector<number>
 a[1] = 42
 a.what = 54
---@^ Error: Cannot adapt the table type `{number}` into `{[integer] = number}`
+--@^ Error: Cannot adapt the table type `vector<number>` into `map<integer, number>`
 --@^^ Note: The table had to be adapted in order to index it with `"what"`
 --! error
 
 --8<-- var-map-update-and-index
-local a = {} --: {[number] = number}
+local a = {} --: map<number, number>
 a[1] = 42
 a[3] = 54
 a[1] = nil
@@ -696,7 +696,7 @@ local z = a[3] --: number?
 --! ok
 
 --8<-- var-map-update-and-index-subtype
-local a = {} --: {[number] = number}
+local a = {} --: map<number, number>
 a[1] = 42
 a[3] = 54
 a[1] = nil
@@ -706,15 +706,15 @@ local z = a[3] --: integer?
 --! error
 
 --8<-- var-map-update-and-index-wrong-key
-local a = {} --: {[number] = number}
+local a = {} --: map<number, number>
 a[1] = 42
 a.string = 54
---@^ Error: Cannot adapt the table type `{[number] = number}` into `{[(number|"string")] = number}`
+--@^ Error: Cannot adapt the table type `map<number, number>` into `map<(number|"string"), number>`
 --@^^ Note: The table had to be adapted in order to index it with `"string"`
 --! error
 
 --8<-- var-map-update-and-index-without-nil
-local a = {} --: {[number] = number}
+local a = {} --: map<number, number>
 a[1] = 42
 a[3] = 54
 a[1] = nil
@@ -724,13 +724,13 @@ local z = a[3] --: integer
 --! error
 
 --8<-- const-map-init
-local a = {} --: const {[number] = number}
+local a = {} --: const map<number, number>
 --! ok
 
 --8<-- const-map-update
-local a = {} --: const {[number] = number}
+local a = {} --: const map<number, number>
 a[1] = 42
---@^ Error: Cannot adapt the table type `const {[number] = number}` into `{[number] = number}`
+--@^ Error: Cannot adapt the table type `const map<number, number>` into `map<number, number>`
 --@^^ Note: The table had to be adapted in order to index it with `1`
 --! error
 
@@ -981,7 +981,7 @@ local function p()
 end
 local a = {p(), p()} --: {integer, integer, integer, integer}
 local b = {foo = p()} --: {foo = integer}
-local c = {p(), bar = p()} --: {[integer|string] = integer}
+local c = {p(), bar = p()} --: map<integer|string, integer>
 --! ok
 
 --8<-- funccall-from-seq
@@ -1250,19 +1250,19 @@ p = q
 --! error
 
 --8<-- assign-var-map-eqtype
---# assume p: { [string] = number }
+--# assume p: map<string, number>
 --# assume q: number
 p.x = q
 --! ok
 
 --8<-- assign-var-map-subtype
---# assume p: { [string] = number }
+--# assume p: map<string, number>
 --# assume q: integer
 p.x = q
 --! ok
 
 --8<-- assign-var-map-suptype
---# assume p: { [string] = integer }
+--# assume p: map<string, integer>
 --# assume q: number
 p.x = q
 --@^ Error: Cannot assign `number` into `(nil|integer)`
@@ -1504,7 +1504,7 @@ end
 
 --8<-- lua51-ipairs-integer-array
 --# open lua51
---# assume p: {integer}
+--# assume p: vector<integer>
 for x, y in ipairs(p) do
     local a = x * 3
     local b = y * 4
@@ -1513,7 +1513,7 @@ end
 
 --8<-- lua51-ipairs-string-array-1
 --# open lua51
---# assume p: {string}
+--# assume p: vector<string>
 for x, y in ipairs(p) do
     local a = x * 3
     local b = y .. 'a'
@@ -1522,7 +1522,7 @@ end
 
 --8<-- lua51-ipairs-string-array-2
 --# open lua51
---# assume p: {string}
+--# assume p: vector<string>
 for x, y in ipairs(p) do
     local b = y * 4 --@< Error: `string` is not a subtype of `number`
 end
@@ -1530,9 +1530,9 @@ end
 
 --8<-- lua51-ipairs-no-map
 --# open lua51
---# assume p: {[integer] = string}
+--# assume p: map<integer, string>
 for x, y in ipairs(p) do
-    --@^ Error: `{[integer] = string}` is not a subtype of `{const WHATEVER}`
+    --@^ Error: `map<integer, string>` is not a subtype of `vector<const WHATEVER>`
     -- XXX WHATEVER is temporary
 end
 --! error
@@ -1541,7 +1541,7 @@ end
 --# open lua51
 --# assume p: table
 for x, y in ipairs(p) do
-    --@^ Error: `table` is not a subtype of `{const WHATEVER}`
+    --@^ Error: `table` is not a subtype of `vector<const WHATEVER>`
     -- XXX WHATEVER is temporary
 end
 --! error
@@ -1550,7 +1550,7 @@ end
 --# open lua51
 --# assume p: string
 for x, y in ipairs(p) do
-    --@^ Error: `string` is not a subtype of `{const WHATEVER}`
+    --@^ Error: `string` is not a subtype of `vector<const WHATEVER>`
     -- XXX WHATEVER is temporary
 end
 --! error
@@ -1583,7 +1583,7 @@ end
 
 --8<-- lua51-pairs-integer-integer-map
 --# open lua51
---# assume p: {[integer] = integer}
+--# assume p: map<integer, integer>
 for x, y in pairs(p) do
     local a = x * 3
     local b = y * 4
@@ -1592,7 +1592,7 @@ end
 
 --8<-- lua51-pairs-integer-string-map-1
 --# open lua51
---# assume p: {[integer] = string}
+--# assume p: map<integer, string>
 for x, y in pairs(p) do
     local a = x * 3
     local b = y .. 'a'
@@ -1601,7 +1601,7 @@ end
 
 --8<-- lua51-pairs-integer-string-map-2
 --# open lua51
---# assume p: {[integer] = string}
+--# assume p: map<integer, string>
 for x, y in pairs(p) do
     local b = y * 4 --@< Error: `string` is not a subtype of `number`
 end
@@ -1609,7 +1609,7 @@ end
 
 --8<-- lua51-pairs-string-integer-map-1
 --# open lua51
---# assume p: {[string] = integer}
+--# assume p: map<string, integer>
 for x, y in pairs(p) do
     local a = x .. 'a'
     local b = y * 4
@@ -1618,7 +1618,7 @@ end
 
 --8<-- lua51-pairs-string-integer-map-2
 --# open lua51
---# assume p: {[string] = integer}
+--# assume p: map<string, integer>
 for x, y in pairs(p) do
     local a = x * 3 --@< Error: `string` is not a subtype of `number`
 end

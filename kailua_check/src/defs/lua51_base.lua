@@ -25,8 +25,9 @@
 --#
 --# assume global `ipairs`:
 --#     [generic_pairs]
---#     function({const WHATEVER}) --> (function({const WHATEVER}, integer) --> (integer?, any),
---#                                    {const WHATEVER}, integer)
+--#     function(vector<const WHATEVER>) -->
+--#         (function(vector<const WHATEVER>, integer) --> (integer?, any),
+--#          vector<const WHATEVER>, integer)
 --#
 --# -- TODO sequence conditional union
 --# assume global `load`:

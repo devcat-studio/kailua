@@ -597,7 +597,7 @@ local x --: {const function (); string;
 
 --8<-- kind-tuple-1
 local x --: {WHATEVER}
---! [Local([`x`: _ Array(_ Dynamic)], [])]
+--! [Local([`x`: _ Tuple([_ Dynamic])], [])]
 
 --8<-- kind-tuple-1-comma
 local x --: {WHATEVER,}
@@ -612,27 +612,87 @@ local x --: {WHATEVER;WHATEVER;}
 --! [Local([`x`: _ Tuple([_ Dynamic, _ Dynamic])], [])]
 
 --8<-- kind-array
-local x --: {integer}
---! [Local([`x`: _ Array(_ Integer)], [])]
+local x --: vector<integer>
+local y --: vector<const integer>
+--! [Local([`x`: _ Array(_ Integer)], []), \
+--!  Local([`y`: _ Array(Const Integer)], [])]
+
+--8<-- kind-array-recover-1
+local x --: vector<integer, string> --@< Error: `vector` type needs a single type parameter
+local y --: vector<integer>
+--! [Local([`x`: _ Oops], []), \
+--!  Local([`y`: _ Array(_ Integer)], [])]
+
+--8<-- kind-array-recover-2
+local x --: vector<integer, , string> --@< Error: Expected a single type, got `,`
+                                      --@^ Error: `vector` type needs a single type parameter
+local y --: vector<boolean,> --@< Error: Expected a single type, got `>`
+                             --@^ Error: `vector` type needs a single type parameter
+local z --: vector<integer>
+local w --: vector<> --@< Error: Expected a single type, got `>`
+--! [Local([`x`: _ Oops], []), \
+--!  Local([`y`: _ Oops], []), \
+--!  Local([`z`: _ Array(_ Integer)], []), \
+--!  Local([`w`: _ Array(_ Oops)], [])]
+
+--8<-- kind-array-recover-3
+local x --: vector<integer, --@<-v Error: Expected a single type, got a newline
+                            --@^-< Error: Expected `>` or `>>`, got a newline
+                            --@^^ Error: `vector` type needs a single type parameter
+local y --: vector<boolean  --@<-v Error: Expected `>` or `>>`, got a newline
+local z --: vector<integer>
+local w --: vector          --@<-v Error: Expected a list of type parameters, got a newline
+--! [Local([`x`: _ Oops], []), \
+--!  Local([`y`: _ Array(_ Boolean)], []), \
+--!  Local([`z`: _ Array(_ Integer)], []), \
+--!  Local([`w`: _ Oops], [])]
+
+--8<-- kind-array-reserved
+local x --: `vector` --@< Error: The type name `vector` is reserved and cannot be used
+local y --: `vector`<const integer> --@< Error: The type name `vector` is reserved and cannot be used
+                                    --@^ Error: Expected a newline, got `<`
+--! [Local([`x`: _ Oops], []), \
+--!  Local([`y`: _ Oops], [])]
 
 --8<-- kind-map
-local x --: {[string] = const integer}
+local x --: map<string, const integer>
 --! [Local([`x`: _ Map(String, Const Integer)], [])]
 
 --8<-- kind-map-or-1
-local x --: {[string] = integer|boolean}
+local x --: map<string, integer|boolean>
 --! [Local([`x`: _ Map(String, _ Union([Integer, Boolean]))], [])]
 
 --8<-- kind-map-or-2
-local x --: {[string|boolean] = integer|boolean}
+local x --: map<string|boolean, integer|boolean>
 --! [Local([`x`: _ Map(Union([String, Boolean]), _ Union([Integer, Boolean]))], [])]
 
 --8<-- kind-map-opt
-local x --: {[string?] = integer?}
+local x --: map<string?, integer?>
 --! [Local([`x`: _ Map(String?, _ Integer?)], [])]
 
+--8<-- kind-map-recover-1
+local x --: map<integer, string, boolean> --@< Error: `map` type needs two type parameters
+local y --: map<integer, string>
+local z --: map<integer> --@< Error: `map` type needs two type parameters
+--! [Local([`x`: _ Oops], []), \
+--!  Local([`y`: _ Map(Integer, _ String)], []), \
+--!  Local([`z`: _ Oops], [])]
+
+--8<-- kind-map-recover-2
+local x --: map<integer, , string> --@< Error: Expected a single type, got `,`
+                                   --@^ Error: `map` type needs two type parameters
+local y --: map<boolean,> --@< Error: Expected a single type, got `>`
+local z --: map<integer, string>
+--! [Local([`x`: _ Oops], []), \
+--!  Local([`y`: _ Map(Boolean, _ Oops)], []), \
+--!  Local([`z`: _ Map(Integer, _ String)], [])]
+
+--8<-- kind-map-recover-3
+local x --: map<const integer, string> --@< Error: The first type parameter of `map` type cannot have modifiers
+--! [Local([`x`: _ Map(Integer, _ String)], [])]
+
 --8<-- kind-nested-table
-local x --: {[integer] = const {{[string] = {integer, integer}?}}}
+local x --: map<integer, const vector<map<string, {integer, integer}?>>>
 --! [Local([`x`: _ Map(Integer, \
 --!                    Const Array(_ Map(String, \
 --!                                      _ Tuple([_ Integer, _ Integer])?)))], [])]
@@ -1253,10 +1313,10 @@ a, *b = 5 --@< Fatal: Expected a left-hand-side expression, got `*`
 --!  KailuaAssume(Local, `y`, _, Record(["y": _ Integer]))]
 
 --8<-- assume-tuple-invalid-char
---# assume x: {integer #} --@< Error: Expected `,`, `;` or `}`, got `#`
---# assume y: {integer #} --@< Error: Expected `,`, `;` or `}`, got `#`
---! [KailuaAssume(Local, `x`, _, Array(_ Integer)), \
---!  KailuaAssume(Local, `y`, _, Array(_ Integer))]
+--# assume x: {integer, integer #} --@< Error: Expected `,`, `;` or `}`, got `#`
+--# assume y: {integer, integer #} --@< Error: Expected `,`, `;` or `}`, got `#`
+--! [KailuaAssume(Local, `x`, _, Tuple([_ Integer, _ Integer])), \
+--!  KailuaAssume(Local, `y`, _, Tuple([_ Integer, _ Integer]))]
 
 --8<-- assume-rec-duplicate-name
 --# assume x: {x = integer, x = string} --@< Error: Duplicate record field `x` in the type specification
@@ -1319,18 +1379,18 @@ f(                                      --@< Error: Expected `)`, got the end of
 
 --8<-- alias
 --# type int = integer
---# assume x: {int}
+--# assume x: vector<int>
 --! [KailuaType(`int`, Integer), \
 --!  KailuaAssume(Local, `x`, _, Array(_ `int`))]
 
 --8<-- alias-builtin
 --# type any = integer --@< Error: Cannot redefine a builtin type
---# assume x: {any}
+--# assume x: vector<any>
 --! [KailuaType(`any`, Integer), KailuaAssume(Local, `x`, _, Array(_ Any))]
 
 --8<-- alias-incomplete
 --# type int =
---# assume x: {int} --@< Error: Expected a single type, got a keyword `assume`
+--# assume x: vector<int> --@< Error: Expected a single type, got a keyword `assume`
 --! [KailuaType(`int`, Oops), KailuaAssume(Local, `x`, _, Array(_ `int`))]
 
 --8<-- kind-error

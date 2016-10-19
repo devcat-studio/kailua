@@ -339,8 +339,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
     fn peek<'b>(&'b mut self) -> &'b Spanned<Tok> {
         if self.lookahead.is_none() {
-            let tok = self.read();
-            self.unread(tok);
+            // keep the side information as much as possible
+            let (elided, tok) = self._read();
+            self._unread(elided, tok);
         }
         self.lookahead.as_ref().unwrap()
     }
@@ -655,18 +656,21 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         Box::new(K::Oops).without_loc()
     }
 
-    fn builtin_kind(&self, name: &[u8]) -> Option<K> {
+    // Some(Some(k)) for concrete kinds, Some(None) for generic kinds
+    fn builtin_kind(&self, name: &[u8]) -> Option<Option<K>> {
         match name {
-            b"WHATEVER" => Some(K::Dynamic),
-            b"any"      => Some(K::Any),
-            b"boolean"  => Some(K::Boolean),
-            b"number"   => Some(K::Number),
-            b"integer"  => Some(K::Integer),
-            b"string"   => Some(K::String),
-            b"table"    => Some(K::Table),
-            b"function" => Some(K::Function), // allow for quoted `function` too
-            b"thread"   => Some(K::Thread),
-            b"userdata" => Some(K::UserData),
+            b"WHATEVER" => Some(Some(K::Dynamic)),
+            b"any"      => Some(Some(K::Any)),
+            b"boolean"  => Some(Some(K::Boolean)),
+            b"number"   => Some(Some(K::Number)),
+            b"integer"  => Some(Some(K::Integer)),
+            b"string"   => Some(Some(K::String)),
+            b"table"    => Some(Some(K::Table)),
+            b"function" => Some(Some(K::Function)), // allow for quoted `function` too
+            b"thread"   => Some(Some(K::Thread)),
+            b"userdata" => Some(Some(K::UserData)),
+            b"vector"   => Some(None),
+            b"map"      => Some(None),
             _ => None,
         }
     }
@@ -674,8 +678,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     fn try_parse_name(&mut self) -> Option<Spanned<Name>> {
         let tok = self.read();
         if let Tok::Name(name) = tok.1.base {
-            let name: Name = name.into();
-            Some(name.with_loc(tok.1.span))
+            Some(Name::from(name).with_loc(tok.1.span))
         } else {
             self.unread(tok);
             None
@@ -685,8 +688,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     fn parse_name(&mut self) -> Result<Spanned<Name>> {
         let tok = self.read();
         if let Tok::Name(name) = tok.1.base {
-            let name: Name = name.into();
-            Ok(name.with_loc(tok.1.span))
+            Ok(Name::from(name).with_loc(tok.1.span))
         } else {
             self.fatal(tok.1.span, m::NoName { read: &tok.1.base }).done()
         }
@@ -695,12 +697,10 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     fn try_name_or_keyword(&mut self) -> Result<Spanned<Name>> {
         match self.read() {
             (_, Spanned { base: Tok::Name(name), span }) => {
-                let name: Name = name.into();
-                Ok(name.with_loc(span))
+                Ok(Name::from(name).with_loc(span))
             }
             (_, Spanned { base: Tok::Keyword(keyword), span }) => {
-                let name: Name = keyword.name().into();
-                Ok(name.with_loc(span))
+                Ok(Name::from(keyword.name()).with_loc(span))
             }
             tok => {
                 try!(self.error(tok.1.span, m::NoName { read: &tok.1.base }).done());
@@ -1153,8 +1153,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 variadic = Some(span);
             }
             (_, Spanned { base: Tok::Name(name0), span }) => {
-                let name0: Name = name0.into();
-                name = Some(name0.with_loc(span));
+                name = Some(Name::from(name0).with_loc(span));
                 spec = try!(self.try_parse_kailua_type_spec()); // 1)
                 while self.may_expect(Punct::Comma) {
                     // try to read the type spec after a comma if there was no prior spec
@@ -1325,8 +1324,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     };
                     match name_or_exp {
                         Ok(name) => {
-                            let s: Str = name.base.into();
-                            key = Some(Box::new(Ex::Str(s)).with_loc(name.span));
+                            key = Some(Box::new(Ex::Str(name.base.into())).with_loc(name.span));
                             try!(self.expect(Punct::Eq));
                             value = try!(self.parse_exp());
                         }
@@ -1368,7 +1366,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 Ok(Some(args.with_loc(span)))
             }
             (_, Spanned { base: Tok::Str(s), span }) => {
-                Ok(Some(vec![Box::new(Ex::Str(Str::from(s))).with_loc(span)].with_loc(span)))
+                Ok(Some(vec![Box::new(Ex::Str(s.into())).with_loc(span)].with_loc(span)))
             }
             tok @ (_, Spanned { base: Tok::Punct(Punct::LBrace), .. }) => {
                 self.unread(tok);
@@ -1395,8 +1393,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 ));
             }
             (_, Spanned { base: Tok::Name(name), span }) => {
-                let name: Name = name.into();
-                exp = Box::new(Ex::Var(name.with_loc(span))).with_loc(span);
+                exp = Box::new(Ex::Var(Name::from(name).with_loc(span))).with_loc(span);
             }
             tok => {
                 self.unread(tok);
@@ -1411,7 +1408,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 (_, Spanned { base: Tok::Punct(Punct::Dot), .. }) => {
                     let tok = self.read().1;
                     if let Tok::Name(name) = tok.base {
-                        let name = Box::new(Ex::Str(Str::from(name))).with_loc(tok.span);
+                        let name = Box::new(Ex::Str(name.into())).with_loc(tok.span);
                         let span = begin..self.last_pos();
                         exp = Box::new(Ex::Index(exp, name)).with_loc(span);
                     } else {
@@ -1914,6 +1911,47 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         Ok(FuncKind { args: args, returns: returns }.with_loc(span))
     }
 
+    fn try_parse_kailua_kind_params(&mut self)
+            -> Result<Option<Spanned<Vec<(Spanned<M>, Spanned<Kind>)>>>> {
+        let begin = self.pos();
+        if self.may_expect(Punct::Lt) {
+            // `<` MODF KIND [`,` MODF KIND] `>`
+            let mut kinds = vec![try!(self.parse_kailua_kind_with_spanned_modf())];
+            while self.may_expect(Punct::Comma) {
+                kinds.push(try!(self.parse_kailua_kind_with_spanned_modf()));
+            }
+            if !self.may_expect(Punct::Gt) {
+                // try to match against `>>` as well (Lua 5.2+)
+                // for now, we intentionally put an edited token (`>`) back;
+                // this can be done in a better way, though.
+                let tok = self.read();
+                if let (side, Spanned { base: Tok::Punct(Punct::GtGt), span }) = tok {
+                    // XXX this span is bad, but we are unlikely to use this span anyway...
+                    self.unread((side, Tok::Punct(Punct::Gt).with_loc(span)));
+                } else {
+                    try!(self.error(tok.1.span, m::NoKindParamsClose { read: &tok.1.base }).done());
+                    self.unread(tok);
+                }
+            }
+            let end = self.last_pos();
+            Ok(Some(kinds.with_loc(begin..end)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn parse_kailua_kind_params(&mut self)
+            -> Result<Spanned<Vec<(Spanned<M>, Spanned<Kind>)>>> {
+        if let Some(params) = try!(self.try_parse_kailua_kind_params()) {
+            Ok(params)
+        } else {
+            let tok = self.read();
+            try!(self.error(tok.1.span, m::NoKindParams { read: &tok.1.base }).done());
+            self.unread(tok);
+            Ok(Vec::new().without_loc())
+        }
+    }
+
     // returns true if it can be followed by postfix operators
     fn try_parse_kailua_atomic_kind_seq(&mut self) -> Result<Option<AtomicKind>> {
         let begin = self.pos();
@@ -1922,7 +1960,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             (_, Spanned { base: Tok::Keyword(Keyword::Function), span }) => {
                 // either a "function" type or a function signature
                 if self.lookahead(Punct::LParen) {
-                    // function "(" ... ")" ["->" ...]
+                    // function `(` ... `)` [`-->` ...]
                     let func = try!(self.parse_kailua_funckind());
                     // cannot be followed by postfix operators
                     let kind = Box::new(K::Func(func)).with_loc(begin..self.last_pos());
@@ -1949,17 +1987,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     (_, Spanned { base: Tok::Punct(Punct::RBrace), .. }) =>
                         Box::new(K::EmptyTable),
 
-                    // "{" "[" KIND "]" "=" MODF KIND "}"
-                    (_, Spanned { base: Tok::Punct(Punct::LBracket), .. }) => {
-                        let key = try!(self.parse_kailua_kind());
-                        try!(self.expect(Punct::RBracket));
-                        try!(self.expect(Punct::Eq));
-                        let value = try!(self.parse_kailua_slotkind());
-                        try!(self.expect(Punct::RBrace));
-                        Box::new(K::Map(key, value))
-                    }
-
-                    // tuple, array or record -- distinguished by the secondary lookahead
+                    // tuple or record -- distinguished by the secondary lookahead
                     tok => {
                         let is_record = if let (_, Spanned { base: Tok::Name(_), .. }) = tok {
                             self.lookahead(Punct::Eq)
@@ -2008,10 +2036,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                             }
                             Box::new(K::Record(fields))
                         } else {
-                            // array - "{" MODF KIND "}"
                             // tuple - "{" MODF KIND "," [MODF KIND {"," MODF KIND}] "}"
                             let mut fields = Vec::new();
-                            let mut sep = false;
                             loop {
                                 fields.push(try!(self.parse_kailua_slotkind()));
                                 // ";" - "," - ";" "}" - "," "}" - "}"
@@ -2028,14 +2054,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                         break;
                                     }
                                 }
-                                sep = true;
                                 if self.may_expect(Punct::RBrace) { break; }
                             }
-                            if fields.len() == 1 && !sep {
-                                Box::new(K::Array(fields.pop().unwrap()))
-                            } else {
-                                Box::new(K::Tuple(fields))
-                            }
+                            Box::new(K::Tuple(fields))
                         }
                     }
                 };
@@ -2049,13 +2070,47 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             (_, Spanned { base: Tok::Keyword(Keyword::False), span }) =>
                 Box::new(K::BooleanLit(false)).with_loc(span),
 
+            (_, Spanned { base: Tok::Keyword(Keyword::Vector), .. }) => {
+                let params = try!(self.parse_kailua_kind_params());
+                if params.len() != 1 {
+                    if !params.is_empty() {
+                        try!(self.error(&params, m::WrongVectorParamsArity {}).done());
+                    }
+                    self.dummy_kind()
+                } else {
+                    let mut it = params.base.into_iter();
+                    let (vm, v) = it.next().unwrap();
+                    let vspan = vm.span | v.span;
+                    let v = SlotKind { modf: vm.base, kind: v }.with_loc(vspan);
+                    Box::new(K::Array(v)).with_loc(begin..self.last_pos())
+                }
+            }
+            (_, Spanned { base: Tok::Keyword(Keyword::Map), .. }) => {
+                let params = try!(self.parse_kailua_kind_params());
+                if params.len() != 2 {
+                    if !params.is_empty() {
+                        try!(self.error(&params, m::WrongMapParamsArity {}).done());
+                    }
+                    self.dummy_kind()
+                } else {
+                    let mut it = params.base.into_iter();
+                    let (km, k) = it.next().unwrap();
+                    if km.base != M::None {
+                        try!(self.error(&km, m::WrongMapParamsModf {}).done());
+                    }
+                    let (vm, v) = it.next().unwrap();
+                    let vspan = vm.span | v.span;
+                    let v = SlotKind { modf: vm.base, kind: v }.with_loc(vspan);
+                    Box::new(K::Map(k, v)).with_loc(begin..self.last_pos())
+                }
+            }
+
             (_, Spanned { base: Tok::Name(name), span }) => {
                 if name == b"error" {
                     // may follow an error reason
                     let reason = match self.read() {
                         (_, Spanned { base: Tok::Str(s), span }) => {
-                            let s: Str = s.into();
-                            Some(s.with_loc(span))
+                            Some(Str::from(s).with_loc(span))
                         }
                         tok => {
                             self.unread(tok);
@@ -2064,10 +2119,14 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     };
                     Box::new(K::Error(reason)).with_loc(span)
                 } else {
+                    let name = Name::from(name);
                     let kind = match self.builtin_kind(&name) {
-                        Some(kind) => kind,
+                        Some(Some(kind)) => kind,
+                        Some(None) => {
+                            try!(self.error(span, m::ReservedKindName { name: &name }).done());
+                            K::Oops
+                        },
                         None => {
-                            let name: Name = name.into();
                             K::Named(name.with_loc(span))
                         },
                     };

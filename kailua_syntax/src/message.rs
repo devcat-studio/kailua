@@ -136,6 +136,11 @@ define_msg! { pub NoTypeOrTypeSeq<'a> { read: &'a Tok }:
     _    => "Expected a single type or type sequence, got {read}",
 }
 
+define_msg! { pub NoKindParams<'a> { read: &'a Tok }:
+    "ko" => "타입 인자의 목록이 나와야 하는데 {read}이(가) 나왔습니다",
+    _    => "Expected a list of type parameters, got {read}",
+}
+
 define_msg! { pub NoTableSep<'a> { read: &'a Tok }:
     "ko" => "`,`, `;`이나 `}}`가 나와야 하는데 {read}이(가) 나왔습니다",
     _    => "Expected `,`, `;` or `}}`, got {read}",
@@ -318,5 +323,30 @@ define_msg! { pub MissingSelfInFuncSpec:
 define_msg! { pub StmtAfterReturnOrBreak:
     "ko" => "`return`이나 `break` 다음에는 다른 문장이 올 수 없습니다",
     _    => "`return` or `break` cannot be followed by other statements",
+}
+
+define_msg! { pub WrongVectorParamsArity:
+    "ko" => "`vector` 타입에는 타입 인자가 하나 있어야 합니다",
+    _    => "`vector` type needs a single type parameter",
+}
+
+define_msg! { pub WrongMapParamsArity:
+    "ko" => "`map` 타입에는 타입 인자가 두 개 있어야 합니다",
+    _    => "`map` type needs two type parameters",
+}
+
+define_msg! { pub WrongMapParamsModf:
+    "ko" => "`map` 타입의 첫 타입 인자에는 변수 종류를 사용할 수 없습니다",
+    _    => "The first type parameter of `map` type cannot have modifiers",
+}
+
+define_msg! { pub ReservedKindName<'a> { name: &'a Name }:
+    "ko" => "{name} 타입 이름은 예약되어 있으며 사용할 수 없습니다",
+    _    => "The type name {name} is reserved and cannot be used",
+}
+
+define_msg! { pub NoKindParamsClose<'a> { read: &'a Tok }:
+    "ko" => "`>`이나 `>>`가 나와야 하는데 {read}이(가) 나왔습니다",
+    _    => "Expected `>` or `>>`, got {read}",
 }
 

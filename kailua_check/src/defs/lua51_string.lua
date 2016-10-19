@@ -12,7 +12,7 @@
 --#         `gmatch` = function(string, string) --> function() --> string?;
 --#         -- TODO have to constrain the function argument, but not easy
 --#         `gsub` = function(string, string,
---#                           string | { [string] = string } | (function(WHATEVER...) --> string),
+--#                           string | map<string, string> | (function(WHATEVER...) --> string),
 --#                           integer?) --> string;
 --#         `len` = function(string) --> integer;
 --#         `lower` = function(string) --> string;
