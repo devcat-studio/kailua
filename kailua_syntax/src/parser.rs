@@ -1290,54 +1290,15 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         Ok((sig, block))
     }
 
-    fn parse_table(&mut self) -> Result<Vec<(Option<Spanned<Exp>>, Spanned<Exp>)>> {
-        let mut fields = Vec::new();
+    fn scan_tabular_body<Scan, Item>(&mut self, mut scan: Scan) -> Result<Vec<Item>>
+            where Scan: FnMut(&mut Self) -> Result<Item> {
+        let mut items = Vec::new();
 
-        try!(self.expect(Punct::LBrace));
-        loop {
-            let key;
-            let value;
-            match self.read() {
-                (_, Spanned { base: Tok::Punct(Punct::RBrace), .. }) => break,
+        while !self.may_expect(Punct::RBrace) {
+            let item = try!(scan(self));
+            items.push(item);
 
-                (_, Spanned { base: Tok::Punct(Punct::LBracket), .. }) => {
-                    key = Some(try!(self.parse_exp()));
-                    try!(self.expect(Punct::RBracket));
-                    try!(self.expect(Punct::Eq));
-                    value = try!(self.parse_exp());
-                }
-
-                tok => {
-                    self.unread(tok);
-
-                    // it is hard to disambiguiate `NAME "=" exp` and `exp`,
-                    // so parse `exp` first and check if it's a `NAME` followed by `=`.
-                    let exp = try!(self.parse_exp());
-                    let name_or_exp = if self.lookahead(Punct::Eq) {
-                        let span = exp.span;
-                        match *exp.base {
-                            Ex::Var(name) => Ok(name),
-                            exp => Err(Box::new(exp).with_loc(span)),
-                        }
-                    } else {
-                        Err(exp)
-                    };
-                    match name_or_exp {
-                        Ok(name) => {
-                            key = Some(Box::new(Ex::Str(name.base.into())).with_loc(name.span));
-                            try!(self.expect(Punct::Eq));
-                            value = try!(self.parse_exp());
-                        }
-                        Err(exp) => {
-                            key = None;
-                            value = exp;
-                        }
-                    }
-                }
-            }
-
-            fields.push((key, value));
-
+            // ";" - "," - ";" "}" - "," "}" - "}"
             match self.read() {
                 (_, Spanned { base: Tok::Punct(Punct::Comma), .. }) |
                 (_, Spanned { base: Tok::Punct(Punct::Semicolon), .. }) => {}
@@ -1350,7 +1311,43 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             }
         }
 
-        Ok(fields)
+        Ok(items)
+    }
+
+    fn parse_table_body(&mut self) -> Result<Vec<(Option<Spanned<Exp>>, Spanned<Exp>)>> {
+        self.scan_tabular_body(|parser| {
+            if parser.may_expect(Punct::LBracket) {
+                let key = Some(try!(parser.parse_exp()));
+                try!(parser.expect(Punct::RBracket));
+                try!(parser.expect(Punct::Eq));
+                let value = try!(parser.parse_exp());
+                Ok((key, value))
+            } else {
+                // it is hard to disambiguiate `NAME "=" exp` and `exp`,
+                // so parse `exp` first and check if it's a `NAME` followed by `=`.
+                let exp = try!(parser.parse_exp());
+                let name_or_exp = if parser.lookahead(Punct::Eq) {
+                    let span = exp.span;
+                    match *exp.base {
+                        Ex::Var(name) => Ok(name),
+                        exp => Err(Box::new(exp).with_loc(span)),
+                    }
+                } else {
+                    Err(exp)
+                };
+                match name_or_exp {
+                    Ok(name) => {
+                        let key = Some(Box::new(Ex::Str(name.base.into())).with_loc(name.span));
+                        try!(parser.expect(Punct::Eq));
+                        let value = try!(parser.parse_exp());
+                        Ok((key, value))
+                    }
+                    Err(exp) => {
+                        Ok((None, exp))
+                    }
+                }
+            }
+        })
     }
 
     fn try_parse_args(&mut self) -> Result<Option<Spanned<Vec<Spanned<Exp>>>>> {
@@ -1368,9 +1365,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             (_, Spanned { base: Tok::Str(s), span }) => {
                 Ok(Some(vec![Box::new(Ex::Str(s.into())).with_loc(span)].with_loc(span)))
             }
-            tok @ (_, Spanned { base: Tok::Punct(Punct::LBrace), .. }) => {
-                self.unread(tok);
-                let exp = Box::new(Ex::Table(try!(self.parse_table())));
+            (_, Spanned { base: Tok::Punct(Punct::LBrace), .. }) => {
+                let exp = Box::new(Ex::Table(try!(self.parse_table_body())));
                 let span = Span::new(begin, self.last_pos());
                 Ok(Some(vec![exp.with_loc(span)].with_loc(span)))
             }
@@ -1496,9 +1492,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 Ok(Some(Box::new(Ex::Func(sig, body)).with_loc(begin..self.last_pos())))
             }
 
-            tok @ (_, Spanned { base: Tok::Punct(Punct::LBrace), .. }) => {
-                self.unread(tok);
-                let table = try!(self.parse_table());
+            (_, Spanned { base: Tok::Punct(Punct::LBrace), .. }) => {
+                let table = try!(self.parse_table_body());
                 Ok(Some(Box::new(Ex::Table(table)).with_loc(begin..self.last_pos())))
             }
 
@@ -1999,63 +1994,31 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         if is_record {
                             // "{" NAME "=" MODF KIND {"," NAME "=" MODF KIND} "}"
                             let mut seen = HashMap::new(); // value denotes the first span
-                            let mut fields = Vec::new();
-                            loop {
-                                let name = try!(self.parse_name());
+                            let fields = try!(self.scan_tabular_body(|parser| {
+                                let name = try!(parser.parse_name());
                                 match seen.entry(name.base.clone()) {
                                     hash_map::Entry::Occupied(e) => {
-                                        try!(self.error(name.span,
-                                                        m::DuplicateFieldNameInRec
-                                                            { name: &name.base })
-                                                 .note(*e.get(), m::FirstFieldNameInRec {})
-                                                 .done());
+                                        try!(parser.error(name.span,
+                                                          m::DuplicateFieldNameInRec
+                                                              { name: &name.base })
+                                                   .note(*e.get(), m::FirstFieldNameInRec {})
+                                                   .done());
                                     }
                                     hash_map::Entry::Vacant(e) => {
                                         e.insert(name.span);
                                     }
                                 }
                                 let name = Str::from(name.base).with_loc(name.span);
-                                try!(self.expect(Punct::Eq));
-                                let slotkind = try!(self.parse_kailua_slotkind());
-                                fields.push((name, slotkind));
-                                // ";" - "," - ";" "}" - "," "}" - "}"
-                                match self.read() {
-                                    (_, Spanned { base: Tok::Punct(Punct::Comma), .. }) => {}
-                                    (_, Spanned { base: Tok::Punct(Punct::Semicolon), .. }) => {}
-                                    (_, Spanned { base: Tok::Punct(Punct::RBrace), .. }) => break,
-                                    tok => {
-                                        try!(self.error(tok.1.span,
-                                                        m::NoTableSep { read: &tok.1.base })
-                                                 .done());
-                                        self.unread(tok);
-                                        self.recover_to_close();
-                                        break;
-                                    }
-                                }
-                                if self.may_expect(Punct::RBrace) { break; }
-                            }
+                                try!(parser.expect(Punct::Eq));
+                                let slotkind = try!(parser.parse_kailua_slotkind());
+                                Ok((name, slotkind))
+                            }));
                             Box::new(K::Record(fields))
                         } else {
-                            // tuple - "{" MODF KIND "," [MODF KIND {"," MODF KIND}] "}"
-                            let mut fields = Vec::new();
-                            loop {
-                                fields.push(try!(self.parse_kailua_slotkind()));
-                                // ";" - "," - ";" "}" - "," "}" - "}"
-                                match self.read() {
-                                    (_, Spanned { base: Tok::Punct(Punct::Comma), .. }) => {}
-                                    (_, Spanned { base: Tok::Punct(Punct::Semicolon), .. }) => {}
-                                    (_, Spanned { base: Tok::Punct(Punct::RBrace), .. }) => break,
-                                    tok => {
-                                        try!(self.error(tok.1.span,
-                                                        m::NoTableSep { read: &tok.1.base })
-                                                 .done());
-                                        self.unread(tok);
-                                        self.recover_to_close();
-                                        break;
-                                    }
-                                }
-                                if self.may_expect(Punct::RBrace) { break; }
-                            }
+                            // "{" MODF KIND "," [MODF KIND {"," MODF KIND}] "}"
+                            let fields = try!(self.scan_tabular_body(|parser| {
+                                parser.parse_kailua_slotkind()
+                            }));
                             Box::new(K::Tuple(fields))
                         }
                     }
