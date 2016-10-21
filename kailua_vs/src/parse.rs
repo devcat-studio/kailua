@@ -3,7 +3,8 @@ use std::ptr;
 use std::panic::{self, AssertUnwindSafe};
 use lex::VSTokenStream;
 use report::VSReport;
-use kailua_diag::{Spanned, Report};
+use kailua_env::Spanned;
+use kailua_diag::Report;
 use kailua_syntax::{Block, St, Parser};
 
 pub struct VSParseTree {

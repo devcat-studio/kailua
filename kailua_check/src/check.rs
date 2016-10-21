@@ -5,7 +5,8 @@ use std::ops::{Deref, DerefMut};
 use std::borrow::Cow;
 use take_mut::take;
 
-use kailua_diag::{Span, Spanned, WithLoc, Reporter};
+use kailua_env::{Span, Spanned, WithLoc};
+use kailua_diag::Reporter;
 use kailua_syntax::{Name, Var, M, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp, NameScope};
 use kailua_syntax::{St, Stmt, Block, K};
 use diag::CheckResult;

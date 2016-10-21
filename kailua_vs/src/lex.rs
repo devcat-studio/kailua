@@ -3,7 +3,8 @@ use std::ptr;
 use std::panic::{self, AssertUnwindSafe};
 use source::VSSource;
 use report::VSReport;
-use kailua_diag::{Span, Spanned, Report};
+use kailua_env::{Span, Spanned};
+use kailua_diag::Report;
 use kailua_syntax::{Tok, Punct, Keyword, Lexer};
 
 macro_rules! define_token_type {

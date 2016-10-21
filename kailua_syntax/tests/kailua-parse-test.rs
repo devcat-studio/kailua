@@ -1,13 +1,15 @@
 extern crate env_logger;
 extern crate regex;
 extern crate kailua_test;
+extern crate kailua_env;
 extern crate kailua_diag;
 extern crate kailua_syntax;
 
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::collections::HashMap;
-use kailua_diag::{Source, Span, Report, TrackMaxKind};
+use kailua_env::{Source, Span};
+use kailua_diag::{Report, TrackMaxKind};
 
 struct Testing {
     span_pattern: regex::Regex,
@@ -34,6 +36,6 @@ impl kailua_test::Testing for Testing {
 
 fn main() {
     env_logger::init().unwrap();
-    kailua_test::Tester::new(Testing::new()).scan("src/tests").done();
+    kailua_test::Tester::new("kailua-parse-test", Testing::new()).scan("src/tests").done();
 }
 

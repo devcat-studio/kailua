@@ -1,3 +1,4 @@
+extern crate kailua_env;
 extern crate kailua_diag;
 extern crate kailua_syntax;
 extern crate kailua_check;
@@ -11,7 +12,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::path::Path;
 
-use kailua_diag::{Spanned, Source, SourceFile, Report, ConsoleReport, TrackMaxKind};
+use kailua_env::{Spanned, Source, SourceFile};
+use kailua_diag::{Report, ConsoleReport, TrackMaxKind};
 use kailua_syntax::{parse_chunk, Block};
 use kailua_check::{FsSource, FsOptions, Context, check_from_chunk};
 

@@ -1,3 +1,4 @@
+extern crate kailua_env;
 extern crate kailua_diag;
 extern crate kailua_syntax;
 
@@ -5,7 +6,8 @@ use std::env;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::path::Path;
-use kailua_diag::{Source, SourceFile, ConsoleReport};
+use kailua_env::{Source, SourceFile};
+use kailua_diag::ConsoleReport;
 
 fn parse_and_dump(path: &str) -> Result<(), String> {
     let mut source = Source::new();

@@ -7,7 +7,8 @@ use std::rc::Rc;
 use std::collections::{HashMap, HashSet};
 use vec_map::VecMap;
 
-use kailua_diag::{self, Kind, Span, Spanned, Report, Reporter, WithLoc, Localize};
+use kailua_env::{Span, Spanned, WithLoc};
+use kailua_diag::{self, Kind, Report, Reporter, Localize};
 use kailua_syntax::Name;
 use diag::{CheckResult, unquotable_name};
 use ty::{Ty, TySeq, T, Slot, F, TVar, Mark, Lattice, Builtin, Displayed, Display};

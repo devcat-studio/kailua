@@ -1,4 +1,5 @@
-use kailua_diag::{Span, SourceData, Spanned, WithLoc, NoReport};
+use kailua_env::{Span, SourceData, Spanned, WithLoc};
+use kailua_diag::NoReport;
 use kailua_syntax::{Block, Lexer, Parser};
 
 pub struct Def {

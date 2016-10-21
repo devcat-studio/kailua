@@ -5,7 +5,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
 use std::sync::RwLock;
 use widestring::{WideStr, WideString};
-use kailua_diag::{Unit, Pos, Span, Source, SourceFile};
+use kailua_env::{Unit, Pos, Span, Source, SourceFile};
 
 pub struct VSSource {
     source: RwLock<Source>,

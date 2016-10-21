@@ -5,8 +5,8 @@ use std::result;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use unicode_width::UnicodeWidthChar;
+use kailua_env::{Source, SourceSlice, Span, Pos};
 
-use source::{Source, SourceSlice, Span, Pos};
 use dummy_term::{stderr_or_dummy};
 use term::{color, StderrTerminal};
 use message::{Localize, Localized, get_message_language};

@@ -7,7 +7,8 @@ use std::path::Path;
 use report::VSReport;
 use parse::VSParseTree;
 use widestring::{WideStr, WideString};
-use kailua_diag::{Spanned, Report};
+use kailua_env::Spanned;
+use kailua_diag::Report;
 use kailua_syntax::Block;
 use kailua_check::{self, FsSource, FsOptions, Context};
 

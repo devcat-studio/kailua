@@ -3,9 +3,10 @@ use std::i32;
 use std::fmt;
 use std::result;
 use std::collections::{hash_map, HashMap};
-
+use kailua_env::{Pos, Span, Spanned, WithLoc};
 use kailua_diag as diag;
-use kailua_diag::{Pos, Span, Spanned, WithLoc, Report, Localize};
+use kailua_diag::{Report, Localize};
+
 use message as m;
 use lex::{Tok, Punct, Keyword};
 use ast::{Name, Str, Var, Seq, Presig, Sig, Attr};

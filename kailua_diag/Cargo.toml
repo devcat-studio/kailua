@@ -11,3 +11,4 @@ unicode-width = "0.1.3"
 parse-generics-shim = "0.1.0"
 winapi = "0.2.7"
 kernel32-sys = "0.2.2"
+kailua_env = { path = "../kailua_env" }

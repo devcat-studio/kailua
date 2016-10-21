@@ -1,2 +1,9 @@
 [workspace]
-members = ["kailua_diag", "kailua_test", "kailua_syntax", "kailua_check", "kailua_vs"]
+members = [
+    "kailua_env",
+    "kailua_diag",
+    "kailua_test",
+    "kailua_syntax",
+    "kailua_check",
+    "kailua_vs",
+]

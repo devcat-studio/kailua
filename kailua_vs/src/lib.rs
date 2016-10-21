@@ -3,6 +3,7 @@
 #![allow(non_snake_case)]
 
 extern crate widestring;
+extern crate kailua_env;
 extern crate kailua_diag;
 extern crate kailua_syntax;
 extern crate kailua_check;

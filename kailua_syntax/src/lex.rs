@@ -4,9 +4,9 @@ use std::fmt;
 
 use message as m;
 use kailua_diag as diag;
-use kailua_diag::{SourceData, Pos, Span, Spanned, WithLoc};
+use kailua_env::{SourceData, Pos, Span, Spanned, WithLoc};
+use kailua_env::SourceData::{U8, U16, EOF};
 use kailua_diag::{Report, Reporter, Localize, Localized};
-use kailua_diag::SourceData::{U8, U16, EOF};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tok {

@@ -9,4 +9,6 @@ log = "0.3"
 term = "0.2"
 regex = "0.1"
 lazy_static = "0.2"
+clap = "2"
+kailua_env = { path = "../kailua_env" }
 kailua_diag = { path = "../kailua_diag" }

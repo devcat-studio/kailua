@@ -5,7 +5,8 @@ use std::sync::Mutex;
 use std::sync::mpsc::{self, Sender, Receiver};
 use std::panic::{self, AssertUnwindSafe};
 use widestring::{WideCStr, WideCString};
-use kailua_diag::{self, Span, Localize, Localized, Kind, Report, Stop};
+use kailua_env::Span;
+use kailua_diag::{self, Localize, Localized, Kind, Report, Stop};
 
 // report can be shared by multiple parties, possibly across multiple threads.
 // but the current Kailua interfaces are NOT thread-safe since its normal usage is a single thread.

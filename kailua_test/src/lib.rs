@@ -1,8 +1,10 @@
 extern crate regex;
 #[macro_use] extern crate lazy_static;
 extern crate term;
+extern crate kailua_env;
 extern crate kailua_diag;
 #[macro_use] extern crate log;
+#[macro_use] extern crate clap;
 
 use std::str;
 use std::fmt;
@@ -21,7 +23,9 @@ use std::error::Error;
 use std::collections::HashMap;
 use regex::Regex;
 use term::StderrTerminal;
-use kailua_diag::{Source, SourceFile, Kind, Span, Report, CollectedReport};
+use clap::{App, Arg};
+use kailua_env::{Source, SourceFile, Span};
+use kailua_diag::{Kind, Report, CollectedReport};
 
 pub trait Testing {
     fn run(&self, source: Rc<RefCell<Source>>, span: Span, filespans: &HashMap<String, Span>,
@@ -394,25 +398,35 @@ const MAIN_PATH: &'static str = "<test main>";
 enum TestResult { Passed, Failed, Ignored }
 
 impl<T: Testing> Tester<T> {
-    pub fn new(testing: T) -> Tester<T> {
-        let args: Vec<_> = env::args().skip(1).collect();
+    pub fn new(name: &str, testing: T) -> Tester<T> {
+        // `cargo test` will pass args to every tester, so we need to avoid hyphens as a prefix
+        let args = env::args().map(|s| {
+            let pluses = s.len() - s.trim_left_matches('+').len();
+            format!("{:->pluses$}{}", "", &s[pluses..], pluses = pluses)
+        });
+
+        let matches = App::new(name)
+            .arg(Arg::with_name("exact_diags")
+                .short("e")
+                .long("exact-diags"))
+            .arg(Arg::with_name("message_lang")
+                .short("l")
+                .long("message-language")
+                .takes_value(true))
+            .arg(Arg::with_name("filter"))
+            .get_matches_from(args);
+
+        let filter = match matches.value_of("filter") {
+            Some(s) => Some(Regex::new(s).expect("pattern should be a valid regex")),
+            None => None,
+        };
+        let exact_diags = matches.is_present("exact_diags");
+        let message_lang = matches.value_of("message_lang").unwrap_or("en");
+
         let term = term::stderr().unwrap();
-        let filter = if args.len() > 0 {
-            Some(Regex::new(&args[0]).expect("pattern should be a valid regex"))
-        } else {
-            None
-        };
-        let exact_diags = match env::var("KAILUA_TEST_EXACT_DIAGS") {
-            Ok(s) => !s.is_empty(),
-            Err(_) => false,
-        };
-        let message_lang = match env::var("KAILUA_TEST_MESSAGE_LANG") {
-            Ok(s) => s.to_lowercase(),
-            Err(_) => String::from("en"),
-        };
         Tester {
             testing: testing, filter: filter, term: term,
-            exact_diags: exact_diags, message_lang: message_lang,
+            exact_diags: exact_diags, message_lang: String::from(message_lang),
             failed_logs: Vec::new(), num_tested: 0, num_passed: 0,
         }
     }

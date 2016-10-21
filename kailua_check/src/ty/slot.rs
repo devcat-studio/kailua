@@ -3,7 +3,8 @@ use std::ops::Deref;
 use std::rc::Rc;
 use std::cell::{Ref, RefCell};
 
-use kailua_diag::{Spanned, Reporter};
+use kailua_env::Spanned;
+use kailua_diag::Reporter;
 use kailua_syntax::M;
 use diag::CheckResult;
 use super::{T, TypeContext, Lattice, Display, Mark, TVar, Builtin};

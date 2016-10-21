@@ -1,7 +1,7 @@
 use std::str;
 use std::path::{Path, PathBuf};
 
-use kailua_diag::Spanned;
+use kailua_env::Spanned;
 use kailua_syntax::Block;
 use diag::CheckResult;
 

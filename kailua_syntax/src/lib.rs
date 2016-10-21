@@ -3,8 +3,10 @@
 #[macro_use] extern crate custom_derive;
 #[macro_use] extern crate newtype_derive;
 #[macro_use] extern crate log;
+extern crate kailua_env;
 
-use kailua_diag::{Source, Span, Spanned, Report};
+use kailua_env::{Source, Span, Spanned};
+use kailua_diag::Report;
 
 pub use lex::{Tok, Punct, Keyword, Lexer};
 pub use ast::{Name, Str, Seq, Var, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, NameScope, SelfParam};

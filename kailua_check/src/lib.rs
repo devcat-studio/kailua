@@ -1,4 +1,5 @@
 #[macro_use] extern crate parse_generics_shim;
+extern crate kailua_env;
 #[macro_use] extern crate kailua_diag;
 extern crate kailua_syntax;
 #[macro_use] extern crate bitflags;
@@ -24,7 +25,7 @@ mod defs;
 mod check;
 
 pub fn check_from_chunk(context: &mut Context,
-                        chunk: &kailua_diag::Spanned<kailua_syntax::Block>,
+                        chunk: &kailua_env::Spanned<kailua_syntax::Block>,
                         opts: Rc<RefCell<Options>>) -> CheckResult<()> {
     let mut env = env::Env::new(context, opts);
     let mut checker = check::Checker::new(&mut env);

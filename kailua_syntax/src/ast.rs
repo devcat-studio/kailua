@@ -1,5 +1,5 @@
 use std::fmt;
-use kailua_diag::Spanned;
+use kailua_env::Spanned;
 
 fn format_ascii_vec(f: &mut fmt::Formatter, s: &[u8]) -> fmt::Result {
     for &c in s {

@@ -1,7 +1,8 @@
 use std::fmt;
 use diag::CheckResult;
 use message as m;
-use kailua_diag::{self, Kind, Span, Spanned, Report, Reporter, Localize};
+use kailua_env::{Span, Spanned};
+use kailua_diag::{self, Kind, Report, Reporter, Localize};
 use kailua_syntax::Name;
 
 pub use self::literals::{Numbers, Strings};

@@ -4,7 +4,7 @@ use std::vec;
 use std::usize;
 use std::iter;
 
-use kailua_diag::{Span, Spanned, WithLoc};
+use kailua_env::{Span, Spanned, WithLoc};
 use kailua_syntax::{Seq, Kind};
 use diag::CheckResult;
 use super::{T, Ty, TyWithNil, Slot, SlotWithNil, Lattice, Display};

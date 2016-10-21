@@ -1,6 +1,7 @@
 #[macro_use] extern crate log;
 extern crate env_logger;
 extern crate kailua_test;
+extern crate kailua_env;
 extern crate kailua_diag;
 extern crate kailua_syntax;
 extern crate kailua_check;
@@ -9,7 +10,8 @@ use std::str;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::collections::HashMap;
-use kailua_diag::{Source, Span, Spanned, Report, TrackMaxKind};
+use kailua_env::{Source, Span, Spanned};
+use kailua_diag::{Report, TrackMaxKind};
 use kailua_syntax::{Block, parse_chunk};
 use kailua_check::{Options, Context, CheckResult, check_from_chunk};
 
@@ -60,6 +62,6 @@ impl kailua_test::Testing for Testing {
 
 fn main() {
     env_logger::init().unwrap();
-    kailua_test::Tester::new(Testing).scan("src/tests").done();
+    kailua_test::Tester::new("kailua-check-test", Testing).scan("src/tests").done();
 }
 
