@@ -11,7 +11,9 @@ use std::fmt;
 use std::env;
 use std::fs;
 use std::mem;
+use std::panic;
 use std::process;
+use std::any::Any;
 use std::ascii::AsciiExt;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -381,6 +383,14 @@ fn extract_tests(path: &Path) -> Result<Vec<Test>, TestError> {
     Ok(tests)
 }
 
+struct FailLog {
+    test: Test,
+    source: Source,
+    panicked: bool,
+    output: String,
+    collected: Vec<(Kind, Span, String)>,
+}
+
 #[must_use]
 pub struct Tester<T> {
     testing: T,
@@ -388,14 +398,15 @@ pub struct Tester<T> {
     term: Box<StderrTerminal>,
     exact_diags: bool,
     message_lang: String,
-    failed_logs: Vec<(Test, Source, String, Vec<(Kind, Span, String)>)>,
+    stop_on_panic: bool,
+    failed_logs: Vec<FailLog>,
     num_tested: usize,
     num_passed: usize,
 }
 
 const MAIN_PATH: &'static str = "<test main>";
 
-enum TestResult { Passed, Failed, Ignored }
+enum TestResult { Passed, Failed, Panicked, Ignored }
 
 impl<T: Testing> Tester<T> {
     pub fn new(name: &str, testing: T) -> Tester<T> {
@@ -408,11 +419,19 @@ impl<T: Testing> Tester<T> {
         let matches = App::new(name)
             .arg(Arg::with_name("exact_diags")
                 .short("e")
-                .long("exact-diags"))
+                .long("exact-diags")
+                .help("Requires the exact output for reports.\n\
+                       Without this flag the excess reports are ignored."))
             .arg(Arg::with_name("message_lang")
                 .short("l")
                 .long("message-language")
-                .takes_value(true))
+                .takes_value(true)
+                .help("Switches to given language for reports.\n\
+                       Likely to fail most tests."))
+            .arg(Arg::with_name("stop_on_panic")
+                .short("p")
+                .long("stop-on-panic")
+                .help("Stops on the first panic. Also enables `RUST_BACKTRACE=1`."))
             .arg(Arg::with_name("filter"))
             .get_matches_from(args);
 
@@ -422,11 +441,18 @@ impl<T: Testing> Tester<T> {
         };
         let exact_diags = matches.is_present("exact_diags");
         let message_lang = matches.value_of("message_lang").unwrap_or("en");
+        let stop_on_panic = matches.is_present("stop_on_panic");
+
+        if stop_on_panic {
+            // for the convenience
+            env::set_var("RUST_BACKTRACE", "1");
+        }
 
         let term = term::stderr().unwrap();
         Tester {
             testing: testing, filter: filter, term: term,
             exact_diags: exact_diags, message_lang: String::from(message_lang),
+            stop_on_panic: stop_on_panic,
             failed_logs: Vec::new(), num_tested: 0, num_passed: 0,
         }
     }
@@ -464,13 +490,23 @@ impl<T: Testing> Tester<T> {
         let _ = writeln!(self.term, "");
         let _ = writeln!(self.term, "{} passed, {} failed",
                          self.num_passed, self.num_tested - self.num_passed);
-        for (test, source, output, collected) in mem::replace(&mut self.failed_logs, Vec::new()) {
-            self.note_failed_test(test, source, output, collected);
+        for log in mem::replace(&mut self.failed_logs, Vec::new()) {
+            self.note_failed_test(log);
         }
         let _ = writeln!(self.term, "");
 
         if self.num_passed < self.num_tested {
             process::exit(1);
+        }
+    }
+
+    fn string_from_panic(&self, err: Box<Any + Send>) -> String {
+        if let Some(s) = err.downcast_ref::<String>() {
+            s.to_string()
+        } else if let Some(s) = err.downcast_ref::<&'static str>() {
+            s.to_string()
+        } else {
+            format!("<unknown error>")
         }
     }
 
@@ -487,7 +523,19 @@ impl<T: Testing> Tester<T> {
 
         let source = Rc::new(RefCell::new(source));
         let collected = Rc::new(CollectedReport::new(self.message_lang.clone()));
-        let output = self.testing.run(source.clone(), inputspan, &filespans, collected.clone());
+        let output = {
+            let testing = panic::AssertUnwindSafe(&mut self.testing);
+            let source = panic::AssertUnwindSafe(source.clone());
+            let report = panic::AssertUnwindSafe(collected.clone());
+            if !self.stop_on_panic {
+                panic::set_hook(Box::new(|_| {})); // suppress the default panicking message
+            }
+            let output = panic::catch_unwind(move || {
+                testing.run(source.0, inputspan, &filespans, report.0)
+            });
+            panic::take_hook();
+            output
+        };
         let source = match Rc::try_unwrap(source) {
             Ok(src) => src.into_inner(),
             Err(_) => panic!("Testing::run should not own Source"),
@@ -499,15 +547,19 @@ impl<T: Testing> Tester<T> {
         self.num_tested += 1;
 
         // fail on a mismatching output
-        let mut failed = false;
-        let expected_output = test.output.join("\n");
-        if !self.testing.check_output(&output, &expected_output) {
-            failed = true;
+        let mut success = true;
+        if let Ok(ref output) = output {
+            let expected_output = test.output.join("\n");
+            if !self.testing.check_output(output, &expected_output) {
+                success = false;
+            }
+        } else {
+            success = false;
         }
 
         // check if test.reports are all included in collected reports (multiset inclusion)
         // do not check if collected reports have some others, though (unless exact_diags is set)
-        if !failed {
+        if success {
             let mut reportset = HashMap::new();
             for expected in &test.reports {
                 let pos = expected.pos.as_ref().map(|&(ref p, s, e)| {
@@ -526,24 +578,41 @@ impl<T: Testing> Tester<T> {
                 if let Some(value) = reportset.get_mut(&key) {
                     *value -= 1;
                 } else if self.exact_diags {
-                    failed = true; // seen a note we haven't expected
+                    success = false; // seen a note we haven't expected
                 }
             }
-            if !failed {
-                failed = if self.exact_diags {
-                    reportset.values().any(|&v| v != 0)
+            if success {
+                success = if self.exact_diags {
+                    reportset.values().all(|&v| v == 0)
                 } else {
-                    reportset.values().any(|&v| v > 0)
+                    reportset.values().all(|&v| v <= 0)
                 };
             }
         }
 
-        if failed {
-            self.note_test(&test, TestResult::Failed);
-            self.failed_logs.push((test, source, output, collected));
-        } else {
+        if success {
             self.note_test(&test, TestResult::Passed);
             self.num_passed += 1;
+        } else {
+            let (panicked, output) = match output {
+                Ok(s) => {
+                    self.note_test(&test, TestResult::Failed);
+                    (false, s)
+                },
+                Err(e) => {
+                    self.note_test(&test, TestResult::Panicked);
+                    if self.stop_on_panic {
+                        // we need to print the line above before resuming the panic process
+                        panic::resume_unwind(e);
+                    } else {
+                        (true, self.string_from_panic(e))
+                    }
+                },
+            };
+            self.failed_logs.push(FailLog {
+                test: test, source: source,
+                panicked: panicked, output: output, collected: collected,
+            });
         }
     }
 
@@ -556,13 +625,24 @@ impl<T: Testing> Tester<T> {
     }
 
     fn note_test(&mut self, test: &Test, result: TestResult) {
-        let (color, text) = match result {
-            TestResult::Passed => (term::color::BRIGHT_GREEN, "PASSED"),
-            TestResult::Failed => (term::color::BRIGHT_RED, "FAILED"),
-            TestResult::Ignored => (term::color::BRIGHT_BLACK, "IGNORE"),
+        let (fg, bg, text) = match result {
+            TestResult::Passed => (term::color::BRIGHT_GREEN, None, "PASSED"),
+            TestResult::Failed => (term::color::BRIGHT_RED, None, "FAILED"),
+            TestResult::Panicked => (term::color::BLACK, Some(term::color::RED), "PANIC"),
+            TestResult::Ignored => (term::color::BRIGHT_BLACK, None, "IGNORE"),
         };
-        let _ = self.term.fg(color);
-        let _ = write!(self.term, "  {}  ", text);
+        if let Some(bg) = bg {
+            let _ = write!(self.term, "  ");
+            let _ = self.term.fg(fg);
+            let _ = self.term.bg(bg);
+            let _ = write!(self.term, "{}", text);
+            let _ = self.term.reset();
+            let _ = write!(self.term, "{:1$}  ", "", 6 - text.len());
+        } else {
+            let _ = self.term.fg(fg);
+            let _ = write!(self.term, "  {:<6}  ", text);
+            let _ = self.term.reset();
+        }
         let _ = self.term.fg(term::color::BRIGHT_WHITE);
         if !test.name.is_empty() {
             let _ = write!(self.term, "{}", test.name);
@@ -573,27 +653,27 @@ impl<T: Testing> Tester<T> {
         let _ = writeln!(self.term, "");
     }
 
-    fn note_failed_test(&mut self, test: Test, source: Source, output: String,
-                        collected: Vec<(Kind, Span, String)>) {
+    fn note_failed_test(&mut self, log: FailLog) {
         let _ = writeln!(self.term, "");
         let _ = self.term.fg(term::color::BRIGHT_MAGENTA);
-        let _ = write!(self.term, "{} ", test.file.display());
+        let _ = write!(self.term, "{} ", log.test.file.display());
         let _ = self.term.fg(term::color::BRIGHT_WHITE);
-        if !test.name.is_empty() {
-            let _ = write!(self.term, "{} ", test.name);
+        if !log.test.name.is_empty() {
+            let _ = write!(self.term, "{} ", log.test.name);
         }
         let _ = self.term.reset();
-        let _ = writeln!(self.term, "(at line {})", test.first_line);
+        let _ = writeln!(self.term, "(at line {})", log.test.first_line);
+
         let _ = self.term.fg(term::color::BRIGHT_BLACK);
         let _ = writeln!(self.term, "{:-<60}", "EXPECTED ");
         let _ = self.term.fg(term::color::BRIGHT_WHITE);
-        for line in test.output {
+        for line in log.test.output {
             let _ = writeln!(self.term, "{}", line);
         }
         let _ = self.term.reset();
-        if !test.reports.is_empty() {
+        if !log.test.reports.is_empty() {
             let _ = writeln!(self.term, "");
-            for expected in test.reports {
+            for expected in log.test.reports {
                 if let Some((path, begin, end)) = expected.pos {
                     let path = path.as_ref().map_or(MAIN_PATH, |p| p.as_ref());
                     if begin == end {
@@ -614,22 +694,32 @@ impl<T: Testing> Tester<T> {
                 let _ = write!(self.term, "{}", expected.msg);
                 let _ = self.term.reset();
                 let _ = writeln!(self.term, "");
-
             }
         }
+
         let _ = self.term.fg(term::color::BRIGHT_BLACK);
         let _ = writeln!(self.term, "{:-<60}", "ACTUAL ");
-        let _ = self.term.fg(term::color::BRIGHT_WHITE);
-        let _ = writeln!(self.term, "{}", output);
+        if log.panicked {
+            let _ = self.term.bg(term::color::RED);
+            let _ = self.term.fg(term::color::BLACK);
+            let _ = write!(self.term, "PANICKED");
+            let _ = self.term.reset();
+            let _ = self.term.fg(term::color::BRIGHT_RED);
+            let _ = write!(self.term, " ");
+        } else {
+            let _ = self.term.fg(term::color::BRIGHT_WHITE);
+        }
+        let _ = writeln!(self.term, "{}", log.output);
         let _ = self.term.reset();
-        if !collected.is_empty() {
+        if !log.collected.is_empty() {
             let _ = writeln!(self.term, "");
-            let source = Rc::new(RefCell::new(source));
+            let source = Rc::new(RefCell::new(log.source));
             let display = kailua_diag::ConsoleReport::new(source);
-            for (kind, span, msg) in collected {
+            for (kind, span, msg) in log.collected {
                 let _ = display.add_span(kind, span, &msg);
             }
         }
+
         let _ = self.term.fg(term::color::BRIGHT_BLACK);
         let _ = writeln!(self.term, "{:-<60}", "");
         let _ = self.term.reset();
