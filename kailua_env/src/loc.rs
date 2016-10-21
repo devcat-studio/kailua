@@ -128,8 +128,25 @@ impl Span {
             Span::dummy()
         } else {
             assert!(begin.unit == end.unit, "Span::new with positions from different units");
-            assert!(begin.pos <= end.pos, "Span::new with swapped positions");
-            Span { unit: begin.unit, begin: begin.pos, end: end.pos }
+            if begin.pos <= end.pos {
+                Span { unit: begin.unit, begin: begin.pos, end: end.pos }
+            } else {
+                // this is possible when the range actually describes an empty span.
+                // in the ordinary case we take the beginning of the first token and
+                // the end of the last token for the span:
+                //
+                // function f()    FIRST_TOKEN ... LAST_TOKEN    end
+                //                 ^ begin               end ^
+                //
+                // but if the span is empty, the order is swapped:
+                //
+                // function f()    end
+                //         end ^   ^ begin
+                //
+                // the most reasonable choice here would be using (end..begin)
+                // as an indication of the empty span.
+                Span { unit: begin.unit, begin: end.pos, end: begin.pos }
+            }
         }
     }
 
@@ -260,25 +277,7 @@ impl From<Pos> for Span {
 
 impl From<ops::Range<Pos>> for Span {
     fn from(range: ops::Range<Pos>) -> Span {
-        if range.start <= range.end {
-            Span::new(range.start, range.end)
-        } else {
-            // this is possible when the range actually describes an empty span.
-            // in the ordinary case we take the beginning of the first token and
-            // the end of the last token for the span:
-            //
-            // function f()    FIRST_TOKEN ... LAST_TOKEN    end
-            //                 ^ begin               end ^
-            //
-            // but if the span is empty, the order is swapped:
-            //
-            // function f()    end
-            //         end ^   ^ begin
-            //
-            // the most reasonable choice here would be using (end..begin)
-            // as an indication of the empty span.
-            Span::new(range.end, range.start)
-        }
+        Span::new(range.start, range.end)
     }
 }
 

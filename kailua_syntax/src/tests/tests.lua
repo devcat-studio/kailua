@@ -455,7 +455,7 @@ do end
 --8<-- assume-incomplete
 --# assume a:
 --# assume b: string --@< Error: Expected a single type, got a keyword `assume`
---! [KailuaAssume(Local, `a`, _, Oops), KailuaAssume(Local, `b`, _, String)]
+--! [KailuaAssume(Local, `a`, _, Oops)]
 
 --8<-- assume-global-local
 --# assume global a: {x=string}
@@ -570,7 +570,7 @@ local x --: (
 --8<-- kind-paren-multiline-recover
 local x --: (
         --:   integer --@< Error: Expected `)`, got a newline
---! error
+--! [Local([`x`: _ Oops], [])]
 
 --&
 
@@ -624,12 +624,16 @@ local y --: vector<integer>
 --!  Local([`y`: _ Array(_ Integer)], [])]
 
 --8<-- kind-array-recover-2
+-- XXX excess >/>> expectation error is hard to fix without a special nesting
 local x --: vector<integer, , string> --@< Error: Expected a single type, got `,`
-                                      --@^ Error: `vector` type needs a single type parameter
+                                      --@^-< Error: Expected `>` or `>>`, got a newline
+                                      --@^^ Error: `vector` type needs a single type parameter
 local y --: vector<boolean,> --@< Error: Expected a single type, got `>`
-                             --@^ Error: `vector` type needs a single type parameter
+                             --@^-< Error: Expected `>` or `>>`, got a newline
+                             --@^^ Error: `vector` type needs a single type parameter
 local z --: vector<integer>
 local w --: vector<> --@< Error: Expected a single type, got `>`
+                     --@^-< Error: Expected `>` or `>>`, got a newline
 --! [Local([`x`: _ Oops], []), \
 --!  Local([`y`: _ Oops], []), \
 --!  Local([`z`: _ Array(_ Integer)], []), \
@@ -679,11 +683,13 @@ local z --: map<integer> --@< Error: `map` type needs two type parameters
 --!  Local([`z`: _ Oops], [])]
 
 --8<-- kind-map-recover-2
+-- XXX excess >/>> expectation error is hard to fix without a special nesting
 local x --: map<integer, , string> --@< Error: Expected a single type, got `,`
-                                   --@^ Error: `map` type needs two type parameters
+                                   --@^-< Error: Expected `>` or `>>`, got a newline
 local y --: map<boolean,> --@< Error: Expected a single type, got `>`
+                          --@^-< Error: Expected `>` or `>>`, got a newline
 local z --: map<integer, string>
---! [Local([`x`: _ Oops], []), \
+--! [Local([`x`: _ Map(Integer, _ Oops)], []), \
 --!  Local([`y`: _ Map(Boolean, _ Oops)], []), \
 --!  Local([`z`: _ Map(Integer, _ String)], [])]
 
@@ -729,7 +735,6 @@ local x --: [type] function(any)
 
 --8<-- kind-attr-dup
 local x --: [builtin] [builtin] string --@< Error: Expected a single type, got `[`
-                                       --@^ Error: Expected a newline, got `[`
 --! [Local([`x`: _ Oops], [])]
 
 --8<-- kind-attr-seq
@@ -1247,8 +1252,7 @@ f(x:g - 1) --@< Fatal: Expected argument(s) after `<expression> : <name>`, got `
 
 --8<-- funccall-invalid-char
 f(2, *3) --@< Error: Expected an expression, got `*`
-         --@^ Error: Expected `)`, got `*`
---! [Void(`f`(2, Oops))]
+--! [Void(`f`(2))]
 
 --8<-- op-invalid-char-1
 f(2 + *3) --@< Fatal: Expected an expression, got `*`
@@ -1268,8 +1272,8 @@ a, *b = 5 --@< Fatal: Expected a left-hand-side expression, got `*`
 
 --8<-- assume-invalid-char
 --# assume x: #foo --@< Error: Expected a single type, got `#`
-                   --@^ Error: Expected a newline, got `#`
---! [KailuaAssume(Local, `x`, _, Oops)]
+f()
+--! [KailuaAssume(Local, `x`, _, Oops), Void(`f`())]
 
 --8<-- assume-seq-varargs-1
 --# assume x: (...) --@< Error: `...` should be preceded with a kind in the ordinary kinds
@@ -1391,7 +1395,7 @@ f(                                      --@< Error: Expected `)`, got the end of
 --8<-- alias-incomplete
 --# type int =
 --# assume x: vector<int> --@< Error: Expected a single type, got a keyword `assume`
---! [KailuaType(`int`, Oops), KailuaAssume(Local, `x`, _, Array(_ `int`))]
+--! [KailuaType(`int`, Oops)]
 
 --8<-- kind-error
 --# type x = error
@@ -1419,4 +1423,9 @@ goto = 42
 --# open lua51
 --# type `goto` = integer
 --! [KailuaOpen(`lua51`), KailuaType(`goto`, Integer)]
+
+--8<-- type-spec-recover-negative-span
+local a = {} --: var { var { } } --@< Error: Expected a single type, got a keyword `var`
+local b --: var { var { } }      --@< Error: Expected a single type, got a keyword `var`
+--! [Local([`a`: _ Oops], [Table([])]), Local([`b`: _ Oops], [])]
 

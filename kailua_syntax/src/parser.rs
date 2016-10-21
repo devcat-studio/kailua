@@ -103,12 +103,46 @@ impl Expectable for EOF {
     fn check_token(&self, tok: &Tok) -> bool { tok == &Tok::EOF }
 }
 
+// superset of Expectable, used for auto-recovery delimiter
+trait ExpectableDelim {
+    fn expect_delim<'a, T>(self, parser: &mut Parser<'a, T>) -> Result<()>
+        where T: Iterator<Item=Spanned<Tok>>;
+}
+
+impl<Exp: Expectable> ExpectableDelim for Exp {
+    fn expect_delim<'a, T>(self, parser: &mut Parser<'a, T>) -> Result<()>
+        where T: Iterator<Item=Spanned<Tok>>
+    {
+        parser.expect(self)
+    }
+}
+
+#[derive(Copy, Clone)]
+struct NoDelim;
+
+impl ExpectableDelim for NoDelim {
+    fn expect_delim<'a, T>(self, _parser: &mut Parser<'a, T>) -> Result<()>
+        where T: Iterator<Item=Spanned<Tok>>
+    {
+        Ok(())
+    }
+}
+
+// the "default" dummy value for recovered types
 trait Recover {
     fn recover() -> Self;
 }
 
 impl Recover for () {
     fn recover() -> Self { () }
+}
+
+impl<T1: Recover, T2: Recover> Recover for (T1, T2) {
+    fn recover() -> Self { (Recover::recover(), Recover::recover()) }
+}
+
+impl<T1: Recover, T2: Recover, T3: Recover> Recover for (T1, T2, T3) {
+    fn recover() -> Self { (Recover::recover(), Recover::recover(), Recover::recover()) }
 }
 
 impl Recover for K {
@@ -143,11 +177,11 @@ impl<T: Recover> Recover for Box<T> {
 }
 
 macro_rules! lastly {
-    (|$i:ident| $e:expr $(=> $f:expr)+) => (
-        |$i| {
-            let ret = try!($e);
-            $(try!($f);)+
-            Ok(ret)
+    ($e:expr $(=> $delim:expr)+) => (
+        |parser: &mut Parser<'a, T>| {
+            let saved = try!($e(parser));
+            $(try!($delim.expect_delim(parser));)+
+            Ok(saved)
         }
     )
 }
@@ -375,6 +409,70 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
+    // some notes on error recovery.
+    //
+    // the error recovery basically works by skipping zero or more tokens and
+    // resuming parsing at that point. we have several dummy nodes (conventionally
+    // named `Oops`) for this purpose and the `Recover` trait can be used for automating that.
+    // we can do much better, but the recovery is at best approximate and
+    // complex recovery process results in ambiguity and parsing failure.
+    //
+    // the parser recognizes a set of "delimiter" tokens that forms a hierarchy of
+    // "nestings", and reading or unreading a token will update the current list of
+    // nestings where the cursor is located. the delimiter is not limited to
+    // the natural delimiters like parentheses; known keywords are also used as delimiters.
+    // one important thing about nestings is that they can be closed even when nested;
+    // if one is given `for i = x * (3 + end`, one can conclude that the final `end` is for
+    // the first `for` even though `(` has opened a new nesting. the exception is
+    // when there is no matching opening token at all, in which case the token is ignored.
+    // (there are also some special cases, e.g. one token can close and immediately open
+    // the same nesting, but otherwise they are fairly regular.)
+    //
+    // other parts of the parser are expected to do one of the following on error:
+    //
+    // 1. unread any read token and signal a "recoverable" error, `Stop::Recover`.
+    //    this is a default action for the parsing errors.
+    //
+    // 2. unread any read token and immediately continue with a dummy node.
+    //    this should only be used for the well-formedness errors,
+    //    otherwise it will confuse the callers and raise multiple errors at best
+    //    or read past the EOF and panic at worst.
+    //
+    // 3. skip to the next closing delimiting token.
+    //    note that this should keep the initial depth of nestings,
+    //    so that nested errors uncaught can be correctly recovered.
+    //    this is a default action at the delimiter boundaries.
+    //
+    //    there are three possibilities in what to do after the recovery.
+    //    since it is common to expect the closing delimiter after the item,
+    //    first two options will read the closing delimiter on the successful parsing.
+    //
+    //    - creating a dummy node manually: `try!(self.recover_with(body, closing_delim, dummy))`.
+    //
+    //    - creating a dummy node automatically: `try!(self.recover(body, closing_delim))`.
+    //      same to `try!(self.recover_with(body, closing_delim, Recover::recover))`.
+    //
+    //    - propagating the error: `try!(self.recover_retry(false, body))`.
+    //      this is rarely used when there is no suitable dummy node.
+    //
+    //    `recover_to_close` can also be used when it is hard to use the "wrapping" style.
+    //    (in this case the closing delimiter is implicit. in fact, `closing_delim` is never
+    //    checked and only used to ensure that they are used in the correct fashion.)
+    //    in any case, the opening token should have been already read.
+    //
+    // 4. same to above but keep the delimiting token.
+    //    this is a default action for the items that do not read the delimiter themselves,
+    //    so that this can be called multiple times in the same nesting.
+    //
+    //    `recover_upto`, `recover_upto_with` methods and
+    //    `recover_retry` call with `true` argument are used for this action.
+    //    combined with the action 3, any delimiter closing an explicitly read nesting
+    //    will be either explicitly read or implicitly skipped during the action 3.
+    //
+    // 5. propagate any error (via `try!`).
+    //
+    // 6. (not recommended) raise a fatal error, `Stop::Fatal`.
+
     fn update_nestings(&mut self, tok: &Tok) -> NestingDelta {
         enum Action {
             None,
@@ -542,7 +640,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     // ensures that the nesting depth of the pseudo-tree of tokens is lower than the beginning
-    fn recover_retry<F, R>(&mut self, f: F) -> Result<R>
+    fn recover_retry<F, R>(&mut self, always_unread: bool, f: F) -> Result<R>
         where F: FnOnce(&mut Parser<'a, T>) -> Result<R>
     {
         let depth = self.open_nestings.len();
@@ -556,38 +654,56 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 trace!("skipping {:?}, nestings = {:?}", tok.1, self.open_nestings);
                 last_tok = Some(tok);
             }
-            if depth - self.open_nestings.len() > 1 {
+            if let Some(tok) = last_tok {
                 // if the last token has closed too many nestings we need to keep
                 // that last token to allow the further match from the caller.
                 // this case includes a premature EOF, whether reading EOF would close
                 // at least two nestings (the initial nesting, the top-level nesting).
-                if let Some(tok) = last_tok {
+                if always_unread || depth - self.open_nestings.len() > 1 {
                     self.unread(tok);
                 }
             }
             debug!("recovered from the error, final nestings = {:?}", self.open_nestings);
+        } else {
+            trace!("no recovery required, nestings = {:?}", self.open_nestings);
         }
         ret
     }
 
-    fn recover_with<F, H, R>(&mut self, f: F, handler: H) -> Result<R>
-        where F: FnOnce(&mut Parser<'a, T>) -> Result<R>, H: FnOnce() -> R
+    fn recover_with<F, D, H, R>(&mut self, f: F, delim: D, handler: H) -> Result<R>
+        where F: FnOnce(&mut Parser<'a, T>) -> Result<R>, D: ExpectableDelim, H: FnOnce() -> R
     {
-        match self.recover_retry(f) {
+        match self.recover_retry(false, lastly!(f => delim)) {
             Ok(v) => Ok(v),
             Err(Stop::Recover) => Ok(handler()),
             Err(Stop::Fatal) => Err(Stop::Fatal),
         }
     }
 
-    fn recover<F, R: Recover>(&mut self, f: F) -> Result<R>
+    fn recover_upto_with<F, H, R>(&mut self, f: F, handler: H) -> Result<R>
+        where F: FnOnce(&mut Parser<'a, T>) -> Result<R>, H: FnOnce() -> R
+    {
+        match self.recover_retry(true, f) {
+            Ok(v) => Ok(v),
+            Err(Stop::Recover) => Ok(handler()),
+            Err(Stop::Fatal) => Err(Stop::Fatal),
+        }
+    }
+
+    fn recover<F, D, R>(&mut self, f: F, delim: D) -> Result<R>
+        where F: FnOnce(&mut Parser<'a, T>) -> Result<R>, D: ExpectableDelim, R: Recover
+    {
+        self.recover_with(f, delim, Recover::recover)
+    }
+
+    fn recover_upto<F, R: Recover>(&mut self, f: F) -> Result<R>
         where F: FnOnce(&mut Parser<'a, T>) -> Result<R>
     {
-        self.recover_with(f, Recover::recover)
+        self.recover_upto_with(f, Recover::recover)
     }
 
     fn recover_to_close(&mut self) {
-        let _: Result<()> = self.recover_retry(|_| Err(Stop::Recover));
+        let _: Result<()> = self.recover_retry(false, |_| Err(Stop::Recover));
     }
 
     fn pos(&mut self) -> Pos {
@@ -712,7 +828,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn parse_block(&mut self) -> Result<Spanned<Block>> {
-        debug!("parsing block");
+        trace!("parsing block");
 
         let begin = self.pos();
         let mut stmts = Vec::new();
@@ -742,7 +858,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
     // unlike `parse_block`, this will try to parse as much as possible until EOF
     fn parse_block_then_eof(&mut self) -> Result<Spanned<Block>> {
-        debug!("parsing block then EOF");
+        trace!("parsing block then EOF");
 
         let begin = self.pos();
         let mut stmts = Vec::new();
@@ -820,7 +936,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn try_parse_stmt(&mut self) -> Result<Option<Spanned<Stmt>>> {
-        debug!("parsing stmt");
+        trace!("parsing stmt");
         let begin = self.pos();
 
         let funcspec = try!(self.try_parse_kailua_func_spec());
@@ -839,7 +955,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         // if there exists a spec stmt return it first.
         // a spec may be empty, so loop until no spec exists or a spec is found.
         loop {
-            match try!(self.try_parse_kailua_spec()) {
+            match try!(self.recover(|p| p.try_parse_kailua_spec(), NoDelim)) {
                 Some(Some(spec)) => return Ok(Some(spec)),
                 Some(None) => continue,
                 None => break,
@@ -848,50 +964,42 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
         let stmt = match self.read() {
             (_, Spanned { base: Tok::Keyword(Keyword::Do), .. }) => {
-                let block = try!(self.recover(
-                    lastly!(|p| p.parse_block() => p.expect(Keyword::End))
-                ));
+                let block = try!(self.recover(Self::parse_block, Keyword::End));
                 Box::new(St::Do(block))
             }
 
             (_, Spanned { base: Tok::Keyword(Keyword::While), .. }) => {
-                let cond = try!(self.recover(
-                    lastly!(|p| p.parse_exp() => p.expect(Keyword::Do))
-                ));
-                let block = try!(self.recover(
-                    lastly!(|p| p.parse_block() => p.expect(Keyword::End))
-                ));
+                let cond = try!(self.recover(Self::parse_exp, Keyword::Do));
+                let block = try!(self.recover(Self::parse_block, Keyword::End));
                 Box::new(St::While(cond, block))
             }
 
             (_, Spanned { base: Tok::Keyword(Keyword::Repeat), .. }) => {
-                let block = try!(self.recover(
-                    lastly!(|p| p.parse_block() => p.expect(Keyword::Until))
-                ));
+                let block = try!(self.recover(Self::parse_block, Keyword::Until));
                 let cond = try!(self.parse_exp());
                 Box::new(St::Repeat(block, cond))
             }
 
             (_, Spanned { base: Tok::Keyword(Keyword::If), .. }) => {
-                let cond = try!(self.recover(
-                    lastly!(|p| p.parse_exp() => p.expect(Keyword::Then))
-                ));
-                let block = try!(self.parse_block());
-                let mut blocks = vec![(cond, block).with_loc(begin..self.last_pos())];
-                let mut begin = self.pos();
-                while self.may_expect(Keyword::Elseif) {
-                    let cond = try!(self.parse_exp());
-                    try!(self.expect(Keyword::Then));
-                    let block = try!(self.parse_block());
-                    blocks.push((cond, block).with_loc(begin..self.last_pos()));
-                    begin = self.pos();
-                }
-                let mut lastblock = if self.may_expect(Keyword::Else) {
-                    Some(try!(self.parse_block()))
-                } else {
-                    None
-                };
-                try!(self.expect(Keyword::End));
+                let mut blocks = Vec::new();
+                let mut lastblock = try!(self.recover(|parser| {
+                    let cond = try!(parser.recover(Self::parse_exp, Keyword::Then));
+                    let block = try!(parser.recover_upto(Self::parse_block));
+                    blocks.push((cond, block).with_loc(begin..parser.last_pos()));
+                    let mut begin = parser.pos();
+                    while parser.may_expect(Keyword::Elseif) {
+                        let cond = try!(parser.recover(Self::parse_exp, Keyword::Then));
+                        let block = try!(parser.recover_upto(Self::parse_block));
+                        blocks.push((cond, block).with_loc(begin..parser.last_pos()));
+                        begin = parser.pos();
+                    }
+                    let lastblock = if parser.may_expect(Keyword::Else) {
+                        Some(try!(parser.recover_upto(Self::parse_block)))
+                    } else {
+                        None
+                    };
+                    Ok(lastblock)
+                }, Keyword::End));
 
                 // fix the span for the last block appeared to include `end`
                 if let Some(ref mut lastblock) = lastblock {
@@ -1357,8 +1465,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             (_, Spanned { base: Tok::Punct(Punct::LParen), .. }) => {
                 let mut args = Vec::new();
                 let (span, _) = try!(self.recover_with(
-                    lastly!(|p| p.try_scan_explist(|exp| args.push(exp)) =>
-                                p.expect(Punct::RParen)),
+                    |p| p.try_scan_explist(|exp| args.push(exp)), Punct::RParen,
                     || (Span::dummy(), false)
                 ));
                 Ok(Some(args.with_loc(span)))
@@ -1385,9 +1492,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         match self.read() {
             (_, Spanned { base: Tok::Punct(Punct::LParen), .. }) => {
                 // TODO should we ignore the span for parentheses?
-                exp = try!(self.recover(
-                    lastly!(|p| p.parse_exp() => p.expect(Punct::RParen))
-                ));
+                exp = try!(self.recover(Self::parse_exp, Punct::RParen));
             }
             (_, Spanned { base: Tok::Name(name), span }) => {
                 exp = Box::new(Ex::Var(Name::from(name).with_loc(span))).with_loc(span);
@@ -1587,7 +1692,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn try_parse_exp(&mut self) -> Result<Option<Spanned<Exp>>> {
-        debug!("parsing exp");
+        trace!("parsing exp");
 
         macro_rules! make_check_ops {
             ($($name:ident: $ty:ident { $($tokty:ident::$tok:ident => $op:ident),+ $(,)* };)*) => (
@@ -1658,7 +1763,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             let tok = self.read();
             try!(self.error(tok.1.span, m::NoExp { read: &tok.1.base }).done());
             self.unread(tok);
-            Ok(Recover::recover())
+            Err(Stop::Recover)
         }
     }
 
@@ -1752,8 +1857,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         let begin = self.pos();
         if self.may_expect(Punct::LBracket) {
             // `[` NAME `]`
-            let name = try!(self.recover_retry(
-                lastly!(|p| p.try_name_or_keyword() => p.expect(Punct::RBracket)),
+            let name = try!(self.recover_retry(false,
+                lastly!(Parser::try_name_or_keyword => Punct::RBracket),
             ));
             let attr = Attr { name: name };
             Ok(Some(attr.with_loc(begin..self.last_pos())))
@@ -1944,7 +2049,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             let tok = self.read();
             try!(self.error(tok.1.span, m::NoKindParams { read: &tok.1.base }).done());
             self.unread(tok);
-            Ok(Vec::new().without_loc())
+            Err(Stop::Recover)
         }
     }
 
@@ -2235,7 +2340,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             let tok = self.read();
             try!(self.error(tok.1.span, m::NoSingleType { read: &tok.1.base }).done());
             self.unread(tok);
-            Ok(self.dummy_kind())
+            Err(Stop::Recover)
         }
     }
 
@@ -2245,7 +2350,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             M::None => M::None.with_loc(begin), // i.e. the beginning of the kind
             modf => modf.with_loc(begin..self.last_pos()),
         };
-        let kind = try!(self.parse_kailua_kind());
+        let kind = try!(self.recover_upto(Self::parse_kailua_kind));
         Ok((modf, kind))
     }
 
@@ -2276,12 +2381,14 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn try_parse_kailua_type_spec(&mut self) -> Result<Option<Spanned<(M, Spanned<Kind>)>>> {
+        trace!("parsing kailua type spec");
         let spec = try!(self.try_parse_kailua_type_spec_with_spanned_modf());
         Ok(spec.map(|spec| spec.map(|(m,k)| (m.base, k))))
     }
 
     fn try_parse_kailua_typeseq_spec(&mut self)
             -> Result<Option<Spanned<Vec<Spanned<(M, Spanned<Kind>)>>>>> {
+        trace!("parsing kailua type sequence spec");
         let metabegin = self.pos();
         if self.may_expect(Punct::DashDashColon) {
             self.begin_meta_comment(Punct::DashDashColon);
@@ -2311,6 +2418,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
     fn try_parse_kailua_rettype_spec(&mut self)
             -> Result<Option<Spanned<Seq<Spanned<Kind>>>>> {
+        trace!("parsing kailua return type spec");
         let begin = self.pos();
         if self.may_expect(Punct::DashDashGt) {
             self.begin_meta_comment(Punct::DashDashGt);
@@ -2327,7 +2435,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     // it may supply only attributes, so we need to return attributes and pre-signatures separately
     fn try_parse_kailua_func_spec(&mut self)
             -> Result<Option<Spanned<(Vec<Spanned<Attr>>, Option<Spanned<Presig>>)>>> {
+        trace!("parsing kailua function spec");
         let metabegin = self.pos();
+
         if self.may_expect(Punct::DashDashV) {
             self.begin_meta_comment(Punct::DashDashV);
 
@@ -2376,7 +2486,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn try_parse_kailua_spec(&mut self) -> Result<Option<Option<Spanned<Stmt>>>> {
+        trace!("parsing kailua spec");
         let begin = self.pos();
+
         if self.may_expect(Punct::DashDashHash) {
             self.begin_meta_comment(Punct::DashDashHash);
 
@@ -2391,7 +2503,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     let name = try!(self.parse_name());
                     try!(self.expect(Punct::Colon));
                     let modf = self.parse_kailua_mod();
-                    let kind = try!(self.parse_kailua_kind());
+                    let kind = try!(self.recover_upto(Self::parse_kailua_kind));
 
                     Some(Box::new(St::KailuaAssume(scope, name, modf, kind)))
                 }
@@ -2407,7 +2519,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 (_, Spanned { base: Tok::Keyword(Keyword::Type), .. }) => {
                     let name = try!(self.parse_name());
                     try!(self.expect(Punct::Eq));
-                    let kind = try!(self.parse_kailua_kind());
+                    let kind = try!(self.recover_upto(Self::parse_kailua_kind));
 
                     // forbid overriding builtin types
                     if self.builtin_kind(&*name.base).is_some() {
