@@ -28,7 +28,8 @@ impl kailua_test::Testing for Testing {
            report: Rc<Report>) -> String {
         let report = TrackMaxKind::new(&*report);
         if let Ok(chunk) = kailua_syntax::parse_chunk(&source.borrow(), span, &report) {
-            return self.span_pattern.replace_all(&format!("{:?}", chunk), "");
+            let s = format!("{:?}{:?}", chunk.global_scope, chunk.block);
+            return self.span_pattern.replace_all(&s, "");
         }
         String::from("error")
     }

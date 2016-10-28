@@ -16,7 +16,7 @@ fn parse_and_dump(path: &str) -> Result<(), String> {
     let source = Rc::new(RefCell::new(source));
     let report = ConsoleReport::new(source.clone());
     if let Ok(chunk) = kailua_syntax::parse_chunk(&source.borrow(), filespan, &report) {
-        println!("{:?}", chunk);
+        println!("{:?}{:?}", chunk.global_scope, chunk.block);
     }
     Ok(())
 }

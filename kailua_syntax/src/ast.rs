@@ -1,5 +1,5 @@
 use std::fmt;
-use kailua_env::Spanned;
+use kailua_env::{Spanned, Scope, ScopeMap};
 
 fn format_ascii_vec(f: &mut fmt::Formatter, s: &[u8]) -> fmt::Result {
     for &c in s {
@@ -211,7 +211,7 @@ pub enum Ex {
     Num(f64),
     Str(Str),
     Varargs,
-    Func(Sig, Spanned<Block>),
+    Func(Sig, Scope, Spanned<Block>),
     Table(Vec<(Option<Spanned<Exp>>, Spanned<Exp>)>),
 
     // expressions
@@ -233,7 +233,7 @@ impl fmt::Debug for Ex {
             Ex::Num(v) => write!(f, "{:?}", v),
             Ex::Str(ref s) => write!(f, "{:?}", *s),
             Ex::Varargs => write!(f, "..."),
-            Ex::Func(ref p, ref b) => write!(f, "Func({:?}, {:?})", *p, *b),
+            Ex::Func(ref p, bs, ref b) => write!(f, "Func({:?}, {:?}{:?})", *p, bs, *b),
             Ex::Table(ref fs) => write!(f, "Table({:?})", *fs),
 
             Ex::Var(ref n) => write!(f, "{:?}", *n),
@@ -248,7 +248,7 @@ impl fmt::Debug for Ex {
                 fmt::Debug::fmt(&args.span, f)
             },
             Ex::MethodCall(ref e, ref n, ref args) => {
-                try!(write!(f, "{:?}:{:?}(", *e, *n));
+                try!(write!(f, "{:?}{:?}(", *e, *n));
                 let mut first = true;
                 for arg in &args.base {
                     if first { first = false; } else { try!(write!(f, ", ")); }
@@ -326,7 +326,7 @@ impl BinOp {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum NameScope {
-    Local,
+    Local(Scope),
     Global,
 }
 
@@ -337,7 +337,7 @@ impl fmt::Debug for SelfParam {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "self") }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum St {
     Oops,
 
@@ -347,11 +347,12 @@ pub enum St {
     While(Spanned<Exp>, Spanned<Block>),
     Repeat(Spanned<Block>, Spanned<Exp>),
     If(Vec<Spanned<(Spanned<Exp>, Spanned<Block>)>>, Option<Spanned<Block>>),
-    For(Spanned<Name>, Spanned<Exp>, Spanned<Exp>, Option<Spanned<Exp>>, Spanned<Block>),
-    ForIn(Spanned<Vec<Spanned<Name>>>, Spanned<Vec<Spanned<Exp>>>, Spanned<Block>),
-    FuncDecl(NameScope, Spanned<Name>, Sig, Spanned<Block>),
-    MethodDecl(Vec<Spanned<Name>>, Option<TypeSpec<Spanned<SelfParam>>>, Sig, Spanned<Block>),
-    Local(Spanned<Vec<TypeSpec<Spanned<Name>>>>, Spanned<Vec<Spanned<Exp>>>),
+    For(Spanned<Name>, Spanned<Exp>, Spanned<Exp>, Option<Spanned<Exp>>, Scope, Spanned<Block>),
+    ForIn(Spanned<Vec<Spanned<Name>>>, Spanned<Vec<Spanned<Exp>>>, Scope, Spanned<Block>),
+    FuncDecl(NameScope, Spanned<Name>, Sig, Scope, Spanned<Block>),
+    MethodDecl(Vec<Spanned<Name>>, Option<TypeSpec<Spanned<SelfParam>>>,
+               Sig, Scope, Spanned<Block>),
+    Local(Spanned<Vec<TypeSpec<Spanned<Name>>>>, Spanned<Vec<Spanned<Exp>>>, Scope),
     Return(Spanned<Vec<Spanned<Exp>>>),
     Break,
 
@@ -359,6 +360,52 @@ pub enum St {
     KailuaOpen(Spanned<Name>),
     KailuaType(Spanned<Name>, Spanned<Kind>),
     KailuaAssume(NameScope, Spanned<Name>, M, Spanned<Kind>),
+}
+
+impl fmt::Debug for St {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            St::Oops => write!(f, "Oops"),
+
+            St::Void(ref e) => write!(f, "Void({:?})", e),
+            St::Assign(ref l, ref r) => write!(f, "Assign({:?}, {:?})", l, r),
+            St::Do(ref b) => write!(f, "Do({:?})", b),
+            St::While(ref e, ref b) => write!(f, "While({:?}, {:?})", e, b),
+            St::Repeat(ref b, ref e) => write!(f, "Repeat({:?}, {:?})", b, e),
+            St::If(ref cases, ref else_) => {
+                try!(write!(f, "Repeat("));
+                let mut first = true;
+                for &Spanned { base: (ref e, ref b), span } in cases {
+                    if first { first = false; } else { try!(write!(f, ", ")); }
+                    try!(write!(f, "({:?} => {:?}){:?}", e, b, span));
+                }
+                if let Some(ref b) = *else_ {
+                    try!(write!(f, "_ => {:?}", b));
+                }
+                write!(f, ")")
+            },
+            St::For(ref i, ref start, ref end, ref step, bs, ref b) =>
+                write!(f, "For({:?}, {:?}, {:?}, {:?}, {:?}{:?})", i, start, end, step, bs, b),
+            St::ForIn(ref ii, ref ee, bs, ref b) =>
+                write!(f, "ForIn({:?}, {:?}, {:?}{:?})", ii, ee, bs, b),
+            St::FuncDecl(NameScope::Local(is), ref i, ref sig, bs, ref b) =>
+                write!(f, "FuncDecl(Local, {:?}, {:?}, {:?}{:?}){:?}", i, sig, bs, b, is),
+            St::FuncDecl(NameScope::Global, ref i, ref sig, bs, ref b) =>
+                write!(f, "FuncDecl(Global, {:?}, {:?}, {:?}{:?})", i, sig, bs, b),
+            St::MethodDecl(ref ii, ref self_, ref sig, bs, ref b) =>
+                write!(f, "MethodDecl({:?}, {:?}, {:?}, {:?}{:?})", ii, self_, sig, bs, b),
+            St::Local(ref ii, ref ee, is) => write!(f, "Local({:?}, {:?}){:?}", ii, ee, is),
+            St::Return(ref ee) => write!(f, "Return({:?})", ee),
+            St::Break => write!(f, "Break"),
+
+            St::KailuaOpen(ref lib) => write!(f, "KailuaOpen({:?})", lib),
+            St::KailuaType(ref t, ref k) => write!(f, "KailuaType({:?}, {:?})", t, k),
+            St::KailuaAssume(NameScope::Local(is), ref i, m, ref k) =>
+                write!(f, "KailuaAssume(Local, {:?}, {:?}, {:?}){:?}", i, m, k, is),
+            St::KailuaAssume(NameScope::Global, ref i, m, ref k) =>
+                write!(f, "KailuaAssume(Global, {:?}, {:?}, {:?})", i, m, k),
+        }
+    }
 }
 
 pub type Stmt = Box<St>;
@@ -488,4 +535,10 @@ impl fmt::Debug for K {
 }
 
 pub type Kind = Box<K>;
+
+pub struct Chunk {
+    pub block: Spanned<Block>,
+    pub global_scope: Scope,
+    pub map: ScopeMap<Name>,
+}
 

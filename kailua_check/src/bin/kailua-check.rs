@@ -29,7 +29,7 @@ impl FsSource for LocalFsSource {
                 let mut source = self.source.borrow_mut();
                 let span = source.add(file);
                 if let Ok(chunk) = parse_chunk(&source, span, &*self.report) {
-                    Ok(Some(chunk))
+                    Ok(Some(chunk.block))
                 } else {
                     Err(format!("parse error"))
                 }

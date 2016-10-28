@@ -5,12 +5,12 @@
 #[macro_use] extern crate log;
 extern crate kailua_env;
 
-use kailua_env::{Source, Span, Spanned};
+use kailua_env::{Source, Span};
 use kailua_diag::Report;
 
 pub use lex::{Tok, Punct, Keyword, Lexer};
 pub use ast::{Name, Str, Seq, Var, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, NameScope, SelfParam};
-pub use ast::{St, Stmt, Block, M, K, Kind, FuncKind, SlotKind, Attr};
+pub use ast::{St, Stmt, Block, M, K, Kind, FuncKind, SlotKind, Attr, Chunk};
 pub use parser::Parser;
 
 mod message;
@@ -18,8 +18,7 @@ mod lex;
 mod ast;
 mod parser;
 
-pub fn parse_chunk(source: &Source, span: Span,
-                   report: &Report) -> kailua_diag::Result<Spanned<Block>> {
+pub fn parse_chunk(source: &Source, span: Span, report: &Report) -> kailua_diag::Result<Chunk> {
     if let Some(mut iter) = source.iter_from_span(span) {
         let lexer = lex::Lexer::new(&mut iter, &report);
         let parser = parser::Parser::new(lexer, &report);

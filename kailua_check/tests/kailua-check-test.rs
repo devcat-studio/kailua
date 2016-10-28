@@ -21,7 +21,7 @@ impl kailua_test::Testing for Testing {
     fn run(&self, source: Rc<RefCell<Source>>, span: Span, filespans: &HashMap<String, Span>,
            report: Rc<Report>) -> String {
         let chunk = match parse_chunk(&source.borrow(), span, &*report) {
-            Ok(chunk) => chunk,
+            Ok(chunk) => chunk.block,
             Err(_) => return format!("parse error"),
         };
 
@@ -35,8 +35,9 @@ impl kailua_test::Testing for Testing {
             fn require_block(&mut self, path: &[u8]) -> CheckResult<Spanned<Block>> {
                 let path = try!(str::from_utf8(path).map_err(|_| format!("bad require name")));
                 let span = *try!(self.filespans.get(path).ok_or_else(|| format!("no such module")));
-                parse_chunk(&self.source.borrow(), span, &*self.report)
-                    .map_err(|_| format!("parse error"))
+                let chunk = try!(parse_chunk(&self.source.borrow(), span, &*self.report)
+                                     .map_err(|_| format!("parse error")));
+                Ok(chunk.block)
             }
         }
 

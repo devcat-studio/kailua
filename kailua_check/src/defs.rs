@@ -16,7 +16,7 @@ impl Def {
         let lexer = Lexer::new(&mut iter, &no_report);
         let parser = Parser::new(lexer, &no_report);
         match parser.into_chunk() {
-            Ok(chunk) => chunk,
+            Ok(chunk) => chunk.block,
             Err(e) => panic!("failed to parse a built-in definition {:?}: {:?}", self.name, e),
         }
     }
