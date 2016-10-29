@@ -16,7 +16,7 @@ impl VSParseTree {
         let tokens = stream.into_tokens();
         let parser = Parser::new(tokens.into_iter(), report);
         if let Ok(chunk) = parser.into_chunk() {
-            Some(Box::new(VSParseTree { chunk: chunk }))
+            Some(Box::new(VSParseTree { chunk: chunk.block }))
         } else {
             None
         }

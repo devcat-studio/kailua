@@ -25,7 +25,7 @@ use std::error::Error;
 use std::collections::HashMap;
 use regex::Regex;
 use term::StderrTerminal;
-use clap::{App, Arg};
+use clap::{App, Arg, ArgMatches};
 use kailua_env::{Source, SourceFile, Span};
 use kailua_diag::{Kind, Report, CollectedReport};
 
@@ -34,6 +34,9 @@ pub trait Testing {
            report: Rc<Report>) -> String;
 
     fn check_output(&self, actual: &str, expected: &str) -> bool { actual == expected }
+
+    fn augment_args<'a, 'b: 'a>(&self, app: App<'a, 'b>) -> App<'a, 'b> { app }
+    fn collect_args<'a>(&mut self, _matches: &ArgMatches<'a>) { }
 }
 
 #[derive(Debug)]
@@ -409,14 +412,14 @@ const MAIN_PATH: &'static str = "<test main>";
 enum TestResult { Passed, Failed, Panicked, Ignored }
 
 impl<T: Testing> Tester<T> {
-    pub fn new(name: &str, testing: T) -> Tester<T> {
+    pub fn new(name: &str, mut testing: T) -> Tester<T> {
         // `cargo test` will pass args to every tester, so we need to avoid hyphens as a prefix
         let args = env::args().map(|s| {
             let pluses = s.len() - s.trim_left_matches('+').len();
             format!("{:->pluses$}{}", "", &s[pluses..], pluses = pluses)
         });
 
-        let matches = App::new(name)
+        let app = App::new(name)
             .arg(Arg::with_name("exact_diags")
                 .short("e")
                 .long("exact-diags")
@@ -432,8 +435,9 @@ impl<T: Testing> Tester<T> {
                 .short("p")
                 .long("stop-on-panic")
                 .help("Stops on the first panic. Also enables `RUST_BACKTRACE=1`."))
-            .arg(Arg::with_name("filter"))
-            .get_matches_from(args);
+            .arg(Arg::with_name("filter"));
+        let app = testing.augment_args(app);
+        let matches = app.get_matches_from(args);
 
         let filter = match matches.value_of("filter") {
             Some(s) => Some(Regex::new(s).expect("pattern should be a valid regex")),
@@ -442,6 +446,7 @@ impl<T: Testing> Tester<T> {
         let exact_diags = matches.is_present("exact_diags");
         let message_lang = matches.value_of("message_lang").unwrap_or("en");
         let stop_on_panic = matches.is_present("stop_on_panic");
+        testing.collect_args(&matches);
 
         if stop_on_panic {
             // for the convenience

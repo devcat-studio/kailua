@@ -1,9 +1,10 @@
 use std::fmt;
+use std::ops;
 use std::slice;
 use std::hash::Hash;
 use std::borrow::Borrow;
 use std::collections::HashMap;
-use loc::{Unit, Pos, Span};
+use loc::{Unit, Pos, Span, Spanned};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Scope {
@@ -21,6 +22,22 @@ impl Scope {
 impl fmt::Debug for Scope {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "${}", self.scope)
+    }
+}
+
+pub struct AllScopes<'a, Name: 'a> {
+    scopes: &'a [ScopeItem<Name>],
+    range: ops::Range<u32>,
+}
+
+impl<'a, Name: 'a> Iterator for AllScopes<'a, Name> {
+    type Item = Spanned<Scope>;
+
+    fn next(&mut self) -> Option<Spanned<Scope>> {
+        self.range.next().map(|scope| {
+            let span = self.scopes[scope as usize].span;
+            Spanned { span: span, base: Scope { scope: scope } }
+        })
     }
 }
 
@@ -106,7 +123,7 @@ pub struct ScopeMap<Name> {
     span_ranges: HashMap<Unit, Vec<(u32, u32)>>,
 }
 
-impl<Name: Hash + Eq> ScopeMap<Name> {
+impl<Name: Clone + Hash + Eq> ScopeMap<Name> {
     pub fn new() -> ScopeMap<Name> {
         ScopeMap {
             scopes: vec![ScopeItem::new(0)],
@@ -140,15 +157,37 @@ impl<Name: Hash + Eq> ScopeMap<Name> {
     }
 
     pub fn add_name(&mut self, scope: Scope, name: Name) {
-        let scopes = self.names.entry(name).or_insert(Vec::new());
+        assert!((scope.scope as usize) < self.scopes.len());
+        let scopes = self.names.entry(name.clone()).or_insert(Vec::new());
         if let Err(idx) = scopes.binary_search(&scope) {
             scopes.insert(idx, scope);
+            // avoids the duplicate insertion by pushing after checking
+            self.scopes[scope.scope as usize].names.push(name);
         }
+    }
+
+    pub fn parent_scope(&self, scope: Scope) -> Option<Scope> {
+        assert!((scope.scope as usize) < self.scopes.len());
+        let parent = self.scopes[scope.scope as usize].parent;
+        if parent == scope.scope {
+            None
+        } else {
+            Some(Scope { scope: parent })
+        }
+    }
+
+    pub fn all_scopes<'a>(&'a self) -> AllScopes<'a, Name> {
+        AllScopes { scopes: &self.scopes, range: 1..(self.scopes.len() as u32) }
     }
 
     pub fn ancestor_scopes<'a>(&'a self, scope: Scope) -> AncestorScopes<'a, Name> {
         assert!((scope.scope as usize) < self.scopes.len());
         AncestorScopes { scopes: &self.scopes, current: scope.scope, done: false }
+    }
+
+    pub fn names<'a>(&'a self, scope: Scope) -> slice::Iter<'a, Name> {
+        assert!((scope.scope as usize) < self.scopes.len());
+        self.scopes[scope.scope as usize].names.iter()
     }
 
     pub fn names_and_scopes<'a>(&'a self, scope: Scope) -> NamesAndScopes<'a, Name> {
@@ -201,7 +240,9 @@ impl<Name: Hash + Eq> ScopeMap<Name> {
                 let begin = item.span.begin().to_usize() as u32;
                 let end = item.span.end().to_usize() as u32;
                 seq.push((begin, false, scope));
-                seq.push((end, true, scope));
+                // the end of Span is normally exclusive, but when we are looking for a Pos
+                // we more frequently want the inclusive end.
+                seq.push((end + 1, true, scope));
             }
         }
 

@@ -33,7 +33,7 @@ pub struct Parser<'a, T> {
     open_nestings: Vec<Nesting>,
 
     global_scope: Scope,
-    current_scope: Scope,
+    scope_stack: Vec<(Scope, Pos)>, // Pos for the starting position
     scope_map: ScopeMap<Name>,
 }
 
@@ -285,7 +285,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             report: report,
             open_nestings: vec![Nesting::Top],
             global_scope: global_scope,
-            current_scope: global_scope,
+            scope_stack: Vec::new(),
             scope_map: scope_map,
         };
 
@@ -668,7 +668,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             if let Some(tok) = last_tok {
                 // if the last token has closed too many nestings we need to keep
                 // that last token to allow the further match from the caller.
-                // this case includes a premature EOF, whether reading EOF would close
+                // this case includes a premature EOF, where reading EOF would close
                 // at least two nestings (the initial nesting, the top-level nesting).
                 if always_unread || depth - self.open_nestings.len() > 1 {
                     self.unread(tok);
@@ -804,8 +804,23 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn generate_sibling_scope(&mut self) -> Scope {
-        self.current_scope = self.scope_map.generate(self.current_scope);
-        self.current_scope
+        let (parent, _parentbegin) = *self.scope_stack.last().unwrap();
+        self.scope_map.generate(parent)
+    }
+
+    fn push_scope(&mut self, scope: Scope) {
+        let scopebegin = self.last_pos();
+        self.scope_stack.push((scope, scopebegin));
+    }
+
+    fn pop_scope_upto(&mut self, nscopes: usize) {
+        // XXX end might be too short on the recovery case.
+        // scope span should be closely related to the recovery procedure
+        let end = self.pos();
+        while self.scope_stack.len() > nscopes {
+            let (scope, scopebegin) = self.scope_stack.pop().unwrap();
+            self.scope_map.set_span(scope, Span::new(scopebegin, end));
+        }
     }
 
     fn try_parse_name(&mut self) -> Option<Spanned<Name>> {
@@ -874,24 +889,25 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
     // will reset the scope after the end of the block
     fn parse_block(&mut self) -> Result<Spanned<Block>> {
-        let parent = self.current_scope;
+        let nscopes = self.scope_stack.len();
         let block = self._parse_block();
-        self.current_scope = parent;
+        self.pop_scope_upto(nscopes);
         block
     }
 
     // same to `parse_block`, but will also set the scope in the block
     fn parse_block_with_scope(&mut self) -> Result<(Scope, Spanned<Block>)> {
-        let parent = self.current_scope;
-        let scope = self.scope_map.generate(parent);
-        self.current_scope = scope;
+        let nscopes = self.scope_stack.len();
+        let scope = self.generate_sibling_scope();
+        self.push_scope(scope);
         let block = self._parse_block();
-        self.current_scope = parent;
+        self.pop_scope_upto(nscopes);
         Ok((scope, try!(block)))
     }
 
     // unlike `parse_block`, this will try to parse as much as possible until EOF
-    fn parse_block_then_eof(&mut self) -> Result<Spanned<Block>> {
+    // never consumes the EOF itself, required for the later cleanup process
+    fn parse_block_until_eof(&mut self) -> Result<Spanned<Block>> {
         trace!("parsing block then EOF");
 
         let begin = self.pos();
@@ -902,9 +918,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             let stmt = match try!(self.try_parse_stmt()) {
                 Some(stmt) => stmt,
                 None => {
-                    // try to consume the EOF (and return).
+                    // try to detect the EOF (and return).
                     // if we can't, we will discard one token and retry.
-                    if self.may_expect(EOF) { break; }
+                    if self.lookahead(EOF) { break; }
                     stmts.push(Recover::recover());
                     let tok = self.read();
                     try!(self.error(tok.1.span, m::NoStmt { read: &tok.1.base }).done());
@@ -1059,6 +1075,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         };
                         try!(self.expect(Keyword::Do));
                         let (scope, block) = try!(self.parse_block_with_scope());
+                        self.scope_map.add_name(scope, name.base.clone());
                         try!(self.expect(Keyword::End));
                         Box::new(St::For(name, start, end, step, scope, block))
                     }
@@ -1117,7 +1134,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     }
                 }
 
-                let (sig, scope, body) = try!(self.parse_func_body(funcspec));
+                let (sig, scope, body) = try!(self.parse_func_body(selfparam.is_some(), funcspec));
                 if names.len() == 1 {
                     assert!(selfparam.is_none(), "ordinary function cannot have an implicit self");
                     let name = names.pop().unwrap();
@@ -1133,8 +1150,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     // local function ...
                     (_, Spanned { base: Tok::Keyword(Keyword::Function), .. }) => {
                         let name = try!(self.parse_name());
-                        let (sig, scope, body) = try!(self.parse_func_body(funcspec));
+                        let (sig, scope, body) = try!(self.parse_func_body(false, funcspec));
                         let sibling_scope = self.generate_sibling_scope();
+                        self.push_scope(sibling_scope);
                         self.scope_map.add_name(sibling_scope, name.base.clone());
                         Box::new(St::FuncDecl(NameScope::Local(sibling_scope),
                                               name, sig, scope, body))
@@ -1173,6 +1191,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         }
 
                         let sibling_scope = self.generate_sibling_scope();
+                        self.push_scope(sibling_scope);
+                        // XXX should also mention all excess arguments
                         for name in &names.base {
                             self.scope_map.add_name(sibling_scope, name.base.base.clone());
                         }
@@ -1250,6 +1270,17 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                     &m::ExcessTypeSpecsInAssign {}));
                             }
 
+                            // update the scope map if the name may introduce a global binding
+                            // XXX should also mention all excess arguments
+                            let scope = self.scope_stack.last().unwrap().0;
+                            for namespec in &lhs.base {
+                                if let Var::Name(ref name) = namespec.base.base {
+                                    if self.scope_map.find_name_in_scope(scope, &name).is_none() {
+                                        self.scope_map.add_name(self.global_scope,
+                                                                name.base.clone());
+                                    }
+                                }
+                            }
                             Box::new(St::Assign(lhs, rhs))
                         }
 
@@ -1273,11 +1304,14 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         let exps = exps.with_loc(span);
         try!(self.expect(Keyword::Do));
         let (scope, block) = try!(self.parse_block_with_scope());
+        for name in &names.base {
+            self.scope_map.add_name(scope, name.base.clone());
+        }
         try!(self.expect(Keyword::End));
         Ok(Box::new(St::ForIn(names, exps, scope, block)))
     }
 
-    fn parse_func_body(&mut self,
+    fn parse_func_body(&mut self, has_self: bool,
                        funcspec: Option<Spanned<(Vec<Spanned<Attr>>, Option<Spanned<Presig>>)>>)
             -> Result<(Sig, Scope, Spanned<Block>)> {
         let mut args = Vec::new();
@@ -1437,14 +1471,18 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         };
 
         let (scope, block) = try!(self.parse_block_with_scope());
-        try!(self.expect(Keyword::End));
 
         // attach all arguments to the function body scope
+        // XXX should also mention all excess arguments
         // TODO should we add varargs?
+        if has_self {
+            self.scope_map.add_name(scope, Name::from(b"self"[..].to_owned()));
+        }
         for arg in &sig.args.base.head {
             self.scope_map.add_name(scope, arg.base.base.clone());
         }
 
+        try!(self.expect(Keyword::End));
         Ok((sig, scope, block))
     }
 
@@ -1643,7 +1681,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 Ok(Some(Box::new(Ex::Varargs).with_loc(span))),
 
             (_, Spanned { base: Tok::Keyword(Keyword::Function), .. }) => {
-                let (sig, scope, body) = try!(self.parse_func_body(funcspec));
+                let (sig, scope, body) = try!(self.parse_func_body(false, funcspec));
                 Ok(Some(Box::new(Ex::Func(sig, scope, body)).with_loc(begin..self.last_pos())))
             }
 
@@ -2541,20 +2579,23 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         if self.may_expect(Punct::DashDashHash) {
             self.begin_meta_comment(Punct::DashDashHash);
 
+            let mut sibling_scope = None;
             let stmt = match self.read() {
                 // assume [global] NAME ":" MODF KIND
                 (_, Spanned { base: Tok::Keyword(Keyword::Assume), .. }) => {
-                    let (scope, namescope) = if self.may_expect(Keyword::Global) {
-                        (self.global_scope, NameScope::Global)
-                    } else {
-                        let sibling_scope = self.generate_sibling_scope();
-                        (sibling_scope, NameScope::Local(sibling_scope))
-                    };
+                    let global = self.may_expect(Keyword::Global);
                     let name = try!(self.parse_name());
                     try!(self.expect(Punct::Colon));
                     let modf = self.parse_kailua_mod();
                     let kind = try!(self.recover_upto(Self::parse_kailua_kind));
 
+                    let (scope, namescope) = if global {
+                        (self.global_scope, NameScope::Global)
+                    } else {
+                        let new_scope = self.generate_sibling_scope();
+                        sibling_scope = Some(new_scope);
+                        (new_scope, NameScope::Local(new_scope))
+                    };
                     self.scope_map.add_name(scope, name.base.clone());
                     Some(Box::new(St::KailuaAssume(namescope, name, modf, kind)))
                 }
@@ -2587,7 +2628,13 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             };
 
             let end = self.last_pos();
-            try!(self.end_meta_comment(Punct::DashDashHash));
+            { // the new sibling scope should happen after the meta block
+                let ret = self.end_meta_comment(Punct::DashDashHash);
+                if let Some(scope) = sibling_scope {
+                    self.push_scope(scope);
+                }
+                try!(ret);
+            }
             Ok(Some(stmt.map(|st| st.with_loc(begin..end))))
         } else {
             Ok(None)
@@ -2595,8 +2642,18 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     pub fn into_chunk(mut self) -> diag::Result<Chunk> {
-        self.current_scope = self.global_scope;
-        if let Ok(block) = self.parse_block_then_eof() {
+        self.scope_stack = vec![(self.global_scope, Pos::dummy())];
+        let ret = self.parse_block_until_eof();
+
+        // any remaining scope is considered to end at the last token read
+        // (unlike normal cases of `pop_scope_upto`, as this might be past EOF)
+        let end = self.last_pos();
+        while self.scope_stack.len() > 1 {
+            let (scope, scopebegin) = self.scope_stack.pop().unwrap();
+            self.scope_map.set_span(scope, Span::new(scopebegin, end));
+        }
+
+        if let Ok(block) = ret {
             Ok(Chunk { block: block, global_scope: self.global_scope, map: self.scope_map })
         } else {
             Err(diag::Stop)
