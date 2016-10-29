@@ -21,6 +21,19 @@ end
 q()
 --! $1[Do([Void(`p`())]), Void(`q`())]
 
+--8<-- if
+if a then
+    local p
+    p()
+elseif b then
+    local q = 0
+else
+    p()
+end
+--! $1[If((`a` => [Local([`p`], [])$2, Void(`p`())]), \
+--!       (`b` => [Local([`q`], [0])$3]), \
+--!       [Void(`p`())])]
+
 --8<-- while
 while a do b() end c()
 --! $1[While(`a`, [Void(`b`())]), Void(`c`())]

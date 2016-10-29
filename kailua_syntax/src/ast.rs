@@ -373,14 +373,15 @@ impl fmt::Debug for St {
             St::While(ref e, ref b) => write!(f, "While({:?}, {:?})", e, b),
             St::Repeat(ref b, ref e) => write!(f, "Repeat({:?}, {:?})", b, e),
             St::If(ref cases, ref else_) => {
-                try!(write!(f, "Repeat("));
+                try!(write!(f, "If("));
                 let mut first = true;
                 for &Spanned { base: (ref e, ref b), span } in cases {
                     if first { first = false; } else { try!(write!(f, ", ")); }
                     try!(write!(f, "({:?} => {:?}){:?}", e, b, span));
                 }
                 if let Some(ref b) = *else_ {
-                    try!(write!(f, "_ => {:?}", b));
+                    if !first { try!(write!(f, ", ")); }
+                    try!(write!(f, "{:?}", b));
                 }
                 write!(f, ")")
             },
