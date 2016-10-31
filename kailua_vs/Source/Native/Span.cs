@@ -20,6 +20,13 @@ namespace Kailua.Native
             this.begin = begin;
             this.end = end;
         }
+
+        public Span(Pos pos)
+        {
+            this.unit = (UInt32)pos.Unit.Index;
+            this.begin = (UInt32)pos.Offset;
+            this.end = (UInt32)pos.Offset;
+        }
         
         public bool IsValid
         {

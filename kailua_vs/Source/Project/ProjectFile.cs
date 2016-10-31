@@ -21,7 +21,9 @@ namespace Kailua
         private string sourceText;
         private Task<Native.Span> sourceSpanTask;
         private Task<Native.TokenStream> tokenStreamTask;
+        private Task<TokenList> tokenListTask;
         private Task<Native.ParseTree> parseTreeTask;
+        private Native.ParseTree lastValidParseTree;
 
         private readonly object syncLock = new object();
 
@@ -37,7 +39,9 @@ namespace Kailua
             this.sourceText = null;
             this.sourceSpanTask = null;
             this.tokenStreamTask = null;
+            this.tokenListTask = null;
             this.parseTreeTask = null;
+            this.lastValidParseTree = null;
         }
 
         public string Path
@@ -151,25 +155,25 @@ namespace Kailua
             }
         }
 
-        public Task<Native.TokenStream> TokenStreamTask
+        public Task<TokenList> TokenListTask
         {
             get
             {
                 lock (this.syncLock)
                 {
-                    this.ensureTokenStreamTaskUnlocked(sync: true);
-                    return this.tokenStreamTask;
+                    this.ensureTokenListTaskUnlocked(sync: true);
+                    return this.tokenListTask;
                 }
             }
         }
 
-        public Native.TokenStream TokenStream
+        public TokenList TokenList
         {
             set
             {
                 if (value == null)
                 {
-                    throw new ArgumentNullException("TokenStream");
+                    throw new ArgumentNullException("TokenList");
                 }
 
                 if (this.BeforeReset != null)
@@ -180,7 +184,7 @@ namespace Kailua
                 lock (this.syncLock)
                 {
                     this.resetUnlocked();
-                    this.tokenStreamTask = Task.FromResult(value);
+                    this.tokenListTask = Task.FromResult(value);
                 }
             }
         }
@@ -236,6 +240,21 @@ namespace Kailua
             }
         }
 
+        public Native.ParseTree LastValidParseTree
+        {
+            get
+            {
+                try
+                {
+                    return this.ParseTreeTask.Result;
+                }
+                catch (Exception)
+                {
+                    return this.lastValidParseTree;
+                }
+            }
+        }
+
         public event ResetHandler BeforeReset;
 
         public delegate void ResetHandler();
@@ -260,6 +279,7 @@ namespace Kailua
             this.sourceText = null;
             this.sourceSpanTask = null;
             this.tokenStreamTask = null;
+            this.tokenListTask = null;
             this.parseTreeTask = null;
         }
 
@@ -384,6 +404,28 @@ namespace Kailua
             }
         }
 
+        private void ensureTokenListTaskUnlocked(bool sync)
+        {
+            if (this.tokenListTask != null)
+            {
+                return;
+            }
+
+            this.ensureTokenStreamTaskUnlocked(sync);
+
+            var snapshot = this.sourceSnapshot;
+            Func<Task<Native.TokenStream>, TokenList> job = task => new TokenList(snapshot, task.Result);
+
+            if (sync)
+            {
+                this.tokenListTask = job.CreateSyncTask(this.tokenStreamTask);
+            }
+            else
+            {
+                this.tokenListTask = this.tokenStreamTask.ContinueWith(job, this.cts.Token, TaskContinuationOptions.None, TaskScheduler.Default);
+            }
+        }
+
         private void ensureParseTreeTaskUnlocked(bool sync)
         {
             if (this.parseTreeTask != null)
@@ -402,7 +444,9 @@ namespace Kailua
                     var stream = task.Result;
                     try
                     {
-                        return new Native.ParseTree(stream, report);
+                        var tree = new Native.ParseTree(stream, report);
+                        this.lastValidParseTree = tree;
+                        return tree;
                     }
                     catch (Exception e)
                     {

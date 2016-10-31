@@ -108,6 +108,8 @@
     <Reference Include="WindowsBase" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Source\Completion\CompletionController.cs" />
+    <Compile Include="Source\Completion\CompletionSource.cs" />
     <Compile Include="Source\Log.cs" />
     <Compile Include="Source\Classification\ClassificationTypeName.cs" />
     <Compile Include="Source\Native\Checker.cs" />
@@ -129,6 +131,7 @@
     <Compile Include="Source\Project\ProjectFile.cs" />
     <Compile Include="Source\Project\Project.cs" />
     <Compile Include="Source\Project\ProjectCache.cs" />
+    <Compile Include="Source\Project\TokenList.cs" />
     <Compile Include="Source\Report\ErrorTagger.cs" />
     <Compile Include="Source\Report\ErrorQuickInfo.cs" />
     <Compile Include="Source\Report\ReportData.cs" />

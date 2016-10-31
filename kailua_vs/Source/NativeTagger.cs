@@ -92,12 +92,11 @@ namespace Kailua
                     // get tokens
                     try
                     {
-                        var task = file.TokenStreamTask;
+                        var task = file.TokenListTask;
                         var stream = task.Result;
-                        foreach (Native.TokenTypeAndSpan token in stream)
+                        foreach (TokenTypeAndSnapshotSpan token in stream.WithSnapshot)
                         {
-                            var span = token.Span.AttachSnapshot(snapshot);
-                            tokens.Add(new TagSpan<TokenTag>(span, new TokenTag(token.Type)));
+                            tokens.Add(new TagSpan<TokenTag>(token.Span, new TokenTag(token.Type)));
                         }
                     }
                     catch (AggregateException)

@@ -18,6 +18,12 @@ namespace Kailua.Native
             this.pos = pos;
         }
 
+        internal Pos(Unit unit, UInt32 pos)
+        {
+            this.unit = (uint)unit.Index;
+            this.pos = pos;
+        }
+
         public bool IsValid
         {
             get { return this.unit != 0; }

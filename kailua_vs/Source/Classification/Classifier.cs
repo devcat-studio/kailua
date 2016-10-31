@@ -5,7 +5,7 @@ using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Classification;
 using Microsoft.VisualStudio.Text.Tagging;
 using Microsoft.VisualStudio.Utilities;
-using Kailua.Native;
+using Kailua.Native.Extensions;
 
 namespace Kailua
 {

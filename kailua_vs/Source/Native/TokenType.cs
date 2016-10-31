@@ -87,16 +87,19 @@
         Vector = 0x9f,
     }
 
-    public static class TokenTypeExtension
+    namespace Extensions
     {
-        public static bool IsPunct(this TokenType tok)
+        public static class TokenTypeExtension
         {
-            return ((byte)tok & 0xc0) == 0x40;
-        }
+            public static bool IsPunct(this TokenType tok)
+            {
+                return ((byte)tok & 0xc0) == 0x40;
+            }
 
-        public static bool IsKeyword(this TokenType tok)
-        {
-            return ((byte)tok & 0xc0) == 0x80;
+            public static bool IsKeyword(this TokenType tok)
+            {
+                return ((byte)tok & 0xc0) == 0x80;
+            }
         }
     }
 }
