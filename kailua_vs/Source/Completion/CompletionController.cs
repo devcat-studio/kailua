@@ -81,6 +81,14 @@ namespace Kailua
                     case VSConstants.VSStd2KCmdID.CANCEL:
                         handled = this.Cancel();
                         break;
+                    case VSConstants.VSStd2KCmdID.TYPECHAR:
+                        char ch = this.getTypeChar(pvaIn);
+                        if (char.IsPunctuation(ch))
+                        {
+                            this.Complete(false);
+                            // and continue to the next handler
+                        }
+                        break;
                 }
             }
 
