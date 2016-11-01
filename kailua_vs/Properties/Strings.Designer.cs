@@ -70,6 +70,24 @@ namespace Kailua.Properties {
         }
         
         /// <summary>
+        ///    (global)과(와) 유사한 지역화된 문자열을 찾습니다.
+        /// </summary>
+        internal static string GlobalNameSuffix {
+            get {
+                return ResourceManager.GetString("GlobalNameSuffix", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   과(와) 유사한 지역화된 문자열을 찾습니다.
+        /// </summary>
+        internal static string LocalNameSuffix {
+            get {
+                return ResourceManager.GetString("LocalNameSuffix", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   There seems multiple entry point files detected in the project {0}과(와) 유사한 지역화된 문자열을 찾습니다.
         /// </summary>
         internal static string MultipleEntryPoints {

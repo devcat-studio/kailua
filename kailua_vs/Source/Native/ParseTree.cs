@@ -85,6 +85,11 @@ namespace Kailua.Native
             ref Pos pos,
             [Out] out NameEntriesHandle entries);
 
+        [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int kailua_parse_tree_global_names(
+            ParseTreeHandle tree,
+            [Out] out NameEntriesHandle entries);
+
         [StructLayout(LayoutKind.Sequential)]
         private struct NativeNameEntry
         {
@@ -145,29 +150,52 @@ namespace Kailua.Native
             }
         }
 
-        public IEnumerable<NameEntry> NamesAt(Pos pos)
+        private IEnumerable<NameEntry> wrapNameEntries(int nentries, NameEntriesHandle entries)
         {
             var tree = this.native; // avoid GC while iterating
-            
-            int nentries;
-            NameEntriesHandle entriesHandle;
-            lock (tree)
-            {
-                nentries = kailua_parse_tree_names_at_pos(tree, ref pos, out entriesHandle);
-            }
-            if (nentries < 0)
-            {
-                throw new NativeException("internal error while retrieving names visible at given position");
-            }
-            entriesHandle.Size = nentries; // required for deallocation
+
+            entries.Size = nentries; // required for deallocation
 
             // `entriesHandle` refers to the current parse tree
-            long entriesPtr = entriesHandle.DangerousGetHandle().ToInt64();
+            long entriesPtr = entries.DangerousGetHandle().ToInt64();
             for (int i = 0; i < nentries; ++i)
             {
                 var nameEntry = (NativeNameEntry)Marshal.PtrToStructure(new IntPtr(entriesPtr), typeof(NativeNameEntry));
                 yield return nameEntry.ToManaged();
                 entriesPtr += Marshal.SizeOf(typeof(NativeNameEntry)); // not sizeof()
+            }
+        }
+
+        public IEnumerable<NameEntry> NamesAt(Pos pos)
+        {
+            int nentries;
+            NameEntriesHandle entries;
+            lock (this.native)
+            {
+                nentries = kailua_parse_tree_names_at_pos(this.native, ref pos, out entries);
+            }
+            if (nentries < 0)
+            {
+                throw new NativeException("internal error while retrieving names visible at given position");
+            }
+            return this.wrapNameEntries(nentries, entries);
+        }
+
+        public IEnumerable<NameEntry> GlobalNames
+        {
+            get
+            {
+                int nentries;
+                NameEntriesHandle entries;
+                lock (this.native)
+                {
+                    nentries = kailua_parse_tree_global_names(this.native, out entries);
+                }
+                if (nentries < 0)
+                {
+                    throw new NativeException("internal error while retrieving global names");
+                }
+                return this.wrapNameEntries(nentries, entries);
             }
         }
 

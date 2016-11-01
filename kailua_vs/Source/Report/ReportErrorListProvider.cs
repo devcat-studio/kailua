@@ -29,6 +29,11 @@ namespace Kailua
 
         internal static IVsHierarchy getHierarchy(EnvDTE.Project project)
         {
+            if (project == null)
+            {
+                return null;
+            }
+
             var solution = Package.GetGlobalService(typeof(SVsSolution)) as IVsSolution;
             IVsHierarchy hierarchy;
             if (solution.GetProjectOfUniqueName(project.UniqueName, out hierarchy) == VSConstants.S_OK)

@@ -24,8 +24,6 @@ namespace Kailua
         internal CancellationTokenSource cts;
         internal Native.Report report;
         internal List<ReportData> reportData;
-        internal Dictionary<string, Native.Unit> tempUnits;
-        internal Native.Checker checker;
         private Task checkTask;
         private readonly object syncLock = new object();
 
@@ -42,8 +40,6 @@ namespace Kailua
             this.cts = null;
             this.report = null;
             this.reportData = null;
-            this.tempUnits = null;
-            this.checker = null;
             this.checkTask = null;
 
             this.uiThread = new ProjectUIThread(this, project);
@@ -102,6 +98,23 @@ namespace Kailua
             lock (this.syncLock)
             {
                 this.resetUnlocked();
+            }
+        }
+
+        public SortedSet<string> GlobalScope
+        {
+            get
+            {
+                var names = new SortedSet<string>();
+                foreach (var file in this.files)
+                {
+                    var globalNames = file.Value.LastValidGlobalScopeIfAny;
+                    if (globalNames != null)
+                    {
+                        names.UnionWith(globalNames);
+                    }
+                }
+                return names;
             }
         }
 

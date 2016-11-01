@@ -32,9 +32,12 @@ pub struct Parser<'a, T> {
     // a list of delimiting pairs which contain the current cursor
     open_nestings: Vec<Nesting>,
 
-    global_scope: Scope,
-    scope_stack: Vec<(Scope, Pos)>, // Pos for the starting position
     scope_map: ScopeMap<Name>,
+    // the global scope, visible to every other file
+    // (the local root scopes are generated as needed, and invisible from the outside)
+    global_scope: Scope,
+    // Pos for the starting position
+    scope_stack: Vec<(Scope, Pos)>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -284,9 +287,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             ignore_after_newline: None,
             report: report,
             open_nestings: vec![Nesting::Top],
+            scope_map: scope_map,
             global_scope: global_scope,
             scope_stack: Vec::new(),
-            scope_map: scope_map,
         };
 
         // read the first token and fill the last_span
@@ -803,9 +806,20 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
+    fn is_global_name(&self, name: &Name) -> bool{
+        if let Some(&(scope, _)) = self.scope_stack.last() {
+            self.scope_map.find_name_in_scope(scope, name).is_none()
+        } else {
+            true
+        }
+    }
+
     fn generate_sibling_scope(&mut self) -> Scope {
-        let (parent, _parentbegin) = *self.scope_stack.last().unwrap();
-        self.scope_map.generate(parent)
+        if let Some(&(parent, _parentbegin)) = self.scope_stack.last() {
+            self.scope_map.generate(parent)
+        } else {
+            self.scope_map.generate_root()
+        }
     }
 
     fn push_scope(&mut self, scope: Scope) {
@@ -814,12 +828,14 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     fn pop_scope_upto(&mut self, nscopes: usize) {
-        // XXX end might be too short on the recovery case.
-        // scope span should be closely related to the recovery procedure
-        let end = self.pos();
-        while self.scope_stack.len() > nscopes {
-            let (scope, scopebegin) = self.scope_stack.pop().unwrap();
-            self.scope_map.set_span(scope, Span::new(scopebegin, end));
+        if self.scope_stack.len() > nscopes {
+            // XXX end might be too short on the recovery case.
+            // scope span should be closely related to the recovery procedure
+            let end = self.pos();
+            while self.scope_stack.len() > nscopes {
+                let (scope, scopebegin) = self.scope_stack.pop().unwrap();
+                self.scope_map.set_span(scope, Span::new(scopebegin, end));
+            }
         }
     }
 
@@ -1272,10 +1288,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
                             // update the scope map if the name may introduce a global binding
                             // XXX should also mention all excess arguments
-                            let scope = self.scope_stack.last().unwrap().0;
                             for namespec in &lhs.base {
                                 if let Var::Name(ref name) = namespec.base.base {
-                                    if self.scope_map.find_name_in_scope(scope, &name).is_none() {
+                                    if self.is_global_name(name) {
                                         self.scope_map.add_name(self.global_scope,
                                                                 name.base.clone());
                                     }
@@ -2642,14 +2657,13 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     pub fn into_chunk(mut self) -> diag::Result<Chunk> {
-        self.scope_stack = vec![(self.global_scope, Pos::dummy())];
+        self.scope_stack = vec![];
         let ret = self.parse_block_until_eof();
 
         // any remaining scope is considered to end at the last token read
         // (unlike normal cases of `pop_scope_upto`, as this might be past EOF)
         let end = self.last_pos();
-        while self.scope_stack.len() > 1 {
-            let (scope, scopebegin) = self.scope_stack.pop().unwrap();
+        while let Some((scope, scopebegin)) = self.scope_stack.pop() {
             self.scope_map.set_span(scope, Span::new(scopebegin, end));
         }
 

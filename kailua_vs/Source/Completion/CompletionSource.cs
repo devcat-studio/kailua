@@ -31,6 +31,22 @@ namespace Kailua
             this.buffer = buffer;
         }
 
+        private class NameComparer : IComparer<string>
+        {
+            public int Compare(string x, string y)
+            {
+                return x.ToUpperInvariant().CompareTo(y.ToUpperInvariant());
+            }
+        }
+
+        private class NameEntryComparer : IComparer<Native.NameEntry>
+        {
+            public int Compare(Native.NameEntry x, Native.NameEntry y)
+            {
+                return x.Name.ToUpperInvariant().CompareTo(y.Name.ToUpperInvariant());
+            }
+        }
+
         public void AugmentCompletionSession(ICompletionSession session, IList<CompletionSet> completionSets)
         {
             if (this.disposed)
@@ -113,9 +129,17 @@ namespace Kailua
             var translatedTriggerPoint = triggerPoint.TranslateTo(file.SourceSnapshot, PointTrackingMode.Positive);
             var pos = new Native.Pos(file.Unit, (uint)translatedTriggerPoint.Position);
             var completions = new List<Completion>();
-            foreach (var entry in tree.NamesAt(pos))
+            var names = new SortedSet<Native.NameEntry>(tree.NamesAt(pos), new NameEntryComparer());
+            foreach (var entry in names)
             {
-                completions.Add(new Completion(entry.Name));
+                var name = entry.Name;
+                completions.Add(new Completion(name + Properties.Strings.LocalNameSuffix, name, null, null, null));
+            }
+            var globalNames = new SortedSet<string>(project.GlobalScope, new NameComparer());
+            globalNames.ExceptWith(from entry in names select entry.Name);
+            foreach (var name in project.GlobalScope)
+            {
+                completions.Add(new Completion(name + Properties.Strings.GlobalNameSuffix, name, null, null, null));
             }
 
             var applicableTo = snapshot.CreateTrackingSpan(targetSpan, SpanTrackingMode.EdgeInclusive);

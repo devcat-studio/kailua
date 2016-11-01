@@ -120,6 +120,12 @@
   <data name="ErrorLimitExceeded" xml:space="preserve">
     <value>오류가 너무 많아서 첫 {0}개만 표시됩니다</value>
   </data>
+  <data name="GlobalNameSuffix" xml:space="preserve">
+    <value> (전역)</value>
+  </data>
+  <data name="LocalNameSuffix" xml:space="preserve">
+    <value />
+  </data>
   <data name="MultipleEntryPoints" xml:space="preserve">
     <value>{0} 프로젝트에 시작 파일처럼 보이는 것이 여러 개 있습니다</value>
   </data>

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Diagnostics;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.Text;
@@ -24,6 +25,7 @@ namespace Kailua
         private Task<TokenList> tokenListTask;
         private Task<Native.ParseTree> parseTreeTask;
         private Native.ParseTree lastValidParseTree;
+        private SortedSet<string> lastValidGlobalScope;
 
         private readonly object syncLock = new object();
 
@@ -42,6 +44,7 @@ namespace Kailua
             this.tokenListTask = null;
             this.parseTreeTask = null;
             this.lastValidParseTree = null;
+            this.lastValidGlobalScope = null;
         }
 
         public string Path
@@ -255,6 +258,17 @@ namespace Kailua
             }
         }
 
+        public SortedSet<string> LastValidGlobalScopeIfAny
+        {
+            get
+            {
+                // unlike LastValidParseTree, this can be called for every file in the project
+                // so we don't try to trigger the parsing (which will be eventually triggered from
+                // the project-wide checking process).
+                return this.lastValidGlobalScope;
+            }
+        }
+
         public event ResetHandler BeforeReset;
 
         public delegate void ResetHandler();
@@ -446,6 +460,7 @@ namespace Kailua
                     {
                         var tree = new Native.ParseTree(stream, report);
                         this.lastValidParseTree = tree;
+                        this.lastValidGlobalScope = new SortedSet<string>(from e in tree.GlobalNames select e.Name);
                         return tree;
                     }
                     catch (Exception e)

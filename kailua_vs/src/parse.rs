@@ -60,6 +60,16 @@ impl VSParseTree {
             }).collect::<Vec<_>>().into_boxed_slice()
         })
     }
+
+    pub fn global_names(&self) -> Box<[VSNameEntry]> {
+        self.map.names_and_scopes(self.global_scope).map(|(name, scope)| {
+            VSNameEntry {
+                name: name.as_ptr(),
+                namelen: name.len(),
+                scope: scope.to_usize() as u32,
+            }
+        }).collect::<Vec<_>>().into_boxed_slice()
+    }
 }
 
 #[no_mangle]
@@ -114,6 +124,26 @@ pub extern "C" fn kailua_parse_tree_names_at_pos(tree: *mut VSParseTree, pos: *c
             *out.0 = ptr::null_mut();
             0
         }
+    }).unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "C" fn kailua_parse_tree_global_names(tree: *const VSParseTree,
+                                                 out: *mut *mut VSNameEntry) -> i32 {
+    if tree.is_null() { return -1; }
+    if out.is_null() { return -1; }
+
+    let tree: &VSParseTree = unsafe { mem::transmute(tree) };
+    let out = unsafe { out.as_mut().unwrap() };
+
+    let tree = AssertUnwindSafe(tree);
+    let out = AssertUnwindSafe(out);
+    panic::catch_unwind(move || {
+        let entries = tree.0.global_names();
+        assert!(entries.len() <= i32::MAX as usize);
+        let (entries, nentries): (*mut VSNameEntry, usize) = unsafe { mem::transmute(entries) };
+        *out.0 = entries;
+        nentries as i32
     }).unwrap_or(-1)
 }
 
