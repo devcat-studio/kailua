@@ -38,6 +38,7 @@ namespace Kailua
             {
                 this.errorListProvider.AddReport(data);
             }
+            this.errorListProvider.Refresh();
         }
 
         internal void Launch()

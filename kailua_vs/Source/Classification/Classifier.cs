@@ -22,7 +22,12 @@ namespace Kailua
         [Export]
         [FileExtension(".lua")]
         [ContentType("kailua")]
-        internal static FileExtensionToContentTypeDefinition fileType = null;
+        internal static FileExtensionToContentTypeDefinition luaFileType = null;
+
+        [Export]
+        [FileExtension(".kailua")]
+        [ContentType("kailua")]
+        internal static FileExtensionToContentTypeDefinition kailuaFileType = null;
 
         [Import]
         internal IClassificationTypeRegistryService classificationTypeRegistry = null;

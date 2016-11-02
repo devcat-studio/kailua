@@ -123,6 +123,7 @@ namespace Kailua
                 // TODO actually, the line number can be calculated straight from Source itself, so we don't really need Snapshot
                 this.errorListProvider.AddReport(reportSpan.Tag.Data);
             }
+            this.errorListProvider.Refresh();
         }
 
         public event EventHandler<SnapshotSpanEventArgs> TagsChanged;
