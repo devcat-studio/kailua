@@ -7,7 +7,7 @@ use take_mut::take;
 
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag::Reporter;
-use kailua_syntax::{Name, Var, M, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp, NameScope};
+use kailua_syntax::{Name, Var, M, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp, Vis};
 use kailua_syntax::{St, Stmt, Block, K};
 use diag::CheckResult;
 use ty::{T, TySeq, SpannedTySeq, Lattice, Displayed, Display, TypeContext};
@@ -864,7 +864,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 Ok(exit)
             }
 
-            St::For(ref name, ref start, ref end, ref step, _scope, ref block) => {
+            St::For(ref name, ref start, ref end, ref step, _blockscope, ref block) => {
                 let start = try!(self.visit_exp(start)).into_first();
                 let end = try!(self.visit_exp(end)).into_first();
                 let step = if let &Some(ref step) = step {
@@ -898,7 +898,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
             }
 
-            St::ForIn(ref names, ref exps, _scope, ref block) => {
+            St::ForIn(ref names, ref exps, _blockscope, ref block) => {
                 let infos = try!(self.visit_explist(exps));
                 let expspan = infos.all_span();
                 let mut infos = infos.into_iter_with_nil();
@@ -953,20 +953,20 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
             }
 
-            St::FuncDecl(scope, ref name, ref sig, _scope, ref block) => {
+            St::FuncDecl(vis, ref name, ref sig, _blockscope, ref block, _nextscope) => {
                 // `name` itself is available to the inner scope
                 let funcv = self.context().gen_tvar();
                 let info = Slot::just(T::TVar(funcv)).with_loc(stmt);
-                match scope {
-                    NameScope::Local(_) => try!(self.env.add_local_var(name, None, Some(info))),
-                    NameScope::Global => try!(self.env.assign_to_var(name, info)),
+                match vis {
+                    Vis::Local => try!(self.env.add_local_var(name, None, Some(info))),
+                    Vis::Global => try!(self.env.assign_to_var(name, info)),
                 }
                 let functy = try!(self.visit_func_body(None, sig, block, stmt.span));
                 try!(T::TVar(funcv).assert_eq(&*functy.unlift(), self.context()));
                 Ok(Exit::None)
             }
 
-            St::MethodDecl(ref names, ref selfparam, ref sig, _scope, ref block) => {
+            St::MethodDecl(ref names, ref selfparam, ref sig, _blockscope, ref block) => {
                 assert!(names.len() >= 2);
 
                 // find a slot for the first name
@@ -1069,7 +1069,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 Ok(Exit::None)
             }
 
-            St::Local(ref names, ref exps, _scope) => {
+            St::Local(ref names, ref exps, _nextscope) => {
                 let infos = try!(self.visit_explist(exps));
                 for (namespec, info) in names.iter().zip(infos.into_iter_with_none()) {
                     let specinfo = if let Some(ref kind) = namespec.kind {
@@ -1114,7 +1114,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 Ok(Exit::None)
             }
 
-            St::KailuaAssume(scope, ref name, kindm, ref kind) => {
+            St::KailuaAssume(vis, ref name, kindm, ref kind, _nextscope) => {
                 // while Currently slot is not explicitly constructible for most cases,
                 // `assume` frequently has to *suppose* that the variable is Currently.
                 // detect [currently] attribute and strip it.
@@ -1131,9 +1131,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 let flex = if currently { F::Currently } else { F::from(kindm) };
                 let slot = try!(self.visit_kind(flex, kind));
-                match scope {
-                    NameScope::Local(_) => try!(self.env.assume_var(name, slot)),
-                    NameScope::Global => try!(self.env.assume_global_var(name, slot)),
+                match vis {
+                    Vis::Local => try!(self.env.assume_var(name, slot)),
+                    Vis::Global => try!(self.env.assume_global_var(name, slot)),
                 }
                 Ok(Exit::None)
             }

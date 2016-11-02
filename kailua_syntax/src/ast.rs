@@ -325,8 +325,8 @@ impl BinOp {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum NameScope {
-    Local(Scope),
+pub enum Vis {
+    Local,
     Global,
 }
 
@@ -349,7 +349,7 @@ pub enum St {
     If(Vec<Spanned<(Spanned<Exp>, Spanned<Block>)>>, Option<Spanned<Block>>),
     For(Spanned<Name>, Spanned<Exp>, Spanned<Exp>, Option<Spanned<Exp>>, Scope, Spanned<Block>),
     ForIn(Spanned<Vec<Spanned<Name>>>, Spanned<Vec<Spanned<Exp>>>, Scope, Spanned<Block>),
-    FuncDecl(NameScope, Spanned<Name>, Sig, Scope, Spanned<Block>),
+    FuncDecl(Vis, Spanned<Name>, Sig, Scope, Spanned<Block>, Option<Scope>),
     MethodDecl(Vec<Spanned<Name>>, Option<TypeSpec<Spanned<SelfParam>>>,
                Sig, Scope, Spanned<Block>),
     Local(Spanned<Vec<TypeSpec<Spanned<Name>>>>, Spanned<Vec<Spanned<Exp>>>, Scope),
@@ -359,7 +359,7 @@ pub enum St {
     // Kailua extensions
     KailuaOpen(Spanned<Name>),
     KailuaType(Spanned<Name>, Spanned<Kind>),
-    KailuaAssume(NameScope, Spanned<Name>, M, Spanned<Kind>),
+    KailuaAssume(Vis, Spanned<Name>, M, Spanned<Kind>, Option<Scope>),
 }
 
 impl fmt::Debug for St {
@@ -389,10 +389,10 @@ impl fmt::Debug for St {
                 write!(f, "For({:?}, {:?}, {:?}, {:?}, {:?}{:?})", i, start, end, step, bs, b),
             St::ForIn(ref ii, ref ee, bs, ref b) =>
                 write!(f, "ForIn({:?}, {:?}, {:?}{:?})", ii, ee, bs, b),
-            St::FuncDecl(NameScope::Local(is), ref i, ref sig, bs, ref b) =>
-                write!(f, "FuncDecl(Local, {:?}, {:?}, {:?}{:?}){:?}", i, sig, bs, b, is),
-            St::FuncDecl(NameScope::Global, ref i, ref sig, bs, ref b) =>
-                write!(f, "FuncDecl(Global, {:?}, {:?}, {:?}{:?})", i, sig, bs, b),
+            St::FuncDecl(ns, ref i, ref sig, bs, ref b, Some(is)) =>
+                write!(f, "FuncDecl({:?}, {:?}, {:?}, {:?}{:?}){:?}", ns, i, sig, bs, b, is),
+            St::FuncDecl(ns, ref i, ref sig, bs, ref b, None) =>
+                write!(f, "FuncDecl({:?}, {:?}, {:?}, {:?}{:?})", ns, i, sig, bs, b),
             St::MethodDecl(ref ii, ref self_, ref sig, bs, ref b) =>
                 write!(f, "MethodDecl({:?}, {:?}, {:?}, {:?}{:?})", ii, self_, sig, bs, b),
             St::Local(ref ii, ref ee, is) => write!(f, "Local({:?}, {:?}){:?}", ii, ee, is),
@@ -401,10 +401,10 @@ impl fmt::Debug for St {
 
             St::KailuaOpen(ref lib) => write!(f, "KailuaOpen({:?})", lib),
             St::KailuaType(ref t, ref k) => write!(f, "KailuaType({:?}, {:?})", t, k),
-            St::KailuaAssume(NameScope::Local(is), ref i, m, ref k) =>
-                write!(f, "KailuaAssume(Local, {:?}, {:?}, {:?}){:?}", i, m, k, is),
-            St::KailuaAssume(NameScope::Global, ref i, m, ref k) =>
-                write!(f, "KailuaAssume(Global, {:?}, {:?}, {:?})", i, m, k),
+            St::KailuaAssume(ns, ref i, m, ref k, Some(is)) =>
+                write!(f, "KailuaAssume({:?}, {:?}, {:?}, {:?}){:?}", ns, i, m, k, is),
+            St::KailuaAssume(ns, ref i, m, ref k, None) =>
+                write!(f, "KailuaAssume({:?}, {:?}, {:?}, {:?})", ns, i, m, k),
         }
     }
 }

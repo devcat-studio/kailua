@@ -9,7 +9,7 @@ use kailua_env::{Source, Span};
 use kailua_diag::Report;
 
 pub use lex::{Tok, Punct, Keyword, Lexer};
-pub use ast::{Name, Str, Seq, Var, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, NameScope, SelfParam};
+pub use ast::{Name, Str, Seq, Var, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, Vis, SelfParam};
 pub use ast::{St, Stmt, Block, M, K, Kind, FuncKind, SlotKind, Attr, Chunk};
 pub use parser::Parser;
 

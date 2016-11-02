@@ -10,7 +10,7 @@ use kailua_diag::{Report, Localize};
 use message as m;
 use lex::{Tok, Punct, Keyword};
 use ast::{Name, Str, Var, Seq, Presig, Sig, Attr};
-use ast::{Ex, Exp, UnOp, BinOp, NameScope, SelfParam, St, Stmt, Block};
+use ast::{Ex, Exp, UnOp, BinOp, Vis, SelfParam, St, Stmt, Block};
 use ast::{M, K, Kind, SlotKind, FuncKind, TypeSpec, Chunk};
 
 pub struct Parser<'a, T> {
@@ -806,7 +806,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn is_global_name(&self, name: &Name) -> bool{
+    fn is_global_name(&self, name: &Name) -> bool {
         if let Some(&(scope, _)) = self.scope_stack.last() {
             self.scope_map.find_name_in_scope(scope, name).is_none()
         } else {
@@ -1154,8 +1154,13 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 if names.len() == 1 {
                     assert!(selfparam.is_none(), "ordinary function cannot have an implicit self");
                     let name = names.pop().unwrap();
-                    self.scope_map.add_name(self.global_scope, name.base.clone());
-                    Box::new(St::FuncDecl(NameScope::Global, name, sig, scope, body))
+                    let vis = if self.is_global_name(&name) {
+                        self.scope_map.add_name(self.global_scope, name.base.clone());
+                        Vis::Global
+                    } else {
+                        Vis::Local
+                    };
+                    Box::new(St::FuncDecl(vis, name, sig, scope, body, None))
                 } else {
                     Box::new(St::MethodDecl(names, selfparam, sig, scope, body))
                 }
@@ -1170,8 +1175,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         let sibling_scope = self.generate_sibling_scope();
                         self.push_scope(sibling_scope);
                         self.scope_map.add_name(sibling_scope, name.base.clone());
-                        Box::new(St::FuncDecl(NameScope::Local(sibling_scope),
-                                              name, sig, scope, body))
+                        Box::new(St::FuncDecl(Vis::Local, name, sig, scope, body,
+                                              Some(sibling_scope)))
                     }
 
                     // local NAME ...
@@ -2604,15 +2609,15 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     let modf = self.parse_kailua_mod();
                     let kind = try!(self.recover_upto(Self::parse_kailua_kind));
 
-                    let (scope, namescope) = if global {
-                        (self.global_scope, NameScope::Global)
+                    let vis = if global {
+                        Vis::Global
                     } else {
-                        let new_scope = self.generate_sibling_scope();
-                        sibling_scope = Some(new_scope);
-                        (new_scope, NameScope::Local(new_scope))
+                        sibling_scope = Some(self.generate_sibling_scope());
+                        Vis::Local
                     };
-                    self.scope_map.add_name(scope, name.base.clone());
-                    Some(Box::new(St::KailuaAssume(namescope, name, modf, kind)))
+                    self.scope_map.add_name(sibling_scope.unwrap_or(self.global_scope),
+                                            name.base.clone());
+                    Some(Box::new(St::KailuaAssume(vis, name, modf, kind, sibling_scope)))
                 }
 
                 // open NAME

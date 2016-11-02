@@ -90,6 +90,24 @@ local function r(p,...)
 end
 --! $1[FuncDecl(Local, `r`, [`p`, ...: _] --> _, $2[])$3]
 
+--8<-- local-func-without-sibling-scope-1
+local r
+function r(p,...)
+
+end
+--! $1[Local([`r`], [])$2, FuncDecl(Local, `r`, [`p`, ...: _] --> _, $3[])]
+
+--8<-- local-func-without-sibling-scope-2
+local r
+do
+    local s
+    function r(p,...)
+
+    end
+end
+--! $1[Local([`r`], [])$2, Do([Local([`s`], [])$3, \
+--!                            FuncDecl(Local, `r`, [`p`, ...: _] --> _, $4[])])]
+
 --8<-- func-in-table
 function a.b.c(p) --[[...]] end
 --! $1[MethodDecl([`a`, `b`, `c`], None, [`p`] --> _, $2[])]
