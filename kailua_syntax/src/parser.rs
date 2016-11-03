@@ -1135,7 +1135,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     // (`parse_func_body` doesn't like untyped params, so we need to pop it)
                     if let Some(Spanned { base: (_, Some(ref mut presig)), .. }) = funcspec {
                         if !presig.args.head.is_empty() &&
-                                *presig.args.head[0].base.base.base == b"self" {
+                                *presig.args.head[0].base.base.base == *b"self" {
                             let Spanned { base: arg, span } = presig.args.head.remove(0);
                             selfparam = Some(TypeSpec { base: SelfParam.with_loc(span),
                                                         modf: arg.modf, kind: arg.kind });
@@ -2054,7 +2054,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             };
             let modf;
             let kind;
-            if *name.base == b"self" {
+            if *name.base == *b"self" {
                 // `self` as the first argument can omit its type
                 if self.may_expect(Punct::Colon) {
                     modf = self.parse_kailua_mod();

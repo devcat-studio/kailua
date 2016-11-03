@@ -162,8 +162,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                            .and_then(|t| t.as_string().map(|s| s.to_owned())) {
                     if let Some(rhs) = self.env.resolve_exact_type(&rhs.unlift())
                                                .and_then(|t| t.as_string().map(|s| s.to_owned())) {
-                        let mut s: Vec<u8> = lhs.into();
-                        s.append(&mut rhs.into());
+                        let mut s = lhs.into_bytes().into_vec();
+                        s.append(&mut rhs.into_bytes().into_vec());
                         return Ok(Slot::just(T::str(s.into())));
                     }
                 }
@@ -1008,7 +1008,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     // if `info` is a class prototype we know the exact type for `self`
                     let inferred = if let T::Class(Class::Prototype(cid)) = *info.unlift() {
                         let inst = T::Class(Class::Instance(cid));
-                        if *method.base == b"init" {
+                        if *method.base == *b"init" {
                             // currently [constructible] <class instance #cid>
                             Some((F::Currently,
                                   T::Builtin(Builtin::Constructible, Box::new(inst))))
@@ -1042,7 +1042,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         // if both are missing, we try to use a fresh type variable,
                         // except when [no_check] is requested (requires a fixed type)
                         (None, None) => {
-                            if sig.attrs.iter().any(|a| *a.name.base == b"no_check") {
+                            if sig.attrs.iter().any(|a| *a.name.base == *b"no_check") {
                                 try!(self.env.error(&selfparam.base, m::NoCheckRequiresTypedSelf {})
                                              .done());
                             }
@@ -1122,7 +1122,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let mut currently = false;
                 if kindm == M::None {
                     if let K::Attr(ref k, ref a) = *kind.base {
-                        if *a.name.base == b"currently" {
+                        if *a.name.base == *b"currently" {
                             currently = true;
                             kind = k;
                         }
@@ -1143,7 +1143,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     fn visit_func_body(&mut self, selfinfo: Option<Spanned<Slot>>, sig: &Sig,
                        block: &Spanned<Vec<Spanned<Stmt>>>, declspan: Span) -> CheckResult<Slot> {
         // if no check is requested, the signature should be complete
-        let no_check = sig.attrs.iter().any(|a| *a.name.base == b"no_check");
+        let no_check = sig.attrs.iter().any(|a| *a.name.base == *b"no_check");
 
         let vatype = match sig.args.tail {
             None => None,
@@ -1670,7 +1670,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
     fn literal_ty_to_flags(&self, info: &Spanned<Slot>) -> CheckResult<Option<Flags>> {
         if let Some(s) = info.unlift().as_string() {
-            let tyname = &***s;
+            let tyname = &s[..];
             let flags = match tyname {
                 b"nil" => T_NIL,
                 b"number" => T_NUMBER,
@@ -1694,7 +1694,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     // AssertType built-in accepts more strings than Type
     fn ext_literal_ty_to_flags(&self, info: &Spanned<Slot>) -> CheckResult<Option<Flags>> {
         if let Some(s) = info.unlift().as_string() {
-            let tyname = &***s;
+            let tyname = &s[..];
             let (tyname, nilflags) = if tyname.ends_with(b"?") {
                 (&tyname[..tyname.len()-1], T_NIL)
             } else {

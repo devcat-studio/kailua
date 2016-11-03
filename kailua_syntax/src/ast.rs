@@ -1,4 +1,5 @@
 use std::fmt;
+use std::ops;
 use kailua_env::{Spanned, Scope, ScopeMap};
 
 fn format_ascii_vec(f: &mut fmt::Formatter, s: &[u8]) -> fmt::Result {
@@ -15,9 +16,24 @@ fn format_ascii_vec(f: &mut fmt::Formatter, s: &[u8]) -> fmt::Result {
     Ok(())
 }
 
-custom_derive! {
-    #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, NewtypeFrom, NewtypeDeref)]
-    pub struct Name(Vec<u8>);
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Name(Box<[u8]>);
+
+impl Name {
+    pub fn into_bytes(self) -> Box<[u8]> { self.0 }
+}
+
+impl From<Box<[u8]>> for Name {
+    fn from(n: Box<[u8]>) -> Name { Name(n) }
+}
+
+impl From<Vec<u8>> for Name {
+    fn from(n: Vec<u8>) -> Name { Name(n.into_boxed_slice()) }
+}
+
+impl ops::Deref for Name {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] { &self.0[..] }
 }
 
 impl fmt::Display for Name {
@@ -35,9 +51,24 @@ impl fmt::Debug for Name {
     }
 }
 
-custom_derive! {
-    #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, NewtypeFrom, NewtypeDeref)]
-    pub struct Str(Vec<u8>);
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Str(Box<[u8]>);
+
+impl Str {
+    pub fn into_bytes(self) -> Box<[u8]> { self.0 }
+}
+
+impl From<Box<[u8]>> for Str {
+    fn from(s: Box<[u8]>) -> Str { Str(s) }
+}
+
+impl From<Vec<u8>> for Str {
+    fn from(s: Vec<u8>) -> Str { Str(s.into_boxed_slice()) }
+}
+
+impl ops::Deref for Str {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] { &self.0[..] }
 }
 
 impl fmt::Display for Str {
@@ -56,11 +87,11 @@ impl fmt::Debug for Str {
 }
 
 impl<'a> From<&'a [u8]> for Name {
-    fn from(s: &'a [u8]) -> Name { Name(s.to_owned()) }
+    fn from(s: &'a [u8]) -> Name { Name(s.to_owned().into_boxed_slice()) }
 }
 
 impl<'a> From<&'a [u8]> for Str {
-    fn from(s: &'a [u8]) -> Str { Str(s.to_owned()) }
+    fn from(s: &'a [u8]) -> Str { Str(s.to_owned().into_boxed_slice()) }
 }
 
 impl From<Str> for Name {

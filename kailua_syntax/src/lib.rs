@@ -1,7 +1,5 @@
 #[macro_use] extern crate parse_generics_shim;
 #[macro_use] extern crate kailua_diag;
-#[macro_use] extern crate custom_derive;
-#[macro_use] extern crate newtype_derive;
 #[macro_use] extern crate log;
 extern crate kailua_env;
 

@@ -37,7 +37,7 @@ impl PartialEq<Str> for Key {
 
 impl<'a> PartialEq<&'a [u8]> for Key {
     fn eq(&self, other: &&'a [u8]) -> bool {
-        if let Key::Str(ref s) = *self { **s == *other } else { false }
+        if let Key::Str(ref s) = *self { **s == **other } else { false }
     }
 }
 
