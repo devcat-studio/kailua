@@ -104,7 +104,7 @@ namespace Kailua
                 {
                     case VSConstants.VSStd2KCmdID.TYPECHAR:
                         char ch = this.getTypeChar(pvaIn);
-                        if (char.IsLetterOrDigit(ch))
+                        if (char.IsLetterOrDigit(ch) || ch == '_')
                         {
                             if (this.currentSession == null)
                             {
