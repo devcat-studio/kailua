@@ -10,9 +10,9 @@ use std::str;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::collections::HashMap;
-use kailua_env::{Source, Span, Spanned};
+use kailua_env::{Source, Span};
 use kailua_diag::{Report, TrackMaxKind};
-use kailua_syntax::{Block, parse_chunk};
+use kailua_syntax::{Chunk, parse_chunk};
 use kailua_check::{Options, Context, CheckResult, check_from_chunk};
 
 struct Testing;
@@ -21,7 +21,7 @@ impl kailua_test::Testing for Testing {
     fn run(&self, source: Rc<RefCell<Source>>, span: Span, filespans: &HashMap<String, Span>,
            report: Rc<Report>) -> String {
         let chunk = match parse_chunk(&source.borrow(), span, &*report) {
-            Ok(chunk) => chunk.block,
+            Ok(chunk) => chunk,
             Err(_) => return format!("parse error"),
         };
 
@@ -32,19 +32,19 @@ impl kailua_test::Testing for Testing {
         }
 
         impl Options for Opts {
-            fn require_block(&mut self, path: &[u8]) -> CheckResult<Spanned<Block>> {
+            fn require_chunk(&mut self, path: &[u8]) -> CheckResult<Chunk> {
                 let path = try!(str::from_utf8(path).map_err(|_| format!("bad require name")));
                 let span = *try!(self.filespans.get(path).ok_or_else(|| format!("no such module")));
                 let chunk = try!(parse_chunk(&self.source.borrow(), span, &*self.report)
                                      .map_err(|_| format!("parse error")));
-                Ok(chunk.block)
+                Ok(chunk)
             }
         }
 
         let report = Rc::new(TrackMaxKind::new(report));
         let opts = Rc::new(RefCell::new(Opts { source: source, filespans: filespans.clone(),
                                                report: report.clone() }));
-        match check_from_chunk(&mut Context::new(report.clone()), &chunk, opts) {
+        match check_from_chunk(&mut Context::new(report.clone()), chunk, opts) {
             Ok(()) => {
                 if report.can_continue() {
                     format!("ok")

@@ -38,9 +38,9 @@ define_msg! { pub OtherTypeOrigin:
     _    => "The other type originates here",
 }
 
-define_msg! { pub CannotRedefineGlobalVar<'a> { name: &'a Name }:
-    "ko" => "전역 변수 {name}의 타입을 재지정할 수 없습니다",
-    _    => "Cannot redefine the type of a global variable {name}",
+define_msg! { pub CannotRedefineVar<'a> { name: &'a Name }:
+    "ko" => "{name} 변수의 타입을 재지정할 수 없습니다",
+    _    => "Cannot redefine the type of a variable {name}",
 }
 
 define_msg! { pub TypeSpecToIndex:

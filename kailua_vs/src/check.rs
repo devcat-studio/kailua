@@ -7,9 +7,8 @@ use std::path::Path;
 use report::VSReport;
 use parse::VSParseTree;
 use widestring::{WideStr, WideString};
-use kailua_env::Spanned;
 use kailua_diag::Report;
-use kailua_syntax::Block;
+use kailua_syntax::Chunk;
 use kailua_check::{self, FsSource, FsOptions, Context};
 
 pub type VSFsSourceCallback =
@@ -36,7 +35,7 @@ impl Clone for VSFsSource {
 }
 
 impl FsSource for VSFsSource {
-    fn chunk_from_path(&self, resolved_path: &Path) -> Result<Option<Spanned<Block>>, String> {
+    fn chunk_from_path(&self, resolved_path: &Path) -> Result<Option<Chunk>, String> {
         let path = WideString::from_str(resolved_path.as_os_str());
         let mut tree = ptr::null();
         let ret = (self.callback)(path.as_ptr(), path.len() as i32,
@@ -44,7 +43,7 @@ impl FsSource for VSFsSource {
         if ret != 0 {
             Err(format!("callback returned an error"))
         } else {
-            unsafe { Ok(tree.as_ref().map(|tree: &VSParseTree| tree.to_chunk())) }
+            unsafe { Ok(tree.as_ref().map(|tree: &VSParseTree| tree.chunk().to_owned())) }
         }
     }
 }
@@ -77,7 +76,7 @@ impl VSChecker {
         let opts = Rc::new(RefCell::new(FsOptions::new(self.fssource.clone(), root.to_owned())));
 
         let mut context = Context::new(self.report.clone());
-        if kailua_check::check_from_chunk(&mut context, &filechunk, opts).is_ok() {
+        if kailua_check::check_from_chunk(&mut context, filechunk, opts).is_ok() {
             0
         } else {
             1

@@ -2,15 +2,15 @@ use std::iter;
 use std::i32;
 use std::fmt;
 use std::result;
-use std::collections::{hash_map, HashMap};
+use std::collections::{hash_map, HashMap, HashSet};
 use kailua_env::{Pos, Span, Spanned, WithLoc, Scope, ScopeMap};
 use kailua_diag as diag;
 use kailua_diag::{Report, Localize};
 
 use message as m;
 use lex::{Tok, Punct, Keyword};
-use ast::{Name, Str, Var, Seq, Presig, Sig, Attr};
-use ast::{Ex, Exp, UnOp, BinOp, Vis, SelfParam, St, Stmt, Block};
+use ast::{Name, NameRef, Str, Var, Seq, Presig, Sig, Attr};
+use ast::{Ex, Exp, UnOp, BinOp, SelfParam, St, Stmt, Block};
 use ast::{M, K, Kind, SlotKind, FuncKind, TypeSpec, Chunk};
 
 pub struct Parser<'a, T> {
@@ -33,9 +33,9 @@ pub struct Parser<'a, T> {
     open_nestings: Vec<Nesting>,
 
     scope_map: ScopeMap<Name>,
-    // the global scope, visible to every other file
+    // the global scope; visible to every other file and does not go through a scope map
     // (the local root scopes are generated as needed, and invisible from the outside)
-    global_scope: Scope,
+    global_scope: HashSet<Name>,
     // Pos for the starting position
     scope_stack: Vec<(Scope, Pos)>,
 }
@@ -274,9 +274,6 @@ impl<'a, T> ReportMore<'a, T> {
 
 impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     pub fn new(iter: T, report: &'a Report) -> Parser<'a, T> {
-        let mut scope_map = ScopeMap::new();
-        let global_scope = scope_map.generate_root();
-
         let mut parser = Parser {
             iter: iter.fuse(),
             elided_newline: None,
@@ -287,8 +284,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             ignore_after_newline: None,
             report: report,
             open_nestings: vec![Nesting::Top],
-            scope_map: scope_map,
-            global_scope: global_scope,
+            scope_map: ScopeMap::new(),
+            global_scope: HashSet::new(),
             scope_stack: Vec::new(),
         };
 
@@ -806,11 +803,18 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn is_global_name(&self, name: &Name) -> bool {
-        if let Some(&(scope, _)) = self.scope_stack.last() {
-            self.scope_map.find_name_in_scope(scope, name).is_none()
+    // resolve the name referenced in the current scope (might be global) into a reference
+    fn resolve_name(&mut self, name: Name) -> NameRef {
+        let local = if let Some(&(scope, _)) = self.scope_stack.last() {
+            self.scope_map.find_name_in_scope(scope, &name)
         } else {
-            true
+            None
+        };
+        if let Some((_, scoped_id)) = local {
+            NameRef::Local(scoped_id)
+        } else {
+            self.global_scope.insert(name.clone());
+            NameRef::Global(name)
         }
     }
 
@@ -911,14 +915,19 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         block
     }
 
-    // same to `parse_block`, but will also set the scope in the block
-    fn parse_block_with_scope(&mut self) -> Result<(Scope, Spanned<Block>)> {
+    // same to `parse_block`, but will also set the scope in the block.
+    // in order to keep the lexical order of scoped ids (purely for cosmetic & debugging reasons),
+    // the block can be supplied to run on that scope before `parse_block`.
+    fn parse_block_with_scope<F, X>(&mut self, preblock: F) -> Result<(X, Scope, Spanned<Block>)>
+        where F: FnOnce(&mut Parser<'a, T>, Scope) -> Result<X>
+    {
         let nscopes = self.scope_stack.len();
         let scope = self.generate_sibling_scope();
         self.push_scope(scope);
+        let preret = try!(preblock(self, scope));
         let block = self._parse_block();
         self.pop_scope_upto(nscopes);
-        Ok((scope, try!(block)))
+        Ok((preret, scope, try!(block)))
     }
 
     // unlike `parse_block`, this will try to parse as much as possible until EOF
@@ -1090,10 +1099,12 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                             None
                         };
                         try!(self.expect(Keyword::Do));
-                        let (scope, block) = try!(self.parse_block_with_scope());
-                        self.scope_map.add_name(scope, name.base.clone());
+                        let (id, scope, block) = try!(self.parse_block_with_scope(|parser, scope| {
+                            let id = name.map(|name| parser.scope_map.add_name(scope, name));
+                            Ok(id)
+                        }));
                         try!(self.expect(Keyword::End));
-                        Box::new(St::For(name, start, end, step, scope, block))
+                        Box::new(St::For(id, start, end, step, scope, block))
                     }
 
                     // for NAME in ...
@@ -1120,7 +1131,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             }
 
             (_, Spanned { base: Tok::Keyword(Keyword::Function), .. }) => {
-                let mut names = vec![try!(self.parse_name())];
+                let rootname = try!(self.parse_name()).map(|name| self.resolve_name(name));
+                let mut names = Vec::new();
                 while self.may_expect(Punct::Dot) {
                     names.push(try!(self.parse_name()));
                 }
@@ -1135,9 +1147,9 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     // (`parse_func_body` doesn't like untyped params, so we need to pop it)
                     if let Some(Spanned { base: (_, Some(ref mut presig)), .. }) = funcspec {
                         if !presig.args.head.is_empty() &&
-                                *presig.args.head[0].base.base.base == *b"self" {
+                                **presig.args.head[0].base.base == *b"self" {
                             let Spanned { base: arg, span } = presig.args.head.remove(0);
-                            selfparam = Some(TypeSpec { base: SelfParam.with_loc(span),
+                            selfparam = Some(TypeSpec { base: span,
                                                         modf: arg.modf, kind: arg.kind });
                         } else {
                             try!(self.error(presig, m::MissingSelfInFuncSpec {}).done());
@@ -1145,24 +1157,17 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         }
                     }
                     if selfparam.is_none() {
-                        selfparam = Some(TypeSpec { base: SelfParam.without_loc(),
+                        selfparam = Some(TypeSpec { base: Span::dummy(),
                                                     modf: M::None, kind: None });
                     }
                 }
 
-                let (sig, scope, body) = try!(self.parse_func_body(selfparam.is_some(), funcspec));
-                if names.len() == 1 {
+                let (selfparam, sig, scope, body) = try!(self.parse_func_body(selfparam, funcspec));
+                if names.is_empty() {
                     assert!(selfparam.is_none(), "ordinary function cannot have an implicit self");
-                    let name = names.pop().unwrap();
-                    let vis = if self.is_global_name(&name) {
-                        self.scope_map.add_name(self.global_scope, name.base.clone());
-                        Vis::Global
-                    } else {
-                        Vis::Local
-                    };
-                    Box::new(St::FuncDecl(vis, name, sig, scope, body, None))
+                    Box::new(St::FuncDecl(rootname, sig, scope, body, None))
                 } else {
-                    Box::new(St::MethodDecl(names, selfparam, sig, scope, body))
+                    Box::new(St::MethodDecl(rootname, names, selfparam, sig, scope, body))
                 }
             }
 
@@ -1171,12 +1176,13 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     // local function ...
                     (_, Spanned { base: Tok::Keyword(Keyword::Function), .. }) => {
                         let name = try!(self.parse_name());
-                        let (sig, scope, body) = try!(self.parse_func_body(false, funcspec));
+                        let (_, sig, scope, body) = try!(self.parse_func_body(None, funcspec));
                         let sibling_scope = self.generate_sibling_scope();
                         self.push_scope(sibling_scope);
-                        self.scope_map.add_name(sibling_scope, name.base.clone());
-                        Box::new(St::FuncDecl(Vis::Local, name, sig, scope, body,
-                                              Some(sibling_scope)))
+                        let name = name.map(|name| {
+                            NameRef::Local(self.scope_map.add_name(sibling_scope, name))
+                        });
+                        Box::new(St::FuncDecl(name, sig, scope, body, Some(sibling_scope)))
                     }
 
                     // local NAME ...
@@ -1214,10 +1220,14 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         let sibling_scope = self.generate_sibling_scope();
                         self.push_scope(sibling_scope);
                         // XXX should also mention all excess arguments
-                        for name in &names.base {
-                            self.scope_map.add_name(sibling_scope, name.base.base.clone());
-                        }
-                        Box::new(St::Local(names, exps, sibling_scope))
+                        let namerefs = names.map(|names: Vec<_>| {
+                            names.into_iter().map(|namespec: TypeSpec<_>| {
+                                namespec.map(|name: Spanned<Name>| {
+                                    name.map(|name| self.scope_map.add_name(sibling_scope, name))
+                                })
+                            }).collect()
+                        });
+                        Box::new(St::Local(namerefs, exps, sibling_scope))
                     }
 
                     (_, tok) => {
@@ -1291,16 +1301,6 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                     &m::ExcessTypeSpecsInAssign {}));
                             }
 
-                            // update the scope map if the name may introduce a global binding
-                            // XXX should also mention all excess arguments
-                            for namespec in &lhs.base {
-                                if let Var::Name(ref name) = namespec.base.base {
-                                    if self.is_global_name(name) {
-                                        self.scope_map.add_name(self.global_scope,
-                                                                name.base.clone());
-                                    }
-                                }
-                            }
                             Box::new(St::Assign(lhs, rhs))
                         }
 
@@ -1323,17 +1323,22 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         let span = try!(self.scan_list(Self::parse_exp, |exp| exps.push(exp)));
         let exps = exps.with_loc(span);
         try!(self.expect(Keyword::Do));
-        let (scope, block) = try!(self.parse_block_with_scope());
-        for name in &names.base {
-            self.scope_map.add_name(scope, name.base.clone());
-        }
+        let (names, scope, block) = try!(self.parse_block_with_scope(|parser, scope| {
+            let names = names.map(|names: Vec<_>| {
+                names.into_iter().map(|name: Spanned<Name>| {
+                    name.map(|name| parser.scope_map.add_name(scope, name))
+                }).collect()
+            });
+            Ok(names)
+        }));
         try!(self.expect(Keyword::End));
         Ok(Box::new(St::ForIn(names, exps, scope, block)))
     }
 
-    fn parse_func_body(&mut self, has_self: bool,
+    fn parse_func_body(&mut self,
+                       selfparam: Option<TypeSpec<Span>>,
                        funcspec: Option<Spanned<(Vec<Spanned<Attr>>, Option<Spanned<Presig>>)>>)
-            -> Result<(Sig, Scope, Spanned<Block>)> {
+            -> Result<(Option<TypeSpec<Spanned<SelfParam>>>, Sig, Scope, Spanned<Block>)> {
         let mut args = Vec::new();
         let mut varargs = None;
         let returns; // to check the error case
@@ -1410,12 +1415,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
         returns = try!(self.try_parse_kailua_rettype_spec());
 
-        enum SigOrOthers {
-            Sig(Sig),
-            Others(Vec<Spanned<Attr>>, Option<Spanned<Seq<Spanned<Kind>>>>),
-        }
-
-        let sig_or_others = if let Some(Spanned { base: (attrs, presig), .. }) = funcspec {
+        let (attrs, args, returns) = if let Some(Spanned { base: (attrs, presig), .. }) = funcspec {
             if let Some(presig) = presig {
                 // before any checking, we should ensure that every parameter has a type attached
                 // (`self` is a notable exception, but should have been removed by now)
@@ -1467,43 +1467,50 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                              .note(presig.span, m::PriorFuncSpec {})
                              .done());
                 }
-                SigOrOthers::Sig(presig.base.to_sig(attrs))
+
+                let args = presig.base.args.map(|args| {
+                    Seq { head: args.head.into_iter().map(|arg| arg.base).collect(),
+                          tail: args.tail.map(|arg| arg.base) }
+                });
+                (attrs, Ok(args), presig.base.returns)
             } else {
-                SigOrOthers::Others(attrs, returns)
+                (attrs, Err(args), returns.map(|ret| ret.base))
             }
         } else {
-            SigOrOthers::Others(Vec::new(), returns)
+            (Vec::new(), Err(args), returns.map(|ret| ret.base))
         };
 
-        let sig = match sig_or_others {
-            SigOrOthers::Sig(sig) => sig,
-            SigOrOthers::Others(attrs, returns) => {
-                let args = Seq {
-                    head: args.into_iter().map(|(n,s)| self.make_kailua_typespec(n, s)).collect(),
-                    tail: varargs.map(|tt| tt.base),
-                };
-                Sig {
-                    attrs: attrs,
-                    args: args.with_loc(begin..end),
-                    returns: returns.map(|ret| ret.base),
-                }
-            },
-        };
+        let args = args.unwrap_or_else(|args| {
+            Seq {
+                head: args.into_iter().map(|(n,s)| self.make_kailua_typespec(n, s)).collect(),
+                tail: varargs.map(|tt| tt.base),
+            }.with_loc(begin..end)
+        });
 
-        let (scope, block) = try!(self.parse_block_with_scope());
-
-        // attach all arguments to the function body scope
-        // XXX should also mention all excess arguments
-        // TODO should we add varargs?
-        if has_self {
-            self.scope_map.add_name(scope, Name::from(b"self"[..].to_owned()));
-        }
-        for arg in &sig.args.base.head {
-            self.scope_map.add_name(scope, arg.base.base.clone());
-        }
+        // resolve every parameter (including self)
+        let ((selfparam, args), scope, block) = try!(self.parse_block_with_scope(|parser, scope| {
+            // attach all arguments to the function body scope
+            // XXX should also mention all excess arguments
+            // TODO should we add varargs?
+            let selfparam = selfparam.map(|paramspec: TypeSpec<Span>| {
+                paramspec.map(|span| {
+                    let scoped_id = parser.scope_map.add_name(scope,
+                                                              Name::from(b"self"[..].to_owned()));
+                    SelfParam(scoped_id).with_loc(span)
+                })
+            });
+            let args = args.map(|args: Seq<_, _>| {
+                args.map(|argspec: TypeSpec<_>| {
+                    argspec.map(|arg: Spanned<Name>| {
+                        arg.map(|name| parser.scope_map.add_name(scope, name))
+                    })
+                }, |varargspec| varargspec)
+            });
+            Ok((selfparam, args))
+        }));
 
         try!(self.expect(Keyword::End));
-        Ok((sig, scope, block))
+        Ok((selfparam, Sig { attrs: attrs, args: args, returns: returns }, scope, block))
     }
 
     fn scan_tabular_body<Scan, Item>(&mut self, mut scan: Scan) -> Result<Vec<Item>>
@@ -1539,29 +1546,23 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 let value = try!(parser.parse_exp());
                 Ok((key, value))
             } else {
-                // it is hard to disambiguiate `NAME "=" exp` and `exp`,
-                // so parse `exp` first and check if it's a `NAME` followed by `=`.
-                let exp = try!(parser.parse_exp());
-                let name_or_exp = if parser.lookahead(Punct::Eq) {
-                    let span = exp.span;
-                    match *exp.base {
-                        Ex::Var(name) => Ok(name),
-                        exp => Err(Box::new(exp).with_loc(span)),
+                // try to disambiguate `NAME "=" exp` from `exp`
+                let key = match parser.read() {
+                    (side, Spanned { base: Tok::Name(name), span }) => {
+                        if parser.may_expect(Punct::Eq) {
+                            Some(Box::new(Ex::Str(Str::from(name))).with_loc(span))
+                        } else {
+                            parser.unread((side, Tok::Name(name).with_loc(span)));
+                            None
+                        }
                     }
-                } else {
-                    Err(exp)
+                    tok => {
+                        parser.unread(tok);
+                        None
+                    }
                 };
-                match name_or_exp {
-                    Ok(name) => {
-                        let key = Some(Box::new(Ex::Str(name.base.into())).with_loc(name.span));
-                        try!(parser.expect(Punct::Eq));
-                        let value = try!(parser.parse_exp());
-                        Ok((key, value))
-                    }
-                    Err(exp) => {
-                        Ok((None, exp))
-                    }
-                }
+                let value = try!(parser.parse_exp());
+                Ok((key, value))
             }
         })
     }
@@ -1602,7 +1603,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 exp = try!(self.recover(Self::parse_exp, Punct::RParen));
             }
             (_, Spanned { base: Tok::Name(name), span }) => {
-                exp = Box::new(Ex::Var(Name::from(name).with_loc(span))).with_loc(span);
+                let nameref = self.resolve_name(Name::from(name));
+                exp = Box::new(Ex::Var(nameref.with_loc(span))).with_loc(span);
             }
             tok => {
                 self.unread(tok);
@@ -1701,7 +1703,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 Ok(Some(Box::new(Ex::Varargs).with_loc(span))),
 
             (_, Spanned { base: Tok::Keyword(Keyword::Function), .. }) => {
-                let (sig, scope, body) = try!(self.parse_func_body(false, funcspec));
+                let (_, sig, scope, body) = try!(self.parse_func_body(None, funcspec));
                 Ok(Some(Box::new(Ex::Func(sig, scope, body)).with_loc(begin..self.last_pos())))
             }
 
@@ -2609,15 +2611,15 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     let modf = self.parse_kailua_mod();
                     let kind = try!(self.recover_upto(Self::parse_kailua_kind));
 
-                    let vis = if global {
-                        Vis::Global
+                    let name = if global {
+                        self.global_scope.insert(name.base.clone());
+                        name.map(NameRef::Global)
                     } else {
-                        sibling_scope = Some(self.generate_sibling_scope());
-                        Vis::Local
+                        let scope = self.generate_sibling_scope();
+                        sibling_scope = Some(scope);
+                        name.map(|name| NameRef::Local(self.scope_map.add_name(scope, name)))
                     };
-                    self.scope_map.add_name(sibling_scope.unwrap_or(self.global_scope),
-                                            name.base.clone());
-                    Some(Box::new(St::KailuaAssume(vis, name, modf, kind, sibling_scope)))
+                    Some(Box::new(St::KailuaAssume(name, modf, kind, sibling_scope)))
                 }
 
                 // open NAME

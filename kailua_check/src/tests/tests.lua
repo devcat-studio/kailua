@@ -1653,19 +1653,19 @@ package.cpath = '?.lua'
 
 --8<-- redefine-global
 p = 42 --: integer
-p = 54 --: integer --@< Error: Cannot redefine the type of a global variable `p`
-p = 63 --: integer --@< Error: Cannot redefine the type of a global variable `p`
+p = 54 --: integer --@< Error: Cannot redefine the type of a variable `p`
+p = 63 --: integer --@< Error: Cannot redefine the type of a variable `p`
 --! error
 
 --8<-- redefine-global-in-single-stmt-1
 p, p = 42, 54 --: integer, integer
---@^ Error: Cannot redefine the type of a global variable `p`
+--@^ Error: Cannot redefine the type of a variable `p`
 --! error
 
 --8<-- redefine-global-in-single-stmt-2
 p, p, p = 42, 54, 63 --: integer, integer, integer
---@^ Error: Cannot redefine the type of a global variable `p`
---@^^ Error: Cannot redefine the type of a global variable `p`
+--@^ Error: Cannot redefine the type of a variable `p`
+--@^^ Error: Cannot redefine the type of a variable `p`
 --! error
 
 --8<-- redefine-local

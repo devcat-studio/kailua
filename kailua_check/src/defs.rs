@@ -1,6 +1,6 @@
-use kailua_env::{Span, SourceData, Spanned, WithLoc};
+use kailua_env::{Span, SourceData, WithLoc};
 use kailua_diag::NoReport;
-use kailua_syntax::{Block, Lexer, Parser};
+use kailua_syntax::{Chunk, Lexer, Parser};
 
 pub struct Def {
     pub name: &'static str,
@@ -8,7 +8,7 @@ pub struct Def {
 }
 
 impl Def {
-    pub fn to_chunk(&self) -> Spanned<Block> {
+    pub fn to_chunk(&self) -> Chunk {
         let span = Span::builtin(); // a special span independent of Source
         let mut iter = self.code.iter().map(|&c| SourceData::U8(c).with_loc(span))
                                        .chain(Some(SourceData::EOF.with_loc(span)));
@@ -16,7 +16,7 @@ impl Def {
         let lexer = Lexer::new(&mut iter, &no_report);
         let parser = Parser::new(lexer, &no_report);
         match parser.into_chunk() {
-            Ok(chunk) => chunk.block,
+            Ok(chunk) => chunk,
             Err(e) => panic!("failed to parse a built-in definition {:?}: {:?}", self.name, e),
         }
     }

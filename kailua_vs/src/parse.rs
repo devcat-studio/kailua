@@ -4,21 +4,19 @@ use std::i32;
 use std::panic::{self, AssertUnwindSafe};
 use lex::VSTokenStream;
 use report::VSReport;
-use kailua_env::{Pos, Spanned, Scope, ScopeMap};
+use kailua_env::Pos;
 use kailua_diag::Report;
-use kailua_syntax::{Name, Block, St, Parser};
+use kailua_syntax::{St, Chunk, Parser};
 
 pub struct VSParseTree {
-    block: Spanned<Block>,
-    global_scope: Scope,
-    map: ScopeMap<Name>,
+    chunk: Chunk,
 }
 
 #[repr(C)]
 pub struct VSNameEntry {
     pub name: *const u8,
     pub namelen: usize,
-    pub scope: u32,
+    pub scope: u32, // 0 if global
 }
 
 impl VSParseTree {
@@ -26,32 +24,26 @@ impl VSParseTree {
         let tokens = stream.into_tokens();
         let parser = Parser::new(tokens.into_iter(), report);
         if let Ok(chunk) = parser.into_chunk() {
-            Some(Box::new(VSParseTree {
-                block: chunk.block,
-                global_scope: chunk.global_scope,
-                map: chunk.map,
-            }))
+            Some(Box::new(VSParseTree { chunk: chunk }))
         } else {
             None
         }
     }
 
-    pub fn to_chunk(&self) -> Spanned<Block> {
-        self.block.clone() // XXX copy
-    }
+    pub fn chunk(&self) -> &Chunk { &self.chunk }
 
     // search for directives like `--# open lua51` likely in the entry point
     // TODO should really (transitively) check for `--# set lang_version = "5.1"` or so
     pub fn has_primitive_open(&self) -> i32 {
-        match self.block.base.first().map(|st| &*st.base) {
+        match self.chunk.block.base.first().map(|st| &*st.base) {
             Some(&St::KailuaOpen(ref name)) if name.starts_with(&b"lua5"[..]) => 1,
             _ => 0,
         }
     }
 
     pub fn names_at_pos(&mut self, pos: Pos) -> Option<Box<[VSNameEntry]>> {
-        self.map.scope_from_pos(pos).map(|scope| {
-            self.map.names_and_scopes(scope).map(|(name, scope)| {
+        self.chunk.map.scope_from_pos(pos).map(|scope| {
+            self.chunk.map.names_and_scopes(scope).map(|(name, scope, _id)| {
                 VSNameEntry {
                     name: name.as_ptr(),
                     namelen: name.len(),
@@ -62,11 +54,11 @@ impl VSParseTree {
     }
 
     pub fn global_names(&self) -> Box<[VSNameEntry]> {
-        self.map.names_and_scopes(self.global_scope).map(|(name, scope)| {
+        self.chunk.global_scope.iter().map(|name| {
             VSNameEntry {
                 name: name.as_ptr(),
                 namelen: name.len(),
-                scope: scope.to_usize() as u32,
+                scope: 0,
             }
         }).collect::<Vec<_>>().into_boxed_slice()
     }

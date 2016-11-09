@@ -7,8 +7,8 @@ use take_mut::take;
 
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag::Reporter;
-use kailua_syntax::{Name, Var, M, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp, Vis};
-use kailua_syntax::{St, Stmt, Block, K};
+use kailua_syntax::{NameRef, Var, M, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
+use kailua_syntax::{SelfParam, St, Stmt, Block, K};
 use diag::CheckResult;
 use ty::{T, TySeq, SpannedTySeq, Lattice, Displayed, Display, TypeContext};
 use ty::{Tables, Function, Functions, TyWithNil};
@@ -734,13 +734,13 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             St::Assign(ref vars, ref exps) => {
                 #[derive(Debug)]
                 enum VarRef<'a> {
-                    Name(&'a Spanned<Name>),
+                    Name(&'a Spanned<NameRef>),
                     Slot(Spanned<Slot>),
                 }
 
                 let varrefs = try!(vars.iter().map(|varspec| {
                     match varspec.base.base {
-                        Var::Name(ref name) => Ok(VarRef::Name(name)),
+                        Var::Name(ref nameref) => Ok(VarRef::Name(nameref)),
 
                         Var::Index(ref e, ref key) => {
                             if let Some(ref kind) = varspec.kind {
@@ -764,15 +764,15 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     debug!("assigning {:?} to {:?} with type {:?}", info, var, varref);
 
                     match (varref, var) {
-                        // global variable declaration
-                        (VarRef::Name(name), &TypeSpec { modf, kind: Some(ref kind), .. }) => {
+                        // variable declaration
+                        (VarRef::Name(nameref), &TypeSpec { modf, kind: Some(ref kind), .. }) => {
                             let specinfo = try!(self.visit_kind(F::from(modf), kind));
-                            try!(self.env.add_global_var(name, Some(specinfo), info));
+                            try!(self.env.add_var(nameref, Some(specinfo), Some(info)));
                         }
 
-                        // global or local variable assignment
-                        (VarRef::Name(name), &TypeSpec { kind: None, .. }) => {
-                            try!(self.env.assign_to_var(name, info));
+                        // variable assignment
+                        (VarRef::Name(nameref), &TypeSpec { kind: None, .. }) => {
+                            try!(self.env.assign_to_var(nameref, info));
                         }
 
                         // indexed assignment
@@ -864,7 +864,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 Ok(exit)
             }
 
-            St::For(ref name, ref start, ref end, ref step, _blockscope, ref block) => {
+            St::For(ref localname, ref start, ref end, ref step, _blockscope, ref block) => {
                 let start = try!(self.visit_exp(start)).into_first();
                 let end = try!(self.visit_exp(end)).into_first();
                 let step = if let &Some(ref step) = step {
@@ -893,7 +893,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 let mut scope = self.scoped(Scope::new());
                 let indty = Slot::var(indty, scope.context());
-                try!(scope.env.add_local_var(name, None, Some(indty.without_loc())));
+                let nameref = NameRef::Local(localname.base.clone()).with_loc(localname);
+                try!(scope.env.add_var(&nameref, None, Some(indty.without_loc())));
                 let exit = try!(scope.visit_block(block));
                 if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
             }
@@ -945,43 +946,40 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 }
 
                 let mut scope = self.scoped(Scope::new());
-                for (name, ty) in names.iter().zip(indtys.into_iter_with_nil()) {
+                for (localname, ty) in names.iter().zip(indtys.into_iter_with_nil()) {
                     let ty = Slot::var(*ty, scope.context());
-                    try!(scope.env.add_local_var(name, None, Some(ty.without_loc())));
+                    let nameref = NameRef::Local(localname.base.clone()).with_loc(localname);
+                    try!(scope.env.add_var(&nameref, None, Some(ty.without_loc())));
                 }
                 let exit = try!(scope.visit_block(block));
                 if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
             }
 
-            St::FuncDecl(vis, ref name, ref sig, _blockscope, ref block, _nextscope) => {
+            St::FuncDecl(ref name, ref sig, _blockscope, ref block, _nextscope) => {
                 // `name` itself is available to the inner scope
                 let funcv = self.context().gen_tvar();
                 let info = Slot::just(T::TVar(funcv)).with_loc(stmt);
-                match vis {
-                    Vis::Local => try!(self.env.add_local_var(name, None, Some(info))),
-                    Vis::Global => try!(self.env.assign_to_var(name, info)),
-                }
+                try!(self.env.add_var(name, None, Some(info)));
                 let functy = try!(self.visit_func_body(None, sig, block, stmt.span));
                 try!(T::TVar(funcv).assert_eq(&*functy.unlift(), self.context()));
                 Ok(Exit::None)
             }
 
-            St::MethodDecl(ref names, ref selfparam, ref sig, _blockscope, ref block) => {
-                assert!(names.len() >= 2);
+            St::MethodDecl(ref name, ref meths, ref selfparam, ref sig, _blockscope, ref block) => {
+                assert!(meths.len() >= 1);
 
                 // find a slot for the first name
-                let varname = &names[0];
-                let info = if let Some(def) = self.env.get_var(varname).cloned() {
-                    try!(self.env.ensure_var(varname));
+                let info = if let Some(def) = self.env.get_var(name).cloned() {
+                    try!(self.env.ensure_var(name));
                     def.slot
                 } else {
-                    try!(self.env.error(varname, m::NoVar { name: varname }).done());
+                    try!(self.env.error(name, m::NoVar { name: self.env.get_name(name) }).done());
                     Slot::dummy()
                 };
 
                 // reduce the expr a.b.c...y.z into (a["b"]["c"]...["y"]).z
-                let mut info = info.with_loc(varname);
-                for subname in &names[1..names.len()-1] {
+                let mut info = info.with_loc(name);
+                for subname in &meths[..meths.len()-1] {
                     let kty = Slot::just(T::str(subname.base.clone().into())).with_loc(subname);
                     let subspan = info.span | subname.span; // a subexpr for this indexing
                     if let Some(subinfo) = try!(self.check_index(&info, &kty, subspan, false)) {
@@ -995,7 +993,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 }
 
                 // now prepare the right-hand side (i.e. method decl)
-                let method = names.last().unwrap();
+                let method = meths.last().unwrap();
                 let selfinfo = if let Some(ref selfparam) = *selfparam {
                     let given = if let Some(ref kind) = selfparam.kind {
                         let ty = try!(T::from(kind, &mut self.env));
@@ -1053,7 +1051,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         }
                     };
 
-                    Some(slot.with_loc(&selfparam.base))
+                    Some((&selfparam.base, slot))
                 } else {
                     None
                 };
@@ -1077,7 +1075,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     } else {
                         None
                     };
-                    try!(self.env.add_local_var(&namespec.base, specinfo, info));
+                    let localname = &namespec.base;
+                    let nameref = NameRef::Local(localname.base.clone()).with_loc(localname);
+                    try!(self.env.add_var(&nameref, specinfo, info));
                 }
                 Ok(Exit::None)
             }
@@ -1114,7 +1114,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 Ok(Exit::None)
             }
 
-            St::KailuaAssume(vis, ref name, kindm, ref kind, _nextscope) => {
+            St::KailuaAssume(ref name, kindm, ref kind, _nextscope) => {
                 // while Currently slot is not explicitly constructible for most cases,
                 // `assume` frequently has to *suppose* that the variable is Currently.
                 // detect [currently] attribute and strip it.
@@ -1131,16 +1131,13 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 let flex = if currently { F::Currently } else { F::from(kindm) };
                 let slot = try!(self.visit_kind(flex, kind));
-                match vis {
-                    Vis::Local => try!(self.env.assume_var(name, slot)),
-                    Vis::Global => try!(self.env.assume_global_var(name, slot)),
-                }
+                try!(self.env.assume_var(name, slot));
                 Ok(Exit::None)
             }
         }
     }
 
-    fn visit_func_body(&mut self, selfinfo: Option<Spanned<Slot>>, sig: &Sig,
+    fn visit_func_body(&mut self, selfparam: Option<(&Spanned<SelfParam>, Slot)>, sig: &Sig,
                        block: &Spanned<Vec<Spanned<Stmt>>>, declspan: Span) -> CheckResult<Slot> {
         // if no check is requested, the signature should be complete
         let no_check = sig.attrs.iter().any(|a| *a.name.base == *b"no_check");
@@ -1177,10 +1174,10 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         let mut argshead = Vec::new();
 
         let mut scope = self.scoped(Scope::new_function(frame));
-        if let Some(selfinfo) = selfinfo {
+        if let Some((selfparam, selfinfo)) = selfparam {
             let ty = selfinfo.unlift().clone().into_send();
-            let selfname = Name::from(&b"self"[..]).without_loc();
-            try!(scope.env.add_local_var_already_set(&selfname, selfinfo));
+            let selfid = selfparam.clone().map(|param| param.0);
+            try!(scope.env.add_local_var_already_set(&selfid, selfinfo.without_loc()));
             argshead.push(Box::new(ty));
         }
 
@@ -1251,17 +1248,17 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                     info!("requiring {:?}", modname);
                     let opts = self.env.opts().clone();
-                    let block = match opts.borrow_mut().require_block(&modname) {
-                        Ok(block) => block,
+                    let chunk = match opts.borrow_mut().require_chunk(&modname) {
+                        Ok(chunk) => chunk,
                         Err(_) => {
                             try!(self.env.warn(&args[0], m::CannotResolveModName {}).done());
                             return Ok(SlotSeq::from(T::All));
                         }
                     };
-                    let mut env = Env::new(self.env.context(), opts);
+                    let mut env = Env::new(self.env.context(), opts, chunk.map);
                     {
                         let mut sub = Checker::new(&mut env);
-                        try!(sub.visit_block(&block));
+                        try!(sub.visit_block(&chunk.block));
                     }
                     return Ok(SlotSeq::from_slot(try!(env.return_from_module(&modname, expspan))));
                 } else {
@@ -1369,7 +1366,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     try!(self.env.ensure_var(name));
                     Ok(SlotSeq::from_slot(def.slot))
                 } else {
-                    try!(self.env.error(exp, m::NoVar { name: name }).done());
+                    try!(self.env.error(exp, m::NoVar { name: self.env.get_name(name) }).done());
                     Ok(SlotSeq::dummy())
                 }
             },

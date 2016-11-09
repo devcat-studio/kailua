@@ -15,6 +15,7 @@ use kailua_diag::{Report, Reporter, TrackMaxKind};
 
 struct Testing {
     span_pattern: regex::Regex,
+    scoped_id_pattern: regex::Regex,
     note_scopes: bool,
 }
 
@@ -22,7 +23,14 @@ impl Testing {
     fn new() -> Testing {
         let span_pattern = regex::Regex::new(r"@(?:_|\d+(?:/\d+(?:-\d+)?)?)").unwrap();
         assert_eq!(span_pattern.replace_all("[X@1, Y@3/40-978]@_", ""), "[X, Y]");
-        Testing { span_pattern: span_pattern, note_scopes: false }
+
+        let scoped_id_pattern = regex::Regex::new(r"<(\d+)>").unwrap();
+
+        Testing {
+            span_pattern: span_pattern,
+            scoped_id_pattern: scoped_id_pattern,
+            note_scopes: false,
+        }
     }
 }
 
@@ -44,13 +52,10 @@ impl kailua_test::Testing for Testing {
            report: Rc<Report>) -> String {
         let report = TrackMaxKind::new(&*report);
         if let Ok(chunk) = kailua_syntax::parse_chunk(&source.borrow(), span, &report) {
-            let s = format!("{:?}{:?}", chunk.global_scope, chunk.block);
+            let s = format!("{:?}", chunk.block);
             if self.note_scopes {
                 for scope in chunk.map.all_scopes() {
                     let mut msg = format!("scope {:?}", scope.base);
-                    if scope.base == chunk.global_scope {
-                        msg.push_str(" (global)");
-                    }
                     if let Some(parent) = chunk.map.parent_scope(scope.base) {
                         msg.push_str(&format!(" <- {:?}", parent));
                     }
@@ -59,7 +64,16 @@ impl kailua_test::Testing for Testing {
                     report.note(scope.span, msg).done().unwrap();
                 }
             }
-            return self.span_pattern.replace_all(&s, "");
+            let s = self.span_pattern.replace_all(&s, "");
+            let s = self.scoped_id_pattern.replace_all(&s, |caps: &regex::Captures| {
+                let id = caps[1].parse().unwrap();
+                if let Some((name, scope)) = chunk.map.find_id_with_index(id) {
+                    format!("{:?}{:?}", name, scope)
+                } else {
+                    caps[0].to_owned()
+                }
+            });
+            return s;
         }
         String::from("error")
     }

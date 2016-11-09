@@ -25,10 +25,10 @@ mod defs;
 mod check;
 
 pub fn check_from_chunk(context: &mut Context,
-                        chunk: &kailua_env::Spanned<kailua_syntax::Block>,
+                        chunk: kailua_syntax::Chunk,
                         opts: Rc<RefCell<Options>>) -> CheckResult<()> {
-    let mut env = env::Env::new(context, opts);
+    let mut env = env::Env::new(context, opts, chunk.map);
     let mut checker = check::Checker::new(&mut env);
-    checker.visit(chunk)
+    checker.visit(&chunk.block)
 }
 

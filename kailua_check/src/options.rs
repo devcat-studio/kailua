@@ -1,21 +1,20 @@
 use std::str;
 use std::path::{Path, PathBuf};
 
-use kailua_env::Spanned;
-use kailua_syntax::Block;
+use kailua_syntax::Chunk;
 use diag::CheckResult;
 
 pub trait Options {
     fn set_package_path(&mut self, _path: &[u8]) -> CheckResult<()> { Ok(()) }
     fn set_package_cpath(&mut self, _path: &[u8]) -> CheckResult<()> { Ok(()) }
 
-    fn require_block(&mut self, _path: &[u8]) -> CheckResult<Spanned<Block>> {
+    fn require_chunk(&mut self, _path: &[u8]) -> CheckResult<Chunk> {
         Err("not implemented".into())
     }
 }
 
 pub trait FsSource {
-    fn chunk_from_path(&self, resolved_path: &Path) -> CheckResult<Option<Spanned<Block>>>;
+    fn chunk_from_path(&self, resolved_path: &Path) -> CheckResult<Option<Chunk>>;
 }
 
 pub struct FsOptions<S> {
@@ -38,7 +37,7 @@ impl<S: FsSource> FsOptions<S> {
     }
 
     fn search_file(&self, path: &str, search_paths: &[String],
-                   suffix: &str) -> CheckResult<Option<Spanned<Block>>> {
+                   suffix: &str) -> CheckResult<Option<Chunk>> {
         for template in search_paths {
             let path = template.replace('?', &path) + suffix;
             let path = self.root.join(path);
@@ -65,7 +64,7 @@ impl<S: FsSource> Options for FsOptions<S> {
         Ok(())
     }
 
-    fn require_block(&mut self, path: &[u8]) -> Result<Spanned<Block>, String> {
+    fn require_chunk(&mut self, path: &[u8]) -> Result<Chunk, String> {
         let path = try!(str::from_utf8(path).map_err(|e| e.to_string()));
 
         for &search_path in &[&self.package_path, &self.package_cpath][..] {

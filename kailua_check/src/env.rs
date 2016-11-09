@@ -4,12 +4,12 @@ use std::str;
 use std::fmt;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::collections::{HashMap, HashSet};
+use std::collections::{hash_map, HashMap, HashSet};
 use vec_map::VecMap;
 
-use kailua_env::{Span, Spanned, WithLoc};
+use kailua_env::{self, Span, Spanned, WithLoc, ScopedId, ScopeMap};
 use kailua_diag::{self, Kind, Report, Reporter, Localize};
-use kailua_syntax::Name;
+use kailua_syntax::{Name, NameRef};
 use diag::{CheckResult, unquotable_name};
 use ty::{Ty, TySeq, T, Slot, F, TVar, Mark, Lattice, Builtin, Displayed, Display};
 use ty::{TypeContext, TypeResolver, ClassId, Class, Functions, Function, Key};
@@ -18,6 +18,83 @@ use defs::get_defs;
 use options::Options;
 use check::Checker;
 use message as m;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Id {
+    Local(usize, ScopedId),
+    Global(Name),
+}
+
+impl Id {
+    pub fn from(map_index: usize, nameref: NameRef) -> Id {
+        match nameref {
+            NameRef::Local(scoped_id) => Id::Local(map_index, scoped_id),
+            NameRef::Global(name) => Id::Global(name),
+        }
+    }
+
+    pub fn name<'a>(&'a self, ctx: &'a Context) -> &'a Name {
+        match *self {
+            Id::Local(map_index, ref scoped_id) => scoped_id.name(&ctx.scope_maps[map_index]),
+            Id::Global(ref name) => name,
+        }
+    }
+
+    pub fn scope(&self, ctx: &Context) -> Option<kailua_env::Scope> {
+        match *self {
+            Id::Local(map_index, ref scoped_id) =>
+                Some(scoped_id.scope(&ctx.scope_maps[map_index])),
+            Id::Global(_) => None,
+        }
+    }
+
+    pub fn is_global(&self) -> bool {
+        match *self {
+            Id::Local(..) => false,
+            Id::Global(..) => true,
+        }
+    }
+
+    pub fn display<'a>(&'a self, ctx: &'a Context) -> IdDisplay<'a> {
+        IdDisplay { id: self, ctx: ctx }
+    }
+}
+
+#[must_use]
+pub struct IdDisplay<'a> {
+    id: &'a Id,
+    ctx: &'a Context,
+}
+
+impl<'a> fmt::Display for IdDisplay<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self.id {
+            Id::Local(map_index, ref scoped_id) => {
+                let (name, scope) = self.ctx.scope_maps[map_index].find_id(scoped_id);
+                try!(write!(f, "{:?}$", name));
+                { // bijective numeral: a b c d .. z aa ab .. az ba .. zz aaa ..
+                    let mut index = map_index;
+                    let mut mult = 26;
+                    let mut len = 1;
+                    while index < mult {
+                        index -= mult;
+                        mult *= 26;
+                        len += 1;
+                    }
+                    for _ in 0..len {
+                        mult /= 26;
+                        try!(write!(f, "{}", (b'a' + (index / mult) as u8) as char));
+                        index %= mult;
+                    }
+                }
+                write!(f, "/{}", scope.to_usize())
+            }
+            Id::Global(ref name) => {
+                write!(f, "{:?}_", name)
+            }
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Frame {
@@ -50,26 +127,17 @@ pub struct ClassDef {
 
 #[derive(Clone, Debug)]
 pub struct Scope {
-    names: HashMap<Name, NameDef>,
     frame: Option<Frame>,
     types: HashMap<Name, TypeDef>,
 }
 
 impl Scope {
     pub fn new() -> Scope {
-        Scope { names: HashMap::new(), frame: None, types: HashMap::new() }
+        Scope { frame: None, types: HashMap::new() }
     }
 
     pub fn new_function(frame: Frame) -> Scope {
-        Scope { names: HashMap::new(), frame: Some(frame), types: HashMap::new() }
-    }
-
-    pub fn get<'a>(&'a self, name: &Name) -> Option<&'a NameDef> {
-        self.names.get(name)
-    }
-
-    pub fn get_mut<'a>(&'a mut self, name: &Name) -> Option<&'a mut NameDef> {
-        self.names.get_mut(name)
+        Scope { frame: Some(frame), types: HashMap::new() }
     }
 
     pub fn get_frame<'a>(&'a self) -> Option<&'a Frame> {
@@ -83,10 +151,6 @@ impl Scope {
     // the span indicates the position of the initial definition
     pub fn get_type<'a>(&'a self, name: &Name) -> Option<&'a TypeDef> {
         self.types.get(name)
-    }
-
-    pub fn put(&mut self, name: Spanned<Name>, info: Slot, set: bool) {
-        self.names.insert(name.base, NameDef { span: name.span, slot: info, set: set });
     }
 
     // the caller should check for the outermost types first
@@ -409,6 +473,8 @@ enum LoadStatus {
 // anything has to be retained across multiple files should be here
 pub struct Context {
     report: Rc<Report>,
+    ids: HashMap<Id, NameDef>,
+    scope_maps: Vec<ScopeMap<Name>>, // used to interpret Id::Local
     global_scope: Scope,
     next_tvar: Cell<TVar>,
     tvar_sub: Constraints, // upper bound
@@ -426,6 +492,8 @@ impl Context {
     pub fn new(report: Rc<Report>) -> Context {
         let mut ctx = Context {
             report: report,
+            ids: HashMap::new(),
+            scope_maps: Vec::new(),
             global_scope: Scope::new(),
             next_tvar: Cell::new(TVar(1)), // TVar(0) for the top-level return
             tvar_sub: Constraints::new("<:"),
@@ -457,6 +525,14 @@ impl Context {
         &mut self.global_scope
     }
 
+    pub fn get<'a>(&'a self, id: &Id) -> Option<&'a NameDef> {
+        self.ids.get(id)
+    }
+
+    pub fn get_mut<'a>(&'a mut self, id: &Id) -> Option<&'a mut NameDef> {
+        self.ids.get_mut(id)
+    }
+
     pub fn open_library(&mut self, name: &Spanned<Name>,
                         opts: Rc<RefCell<Options>>) -> CheckResult<()> {
         let name_ = try!(str::from_utf8(&name.base).map_err(|e| e.to_string()));
@@ -466,9 +542,9 @@ impl Context {
                 if self.opened.insert(def.name.to_owned()) {
                     // the built-in code is parsed independently and has no usable span
                     let chunk = def.to_chunk();
-                    let mut env = Env::new(self, opts.clone());
+                    let mut env = Env::new(self, opts.clone(), chunk.map);
                     let mut checker = Checker::new(&mut env);
-                    try!(checker.visit(&chunk))
+                    try!(checker.visit(&chunk.block))
                 }
             }
             Ok(())
@@ -514,14 +590,14 @@ impl Context {
         cid
     }
 
-    pub fn name_class(&mut self, cid: ClassId, name: &Spanned<Name>) -> CheckResult<()> {
+    pub fn name_class(&mut self, cid: ClassId, name: Spanned<Name>) -> CheckResult<()> {
         let cls = &mut self.classes[cid.0 as usize];
         if let Some(ref prevname) = cls.name {
             try!(self.report.warn(name, m::RedefinedClassName {})
                             .note(prevname, m::PreviousClassName {})
                             .done());
         } else {
-            cls.name = Some(name.clone());
+            cls.name = Some(name);
         }
         Ok(())
     }
@@ -969,15 +1045,20 @@ impl TypeContext for Context {
 pub struct Env<'ctx> {
     context: &'ctx mut Context,
     opts: Rc<RefCell<Options>>,
+    map_index: usize,
     scopes: Vec<Scope>,
 }
 
 impl<'ctx> Env<'ctx> {
-    pub fn new(context: &'ctx mut Context, opts: Rc<RefCell<Options>>) -> Env<'ctx> {
+    pub fn new(context: &'ctx mut Context, opts: Rc<RefCell<Options>>,
+               map: ScopeMap<Name>) -> Env<'ctx> {
+        let map_index = context.scope_maps.len();
+        context.scope_maps.push(map);
         let global_frame = Frame { vararg: None, returns: None, returns_exact: false };
         Env {
             context: context,
             opts: opts,
+            map_index: map_index,
             // we have local variables even at the global position, so we need at least one Scope
             scopes: vec![Scope::new_function(global_frame)],
         }
@@ -996,6 +1077,10 @@ impl<'ctx> Env<'ctx> {
     pub fn display<'a, 'c, T: Display>(&'c self, x: &'a T) -> Displayed<'a, 'c, T>
             where Displayed<'a, 'c, T>: fmt::Display {
         x.display(self.context)
+    }
+
+    pub fn id_from_nameref(&self, nameref: &Spanned<NameRef>) -> Spanned<Id> {
+        Id::from(self.map_index, nameref.base.clone()).with_loc(nameref)
     }
 
     pub fn enter(&mut self, scope: Scope) {
@@ -1091,32 +1176,20 @@ impl<'ctx> Env<'ctx> {
         self.scopes.last_mut().unwrap()
     }
 
-    pub fn get_var<'a>(&'a self, name: &Name) -> Option<&'a NameDef> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(def) = scope.get(name) { return Some(def); }
+    pub fn get_name<'a>(&'a self, nameref: &'a NameRef) -> &'a Name {
+        match *nameref {
+            NameRef::Local(ref scoped_id) =>
+                scoped_id.name(&self.context.scope_maps[self.map_index]),
+            NameRef::Global(ref name) => name,
         }
-        self.context.global_scope().get(name)
     }
 
-    pub fn get_var_mut<'a>(&'a mut self, name: &Name) -> Option<&'a mut NameDef> {
-        for scope in self.scopes.iter_mut().rev() {
-            if let Some(def) = scope.get_mut(name) { return Some(def); }
-        }
-        self.context.global_scope_mut().get_mut(name)
+    pub fn get_var<'a>(&'a self, nameref: &NameRef) -> Option<&'a NameDef> {
+        self.context.ids.get(&Id::from(self.map_index, nameref.clone()))
     }
 
-    pub fn get_local_var<'a>(&'a self, name: &Name) -> Option<&'a NameDef> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(def) = scope.get(name) { return Some(def); }
-        }
-        None
-    }
-
-    pub fn get_local_var_mut<'a>(&'a mut self, name: &Name) -> Option<&'a mut NameDef> {
-        for scope in self.scopes.iter_mut().rev() {
-            if let Some(def) = scope.get_mut(name) { return Some(def); }
-        }
-        None
+    pub fn get_var_mut<'a>(&'a mut self, nameref: &NameRef) -> Option<&'a mut NameDef> {
+        self.context.ids.get_mut(&Id::from(self.map_index, nameref.clone()))
     }
 
     pub fn get_frame<'a>(&'a self) -> &'a Frame {
@@ -1251,9 +1324,11 @@ impl<'ctx> Env<'ctx> {
         self.assign_(lhs, rhs, false)
     }
 
-    pub fn ensure_var(&mut self, name: &Spanned<Name>) -> CheckResult<()> {
+    pub fn ensure_var(&mut self, nameref: &Spanned<NameRef>) -> CheckResult<()> {
+        let id = self.id_from_nameref(nameref);
+
         let defslot = {
-            let def = self.get_var(name).expect("Env::ensure_var with an undefined var");
+            let def = self.context.ids.get(&id).expect("Env::ensure_var with an undefined var");
             if def.set { return Ok(()); }
             def.slot.clone().with_loc(def.span)
         };
@@ -1263,10 +1338,10 @@ impl<'ctx> Env<'ctx> {
         let nil = Slot::just(T::Nil).without_loc();
         try!(self.assign_special(&defslot, &nil));
         if defslot.accept(&nil, self.context, true).is_ok() { // this IS still initialization
-            self.get_var_mut(name).unwrap().set = true;
+            self.context.ids.get_mut(&id).unwrap().set = true;
         } else {
             // won't alter the set flag, so subsequent uses are still errors
-            try!(self.error(name, m::UseOfUnassignedVar {})
+            try!(self.error(&id, m::UseOfUnassignedVar {})
                      .note_if(&defslot, m::UnassignedVarOrigin { var: self.display(&defslot) })
                      .done());
         }
@@ -1274,24 +1349,28 @@ impl<'ctx> Env<'ctx> {
         Ok(())
     }
 
-    fn name_class_if_any(&mut self, name: &Spanned<Name>, info: &Spanned<Slot>,
-                         global: bool) -> CheckResult<()> {
+    fn name_class_if_any(&mut self, id: &Spanned<Id>, info: &Spanned<Slot>) -> CheckResult<()> {
         match *info.unlift().as_base() {
             T::Class(Class::Prototype(cid)) => {
+                let name = id.name(&self.context).clone().with_loc(id);
+
                 // check if the name conflicts in the type namespace earlier
                 // note that even when the type is defined in the global scope
                 // we check both the local and global scope for the type name
-                if let Some(def) = self.get_named_type(name) {
-                    try!(self.error(name, m::CannotRedefineType { name: &name.base })
+                if let Some(def) = self.get_named_type(&name) {
+                    try!(self.error(&name, m::CannotRedefineType { name: &name.base })
                              .note(def.span, m::AlreadyDefinedType {})
                              .done());
                     return Ok(());
                 }
 
-                try!(self.context.name_class(cid, name));
+                try!(self.context.name_class(cid, name.clone()));
 
-                let scope = if global { self.global_scope_mut() } else { self.current_scope_mut() };
-                let ret = scope.put_type(name.clone(), Box::new(T::Class(Class::Instance(cid))));
+                let scope = match id.base {
+                    Id::Local(..) => self.current_scope_mut(),
+                    Id::Global(..) => self.global_scope_mut(),
+                };
+                let ret = scope.put_type(name, Box::new(T::Class(Class::Instance(cid))));
                 assert!(ret, "failed to insert the type");
             }
 
@@ -1311,11 +1390,21 @@ impl<'ctx> Env<'ctx> {
     }
 
     // adds a local variable with the explicit type `specinfo` and the implicit type `initinfo`.
-    pub fn add_local_var(&mut self, name: &Spanned<Name>,
-                         specinfo: Option<Spanned<Slot>>,
-                         initinfo: Option<Spanned<Slot>>) -> CheckResult<()> {
-        debug!("adding a local variable {:?} with {:?} (specified) and {:?} (initialized)",
-               *name, specinfo, initinfo);
+    pub fn add_var(&mut self, nameref: &Spanned<NameRef>,
+                   specinfo: Option<Spanned<Slot>>,
+                   initinfo: Option<Spanned<Slot>>) -> CheckResult<()> {
+        let id = self.id_from_nameref(nameref);
+        debug!("adding a variable {} with {:?} (specified) and {:?} (initialized)",
+               id.display(&self.context), specinfo, initinfo);
+
+        // raise an error in any case that the nameref is defined with a spec multiple times.
+        // practically this means that the global var has been redefined.
+        // (local variables are created uniquely and unlikely to trigger this with a correct AST)
+        if self.context.ids.get(&id).is_some() {
+            let name = id.name(&self.context);
+            try!(self.error(nameref, m::CannotRedefineVar { name: name }).done());
+            return Ok(());
+        }
 
         let assigned = initinfo.is_some();
         let specinfo = specinfo.unwrap_or_else(|| Slot::var(T::Nil, self.context).without_loc());
@@ -1323,74 +1412,51 @@ impl<'ctx> Env<'ctx> {
             try!(self.assign_(&specinfo, &initinfo, true));
 
             // name the class if it is currently unnamed
-            try!(self.name_class_if_any(name, &initinfo, false));
+            try!(self.name_class_if_any(&id, &initinfo));
         }
 
-        self.current_scope_mut().put(name.to_owned(), specinfo.base, assigned);
+        self.context.ids.insert(id.base, NameDef { span: id.span, slot: specinfo.base,
+                                                   set: assigned });
         Ok(())
     }
 
-    pub fn add_local_var_already_set(&mut self, name: &Spanned<Name>,
+    pub fn add_local_var_already_set(&mut self, scoped_id: &Spanned<ScopedId>,
                                      info: Spanned<Slot>) -> CheckResult<()> {
-        debug!("adding a local variable {:?} already set to {:?}", *name, info);
+        let id = Id::Local(self.map_index, scoped_id.base.clone()).with_loc(scoped_id);
+        debug!("adding a local variable {} already set to {:?}", id.display(&self.context), info);
 
         // we cannot blindly `accept` the `initinfo`, since it will discard the flexibility
         // (e.g. if the callee requests `F::Var`, we need to keep that).
         // therefore we just remap `F::Just` to `F::VarOrCurrently`.
         info.adapt(F::Currently, self.context);
 
-        try!(self.name_class_if_any(name, &info, false));
+        try!(self.name_class_if_any(&id, &info));
 
-        self.current_scope_mut().put(name.to_owned(), info.base, true);
-        Ok(())
-    }
-
-    // adds a global variable with the explicit type `specinfo` and the implicit type `initinfo`.
-    pub fn add_global_var(&mut self, name: &Spanned<Name>,
-                          specinfo: Option<Spanned<Slot>>,
-                          initinfo: Spanned<Slot>) -> CheckResult<()> {
-        debug!("adding a global variable {:?} with {:?} (specified) and {:?} (initialized)",
-               *name, specinfo, initinfo);
-
-        // it might collide with other local or global variables
-        if self.get_var(name).is_some() {
-            try!(self.error(name, m::CannotRedefineGlobalVar { name: &name.base }).done());
-            return Ok(());
-        }
-
-        let specinfo =
-            specinfo.unwrap_or_else(|| Slot::var(T::Nil, self.context).without_loc());
-        try!(self.assign_(&specinfo, &initinfo, true));
-        try!(self.name_class_if_any(name, &initinfo, true));
-
-        self.global_scope_mut().put(name.to_owned(), specinfo.base, true);
+        self.context.ids.insert(id.base, NameDef { span: id.span, slot: info.base, set: true });
         Ok(())
     }
 
     // assigns to a global or local variable with a right-hand-side type of `info`.
     // it may create a new global variable if there is no variable with that name.
-    pub fn assign_to_var(&mut self, name: &Spanned<Name>, info: Spanned<Slot>) -> CheckResult<()> {
-        let def = if let Some(def) = self.get_local_var(name) {
-            Some((def.set, def.slot.clone(), false))
-        } else if let Some(def) = self.context.global_scope().get(name) {
-            Some((def.set, def.slot.clone(), true))
+    pub fn assign_to_var(&mut self, nameref: &Spanned<NameRef>,
+                         info: Spanned<Slot>) -> CheckResult<()> {
+        let id = self.id_from_nameref(nameref);
+        let (previnfo, prevset) = if self.context.ids.contains_key(&id.base) {
+            let def = self.context.ids.get_mut(&id.base).unwrap();
+            let prevset = def.set;
+            def.set = true;
+            (def.slot.clone(), prevset)
         } else {
-            None
+            let slot = Slot::var(T::Nil, self.context);
+            self.context.ids.insert(id.base.clone(),
+                                    NameDef { span: id.span, slot: slot.clone(), set: true });
+            (slot, true)
         };
-        if let Some((prevset, previnfo, global)) = def {
-            debug!("assigning {:?} to a variable {:?} with type {:?}", info, *name, previnfo);
-            try!(self.assign_(&previnfo.with_loc(name), &info, !prevset));
-            try!(self.name_class_if_any(name, &info, global));
-            self.get_var_mut(name).unwrap().set = true;
-            return Ok(());
-        }
+        debug!("assigning {:?} to a variable {} with type {:?}",
+               info, id.display(&self.context), previnfo);
 
-        debug!("adding a global variable {:?} as {:?} (initialized)", *name, info);
-        let newinfo = Slot::var(T::Nil, self.context).with_loc(name);
-        try!(self.assign_(&newinfo, &info, true));
-        try!(self.name_class_if_any(name, &info, true));
-
-        self.global_scope_mut().put(name.to_owned(), newinfo.base, true);
+        try!(self.assign_(&previnfo.with_loc(&id), &info, !prevset));
+        try!(self.name_class_if_any(&id, &info));
         Ok(())
     }
 
@@ -1412,27 +1478,22 @@ impl<'ctx> Env<'ctx> {
         Ok(())
     }
 
-    pub fn assume_var(&mut self, name: &Spanned<Name>, info: Spanned<Slot>) -> CheckResult<()> {
+    pub fn assume_var(&mut self, name: &Spanned<NameRef>, info: Spanned<Slot>) -> CheckResult<()> {
+        let id = Id::from(self.map_index, name.base.clone());
+        debug!("(force) adding a variable {} as {:?}", id.display(&self.context), info);
+
         try!(self.assume_special(&info));
-        if let Some(def) = self.get_local_var_mut(name) {
-            debug!("(force) adding a local variable {:?} as {:?}", *name, info);
-            def.set = true;
-            def.slot = info.base;
-            return Ok(());
+        match self.context.ids.entry(id) {
+            hash_map::Entry::Vacant(e) => {
+                e.insert(NameDef { span: name.span, slot: info.base, set: true });
+            }
+            hash_map::Entry::Occupied(mut e) => {
+                let def = e.get_mut();
+                def.slot = info.base;
+                def.set = true;
+            }
         }
 
-        // assuming is inherently an implicit assignment
-        self.context.global_scope_mut().put(name.to_owned(), info.base, true);
-        Ok(())
-    }
-
-    pub fn assume_global_var(&mut self, name: &Spanned<Name>,
-                             info: Spanned<Slot>) -> CheckResult<()> {
-        debug!("(force) adding a global variable {:?} as {:?}", *name, info);
-        try!(self.assume_special(&info));
-
-        // assuming is inherently an implicit assignment
-        self.context.global_scope_mut().put(name.to_owned(), info.base, true);
         Ok(())
     }
 

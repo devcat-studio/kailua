@@ -12,9 +12,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::path::Path;
 
-use kailua_env::{Spanned, Source, SourceFile};
+use kailua_env::{Source, SourceFile};
 use kailua_diag::{Report, ConsoleReport, TrackMaxKind};
-use kailua_syntax::{parse_chunk, Block};
+use kailua_syntax::{parse_chunk, Chunk};
 use kailua_check::{FsSource, FsOptions, Context, check_from_chunk};
 
 struct LocalFsSource {
@@ -23,13 +23,13 @@ struct LocalFsSource {
 }
 
 impl FsSource for LocalFsSource {
-    fn chunk_from_path(&self, resolved_path: &Path) -> Result<Option<Spanned<Block>>, String> {
+    fn chunk_from_path(&self, resolved_path: &Path) -> Result<Option<Chunk>, String> {
         match SourceFile::from_file(resolved_path) {
             Ok(file) => {
                 let mut source = self.source.borrow_mut();
                 let span = source.add(file);
                 if let Ok(chunk) = parse_chunk(&source, span, &*self.report) {
-                    Ok(Some(chunk.block))
+                    Ok(Some(chunk))
                 } else {
                     Err(format!("parse error"))
                 }
@@ -57,7 +57,7 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
     let root = mainpath.parent().unwrap_or(&Path::new(".."));
     let opts = Rc::new(RefCell::new(FsOptions::new(fssource, root.to_owned())));
 
-    try!(check_from_chunk(&mut context, &filechunk, opts));
+    try!(check_from_chunk(&mut context, filechunk, opts));
     if report.can_continue() {
         Ok(())
     } else {

@@ -1,7 +1,8 @@
 use std::fmt;
 use std::ops;
 use std::slice;
-use std::hash::Hash;
+use std::cmp::{self, Ordering};
+use std::hash::{Hash, Hasher};
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use loc::{Unit, Pos, Span, Spanned};
@@ -22,6 +23,63 @@ impl Scope {
 impl fmt::Debug for Scope {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "${}", self.scope)
+    }
+}
+
+// a combined identifier from unique name and scope (can be zero).
+// the identifier should be interpreted along with the associated scope map.
+#[derive(Clone)]
+pub struct ScopedId {
+    id: u32,
+}
+
+impl ScopedId {
+    pub fn to_usize(&self) -> usize {
+        self.id as usize
+    }
+
+    pub fn name<'a, Name>(&self, map: &'a ScopeMap<Name>) -> &'a Name
+        where Name: Clone + Hash + Eq + fmt::Debug
+    {
+        map.find_id(self).0
+    }
+
+    pub fn scope<'a, Name>(&self, map: &'a ScopeMap<Name>) -> Scope
+        where Name: Clone + Hash + Eq + fmt::Debug
+    {
+        map.find_id(self).1
+    }
+}
+
+impl PartialEq for ScopedId {
+    fn eq(&self, other: &ScopedId) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for ScopedId {}
+
+impl PartialOrd for ScopedId {
+    fn partial_cmp(&self, other: &ScopedId) -> Option<Ordering> {
+        self.id.partial_cmp(&other.id)
+    }
+}
+
+impl Ord for ScopedId {
+    fn cmp(&self, other: &ScopedId) -> Ordering {
+        self.id.cmp(&other.id)
+    }
+}
+
+impl Hash for ScopedId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state)
+    }
+}
+
+impl fmt::Debug for ScopedId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "<{}>", self.id)
     }
 }
 
@@ -64,20 +122,34 @@ impl<'a, Name: 'a> Iterator for AncestorScopes<'a, Name> {
     }
 }
 
+pub struct Names<'a, Name: 'a> {
+    iter: slice::Iter<'a, (Name, u32)>,
+}
+
+impl<'a, Name: 'a + fmt::Debug> Iterator for Names<'a, Name> {
+    type Item = (&'a Name, ScopedId);
+
+    fn next(&mut self) -> Option<(&'a Name, ScopedId)> {
+        self.iter.next().map(|&(ref name, id)| (name, ScopedId { id: id }))
+    }
+}
+
 pub struct NamesAndScopes<'a, Name: 'a> {
     scopes: &'a [ScopeItem<Name>],
     current: u32,
-    iter: Option<slice::Iter<'a, Name>>,
+    iter: Option<slice::Iter<'a, (Name, u32)>>,
 }
 
-impl<'a, Name: 'a> Iterator for NamesAndScopes<'a, Name> {
-    type Item = (&'a Name, Scope);
+impl<'a, Name: 'a + fmt::Debug> Iterator for NamesAndScopes<'a, Name> {
+    type Item = (&'a Name, Scope, ScopedId);
 
-    fn next(&mut self) -> Option<(&'a Name, Scope)> {
+    fn next(&mut self) -> Option<(&'a Name, Scope, ScopedId)> {
         loop {
             if let Some(ref mut iter) = self.iter {
-                if let Some(name) = iter.next() {
-                    return Some((name, Scope { scope: self.current }));
+                if let Some(&(ref name, id)) = iter.next() {
+                    let scope = Scope { scope: self.current };
+                    let scoped_id = ScopedId { id: id };
+                    return Some((name, scope, scoped_id));
                 }
             } else {
                 return None;
@@ -94,6 +166,7 @@ impl<'a, Name: 'a> Iterator for NamesAndScopes<'a, Name> {
     }
 }
 
+#[derive(Debug, Clone)]
 struct ScopeItem<Name> {
     // same to itself when the scope is root (not necessarily global)
     parent: u32,
@@ -101,8 +174,8 @@ struct ScopeItem<Name> {
     // associated span, can be dummy but later set
     span: Span,
 
-    // a list of immediately contained names
-    names: Vec<Name>,
+    // a list of immediately contained names and ids
+    names: Vec<(Name, u32)>,
 }
 
 impl<Name> ScopeItem<Name> {
@@ -111,23 +184,28 @@ impl<Name> ScopeItem<Name> {
     }
 }
 
-pub struct ScopeMap<Name> {
+#[derive(Debug, Clone)]
+pub struct ScopeMap<Name: Clone + Hash + Eq> {
     // an implicit mapping from the scope to the item
     scopes: Vec<ScopeItem<Name>>,
 
-    // names and sorted lists of containing scopes
-    names: HashMap<Name, Vec<Scope>>,
+    // names and sorted lists of containing scopes and ids.
+    names: HashMap<Name, Vec<(Scope, u32)>>,
+
+    // a list of name and scope for given scoped ids
+    ids: Vec<(Name, Scope)>,
 
     // a cache of ranges for mapping the location to the scope
     // the scope can be 0 (empty); for multiple scopes the scope is set arbitrarily
     span_ranges: HashMap<Unit, Vec<(u32, u32)>>,
 }
 
-impl<Name: Clone + Hash + Eq> ScopeMap<Name> {
+impl<Name: Clone + Hash + Eq + fmt::Debug> ScopeMap<Name> {
     pub fn new() -> ScopeMap<Name> {
         ScopeMap {
             scopes: vec![ScopeItem::new(0)],
             names: HashMap::new(),
+            ids: Vec::new(),
             span_ranges: HashMap::new(),
         }
     }
@@ -156,13 +234,21 @@ impl<Name: Clone + Hash + Eq> ScopeMap<Name> {
         *scopespan = span;
     }
 
-    pub fn add_name(&mut self, scope: Scope, name: Name) {
+    pub fn add_name(&mut self, scope: Scope, name: Name) -> ScopedId {
         assert!((scope.scope as usize) < self.scopes.len());
         let scopes = self.names.entry(name.clone()).or_insert(Vec::new());
-        if let Err(idx) = scopes.binary_search(&scope) {
-            scopes.insert(idx, scope);
-            // avoids the duplicate insertion by pushing after checking
-            self.scopes[scope.scope as usize].names.push(name);
+        match scopes.binary_search_by(|&(scope_, _)| scope.cmp(&scope_)) {
+            Ok(idx) => ScopedId { id: scopes[idx].1 },
+            Err(idx) => {
+                assert!(self.ids.len() <= 0xffffffff);
+                let id = self.ids.len() as u32;
+                let scoped_id = ScopedId { id: id };
+                self.ids.push((name.clone(), scope));
+                scopes.insert(idx, (scope, id));
+                // avoids the duplicate insertion by pushing after checking
+                self.scopes[scope.scope as usize].names.push((name, id));
+                scoped_id
+            },
         }
     }
 
@@ -185,9 +271,10 @@ impl<Name: Clone + Hash + Eq> ScopeMap<Name> {
         AncestorScopes { scopes: &self.scopes, current: scope.scope, done: false }
     }
 
-    pub fn names<'a>(&'a self, scope: Scope) -> slice::Iter<'a, Name> {
+    pub fn names<'a>(&'a self, scope: Scope) -> Names<'a, Name> {
         assert!((scope.scope as usize) < self.scopes.len());
-        self.scopes[scope.scope as usize].names.iter()
+        let iter = self.scopes[scope.scope as usize].names.iter();
+        Names { iter: iter }
     }
 
     pub fn names_and_scopes<'a>(&'a self, scope: Scope) -> NamesAndScopes<'a, Name> {
@@ -196,28 +283,42 @@ impl<Name: Clone + Hash + Eq> ScopeMap<Name> {
         NamesAndScopes { scopes: &self.scopes, current: scope.scope, iter: Some(iter) }
     }
 
+    pub fn find_id<'a>(&'a self, scoped_id: &ScopedId) -> (&'a Name, Scope) {
+        self.find_id_with_index(scoped_id.id as usize).expect("ScopedId used on a wrong map")
+    }
+
+    pub fn find_id_with_index<'a>(&'a self, id: usize) -> Option<(&'a Name, Scope)> {
+        if id < self.ids.len() {
+            let (ref name, scope) = self.ids[id];
+            Some((name, scope))
+        } else {
+            None
+        }
+    }
+
     // finds the most innermost name available at that scope
-    pub fn find_name_in_scope<T: ?Sized>(&self, scope: Scope, name: &T) -> Option<Scope>
-        where Name: Borrow<T>, T: Hash + Eq
+    pub fn find_name_in_scope<T: ?Sized>(&self, scope: Scope, name: &T) -> Option<(Scope, ScopedId)>
+        where Name: Borrow<T>, for<'a> Name: From<&'a T>, T: Hash + Eq
     {
         let mut ancestors = self.ancestor_scopes(scope);
         let mut scopes = match self.names.get(name) {
-            Some(v) => v.iter().rev(),
+            Some(v) => v.iter(),
             None => return None,
         };
 
-        // both iterators are sorted (in the decreasing order),
+        // both iterators are sorted (in the same order),
         // so the largest intersection can be quickly found
         let mut next_ancestor = ancestors.next();
         let mut next_scope = scopes.next();
         loop {
-            if let (Some(a), Some(&s)) = (next_ancestor, next_scope) {
+            if let (Some(a), Some(&(s, id))) = (next_ancestor, next_scope) {
                 if a < s {
                     next_scope = scopes.next();
                 } else if a > s {
                     next_ancestor = ancestors.next();
                 } else {
-                    return Some(a); // found a match
+                    // found a match
+                    return Some((s, ScopedId { id: id }));
                 }
             } else {
                 return None;
@@ -240,9 +341,7 @@ impl<Name: Clone + Hash + Eq> ScopeMap<Name> {
                 let begin = item.span.begin().to_usize() as u32;
                 let end = item.span.end().to_usize() as u32;
                 seq.push((begin, false, scope));
-                // the end of Span is normally exclusive, but when we are looking for a Pos
-                // we more frequently want the inclusive end.
-                seq.push((end + 1, true, scope));
+                seq.push((end, true, scope));
             }
         }
 
@@ -255,6 +354,7 @@ impl<Name: Clone + Hash + Eq> ScopeMap<Name> {
             let mut ranges = Vec::new();
             for (pos, will_close, scope) in seq {
                 let next_scope = if will_close {
+                    // prefer the opening of later-defined scopes
                     while open.pop().unwrap_or(scope) > scope { }
                     open.last().map_or(0, |&scope| scope)
                 } else {
@@ -262,7 +362,6 @@ impl<Name: Clone + Hash + Eq> ScopeMap<Name> {
                     scope
                 };
 
-                // prefer the opening of later-defined scopes
                 if ranges.last().map(|&(pos, _)| pos) == Some(pos) {
                     ranges.last_mut().unwrap().1 = next_scope;
                 } else {
@@ -282,8 +381,16 @@ impl<Name: Clone + Hash + Eq> ScopeMap<Name> {
             None => return None,
         };
 
-        let scope = match ranges.binary_search_by(|&(p, _)| p.cmp(&(pos.to_usize() as u32))) {
-            Ok(i) => ranges[i].1,
+        let pos = pos.to_usize() as u32;
+        let scope = match ranges.binary_search_by(|&(p, _)| p.cmp(&pos)) {
+            Ok(i) => {
+                let mut scope = ranges[i].1;
+                // when the pos is on a boundary of two ranges, try to return a later-defined scope
+                if ranges[i].0 == pos && i > 0 {
+                    scope = cmp::max(scope, ranges[i-1].1);
+                }
+                scope
+            },
             Err(0) => 0, // before the first item
             Err(i) => ranges[i-1].1,
         };
@@ -305,23 +412,28 @@ fn test_scope_map() {
     let c = m.generate(a);
     let d = m.generate(b);
 
+    let id = |n| ScopedId { id: n };
+
     assert_eq!(m.ancestor_scopes(g).collect::<Vec<_>>(), [g]);
     assert_eq!(m.ancestor_scopes(a).collect::<Vec<_>>(), [a, g]);
     assert_eq!(m.ancestor_scopes(b).collect::<Vec<_>>(), [b, g]);
     assert_eq!(m.ancestor_scopes(c).collect::<Vec<_>>(), [c, a, g]);
     assert_eq!(m.ancestor_scopes(d).collect::<Vec<_>>(), [d, b, g]);
 
-    m.add_name(a, "x".to_string());
-    m.add_name(b, "x".to_string());
-    m.add_name(g, "y".to_string());
-    m.add_name(d, "x".to_string());
+    assert_eq!(m.add_name(a, "x".to_string()), id(0));
+    assert_eq!(m.add_name(b, "x".to_string()), id(1));
+    assert_eq!(m.add_name(g, "y".to_string()), id(2));
+    assert_eq!(m.add_name(d, "x".to_string()), id(3));
+    assert_eq!(m.add_name(b, "z".to_string()), id(4));
+    assert_eq!(m.add_name(a, "x".to_string()), id(0)); // duplicate
 
-    assert_eq!(m.find_name_in_scope(c, "x"), Some(a));
-    assert_eq!(m.find_name_in_scope(d, "x"), Some(d));
-    assert_eq!(m.find_name_in_scope(b, "x"), Some(b));
+    assert_eq!(m.find_name_in_scope(c, "x"), Some((a, id(0))));
+    assert_eq!(m.find_name_in_scope(d, "x"), Some((d, id(3))));
+    assert_eq!(m.find_name_in_scope(b, "x"), Some((b, id(1))));
+    assert_eq!(m.find_name_in_scope(b, "z"), Some((b, id(4))));
     assert_eq!(m.find_name_in_scope(g, "x"), None);
-    assert_eq!(m.find_name_in_scope(c, "y"), Some(g));
-    assert_eq!(m.find_name_in_scope(g, "y"), Some(g));
+    assert_eq!(m.find_name_in_scope(c, "y"), Some((g, id(2))));
+    assert_eq!(m.find_name_in_scope(g, "y"), Some((g, id(2))));
 }
 
 #[test]
@@ -350,7 +462,8 @@ fn test_scope_map_span() {
     assert_eq!(m.scope_from_pos(pos(80)), Some(d));
     assert_eq!(m.scope_from_pos(pos(100)), Some(f));
     assert_eq!(m.scope_from_pos(pos(109)), Some(f));
-    assert_eq!(m.scope_from_pos(pos(110)), None);
+    assert_eq!(m.scope_from_pos(pos(110)), Some(f));
+    assert_eq!(m.scope_from_pos(pos(111)), None);
     assert_eq!(m.scope_from_pos(pos(888888)), None);
     assert_eq!(m.scope_from_pos(pos(999888)), Some(x));
     assert_eq!(m.scope_from_pos(pos(1000000)), None);
@@ -365,11 +478,12 @@ fn test_scope_map_span() {
     let e = m.generate(d); m.set_span(e, span(80, 90));
     assert_eq!(m.scope_from_pos(pos(0)), None);
     assert_eq!(m.scope_from_pos(pos(30)), Some(a));
-    assert_eq!(m.scope_from_pos(pos(35)), Some(a));
-    assert_eq!(m.scope_from_pos(pos(40)), Some(c));
-    assert_eq!(m.scope_from_pos(pos(50)), Some(a));
-    assert_eq!(m.scope_from_pos(pos(55)), Some(a));
-    assert_eq!(m.scope_from_pos(pos(60)), None);
+    assert_eq!(m.scope_from_pos(pos(39)), Some(a));
+    assert_eq!(m.scope_from_pos(pos(40)), Some(c)); // prefer c over a (inclusive)
+    assert_eq!(m.scope_from_pos(pos(50)), Some(c)); // prefer c over a (exclusive)
+    assert_eq!(m.scope_from_pos(pos(51)), Some(a));
+    assert_eq!(m.scope_from_pos(pos(60)), Some(a));
+    assert_eq!(m.scope_from_pos(pos(61)), None);
     assert_eq!(m.scope_from_pos(pos(85)), Some(e));
 
     // multiple units & cache invalidation
@@ -379,12 +493,13 @@ fn test_scope_map_span() {
     let b = m.generate(g); m.set_span(b, span_from_u32(unit2, 20, 40));
     assert_eq!(m.scope_from_pos(pos_from_u32(unit1, 10)), Some(a));
     assert_eq!(m.scope_from_pos(pos_from_u32(unit1, 20)), Some(a));
-    assert_eq!(m.scope_from_pos(pos_from_u32(unit1, 30)), None);
+    assert_eq!(m.scope_from_pos(pos_from_u32(unit1, 30)), Some(a));
     assert_eq!(m.scope_from_pos(pos_from_u32(unit1, 40)), None);
     assert_eq!(m.scope_from_pos(pos_from_u32(unit2, 10)), None);
     assert_eq!(m.scope_from_pos(pos_from_u32(unit2, 20)), Some(b));
     assert_eq!(m.scope_from_pos(pos_from_u32(unit2, 30)), Some(b));
-    assert_eq!(m.scope_from_pos(pos_from_u32(unit2, 40)), None);
+    assert_eq!(m.scope_from_pos(pos_from_u32(unit2, 40)), Some(b));
+    assert_eq!(m.scope_from_pos(pos_from_u32(unit2, 50)), None);
     let c = m.generate(b); m.set_span(c, span_from_u32(unit2, 25, 35));
     assert_eq!(m.scope_from_pos(pos_from_u32(unit2, 30)), Some(c));
 }

@@ -1,6 +1,7 @@
 use std::fmt;
 use std::ops;
-use kailua_env::{Spanned, Scope, ScopeMap};
+use std::collections::HashSet;
+use kailua_env::{Spanned, Scope, ScopedId, ScopeMap};
 
 fn format_ascii_vec(f: &mut fmt::Formatter, s: &[u8]) -> fmt::Result {
     for &c in s {
@@ -94,12 +95,40 @@ impl<'a> From<&'a [u8]> for Str {
     fn from(s: &'a [u8]) -> Str { Str(s.to_owned().into_boxed_slice()) }
 }
 
+impl<'a> From<&'a Name> for Name {
+    fn from(n: &'a Name) -> Name { n.clone() }
+}
+
+impl<'a> From<&'a Str> for Str {
+    fn from(s: &'a Str) -> Str { s.clone() }
+}
+
 impl From<Str> for Name {
     fn from(Str(s): Str) -> Name { Name(s) }
 }
 
 impl From<Name> for Str {
     fn from(Name(n): Name) -> Str { Str(n) }
+}
+
+// why don't we use scoped ids everywhere? scoped ids are bound to the scope map,
+// and we may have multiple ASTs (thus multiple scope maps) there!
+// scoped ids can be paired with the scope map (implicitly), but this only works for local names.
+// therefore global names should be stored as their names, even though there are
+// also associated (however non-unique) scoped ids for them.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum NameRef {
+    Local(ScopedId),
+    Global(Name),
+}
+
+impl fmt::Debug for NameRef {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            NameRef::Local(ref scoped_id) => write!(f, "{:?}", scoped_id),
+            NameRef::Global(ref name) => write!(f, "{:?}_", name),
+        }
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -117,6 +146,12 @@ impl fmt::Debug for Attr {
 pub struct Seq<Head, Tail=Head> {
     pub head: Vec<Head>,
     pub tail: Option<Tail>,
+}
+
+impl<Head, Tail> Seq<Head, Tail> {
+    pub fn map<U, V, F: FnMut(Head) -> U, G: FnOnce(Tail) -> V>(self, f: F, g: G) -> Seq<U, V> {
+        Seq { head: self.head.into_iter().map(f).collect(), tail: self.tail.map(g) }
+    }
 }
 
 impl<Head: fmt::Debug, Tail: fmt::Debug> fmt::Debug for Seq<Head, Tail> {
@@ -138,14 +173,14 @@ impl<Head: fmt::Debug, Tail: fmt::Debug> fmt::Debug for Seq<Head, Tail> {
 
 #[derive(Clone, PartialEq)]
 pub enum Var {
-    Name(Spanned<Name>),
+    Name(Spanned<NameRef>),
     Index(Spanned<Exp>, Spanned<Exp>),
 }
 
 impl fmt::Debug for Var {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Var::Name(ref name) => write!(f, "{:?}", name),
+            Var::Name(ref id) => write!(f, "{:?}", id),
             Var::Index(ref lhs, ref rhs) => write!(f, "({:?})[{:?}]", lhs, rhs),
         }
     }
@@ -156,6 +191,12 @@ pub struct TypeSpec<T> {
     pub base: T,
     pub modf: M,
     pub kind: Option<Spanned<Kind>>,
+}
+
+impl<T> TypeSpec<T> {
+    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> TypeSpec<U> {
+        TypeSpec { base: f(self.base), modf: self.modf, kind: self.kind }
+    }
 }
 
 impl<T: fmt::Debug> fmt::Debug for TypeSpec<T> {
@@ -176,24 +217,11 @@ pub struct Presig {
     pub returns: Option<Seq<Spanned<Kind>>>,
 }
 
-impl Presig {
-    pub fn to_sig(self, attrs: Vec<Spanned<Attr>>) -> Sig {
-        Sig {
-            attrs: attrs,
-            args: self.args.map(|args| {
-                Seq { head: args.head.into_iter().map(|arg| arg.base).collect(),
-                      tail: args.tail.map(|arg| arg.base) }
-            }),
-            returns: self.returns,
-        }
-    }
-}
-
 #[derive(Clone, PartialEq)]
 pub struct Sig {
     pub attrs: Vec<Spanned<Attr>>,
-    pub args: Spanned<Seq<TypeSpec<Spanned<Name>>,
-                      Option<Spanned<Kind>>>>, // may have to be inferred; Const only
+    pub args: Spanned<Seq<TypeSpec<Spanned<ScopedId>>,
+                          Option<Spanned<Kind>>>>, // may have to be inferred; Const only
     pub returns: Option<Seq<Spanned<Kind>>>, // may have to be inferred
 }
 
@@ -246,7 +274,7 @@ pub enum Ex {
     Table(Vec<(Option<Spanned<Exp>>, Spanned<Exp>)>),
 
     // expressions
-    Var(Spanned<Name>),
+    Var(Spanned<NameRef>),
     FuncCall(Spanned<Exp>, Spanned<Vec<Spanned<Exp>>>), // desugared form
     MethodCall(Spanned<Exp>, Spanned<Name>, Spanned<Vec<Spanned<Exp>>>),
     Index(Spanned<Exp>, Spanned<Exp>),
@@ -267,7 +295,7 @@ impl fmt::Debug for Ex {
             Ex::Func(ref p, bs, ref b) => write!(f, "Func({:?}, {:?}{:?})", *p, bs, *b),
             Ex::Table(ref fs) => write!(f, "Table({:?})", *fs),
 
-            Ex::Var(ref n) => write!(f, "{:?}", *n),
+            Ex::Var(ref id) => write!(f, "{:?}", id),
             Ex::FuncCall(ref e, ref args) => {
                 try!(write!(f, "{:?}(", *e));
                 let mut first = true;
@@ -355,22 +383,21 @@ impl BinOp {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Vis {
-    Local,
-    Global,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub struct SelfParam;
+#[derive(Clone, PartialEq, Eq)]
+pub struct SelfParam(pub ScopedId);
 
 impl fmt::Debug for SelfParam {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "self") }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "self={:?}", self.0)
+    }
 }
 
 #[derive(Clone, PartialEq)]
 pub enum St {
     Oops,
+
+    // every scope is associated to the following node, except when the scope is the last field,
+    // in which case it is a sibling scope applied to the following stmts.
 
     Void(Spanned<Exp>), // technically not every Exp is valid here, but for simplicity.
     Assign(Spanned<Vec<TypeSpec<Spanned<Var>>>>, Spanned<Vec<Spanned<Exp>>>),
@@ -378,19 +405,19 @@ pub enum St {
     While(Spanned<Exp>, Spanned<Block>),
     Repeat(Spanned<Block>, Spanned<Exp>),
     If(Vec<Spanned<(Spanned<Exp>, Spanned<Block>)>>, Option<Spanned<Block>>),
-    For(Spanned<Name>, Spanned<Exp>, Spanned<Exp>, Option<Spanned<Exp>>, Scope, Spanned<Block>),
-    ForIn(Spanned<Vec<Spanned<Name>>>, Spanned<Vec<Spanned<Exp>>>, Scope, Spanned<Block>),
-    FuncDecl(Vis, Spanned<Name>, Sig, Scope, Spanned<Block>, Option<Scope>),
-    MethodDecl(Vec<Spanned<Name>>, Option<TypeSpec<Spanned<SelfParam>>>,
+    For(Spanned<ScopedId>, Spanned<Exp>, Spanned<Exp>, Option<Spanned<Exp>>, Scope, Spanned<Block>),
+    ForIn(Spanned<Vec<Spanned<ScopedId>>>, Spanned<Vec<Spanned<Exp>>>, Scope, Spanned<Block>),
+    FuncDecl(Spanned<NameRef>, Sig, Scope, Spanned<Block>, Option<Scope>),
+    MethodDecl(Spanned<NameRef>, Vec<Spanned<Name>>, Option<TypeSpec<Spanned<SelfParam>>>,
                Sig, Scope, Spanned<Block>),
-    Local(Spanned<Vec<TypeSpec<Spanned<Name>>>>, Spanned<Vec<Spanned<Exp>>>, Scope),
+    Local(Spanned<Vec<TypeSpec<Spanned<ScopedId>>>>, Spanned<Vec<Spanned<Exp>>>, Scope),
     Return(Spanned<Vec<Spanned<Exp>>>),
     Break,
 
     // Kailua extensions
     KailuaOpen(Spanned<Name>),
     KailuaType(Spanned<Name>, Spanned<Kind>),
-    KailuaAssume(Vis, Spanned<Name>, M, Spanned<Kind>, Option<Scope>),
+    KailuaAssume(Spanned<NameRef>, M, Spanned<Kind>, Option<Scope>),
 }
 
 impl fmt::Debug for St {
@@ -420,22 +447,24 @@ impl fmt::Debug for St {
                 write!(f, "For({:?}, {:?}, {:?}, {:?}, {:?}{:?})", i, start, end, step, bs, b),
             St::ForIn(ref ii, ref ee, bs, ref b) =>
                 write!(f, "ForIn({:?}, {:?}, {:?}{:?})", ii, ee, bs, b),
-            St::FuncDecl(ns, ref i, ref sig, bs, ref b, Some(is)) =>
-                write!(f, "FuncDecl({:?}, {:?}, {:?}, {:?}{:?}){:?}", ns, i, sig, bs, b, is),
-            St::FuncDecl(ns, ref i, ref sig, bs, ref b, None) =>
-                write!(f, "FuncDecl({:?}, {:?}, {:?}, {:?}{:?})", ns, i, sig, bs, b),
-            St::MethodDecl(ref ii, ref self_, ref sig, bs, ref b) =>
-                write!(f, "MethodDecl({:?}, {:?}, {:?}, {:?}{:?})", ii, self_, sig, bs, b),
+            St::FuncDecl(ref i, ref sig, bs, ref b, is) => {
+                try!(write!(f, "FuncDecl({:?}, {:?}, {:?}{:?})", i, sig, bs, b));
+                if let Some(is) = is { try!(write!(f, "{:?}", is)); }
+                Ok(())
+            },
+            St::MethodDecl(ref i, ref ii, ref self_, ref sig, bs, ref b) =>
+                write!(f, "MethodDecl({:?}, {:?}, {:?}, {:?}, {:?}{:?})", i, ii, self_, sig, bs, b),
             St::Local(ref ii, ref ee, is) => write!(f, "Local({:?}, {:?}){:?}", ii, ee, is),
             St::Return(ref ee) => write!(f, "Return({:?})", ee),
             St::Break => write!(f, "Break"),
 
             St::KailuaOpen(ref lib) => write!(f, "KailuaOpen({:?})", lib),
             St::KailuaType(ref t, ref k) => write!(f, "KailuaType({:?}, {:?})", t, k),
-            St::KailuaAssume(ns, ref i, m, ref k, Some(is)) =>
-                write!(f, "KailuaAssume({:?}, {:?}, {:?}, {:?}){:?}", ns, i, m, k, is),
-            St::KailuaAssume(ns, ref i, m, ref k, None) =>
-                write!(f, "KailuaAssume({:?}, {:?}, {:?}, {:?})", ns, i, m, k),
+            St::KailuaAssume(ref i, m, ref k, is) => {
+                try!(write!(f, "KailuaAssume({:?}, {:?}, {:?})", i, m, k));
+                if let Some(is) = is { try!(write!(f, "{:?}", is)); }
+                Ok(())
+            },
         }
     }
 }
@@ -568,9 +597,10 @@ impl fmt::Debug for K {
 
 pub type Kind = Box<K>;
 
+#[derive(Clone)]
 pub struct Chunk {
     pub block: Spanned<Block>,
-    pub global_scope: Scope,
+    pub global_scope: HashSet<Name>,
     pub map: ScopeMap<Name>,
 }
 
