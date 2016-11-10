@@ -1331,7 +1331,19 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     }
 
     fn visit_exp(&mut self, exp: &Spanned<Exp>) -> CheckResult<SpannedSlotSeq> {
-        Ok(try!(self.visit_exp_(exp)).all_with_loc(exp))
+        let slotseq = try!(self.visit_exp_(exp));
+
+        // mark the resulting slot (sequence) to the span
+        let slot = if let Some(slot) = slotseq.head.first() {
+            slot.clone()
+        } else if let Some(ref slot) = slotseq.tail {
+            slot.clone().into_slot()
+        } else {
+            Slot::just(T::Nil)
+        };
+        self.context().spanned_slots_mut().insert(slot.with_loc(exp));
+
+        Ok(slotseq.all_with_loc(exp))
     }
 
     fn visit_exp_(&mut self, exp: &Spanned<Exp>) -> CheckResult<SlotSeq> {

@@ -24,4 +24,5 @@ kailua_diag = { path = "../kailua_diag" }
 kailua_syntax = { path = "../kailua_syntax" }
 
 [dev-dependencies]
+clap = "2"
 kailua_test = { path = "../kailua_test" }

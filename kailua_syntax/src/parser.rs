@@ -838,7 +838,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             let end = self.pos();
             while self.scope_stack.len() > nscopes {
                 let (scope, scopebegin) = self.scope_stack.pop().unwrap();
-                self.scope_map.set_span(scope, Span::new(scopebegin, end));
+                self.scope_map.set_span(scope.with_loc(scopebegin..end));
             }
         }
     }
@@ -2671,7 +2671,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         // (unlike normal cases of `pop_scope_upto`, as this might be past EOF)
         let end = self.last_pos();
         while let Some((scope, scopebegin)) = self.scope_stack.pop() {
-            self.scope_map.set_span(scope, Span::new(scopebegin, end));
+            self.scope_map.set_span(scope.with_loc(scopebegin..end));
         }
 
         if let Ok(block) = ret {

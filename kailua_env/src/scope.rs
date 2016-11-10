@@ -223,15 +223,15 @@ impl<Name: Clone + Hash + Eq + fmt::Debug> ScopeMap<Name> {
         Scope { scope: scope }
     }
 
-    pub fn set_span(&mut self, scope: Scope, span: Span) {
-        assert!((scope.scope as usize) < self.scopes.len());
-        assert!(span.is_source_dependent());
+    pub fn set_span(&mut self, scope: Spanned<Scope>) {
+        assert!((scope.base.scope as usize) < self.scopes.len());
+        assert!(scope.span.is_source_dependent());
 
-        let scopespan = &mut self.scopes[scope.scope as usize].span;
-        assert!(scopespan.is_dummy(), "scope {:?} has already set the span", scope);
-        *scopespan = span;
+        let scopespan = &mut self.scopes[scope.base.scope as usize].span;
+        assert!(scopespan.is_dummy(), "scope {:?} has already set the span", scope.base);
+        *scopespan = scope.span;
 
-        self.spans.insert(span, scope);
+        self.spans.insert(scope);
     }
 
     pub fn add_name(&mut self, scope: Scope, name: Name) -> ScopedId {
@@ -330,7 +330,7 @@ impl<Name: Clone + Hash + Eq + fmt::Debug> ScopeMap<Name> {
         // there might be multiple scopes intersecting pos;
         // prefer (one of) the innermost scopes by using the later-defined scope.
         // (multiple innermost scopes are possible, but probably impossible in the parser)
-        self.spans.adjacencies(Span::new(pos, pos)).map(|(_, &scope)| scope).max()
+        self.spans.adjacencies(Span::from(pos)).map(|scope| *scope.base).max()
     }
 }
 
@@ -370,7 +370,7 @@ fn test_scope_map() {
 
 #[test]
 fn test_scope_map_span() {
-    use loc::{unit_from_u32, pos_from_u32, span_from_u32};
+    use loc::{unit_from_u32, pos_from_u32, span_from_u32, WithLoc};
 
     let unit1 = unit_from_u32(1);
     let unit2 = unit_from_u32(2);
@@ -379,13 +379,13 @@ fn test_scope_map_span() {
 
     let mut m = ScopeMap::<()>::new();
     let g = m.generate_root();
-    let a = m.generate(g); m.set_span(a, span(0, 100));
-    let b = m.generate(a); m.set_span(b, span(30, 70));
-    let c = m.generate(a); m.set_span(c, span(70, 80));
-    let d = m.generate(a); m.set_span(d, span(80, 100));
-    let e = m.generate(g); m.set_span(e, span(100, 110));
-    let f = m.generate(e); m.set_span(f, span(100, 110));
-    let x = m.generate(g); m.set_span(x, span(999000, 999999));
+    let a = m.generate(g); m.set_span(a.with_loc(span(0, 100)));
+    let b = m.generate(a); m.set_span(b.with_loc(span(30, 70)));
+    let c = m.generate(a); m.set_span(c.with_loc(span(70, 80)));
+    let d = m.generate(a); m.set_span(d.with_loc(span(80, 100)));
+    let e = m.generate(g); m.set_span(e.with_loc(span(100, 110)));
+    let f = m.generate(e); m.set_span(f.with_loc(span(100, 110)));
+    let x = m.generate(g); m.set_span(x.with_loc(span(999000, 999999)));
     assert_eq!(m.scope_from_pos(pos(0)), Some(a));
     assert_eq!(m.scope_from_pos(pos(20)), Some(a));
     assert_eq!(m.scope_from_pos(pos(30)), Some(b));
@@ -403,11 +403,11 @@ fn test_scope_map_span() {
     // check for dummies
     let mut m = ScopeMap::<()>::new();
     let g = m.generate_root();
-    let a = m.generate(g); m.set_span(a, span(30, 60));
+    let a = m.generate(g); m.set_span(a.with_loc(span(30, 60)));
     let b = m.generate(a); // no span attached
-    let c = m.generate(b); m.set_span(c, span(40, 50));
+    let c = m.generate(b); m.set_span(c.with_loc(span(40, 50)));
     let d = m.generate(g); // no span attached
-    let e = m.generate(d); m.set_span(e, span(80, 90));
+    let e = m.generate(d); m.set_span(e.with_loc(span(80, 90)));
     assert_eq!(m.scope_from_pos(pos(0)), None);
     assert_eq!(m.scope_from_pos(pos(30)), Some(a));
     assert_eq!(m.scope_from_pos(pos(39)), Some(a));
@@ -421,8 +421,8 @@ fn test_scope_map_span() {
     // multiple units & cache invalidation
     let mut m = ScopeMap::<()>::new();
     let g = m.generate_root();
-    let a = m.generate(g); m.set_span(a, span_from_u32(unit1, 10, 30));
-    let b = m.generate(g); m.set_span(b, span_from_u32(unit2, 20, 40));
+    let a = m.generate(g); m.set_span(a.with_loc(span_from_u32(unit1, 10, 30)));
+    let b = m.generate(g); m.set_span(b.with_loc(span_from_u32(unit2, 20, 40)));
     assert_eq!(m.scope_from_pos(pos_from_u32(unit1, 10)), Some(a));
     assert_eq!(m.scope_from_pos(pos_from_u32(unit1, 20)), Some(a));
     assert_eq!(m.scope_from_pos(pos_from_u32(unit1, 30)), Some(a));
@@ -432,7 +432,7 @@ fn test_scope_map_span() {
     assert_eq!(m.scope_from_pos(pos_from_u32(unit2, 30)), Some(b));
     assert_eq!(m.scope_from_pos(pos_from_u32(unit2, 40)), Some(b));
     assert_eq!(m.scope_from_pos(pos_from_u32(unit2, 50)), None);
-    let c = m.generate(b); m.set_span(c, span_from_u32(unit2, 25, 35));
+    let c = m.generate(b); m.set_span(c.with_loc(span_from_u32(unit2, 25, 35)));
     assert_eq!(m.scope_from_pos(pos_from_u32(unit2, 30)), Some(c));
 }
 

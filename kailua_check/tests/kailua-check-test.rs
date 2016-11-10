@@ -1,5 +1,6 @@
 #[macro_use] extern crate log;
 extern crate env_logger;
+extern crate clap;
 extern crate kailua_test;
 extern crate kailua_env;
 extern crate kailua_diag;
@@ -10,14 +11,36 @@ use std::str;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::collections::HashMap;
+use clap::{App, Arg, ArgMatches};
 use kailua_env::{Source, Span};
-use kailua_diag::{Report, TrackMaxKind};
+use kailua_diag::{Report, Reporter, TrackMaxKind};
 use kailua_syntax::{Chunk, parse_chunk};
-use kailua_check::{Options, Context, CheckResult, check_from_chunk};
+use kailua_check::{Options, Context, CheckResult, Display, check_from_chunk};
 
-struct Testing;
+struct Testing {
+    note_spanned_infos: bool,
+}
+
+impl Testing {
+    fn new() -> Testing {
+        Testing { note_spanned_infos: false }
+    }
+}
 
 impl kailua_test::Testing for Testing {
+    fn augment_args<'a, 'b: 'a>(&self, app: App<'a, 'b>) -> App<'a, 'b> {
+        app.arg(
+            Arg::with_name("note_spanned_infos")
+                .short("s")
+                .long("note-spanned-infos")
+                .help("Displays a list of spanned informations.\n\
+                       Only useful when used with `--exact-diags`."))
+    }
+
+    fn collect_args<'a>(&mut self, matches: &ArgMatches<'a>) {
+        self.note_spanned_infos = matches.is_present("note_spanned_infos");
+    }
+
     fn run(&self, source: Rc<RefCell<Source>>, span: Span, filespans: &HashMap<String, Span>,
            report: Rc<Report>) -> String {
         let chunk = match parse_chunk(&source.borrow(), span, &*report) {
@@ -44,7 +67,22 @@ impl kailua_test::Testing for Testing {
         let report = Rc::new(TrackMaxKind::new(report));
         let opts = Rc::new(RefCell::new(Opts { source: source, filespans: filespans.clone(),
                                                report: report.clone() }));
-        match check_from_chunk(&mut Context::new(report.clone()), chunk, opts) {
+        let mut context = Context::new(report.clone());
+        let ret = check_from_chunk(&mut context, chunk, opts);
+
+        // spanned information is available even on error
+        if self.note_spanned_infos {
+            let mut slots: Vec<_> = context.spanned_slots().iter().collect();
+            slots.sort_by_key(|slot| {
+                (slot.span.unit(), slot.span.begin().to_usize(), slot.span.end().to_usize())
+            });
+            for slot in slots {
+                let msg = format!("slot: {}", slot.display(&context));
+                report.note(slot.span, &msg).done().unwrap();
+            }
+        }
+
+        match ret {
             Ok(()) => {
                 if report.can_continue() {
                     format!("ok")
@@ -63,6 +101,6 @@ impl kailua_test::Testing for Testing {
 
 fn main() {
     env_logger::init().unwrap();
-    kailua_test::Tester::new("kailua-check-test", Testing).scan("src/tests").done();
+    kailua_test::Tester::new("kailua-check-test", Testing::new()).scan("src/tests").done();
 }
 

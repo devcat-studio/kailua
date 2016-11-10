@@ -41,7 +41,7 @@ impl VSParseTree {
         }
     }
 
-    pub fn names_at_pos(&mut self, pos: Pos) -> Option<Box<[VSNameEntry]>> {
+    pub fn names_at_pos(&self, pos: Pos) -> Option<Box<[VSNameEntry]>> {
         self.chunk.map.scope_from_pos(pos).map(|scope| {
             self.chunk.map.names_and_scopes(scope).map(|(name, scope, _id)| {
                 VSNameEntry {
@@ -94,13 +94,13 @@ pub extern "C" fn kailua_parse_tree_has_prim_open(tree: *const VSParseTree) -> i
 }
 
 #[no_mangle]
-pub extern "C" fn kailua_parse_tree_names_at_pos(tree: *mut VSParseTree, pos: *const Pos,
+pub extern "C" fn kailua_parse_tree_names_at_pos(tree: *const VSParseTree, pos: *const Pos,
                                                  out: *mut *mut VSNameEntry) -> i32 {
     if tree.is_null() { return -1; }
     if pos.is_null() { return -1; }
     if out.is_null() { return -1; }
 
-    let tree: &mut VSParseTree = unsafe { mem::transmute(tree) };
+    let tree: &VSParseTree = unsafe { mem::transmute(tree) };
     let pos = unsafe { *pos };
     let out = unsafe { out.as_mut().unwrap() };
 
