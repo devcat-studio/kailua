@@ -186,6 +186,14 @@ impl Span {
         Pos { unit: self.unit, pos: self.end }
     }
 
+    pub fn len(&self) -> usize {
+        if self.is_source_dependent() {
+            0
+        } else {
+            (self.end - self.begin) as usize
+        }
+    }
+
     pub fn contains(&self, pos: Pos) -> bool {
         self.unit > 0 && self.unit == pos.unit && self.begin <= pos.pos && pos.pos < self.end
     }

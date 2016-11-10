@@ -1,11 +1,12 @@
 use std::fmt;
 use std::ops;
 use std::slice;
-use std::cmp::{self, Ordering};
+use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use loc::{Unit, Pos, Span, Spanned};
+use spanmap::SpanMap;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Scope {
@@ -195,9 +196,8 @@ pub struct ScopeMap<Name: Clone + Hash + Eq> {
     // a list of name and scope for given scoped ids
     ids: Vec<(Name, Scope)>,
 
-    // a cache of ranges for mapping the location to the scope
-    // the scope can be 0 (empty); for multiple scopes the scope is set arbitrarily
-    span_ranges: HashMap<Unit, Vec<(u32, u32)>>,
+    // mappings from the location to the scope
+    spans: HashMap<Unit, SpanMap<Scope>>,
 }
 
 impl<Name: Clone + Hash + Eq + fmt::Debug> ScopeMap<Name> {
@@ -206,7 +206,7 @@ impl<Name: Clone + Hash + Eq + fmt::Debug> ScopeMap<Name> {
             scopes: vec![ScopeItem::new(0)],
             names: HashMap::new(),
             ids: Vec::new(),
-            span_ranges: HashMap::new(),
+            spans: HashMap::new(),
         }
     }
 
@@ -227,11 +227,12 @@ impl<Name: Clone + Hash + Eq + fmt::Debug> ScopeMap<Name> {
         assert!((scope.scope as usize) < self.scopes.len());
         assert!(!span.is_dummy());
 
-        self.span_ranges.clear(); // flush the range cache
-
         let scopespan = &mut self.scopes[scope.scope as usize].span;
         assert!(scopespan.is_dummy(), "scope {:?} has already set the span", scope);
         *scopespan = span;
+
+        let spans = self.spans.entry(span.unit()).or_insert_with(|| SpanMap::new(span.unit()));
+        spans.insert(span, scope);
     }
 
     pub fn add_name(&mut self, scope: Scope, name: Name) -> ScopedId {
@@ -326,78 +327,14 @@ impl<Name: Clone + Hash + Eq + fmt::Debug> ScopeMap<Name> {
         }
     }
 
-    fn update_scope_ranges(&mut self) {
-        if !self.span_ranges.is_empty() {
-            // even when there is no non-dummy span in the map, the cache is populated somehow
-            return;
-        }
-
-        let mut seqs = HashMap::new();
-        for (scope, item) in self.scopes.iter().enumerate() {
-            let scope = scope as u32;
-            let unit = item.span.unit();
-            let mut seq = seqs.entry(unit).or_insert(Vec::new());
-            if !unit.is_dummy() {
-                let begin = item.span.begin().to_usize() as u32;
-                let end = item.span.end().to_usize() as u32;
-                seq.push((begin, false, scope));
-                seq.push((end, true, scope));
-            }
-        }
-
-        self.span_ranges = seqs.into_iter().map(|(scope, mut seq)| {
-            seq.sort_by_key(|&(pos, _, _)| pos);
-
-            // technically the span may not nest, but we ignore that possibility
-            // by only requiring this method to return any correct span in such cases
-            let mut open = Vec::new();
-            let mut ranges = Vec::new();
-            for (pos, will_close, scope) in seq {
-                let next_scope = if will_close {
-                    // prefer the opening of later-defined scopes
-                    while open.pop().unwrap_or(scope) > scope { }
-                    open.last().map_or(0, |&scope| scope)
-                } else {
-                    open.push(scope);
-                    scope
-                };
-
-                if ranges.last().map(|&(pos, _)| pos) == Some(pos) {
-                    ranges.last_mut().unwrap().1 = next_scope;
-                } else {
-                    ranges.push((pos, next_scope));
-                }
-            }
-
-            (scope, ranges)
-        }).collect();
-    }
-
-    pub fn scope_from_pos(&mut self, pos: Pos) -> Option<Scope> {
-        self.update_scope_ranges();
-
-        let ranges = match self.span_ranges.get(&pos.unit()) {
-            Some(ranges) => ranges,
-            None => return None,
-        };
-
-        let pos = pos.to_usize() as u32;
-        let scope = match ranges.binary_search_by(|&(p, _)| p.cmp(&pos)) {
-            Ok(i) => {
-                let mut scope = ranges[i].1;
-                // when the pos is on a boundary of two ranges, try to return a later-defined scope
-                if ranges[i].0 == pos && i > 0 {
-                    scope = cmp::max(scope, ranges[i-1].1);
-                }
-                scope
-            },
-            Err(0) => 0, // before the first item
-            Err(i) => ranges[i-1].1,
-        };
-        if scope == 0 {
-            None
+    pub fn scope_from_pos(&self, pos: Pos) -> Option<Scope> {
+        if let Some(spans) = self.spans.get(&pos.unit()) {
+            // there might be multiple scopes intersecting pos;
+            // prefer (one of) the innermost scopes by using the later-defined scope.
+            // (multiple innermost scopes are possible, but probably impossible in the parser)
+            spans.adjacencies(Span::new(pos, pos)).map(|(_, &scope)| scope).max()
         } else {
-            Some(Scope { scope: scope })
+            None
         }
     }
 }
