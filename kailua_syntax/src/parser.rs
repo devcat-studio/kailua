@@ -240,25 +240,13 @@ impl<'a, U> Parser<'a, U> {
         ReportMore(diag::Reporter::warn(self, loc, msg))
     }
 
-    fn note<Loc: Into<Span>, Msg: Localize>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
-        ReportMore(diag::Reporter::note(self, loc, msg))
+    fn info<Loc: Into<Span>, Msg: Localize>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
+        ReportMore(diag::Reporter::info(self, loc, msg))
     }
 }
 
 #[allow(dead_code)]
 impl<'a, T> ReportMore<'a, T> {
-    fn fatal<Loc: Into<Span>, Msg: Localize, U>(self, loc: Loc, msg: Msg) -> ReportMore<'a, U> {
-        ReportMore(self.0.fatal(loc, msg))
-    }
-
-    fn error<Loc: Into<Span>, Msg: Localize>(self, loc: Loc, msg: Msg) -> ReportMore<'a, T> {
-        ReportMore(self.0.error(loc, msg))
-    }
-
-    fn warn<Loc: Into<Span>, Msg: Localize>(self, loc: Loc, msg: Msg) -> ReportMore<'a, T> {
-        ReportMore(self.0.warn(loc, msg))
-    }
-
     fn note<Loc: Into<Span>, Msg: Localize>(self, loc: Loc, msg: Msg) -> ReportMore<'a, T> {
         ReportMore(self.0.note(loc, msg))
     }
@@ -303,7 +291,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             if let Some(ref t) = next {
                 trace!("got {:?}", *t);
                 if false { // useful for debugging
-                    let _ = self.note(t.span, format!("got {:?}", t.base)).done();
+                    let _ = self.info(t.span, format!("got {:?}", t.base)).done();
                 }
             }
 

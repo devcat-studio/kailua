@@ -40,7 +40,7 @@ impl kailua_test::Testing for Testing {
             Arg::with_name("note_scopes")
                 .short("s")
                 .long("note-scopes")
-                .help("Displays a list of scopes and associated names as notes.\n\
+                .help("Displays a list of scopes and associated names as reports.\n\
                        Only useful when used with `--exact-diags`."))
     }
 
@@ -61,7 +61,7 @@ impl kailua_test::Testing for Testing {
                     }
                     msg.push_str(&format!(": {:?}",
                                           chunk.map.names(scope.base).collect::<Vec<_>>()));
-                    report.note(scope.span, msg).done().unwrap();
+                    report.info(scope.span, msg).done().unwrap();
                 }
             }
             let s = self.span_pattern.replace_all(&s, "");

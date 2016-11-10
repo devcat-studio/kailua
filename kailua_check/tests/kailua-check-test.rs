@@ -78,7 +78,7 @@ impl kailua_test::Testing for Testing {
             });
             for slot in slots {
                 let msg = format!("slot: {}", slot.display(&context));
-                report.note(slot.span, &msg).done().unwrap();
+                report.info(slot.span, &msg).done().unwrap();
             }
         }
 

@@ -18,15 +18,17 @@ use kailua_diag::{self, Localize, Localized, Kind, Report, Stop};
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum VSReportKind {
     Note = 0,
-    Warning = 1,
-    Error = 2,
-    Fatal = 3,
+    Info = 1,
+    Warning = 2,
+    Error = 3,
+    Fatal = 4,
 }
 
 impl VSReportKind {
     pub fn from(kind: Kind) -> VSReportKind {
         match kind {
             Kind::Note => VSReportKind::Note,
+            Kind::Info => VSReportKind::Info,
             Kind::Warning => VSReportKind::Warning,
             Kind::Error => VSReportKind::Error,
             Kind::Fatal => VSReportKind::Fatal,

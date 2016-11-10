@@ -34,9 +34,10 @@ namespace Kailua.Native
     public enum ReportKind : byte
     {
         Note = 0,
-        Warning = 1,
-        Error = 2,
-        Fatal = 3,
+        Info = 1,
+        Warning = 2,
+        Error = 3,
+        Fatal = 4,
     }
 
     public struct ReportData

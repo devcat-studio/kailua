@@ -386,9 +386,10 @@ fn extract_tests(path: &Path) -> Result<Vec<Test>, TestError> {
     Ok(tests)
 }
 
-struct FailLog {
+struct TestLog {
     test: Test,
     source: Source,
+    delta_only: bool, // if true, `collected` contains calculated differences only
     panicked: bool,
     output: String,
     collected: Vec<(Kind, Span, String)>,
@@ -399,10 +400,11 @@ pub struct Tester<T> {
     testing: T,
     filter: Option<Regex>,
     term: Box<StderrTerminal>,
+    verbose: bool,
     exact_diags: bool,
     message_lang: String,
     stop_on_panic: bool,
-    failed_logs: Vec<FailLog>,
+    displayed_logs: Vec<TestLog>,
     num_tested: usize,
     num_passed: usize,
 }
@@ -420,6 +422,12 @@ impl<T: Testing> Tester<T> {
         });
 
         let app = App::new(name)
+            .arg(Arg::with_name("verbose")
+                .short("v")
+                .long("verbose")
+                .help("Displays all test outputs regardless of the result.\n\
+                       Note that unexpected \"info\" reports are always displayed,\n\
+                       as it is commonly an output of other flags."))
             .arg(Arg::with_name("exact_diags")
                 .short("e")
                 .long("exact-diags")
@@ -443,6 +451,7 @@ impl<T: Testing> Tester<T> {
             Some(s) => Some(Regex::new(s).expect("pattern should be a valid regex")),
             None => None,
         };
+        let verbose = matches.is_present("verbose");
         let exact_diags = matches.is_present("exact_diags");
         let message_lang = matches.value_of("message_lang").unwrap_or("en");
         let stop_on_panic = matches.is_present("stop_on_panic");
@@ -456,9 +465,10 @@ impl<T: Testing> Tester<T> {
         let term = term::stderr().unwrap();
         Tester {
             testing: testing, filter: filter, term: term,
+            verbose: verbose,
             exact_diags: exact_diags, message_lang: String::from(message_lang),
             stop_on_panic: stop_on_panic,
-            failed_logs: Vec::new(), num_tested: 0, num_passed: 0,
+            displayed_logs: Vec::new(), num_tested: 0, num_passed: 0,
         }
     }
 
@@ -495,8 +505,8 @@ impl<T: Testing> Tester<T> {
         let _ = writeln!(self.term, "");
         let _ = writeln!(self.term, "{} passed, {} failed",
                          self.num_passed, self.num_tested - self.num_passed);
-        for log in mem::replace(&mut self.failed_logs, Vec::new()) {
-            self.note_failed_test(log);
+        for log in mem::replace(&mut self.displayed_logs, Vec::new()) {
+            self.note_test_output(log);
         }
         let _ = writeln!(self.term, "");
 
@@ -562,24 +572,27 @@ impl<T: Testing> Tester<T> {
             success = false;
         }
 
+        let translate_span = |source: &Source, span: Span| {
+            source.get_file(span.unit()).and_then(|file| {
+                file.lines_from_span(span).map(|(begin, _, end)| {
+                    (file.path().to_owned(), begin + 1, end + 1)
+                })
+            })
+        };
+
         // check if test.reports are all included in collected reports (multiset inclusion)
         // do not check if collected reports have some others, though (unless exact_diags is set)
+        let mut reportset = HashMap::new(); // # of expected reports - # of collected reports
         if success {
-            let mut reportset = HashMap::new();
             for expected in &test.reports {
                 let pos = expected.pos.as_ref().map(|&(ref p, s, e)| {
                     (p.as_ref().map_or(MAIN_PATH, |p| &p[..]).to_owned(), s, e)
                 });
-                let key = (pos, expected.kind, &expected.msg[..]);
+                let key = (pos, expected.kind, expected.msg.clone().into_owned());
                 *reportset.entry(key).or_insert(0isize) += 1;
             }
             for &(kind, span, ref msg) in &collected {
-                let pos = source.get_file(span.unit()).and_then(|file| {
-                    file.lines_from_span(span).map(|(begin, _, end)| {
-                        (file.path().to_owned(), begin + 1, end + 1)
-                    })
-                });
-                let key = (pos, kind, &msg[..]);
+                let key = (translate_span(&source, span), kind, msg.to_owned());
                 if let Some(value) = reportset.get_mut(&key) {
                     *value -= 1;
                 } else if self.exact_diags {
@@ -598,6 +611,24 @@ impl<T: Testing> Tester<T> {
         if success {
             self.note_test(&test, TestResult::Passed);
             self.num_passed += 1;
+
+            // we still need to display the remaining logs if -v is set or
+            // unexpected reports in the collected are present
+            let mut collected = collected;
+            if !self.verbose {
+                collected.retain(|&(kind, span, ref msg)| {
+                    // if the report is present only in the collected,
+                    // or if the numbers disagree to each other...
+                    let key = (translate_span(&source, span), kind, msg.to_owned());
+                    reportset.get(&key).map_or(true, |&v| v < 0)
+                });
+            }
+            if !collected.is_empty() {
+                self.displayed_logs.push(TestLog {
+                    test: test, source: source, delta_only: !self.verbose,
+                    panicked: false, output: output.unwrap(), collected: collected,
+                });
+            }
         } else {
             let (panicked, output) = match output {
                 Ok(s) => {
@@ -614,8 +645,8 @@ impl<T: Testing> Tester<T> {
                     }
                 },
             };
-            self.failed_logs.push(FailLog {
-                test: test, source: source,
+            self.displayed_logs.push(TestLog {
+                test: test, source: source, delta_only: false,
                 panicked: panicked, output: output, collected: collected,
             });
         }
@@ -658,7 +689,7 @@ impl<T: Testing> Tester<T> {
         let _ = writeln!(self.term, "");
     }
 
-    fn note_failed_test(&mut self, log: FailLog) {
+    fn note_test_output(&mut self, log: TestLog) {
         let _ = writeln!(self.term, "");
         let _ = self.term.fg(term::color::BRIGHT_MAGENTA);
         let _ = write!(self.term, "{} ", log.test.file.display());
@@ -670,54 +701,61 @@ impl<T: Testing> Tester<T> {
         let _ = writeln!(self.term, "(at line {})", log.test.first_line);
 
         let _ = self.term.fg(term::color::BRIGHT_BLACK);
-        let _ = writeln!(self.term, "{:-<60}", "EXPECTED ");
-        let _ = self.term.fg(term::color::BRIGHT_WHITE);
-        for line in log.test.output {
-            let _ = writeln!(self.term, "{}", line);
-        }
-        let _ = self.term.reset();
-        if !log.test.reports.is_empty() {
-            let _ = writeln!(self.term, "");
-            for expected in log.test.reports {
-                if let Some((path, begin, end)) = expected.pos {
-                    let path = path.as_ref().map_or(MAIN_PATH, |p| p.as_ref());
-                    if begin == end {
-                        let _ = write!(self.term, "{}:{}:_: ", path, begin);
-                    } else {
-                        let _ = write!(self.term, "{}:{}:_: {}:_ ", path, begin, end);
-                    }
-                }
-
-                let (dim, bright) = expected.kind.colors();
-                let _ = self.term.fg(dim);
-                let _ = write!(self.term, "[");
-                let _ = self.term.fg(bright);
-                let _ = write!(self.term, "{:?}", expected.kind);
-                let _ = self.term.fg(dim);
-                let _ = write!(self.term, "] ");
-                let _ = self.term.fg(term::color::BRIGHT_WHITE);
-                let _ = write!(self.term, "{}", expected.msg);
-                let _ = self.term.reset();
-                let _ = writeln!(self.term, "");
-            }
-        }
-
-        let _ = self.term.fg(term::color::BRIGHT_BLACK);
-        let _ = writeln!(self.term, "{:-<60}", "ACTUAL ");
-        if log.panicked {
-            let _ = self.term.bg(term::color::RED);
-            let _ = self.term.fg(term::color::BLACK);
-            let _ = write!(self.term, "PANICKED");
-            let _ = self.term.reset();
-            let _ = self.term.fg(term::color::BRIGHT_RED);
-            let _ = write!(self.term, " ");
-        } else {
+        if !log.delta_only {
+            let _ = writeln!(self.term, "{:-<60}", "EXPECTED ");
             let _ = self.term.fg(term::color::BRIGHT_WHITE);
+            for line in log.test.output {
+                let _ = writeln!(self.term, "{}", line);
+            }
+            let _ = self.term.reset();
+            if !log.test.reports.is_empty() {
+                let _ = writeln!(self.term, "");
+                for expected in log.test.reports {
+                    if let Some((path, begin, end)) = expected.pos {
+                        let path = path.as_ref().map_or(MAIN_PATH, |p| p.as_ref());
+                        if begin == end {
+                            let _ = write!(self.term, "{}:{}:_: ", path, begin);
+                        } else {
+                            let _ = write!(self.term, "{}:{}:_: {}:_ ", path, begin, end);
+                        }
+                    }
+
+                    let (dim, bright) = expected.kind.colors();
+                    let _ = self.term.fg(dim);
+                    let _ = write!(self.term, "[");
+                    let _ = self.term.fg(bright);
+                    let _ = write!(self.term, "{:?}", expected.kind);
+                    let _ = self.term.fg(dim);
+                    let _ = write!(self.term, "] ");
+                    let _ = self.term.fg(term::color::BRIGHT_WHITE);
+                    let _ = write!(self.term, "{}", expected.msg);
+                    let _ = self.term.reset();
+                    let _ = writeln!(self.term, "");
+                }
+            }
+
+            let _ = self.term.fg(term::color::BRIGHT_BLACK);
+            let _ = writeln!(self.term, "{:-<60}", "ACTUAL ");
+            if log.panicked {
+                let _ = self.term.bg(term::color::RED);
+                let _ = self.term.fg(term::color::BLACK);
+                let _ = write!(self.term, "PANICKED");
+                let _ = self.term.reset();
+                let _ = self.term.fg(term::color::BRIGHT_RED);
+                let _ = write!(self.term, " ");
+            } else {
+                let _ = self.term.fg(term::color::BRIGHT_WHITE);
+            }
+            let _ = writeln!(self.term, "{}", log.output);
+        } else {
+            let _ = writeln!(self.term, "{:-<60}", "ACTUAL (DIFF FROM EXPECTED) ");
         }
-        let _ = writeln!(self.term, "{}", log.output);
+
         let _ = self.term.reset();
         if !log.collected.is_empty() {
-            let _ = writeln!(self.term, "");
+            if !log.delta_only {
+                let _ = writeln!(self.term, "");
+            }
             let source = Rc::new(RefCell::new(log.source));
             let display = kailua_diag::ConsoleReport::new(source);
             for (kind, span, msg) in log.collected {
