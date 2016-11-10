@@ -6,9 +6,9 @@ use loc::{Unit, Pos, Span, span_from_u32};
 // from the pos/span to a list of overlapping spans associated with arbitrary data.
 #[derive(Clone)]
 pub struct SpanMap<V> {
-    unit: Unit,
+    // SpanMap accepts any source-dependent Unit, but there is at most one Unit in the typical case
+    roots: Vec<(Unit, Option<Box<Node<V>>>)>,
     size: usize,
-    root: Option<Box<Node<V>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -116,20 +116,26 @@ impl<V> Node<V> {
 }
 
 impl<V> SpanMap<V> {
-    pub fn new(unit: Unit) -> SpanMap<V> {
-        assert!(!unit.is_dummy(), "SpanMap needs a non-dummy Unit");
-        SpanMap { unit: unit, size: 0, root: None }
+    pub fn new() -> SpanMap<V> {
+        SpanMap { roots: Vec::new(), size: 0 }
     }
 
     pub fn len(&self) -> usize {
         self.size
     }
 
-    pub fn insert(&mut self, span: Span, value: V) -> bool {
-        assert!(self.unit == span.unit(), "SpanMap::insert only accepts Spans from the same Unit");
-        let low = span.begin().to_usize() as u32;
-        let high = span.end().to_usize() as u32;
+    fn find_node_index(&self, unit: Unit) -> Result<usize, usize> {
+        for (i, &(unit_, _)) in self.roots.iter().enumerate() {
+            match unit.cmp(&unit_) {
+                Ordering::Less => {}
+                Ordering::Equal => return Ok(i),
+                Ordering::Greater => return Err(i),
+            }
+        }
+        Err(self.roots.len())
+    }
 
+    pub fn insert(&mut self, span: Span, value: V) -> bool {
         // to keep a stack of trail nodes to update; won't recurse too much anyway
         fn recur<V>(node: Option<Box<Node<V>>>, low: u32, high: u32,
                     value: V) -> (bool, Box<Node<V>>) {
@@ -155,8 +161,20 @@ impl<V> SpanMap<V> {
             }
         }
 
-        let (created, root) = recur(self.root.take(), low, high, value);
-        self.root = Some(root.balance());
+        let unit = span.unit();
+        let rootptr = match self.find_node_index(unit) {
+            Ok(i) => &mut self.roots[i].1,
+            Err(i) => {
+                self.roots.insert(i, (unit, None));
+                &mut self.roots[i].1
+            }
+        };
+
+        let low = span.begin().to_usize() as u32;
+        let high = span.end().to_usize() as u32;
+
+        let (created, root) = recur(rootptr.take(), low, high, value);
+        *rootptr = Some(root.balance());
         if created {
             self.size += 1;
         }
@@ -164,29 +182,32 @@ impl<V> SpanMap<V> {
     }
 
     pub fn contains<'a>(&'a self, pos: Pos) -> Contains<'a, V> {
-        if self.unit == pos.unit() {
+        let unit = pos.unit();
+        if let Ok(i) = self.find_node_index(unit) {
             let pos = pos.to_usize() as u32;
-            Contains::from_root(self.unit, &self.root, pos)
+            Contains::from_root(unit, &self.roots[i].1, pos)
         } else {
             Contains::new()
         }
     }
 
     pub fn overlaps<'a>(&'a self, span: Span) -> Overlaps<'a, V> {
-        if self.unit == span.unit() {
+        let unit = span.unit();
+        if let Ok(i) = self.find_node_index(unit) {
             let begin = span.begin().to_usize() as u32;
             let end = span.end().to_usize() as u32;
-            Overlaps::from_root(self.unit, &self.root, begin, end)
+            Overlaps::from_root(unit, &self.roots[i].1, begin, end)
         } else {
             Overlaps::new()
         }
     }
 
     pub fn adjacencies<'a>(&'a self, span: Span) -> Adjacencies<'a, V> {
-        if self.unit == span.unit() {
+        let unit = span.unit();
+        if let Ok(i) = self.find_node_index(unit) {
             let begin = span.begin().to_usize() as u32;
             let end = span.end().to_usize() as u32;
-            Adjacencies::from_root(self.unit, &self.root, begin, end)
+            Adjacencies::from_root(unit, &self.roots[i].1, begin, end)
         } else {
             Adjacencies::new()
         }
@@ -202,8 +223,10 @@ impl<V: fmt::Debug> fmt::Debug for SpanMap<V> {
         }
 
         let mut fmt = f.debug_map();
-        if let Some(ref n) = self.root {
-            recur(&mut fmt, n, self.unit);
+        for &(unit, ref root) in &self.roots {
+            if let Some(ref n) = *root {
+                recur(&mut fmt, n, unit);
+            }
         }
         fmt.finish()
     }
@@ -298,7 +321,10 @@ fn test_spanmap() {
     let pos = |pos| loc::pos_from_u32(unit, pos);
     let span = |lo, hi| loc::span_from_u32(unit, lo, hi);
 
-    let mut map = SpanMap::new(unit);
+    let posx = |unit, pos| loc::pos_from_u32(loc::unit_from_u32(unit), pos);
+    let spanx = |unit, lo, hi| loc::span_from_u32(loc::unit_from_u32(unit), lo, hi);
+
+    let mut map = SpanMap::new();
     assert!(map.insert(span(1, 8), 1));
     assert!(map.insert(span(2, 3), 2));
     assert!(map.insert(span(4, 12), 3));
@@ -329,8 +355,7 @@ fn test_spanmap() {
     assert_eq!(sorted!(map.contains(pos(8))), [(span(4, 12), &3)]);
     assert_eq!(sorted!(map.contains(pos(11))), [(span(4, 12), &3)]);
     assert_eq!(sorted!(map.contains(pos(12))), []);
-    // an alien pos/silent is a silent failure here
-    assert_eq!(sorted!(map.contains(loc::pos_from_u32(loc::unit_from_u32(2), 5))), []);
+    assert_eq!(sorted!(map.contains(posx(2, 5))), []);
 
     assert_eq!(sorted!(map.overlaps(span(3, 5))), [(span(1, 8), &1), (span(3, 7), &4),
                                                    (span(4, 6), &6), (span(4, 12), &3)]);
@@ -338,7 +363,7 @@ fn test_spanmap() {
     assert_eq!(sorted!(map.overlaps(span(7, 8))), [(span(1, 8), &1), (span(4, 12), &3)]);
     assert_eq!(sorted!(map.overlaps(span(8, 8))), [(span(4, 12), &3)]);
     assert_eq!(sorted!(map.overlaps(span(12, 14))), []);
-    assert_eq!(sorted!(map.overlaps(loc::span_from_u32(loc::unit_from_u32(2), 3, 5))), []);
+    assert_eq!(sorted!(map.overlaps(spanx(2, 3, 5))), []);
 
     assert_eq!(sorted!(map.adjacencies(span(3, 5))), [(span(1, 8), &1), (span(2, 3), &5),
                                                       (span(3, 7), &4), (span(4, 6), &6),
@@ -349,7 +374,7 @@ fn test_spanmap() {
                                                       (span(4, 12), &3)]);
     assert_eq!(sorted!(map.adjacencies(span(8, 8))), [(span(1, 8), &1), (span(4, 12), &3)]);
     assert_eq!(sorted!(map.adjacencies(span(12, 14))), [(span(4, 12), &3)]);
-    assert_eq!(sorted!(map.adjacencies(loc::span_from_u32(loc::unit_from_u32(2), 3, 5))), []);
+    assert_eq!(sorted!(map.adjacencies(spanx(2, 3, 5))), []);
 
     // we are very sure that the mapping is real-time
     assert!(map.insert(span(8, 12), 7));
@@ -395,5 +420,32 @@ fn test_spanmap() {
                                                       (span(9, 9), &9)]);
     assert_eq!(sorted!(map.adjacencies(span(9, 10))), [(span(4, 12), &3), (span(8, 12), &7),
                                                        (span(9, 9), &9)]);
+
+    // multiple different units can be in the place
+    assert!(map.insert(spanx(2, 3, 7), 10));
+    assert!(map.insert(spanx(3, 2, 3), -3));
+    assert!(!map.insert(spanx(2, 3, 7), -2));
+    assert!(map.insert(spanx(2, 3, 8), -4));
+    assert!(map.insert(spanx(3, 1, 3), -5));
+
+    assert_eq!(sorted!(map.contains(pos(5))), [(span(1, 8), &1), (span(3, 7), &4),
+                                               (span(4, 6), &6), (span(4, 12), &3)]);
+    assert_eq!(sorted!(map.contains(posx(2, 5))), [(spanx(2, 3, 7), &-2), (spanx(2, 3, 8), &-4)]);
+    assert_eq!(sorted!(map.contains(posx(3, 2))), [(spanx(3, 1, 3), &-5), (spanx(3, 2, 3), &-3)]);
+    assert_eq!(sorted!(map.contains(posx(3, 3))), []);
+
+    assert_eq!(sorted!(map.overlaps(span(3, 5))), [(span(1, 8), &1), (span(3, 7), &4),
+                                                   (span(4, 6), &6), (span(4, 12), &3)]);
+    assert_eq!(sorted!(map.overlaps(spanx(2, 3, 5))), [(spanx(2, 3, 7), &-2),
+                                                       (spanx(2, 3, 8), &-4)]);
+    assert_eq!(sorted!(map.overlaps(spanx(3, 3, 5))), []);
+
+    assert_eq!(sorted!(map.adjacencies(span(3, 5))), [(span(1, 8), &1), (span(2, 3), &5),
+                                                      (span(3, 7), &4), (span(4, 6), &6),
+                                                      (span(4, 12), &3), (span(5, 5), &8)]);
+    assert_eq!(sorted!(map.adjacencies(spanx(2, 3, 5))), [(spanx(2, 3, 7), &-2),
+                                                          (spanx(2, 3, 8), &-4)]);
+    assert_eq!(sorted!(map.adjacencies(spanx(3, 3, 5))), [(spanx(3, 1, 3), &-5),
+                                                          (spanx(3, 2, 3), &-3)]);
 }
 

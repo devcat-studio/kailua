@@ -26,24 +26,24 @@ pub enum Id {
 }
 
 impl Id {
-    pub fn from(map_index: usize, nameref: NameRef) -> Id {
+    pub fn from(chunk_id: usize, nameref: NameRef) -> Id {
         match nameref {
-            NameRef::Local(scoped_id) => Id::Local(map_index, scoped_id),
+            NameRef::Local(scoped_id) => Id::Local(chunk_id, scoped_id),
             NameRef::Global(name) => Id::Global(name),
         }
     }
 
     pub fn name<'a>(&'a self, ctx: &'a Context) -> &'a Name {
         match *self {
-            Id::Local(map_index, ref scoped_id) => scoped_id.name(&ctx.scope_maps[map_index]),
+            Id::Local(chunk_id, ref scoped_id) => scoped_id.name(&ctx.chunks[chunk_id].scope_map),
             Id::Global(ref name) => name,
         }
     }
 
     pub fn scope(&self, ctx: &Context) -> Option<kailua_env::Scope> {
         match *self {
-            Id::Local(map_index, ref scoped_id) =>
-                Some(scoped_id.scope(&ctx.scope_maps[map_index])),
+            Id::Local(chunk_id, ref scoped_id) =>
+                Some(scoped_id.scope(&ctx.chunks[chunk_id].scope_map)),
             Id::Global(_) => None,
         }
     }
@@ -69,11 +69,11 @@ pub struct IdDisplay<'a> {
 impl<'a> fmt::Display for IdDisplay<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self.id {
-            Id::Local(map_index, ref scoped_id) => {
-                let (name, scope) = self.ctx.scope_maps[map_index].find_id(scoped_id);
+            Id::Local(chunk_id, ref scoped_id) => {
+                let (name, scope) = self.ctx.chunks[chunk_id].scope_map.find_id(scoped_id);
                 try!(write!(f, "{:?}$", name));
                 { // bijective numeral: a b c d .. z aa ab .. az ba .. zz aaa ..
-                    let mut index = map_index;
+                    let mut index = chunk_id;
                     let mut mult = 26;
                     let mut len = 1;
                     while index < mult {
@@ -469,22 +469,41 @@ enum LoadStatus {
     Ongoing(Span), // span for who to blame
 }
 
+struct ChunkInfo {
+    // used to interpret Id::Local
+    scope_map: ScopeMap<Name>,
+}
+
 // global context (also acts as a type context).
 // anything has to be retained across multiple files should be here
 pub struct Context {
     report: Rc<Report>,
+
+    // name and per-chunk information
     ids: HashMap<Id, NameDef>,
-    scope_maps: Vec<ScopeMap<Name>>, // used to interpret Id::Local
+    chunks: Vec<ChunkInfo>,
+
+    // TODO this might be eventually found useless
     global_scope: Scope,
+
+    // type variable information
     next_tvar: Cell<TVar>,
     tvar_sub: Constraints, // upper bound
     tvar_sup: Constraints, // lower bound
     tvar_eq: Constraints, // tight bound
+
+    // mark information
     next_mark: Cell<Mark>,
     mark_infos: Partitions<Box<MarkInfo>>,
+
+    // module information
     opened: HashSet<String>,
     loaded: HashMap<Vec<u8>, LoadStatus>, // corresponds to `package.loaded`
+
+    // runtime information
     string_meta: Option<Spanned<Slot>>,
+
+    // classes defined
     classes: Vec<ClassDef>,
 }
 
@@ -493,7 +512,7 @@ impl Context {
         let mut ctx = Context {
             report: report,
             ids: HashMap::new(),
-            scope_maps: Vec::new(),
+            chunks: Vec::new(),
             global_scope: Scope::new(),
             next_tvar: Cell::new(TVar(1)), // TVar(0) for the top-level return
             tvar_sub: Constraints::new("<:"),
@@ -1045,20 +1064,22 @@ impl TypeContext for Context {
 pub struct Env<'ctx> {
     context: &'ctx mut Context,
     opts: Rc<RefCell<Options>>,
-    map_index: usize,
+    chunk_id: usize,
     scopes: Vec<Scope>,
 }
 
 impl<'ctx> Env<'ctx> {
     pub fn new(context: &'ctx mut Context, opts: Rc<RefCell<Options>>,
                map: ScopeMap<Name>) -> Env<'ctx> {
-        let map_index = context.scope_maps.len();
-        context.scope_maps.push(map);
+        let chunk_id = context.chunks.len();
+        context.chunks.push(ChunkInfo {
+            scope_map: map,
+        });
         let global_frame = Frame { vararg: None, returns: None, returns_exact: false };
         Env {
             context: context,
             opts: opts,
-            map_index: map_index,
+            chunk_id: chunk_id,
             // we have local variables even at the global position, so we need at least one Scope
             scopes: vec![Scope::new_function(global_frame)],
         }
@@ -1080,7 +1101,7 @@ impl<'ctx> Env<'ctx> {
     }
 
     pub fn id_from_nameref(&self, nameref: &Spanned<NameRef>) -> Spanned<Id> {
-        Id::from(self.map_index, nameref.base.clone()).with_loc(nameref)
+        Id::from(self.chunk_id, nameref.base.clone()).with_loc(nameref)
     }
 
     pub fn enter(&mut self, scope: Scope) {
@@ -1179,17 +1200,17 @@ impl<'ctx> Env<'ctx> {
     pub fn get_name<'a>(&'a self, nameref: &'a NameRef) -> &'a Name {
         match *nameref {
             NameRef::Local(ref scoped_id) =>
-                scoped_id.name(&self.context.scope_maps[self.map_index]),
+                scoped_id.name(&self.context.chunks[self.chunk_id].scope_map),
             NameRef::Global(ref name) => name,
         }
     }
 
     pub fn get_var<'a>(&'a self, nameref: &NameRef) -> Option<&'a NameDef> {
-        self.context.ids.get(&Id::from(self.map_index, nameref.clone()))
+        self.context.ids.get(&Id::from(self.chunk_id, nameref.clone()))
     }
 
     pub fn get_var_mut<'a>(&'a mut self, nameref: &NameRef) -> Option<&'a mut NameDef> {
-        self.context.ids.get_mut(&Id::from(self.map_index, nameref.clone()))
+        self.context.ids.get_mut(&Id::from(self.chunk_id, nameref.clone()))
     }
 
     pub fn get_frame<'a>(&'a self) -> &'a Frame {
@@ -1422,7 +1443,7 @@ impl<'ctx> Env<'ctx> {
 
     pub fn add_local_var_already_set(&mut self, scoped_id: &Spanned<ScopedId>,
                                      info: Spanned<Slot>) -> CheckResult<()> {
-        let id = Id::Local(self.map_index, scoped_id.base.clone()).with_loc(scoped_id);
+        let id = Id::Local(self.chunk_id, scoped_id.base.clone()).with_loc(scoped_id);
         debug!("adding a local variable {} already set to {:?}", id.display(&self.context), info);
 
         // we cannot blindly `accept` the `initinfo`, since it will discard the flexibility
@@ -1479,7 +1500,7 @@ impl<'ctx> Env<'ctx> {
     }
 
     pub fn assume_var(&mut self, name: &Spanned<NameRef>, info: Spanned<Slot>) -> CheckResult<()> {
-        let id = Id::from(self.map_index, name.base.clone());
+        let id = Id::from(self.chunk_id, name.base.clone());
         debug!("(force) adding a variable {} as {:?}", id.display(&self.context), info);
 
         try!(self.assume_special(&info));

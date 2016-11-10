@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
 use std::borrow::Borrow;
 use std::collections::HashMap;
-use loc::{Unit, Pos, Span, Spanned};
+use loc::{Pos, Span, Spanned};
 use spanmap::SpanMap;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -197,7 +197,7 @@ pub struct ScopeMap<Name: Clone + Hash + Eq> {
     ids: Vec<(Name, Scope)>,
 
     // mappings from the location to the scope
-    spans: HashMap<Unit, SpanMap<Scope>>,
+    spans: SpanMap<Scope>,
 }
 
 impl<Name: Clone + Hash + Eq + fmt::Debug> ScopeMap<Name> {
@@ -206,7 +206,7 @@ impl<Name: Clone + Hash + Eq + fmt::Debug> ScopeMap<Name> {
             scopes: vec![ScopeItem::new(0)],
             names: HashMap::new(),
             ids: Vec::new(),
-            spans: HashMap::new(),
+            spans: SpanMap::new(),
         }
     }
 
@@ -225,14 +225,13 @@ impl<Name: Clone + Hash + Eq + fmt::Debug> ScopeMap<Name> {
 
     pub fn set_span(&mut self, scope: Scope, span: Span) {
         assert!((scope.scope as usize) < self.scopes.len());
-        assert!(!span.is_dummy());
+        assert!(span.is_source_dependent());
 
         let scopespan = &mut self.scopes[scope.scope as usize].span;
         assert!(scopespan.is_dummy(), "scope {:?} has already set the span", scope);
         *scopespan = span;
 
-        let spans = self.spans.entry(span.unit()).or_insert_with(|| SpanMap::new(span.unit()));
-        spans.insert(span, scope);
+        self.spans.insert(span, scope);
     }
 
     pub fn add_name(&mut self, scope: Scope, name: Name) -> ScopedId {
@@ -328,14 +327,10 @@ impl<Name: Clone + Hash + Eq + fmt::Debug> ScopeMap<Name> {
     }
 
     pub fn scope_from_pos(&self, pos: Pos) -> Option<Scope> {
-        if let Some(spans) = self.spans.get(&pos.unit()) {
-            // there might be multiple scopes intersecting pos;
-            // prefer (one of) the innermost scopes by using the later-defined scope.
-            // (multiple innermost scopes are possible, but probably impossible in the parser)
-            spans.adjacencies(Span::new(pos, pos)).map(|(_, &scope)| scope).max()
-        } else {
-            None
-        }
+        // there might be multiple scopes intersecting pos;
+        // prefer (one of) the innermost scopes by using the later-defined scope.
+        // (multiple innermost scopes are possible, but probably impossible in the parser)
+        self.spans.adjacencies(Span::new(pos, pos)).map(|(_, &scope)| scope).max()
     }
 }
 
