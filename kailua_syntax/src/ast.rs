@@ -307,7 +307,7 @@ impl fmt::Debug for Ex {
                 fmt::Debug::fmt(&args.span, f)
             },
             Ex::MethodCall(ref e, ref n, ref args) => {
-                try!(write!(f, "{:?}{:?}(", *e, *n));
+                try!(write!(f, "{:?}:{:?}(", e, n));
                 let mut first = true;
                 for arg in &args.base {
                     if first { first = false; } else { try!(write!(f, ", ")); }

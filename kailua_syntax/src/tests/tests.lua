@@ -385,6 +385,24 @@ f{a=a; a;}
 f{a=a; a();}
 --! [Void(`f`_(Table([(Some("a"), `a`_), (None, `a`_())])))]
 
+--8<-- funccall-index
+f.a()
+--! [Void(`f`_["a"]())]
+
+--8<-- methodcall
+f:a(1)
+--! [Void(`f`_:`a`(1))]
+
+--8<-- methodcall-index
+f.a:b(1, 2)
+--! [Void(`f`_["a"]:`b`(1, 2))]
+
+--8<-- desugared-call
+a = r"string":sub(3)
+a = r{a=4}.a
+--! [Assign([`a`_], [`r`_("string"):`sub`(3)]), \
+--!  Assign([`a`_], [`r`_(Table([(Some("a"), 4)]))["a"]])]
+
 --8<-- comment-bracket-1
 --[a]
 do end--]]

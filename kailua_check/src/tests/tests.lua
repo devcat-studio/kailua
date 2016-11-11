@@ -1668,10 +1668,20 @@ p, p, p = 42, 54, 63 --: integer, integer, integer
 --@^^ Error: Cannot redefine the type of a variable `p`
 --! error
 
+--8<-- redefine-global-func
+function p() end
+function p() end --@< Error: Cannot redefine the type of a variable `p`
+--! error
+
 --8<-- redefine-local
 local p = 42 --: integer
 local p = 54 --: integer
 local p = 'string' --: string
+--! ok
+
+--8<-- redefine-local-func
+local function p() end
+local function p() end
 --! ok
 
 --8<-- unknown-attr
@@ -2111,6 +2121,21 @@ end
 --v function(self: string) --> string
 function string:trim()
     return self:gsub('^%s+', ''):gsub('%s+$', '')
+end
+--! ok
+
+--8<-- local-func-without-sibling-scope-1
+local r
+function r(p)
+end
+--! ok
+
+--8<-- local-func-without-sibling-scope-2
+local r
+do
+    local s
+    function r(p)
+    end
 end
 --! ok
 

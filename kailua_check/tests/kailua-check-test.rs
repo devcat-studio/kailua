@@ -8,6 +8,7 @@ extern crate kailua_syntax;
 extern crate kailua_check;
 
 use std::str;
+use std::usize;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::collections::HashMap;
@@ -74,7 +75,8 @@ impl kailua_test::Testing for Testing {
         if self.note_spanned_infos {
             let mut slots: Vec<_> = context.spanned_slots().iter().collect();
             slots.sort_by_key(|slot| {
-                (slot.span.unit(), slot.span.begin().to_usize(), slot.span.end().to_usize())
+                (slot.span.unit(), slot.span.end().to_usize(),
+                 usize::MAX - slot.span.begin().to_usize())
             });
             for slot in slots {
                 let msg = format!("slot: {}", slot.display(&context));

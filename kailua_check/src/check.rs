@@ -955,11 +955,19 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
             }
 
-            St::FuncDecl(ref name, ref sig, _blockscope, ref block, _nextscope) => {
+            St::FuncDecl(ref name, ref sig, _blockscope, ref block, nextscope) => {
                 // `name` itself is available to the inner scope
                 let funcv = self.context().gen_tvar();
                 let info = Slot::just(T::TVar(funcv)).with_loc(stmt);
-                try!(self.env.add_var(name, None, Some(info)));
+                if let (&NameRef::Local(..), None) = (&name.base, nextscope) {
+                    // this is very rare but valid case where the local variable is
+                    // overwritten by a local function decl (so the NameRef is local
+                    // but there is no new sibling scope). it's equivalent to assignment.
+                    try!(self.env.assign_to_var(name, info));
+                } else {
+                    // otherwise it is a new variable.
+                    try!(self.env.add_var(name, None, Some(info)));
+                }
                 let functy = try!(self.visit_func_body(None, sig, block, stmt.span));
                 try!(T::TVar(funcv).assert_eq(&*functy.unlift(), self.context()));
                 Ok(Exit::None)
