@@ -129,9 +129,9 @@ impl SourceFile {
     }
 
     pub fn from_file(path: &Path) -> io::Result<SourceFile> {
-        let mut f = try!(fs::File::open(path));
+        let mut f = fs::File::open(path)?;
         let mut data = Vec::new();
-        try!(f.read_to_end(&mut data));
+        f.read_to_end(&mut data)?;
         drop(f);
 
         Ok(SourceFile::from_u8(path.display().to_string(), data))

@@ -80,7 +80,7 @@ impl F {
                 // fit with the deterministic typing framework.
                 // since weaken is only called when the upvalue is required,
                 // it is safe to assume that m should be true.
-                try!(m.assert_true(ctx));
+                m.assert_true(ctx)?;
                 Ok(F::VarOrConst(ctx.gen_mark()))
             },
         }
@@ -156,7 +156,7 @@ impl<'a> S<'a> {
     }
 
     pub fn weaken<'b: 'a>(&'b self, ctx: &mut TypeContext) -> CheckResult<S<'b>> {
-        Ok(S { flex: try!(self.flex.weaken(ctx)), ty: self.ty.to_ref() })
+        Ok(S { flex: self.flex.weaken(ctx)?, ty: self.ty.to_ref() })
     }
 
     // used for value slots in array and mapping types
@@ -225,15 +225,15 @@ impl<'a> S<'a> {
              $(; eq, $em1:expr, $em2:expr)*
              $(; imply, $im1:expr, $im2:expr)*
              $(; require_eq, $rm:expr)*) => ({
-                $(try!($tm.assert_true(ctx));)*
-                $(try!($fm.assert_false(ctx));)*
-                $(try!($em1.assert_eq($em2, ctx));)*
-                $(try!($im1.assert_imply($im2, ctx));)*
-                $(try!($rm.assert_require_eq(&other.ty, &self.ty, ctx));)*
+                $($tm.assert_true(ctx)?;)*
+                $($fm.assert_false(ctx)?;)*
+                $($em1.assert_eq($em2, ctx)?;)*
+                $($im1.assert_imply($im2, ctx)?;)*
+                $($rm.assert_require_eq(&other.ty, &self.ty, ctx)?;)*
             });
 
-            (a <: b $($t:tt)*) => ({ try!(self.ty.assert_sub(&other.ty, ctx)); m!($($t)*) });
-            (a = b $($t:tt)*) => ({ try!(self.ty.assert_eq(&other.ty, ctx)); m!($($t)*) });
+            (a <: b $($t:tt)*) => ({ self.ty.assert_sub(&other.ty, ctx)?; m!($($t)*) });
+            (a = b $($t:tt)*) => ({ self.ty.assert_eq(&other.ty, ctx)?; m!($($t)*) });
         }
 
         match (self.flex, other.flex) {
@@ -282,12 +282,12 @@ impl<'a> S<'a> {
             ($(; true, $tm:expr)*
              $(; false, $fm:expr)*
              $(; eq, $em1:expr, $em2:expr)*) => ({
-                $(try!($tm.assert_true(ctx));)*
-                $(try!($fm.assert_false(ctx));)*
-                $(try!($em1.assert_eq($em2, ctx));)*
+                $($tm.assert_true(ctx)?;)*
+                $($fm.assert_false(ctx)?;)*
+                $($em1.assert_eq($em2, ctx)?;)*
             });
 
-            (a = b $($t:tt)*) => ({ try!(self.ty.assert_eq(&other.ty, ctx)); m!($($t)*) });
+            (a = b $($t:tt)*) => ({ self.ty.assert_eq(&other.ty, ctx)?; m!($($t)*) });
         }
 
         match (self.flex, other.flex) {
@@ -407,12 +407,12 @@ impl Slot {
 
             // as long as the type is in agreement, Var can be assigned
             (F::Var, _, _) => {
-                try!(rhs.ty.assert_sub(&lhs.ty, ctx));
+                rhs.ty.assert_sub(&lhs.ty, ctx)?;
             }
 
             // assignment to Const slot is for initialization only
             (F::Const, _, true) => {
-                try!(rhs.ty.assert_sub(&lhs.ty, ctx));
+                rhs.ty.assert_sub(&lhs.ty, ctx)?;
             }
 
             // non-Currently value can be assigned to Currently while changing its type
@@ -428,14 +428,14 @@ impl Slot {
 
             // assigning to VarOrConst asserts the mark and makes it Var
             (F::VarOrConst(m), _, false) => {
-                try!(m.assert_true(ctx));
-                try!(rhs.ty.assert_sub(&lhs.ty, ctx));
+                m.assert_true(ctx)?;
+                rhs.ty.assert_sub(&lhs.ty, ctx)?;
                 lhs.flex = F::Var;
             }
 
             // ...except for the first time
             (F::VarOrConst(_), _, true) => {
-                try!(rhs.ty.assert_sub(&lhs.ty, ctx));
+                rhs.ty.assert_sub(&lhs.ty, ctx)?;
             }
 
             // assigning to VarOrCurrently adds a new equality requirement to the mark
@@ -446,7 +446,7 @@ impl Slot {
                     rhs.flex = F::Var;
                 } else {
                     let m = ctx.gen_mark(); // the prior mark had an incompatible base type
-                    try!(m.assert_require_sup(&lhs.ty, &rhs.ty, ctx));
+                    m.assert_require_sup(&lhs.ty, &rhs.ty, ctx)?;
                     lhs.flex = F::VarOrCurrently(m);
                 }
                 lhs.ty = rhs.ty.clone();
@@ -477,7 +477,7 @@ impl Slot {
 
             // it cannot be Var
             F::VarOrCurrently(m) => {
-                try!(m.assert_false(ctx));
+                m.assert_false(ctx)?;
             }
         };
 
@@ -486,7 +486,7 @@ impl Slot {
 
     pub fn filter_by_flags(&self, flags: Flags, ctx: &mut TypeContext) -> CheckResult<()> {
         let mut s = self.0.borrow_mut();
-        s.ty = try!(s.ty.clone().into_send().filter_by_flags(flags, ctx));
+        s.ty = s.ty.clone().into_send().filter_by_flags(flags, ctx)?;
         Ok(())
     }
 
@@ -514,7 +514,7 @@ impl Slot {
 
     pub fn weaken(&self, ctx: &mut TypeContext) -> CheckResult<Slot> {
         let s = self.0.borrow();
-        Ok(Slot::from(try!(s.weaken(ctx))))
+        Ok(Slot::from(s.weaken(ctx)?))
     }
 }
 
@@ -552,9 +552,9 @@ impl<'a> Lattice<T<'a>> for Spanned<Slot> {
     fn assert_sub(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
         let unlifted = self.unlift();
         if let Err(e) = unlifted.assert_sub(other, ctx) {
-            try!(ctx.error(self.span, m::NotSubtype { sub: unlifted.display(ctx),
-                                                      sup: other.display(ctx) })
-                    .done());
+            ctx.error(self.span, m::NotSubtype { sub: unlifted.display(ctx),
+                                                 sup: other.display(ctx) })
+               .done()?;
             Err(e) // XXX not sure if we can recover here
         } else {
             Ok(())
@@ -564,9 +564,9 @@ impl<'a> Lattice<T<'a>> for Spanned<Slot> {
     fn assert_eq(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
         let unlifted = self.unlift();
         if let Err(e) = unlifted.assert_eq(other, ctx) {
-            try!(ctx.error(self.span, m::NotEqual { lhs: unlifted.display(ctx),
-                                                    rhs: other.display(ctx) })
-                    .done());
+            ctx.error(self.span, m::NotEqual { lhs: unlifted.display(ctx),
+                                               rhs: other.display(ctx) })
+               .done()?;
             Err(e) // XXX not sure if we can recover here
         } else {
             Ok(())

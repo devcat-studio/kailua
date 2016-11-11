@@ -57,7 +57,7 @@ impl Unioned {
         match self.numbers {
             None => {}
             Some(Numbers::All) => { flags.insert(T_NUMBER); }
-            Some(_)  => { flags.insert(T_INTEGER); }
+            Some(_)            => { flags.insert(T_INTEGER); }
         }
         if self.strings.is_some()   { flags.insert(T_STRING); }
         if self.tables.is_some()    { flags.insert(T_TABLE); }
@@ -68,20 +68,20 @@ impl Unioned {
 
     pub fn visit<'a, E, F>(&'a self, mut f: F) -> Result<(), E>
             where F: FnMut(T<'a>) -> Result<(), E> {
-        if self.simple.contains(U_NIL) { try!(f(T::Nil)); }
+        if self.simple.contains(U_NIL) { f(T::Nil)?; }
         if self.simple.contains(U_TRUE) {
-            if self.simple.contains(U_FALSE) { try!(f(T::Boolean)); } else { try!(f(T::True)); }
+            if self.simple.contains(U_FALSE) { f(T::Boolean)?; } else { f(T::True)?; }
         } else if self.simple.contains(U_FALSE) {
-            try!(f(T::False));
+            f(T::False)?;
         }
-        if self.simple.contains(U_THREAD) { try!(f(T::Thread)); }
-        if self.simple.contains(U_USERDATA) { try!(f(T::UserData)); }
-        if let Some(ref num) = self.numbers { try!(f(T::Numbers(Cow::Borrowed(num)))) }
-        if let Some(ref str) = self.strings { try!(f(T::Strings(Cow::Borrowed(str)))) }
-        if let Some(ref tab) = self.tables { try!(f(T::Tables(Cow::Borrowed(tab)))) }
-        if let Some(ref func) = self.functions { try!(f(T::Functions(Cow::Borrowed(func)))) }
-        for &c in &self.classes { try!(f(T::Class(c))) }
-        if let Some(tvar) = self.tvar { try!(f(T::TVar(tvar))) }
+        if self.simple.contains(U_THREAD) { f(T::Thread)?; }
+        if self.simple.contains(U_USERDATA) { f(T::UserData)?; }
+        if let Some(ref num) = self.numbers { f(T::Numbers(Cow::Borrowed(num)))? }
+        if let Some(ref str) = self.strings { f(T::Strings(Cow::Borrowed(str)))? }
+        if let Some(ref tab) = self.tables { f(T::Tables(Cow::Borrowed(tab)))? }
+        if let Some(ref func) = self.functions { f(T::Functions(Cow::Borrowed(func)))? }
+        for &c in &self.classes { f(T::Class(c))? }
+        if let Some(tvar) = self.tvar { f(T::TVar(tvar))? }
         Ok(())
     }
 
@@ -104,16 +104,16 @@ impl Unioned {
 
     fn fmt_generic<WriteTy>(&self, f: &mut fmt::Formatter, mut write_ty: WriteTy) -> fmt::Result
             where WriteTy: FnMut(&T, &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "("));
+        write!(f, "(")?;
         let mut first = true;
-        try!(self.visit(|ty| {
+        self.visit(|ty| {
             if first {
                 first = false;
             } else {
-                try!(write!(f, "|"));
+                write!(f, "|")?;
             }
             write_ty(&ty, f)
-        }));
+        })?;
         write!(f, ")")
     }
 }
@@ -147,8 +147,8 @@ impl Lattice for Unioned {
             return error_not_sub(self, other);
         }
 
-        try!(self.numbers.assert_sub(&other.numbers, &mut NoTypeContext));
-        try!(self.strings.assert_sub(&other.strings, &mut NoTypeContext));
+        self.numbers.assert_sub(&other.numbers, &mut NoTypeContext)?;
+        self.strings.assert_sub(&other.strings, &mut NoTypeContext)?;
 
         // XXX err on unions with possible overlapping instantiation for now
         let count = if self.tables.is_some() { 1 } else { 0 } +
@@ -161,8 +161,8 @@ impl Lattice for Unioned {
                     if other.tvar.is_some() { 1 } else { 0 };
         if count > 1 { return error_not_sub(self, other); }
 
-        try!(self.tables.assert_sub(&other.tables, ctx));
-        try!(self.functions.assert_sub(&other.functions, ctx));
+        self.tables.assert_sub(&other.tables, ctx)?;
+        self.functions.assert_sub(&other.functions, ctx)?;
 
         if !self.classes.is_subset(&other.classes) {
             return error_not_sub(self, other);
@@ -195,10 +195,10 @@ impl Lattice for Unioned {
             return error_not_eq(self, other);
         }
 
-        try!(self.numbers.assert_eq(&other.numbers, &mut NoTypeContext));
-        try!(self.strings.assert_eq(&other.strings, &mut NoTypeContext));
-        try!(self.tables.assert_eq(&other.tables, ctx));
-        try!(self.functions.assert_eq(&other.functions, ctx));
+        self.numbers.assert_eq(&other.numbers, &mut NoTypeContext)?;
+        self.strings.assert_eq(&other.strings, &mut NoTypeContext)?;
+        self.tables.assert_eq(&other.tables, ctx)?;
+        self.functions.assert_eq(&other.functions, ctx)?;
 
         if self.classes != other.classes {
             return error_not_eq(self, other);

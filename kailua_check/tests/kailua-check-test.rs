@@ -57,10 +57,10 @@ impl kailua_test::Testing for Testing {
 
         impl Options for Opts {
             fn require_chunk(&mut self, path: &[u8]) -> CheckResult<Chunk> {
-                let path = try!(str::from_utf8(path).map_err(|_| format!("bad require name")));
-                let span = *try!(self.filespans.get(path).ok_or_else(|| format!("no such module")));
-                let chunk = try!(parse_chunk(&self.source.borrow(), span, &*self.report)
-                                     .map_err(|_| format!("parse error")));
+                let path = str::from_utf8(path).map_err(|_| format!("bad require name"))?;
+                let span = *self.filespans.get(path).ok_or_else(|| format!("no such module"))?;
+                let chunk = parse_chunk(&self.source.borrow(), span, &*self.report)
+                                     .map_err(|_| format!("parse error"))?;
                 Ok(chunk)
             }
         }

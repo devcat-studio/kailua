@@ -128,7 +128,7 @@ fn split_line<'a>(s: &'a str, file: Option<&'a str>,
             if s.starts_with("<") {
                 Ok(lineno)
             } else if s.starts_with("^") {
-                let lineno = try!(lineno.checked_sub(s.len()).ok_or_else(|| err()));
+                let lineno = lineno.checked_sub(s.len()).ok_or_else(|| err())?;
                 if lineno == 0 { return Err(err()); }
                 Ok(lineno)
             } else if s.starts_with("v") {
@@ -139,9 +139,9 @@ fn split_line<'a>(s: &'a str, file: Option<&'a str>,
         };
 
         let pos = if let Some(line1) = m.name("line1") {
-            let line1 = try!(parse_lineno(line1));
+            let line1 = parse_lineno(line1)?;
             let line2 = if let Some(line2) = m.name("line2") {
-                try!(parse_lineno(line2))
+                parse_lineno(line2)?
             } else {
                 line1
             };
@@ -151,7 +151,7 @@ fn split_line<'a>(s: &'a str, file: Option<&'a str>,
             None
         };
         let pos = pos.map(|(s,e)| (file.map(|f| f.into()), s, e));
-        let kind = try!(kind_from_str(m.name("kind").unwrap()).ok_or_else(|| err()));
+        let kind = kind_from_str(m.name("kind").unwrap()).ok_or_else(|| err())?;
         let msg = m.name("msg").unwrap().trim();
         Ok((line, Some(Expected { pos: pos, kind: kind, msg: msg.into() })))
     } else if s.contains("--@") {
@@ -252,7 +252,7 @@ pub struct Test {
 }
 
 fn extract_tests(path: &Path) -> Result<Vec<Test>, TestError> {
-    let f = try!(File::open(path).map_err(Box::new));
+    let f = File::open(path).map_err(Box::new)?;
     let f = BufReader::new(f);
 
     let mut tests = Vec::new();
@@ -283,7 +283,7 @@ fn extract_tests(path: &Path) -> Result<Vec<Test>, TestError> {
 
     let mut next_lineno = 1;
     for (lineno, line) in f.lines().enumerate() {
-        let line = try!(line.map_err(Box::new));
+        let line = line.map_err(Box::new)?;
         let lineno = lineno + 1;
         next_lineno = lineno + 1;
 
@@ -317,7 +317,7 @@ fn extract_tests(path: &Path) -> Result<Vec<Test>, TestError> {
         // `--! output` specifies the desired output
         // `--! output \` is same, but the trailing \ and the subsequent newline is stripped
         if let Some(pos) = line.find("--!") {
-            let test = try!(test.as_mut().ok_or_else(|| premature_err()));
+            let test = test.as_mut().ok_or_else(|| premature_err())?;
 
             let mut next = line[pos+3..].trim_left();
             let mut next_cont = false;
@@ -343,7 +343,7 @@ fn extract_tests(path: &Path) -> Result<Vec<Test>, TestError> {
 
         // `--& filename` specifies an additional input file
         if line.starts_with("--&") {
-            let test = try!(test.as_mut().ok_or_else(|| premature_err()));
+            let test = test.as_mut().ok_or_else(|| premature_err())?;
 
             let filename = line[3..].trim();
             if filename.is_empty() {
@@ -373,11 +373,11 @@ fn extract_tests(path: &Path) -> Result<Vec<Test>, TestError> {
         }
 
         // otherwise we are looking at `--@` report specs (if any)
-        let (line, spec) = try!(split_line(&line, current_file.as_ref().map(|s| &s[..]),
-                                           current_lines.len() + 1));
+        let (line, spec) = split_line(&line, current_file.as_ref().map(|s| &s[..]),
+                                      current_lines.len() + 1)?;
         current_lines.push(line.to_owned());
         if let Some(spec) = spec {
-            let test = try!(test.as_mut().ok_or_else(|| premature_err()));
+            let test = test.as_mut().ok_or_else(|| premature_err())?;
             test.reports.push(spec.into_send());
         }
     }

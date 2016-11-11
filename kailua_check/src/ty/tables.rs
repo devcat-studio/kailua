@@ -172,13 +172,13 @@ impl Tables {
             Tables::Empty => write!(f, "{{}}"),
 
             Tables::Fields(ref fields) => {
-                try!(write!(f, "{{"));
+                write!(f, "{{")?;
                 let mut first = true;
                 // try consecutive initial integers first
                 let mut nextlen = 1;
                 while let Some(t) = fields.get(&Key::Int(nextlen)) {
-                    if first { first = false; } else { try!(write!(f, ", ")); }
-                    try!(write_slot(t, f));
+                    if first { first = false; } else { write!(f, ", ")?; }
+                    write_slot(t, f)?;
                     if nextlen >= 0x10000 { break; } // too much
                     nextlen += 1;
                 }
@@ -188,27 +188,27 @@ impl Tables {
                         Key::Int(v) if 1 <= v && v < nextlen => break, // strip duplicates
                         _ => {}
                     }
-                    if first { first = false; } else { try!(write!(f, ", ")); }
-                    try!(write!(f, "{} = ", name));
-                    try!(write_slot(t, f));
+                    if first { first = false; } else { write!(f, ", ")?; }
+                    write!(f, "{} = ", name)?;
+                    write_slot(t, f)?;
                 }
-                try!(write!(f, "}}"));
+                write!(f, "}}")?;
                 Ok(())
             }
 
             Tables::Array(ref t) => {
-                try!(write!(f, "vector<"));
-                try!(write_slot(t.as_slot_without_nil(), f));
-                try!(write!(f, ">"));
+                write!(f, "vector<")?;
+                write_slot(t.as_slot_without_nil(), f)?;
+                write!(f, ">")?;
                 Ok(())
             }
 
             Tables::Map(ref k, ref v) => {
-                try!(write!(f, "map<"));
-                try!(write_ty(k, f));
-                try!(write!(f, ", "));
-                try!(write_slot(v.as_slot_without_nil(), f));
-                try!(write!(f, ">"));
+                write!(f, "map<")?;
+                write_ty(k, f)?;
+                write!(f, ", ")?;
+                write_slot(v.as_slot_without_nil(), f)?;
+                write!(f, ">")?;
                 Ok(())
             }
         }
@@ -287,7 +287,7 @@ impl Lattice for Tables {
             (&Tables::Fields(ref a), &Tables::Fields(ref b)) => {
                 for (k, av) in a {
                     if let Some(ref bv) = b.get(k) {
-                        try!(av.assert_sub(*bv, ctx));
+                        av.assert_sub(*bv, ctx)?;
                     } else {
                         return error_not_sub(self, other);
                     }
@@ -297,8 +297,8 @@ impl Lattice for Tables {
 
             (&Tables::Fields(ref fields), &Tables::Map(ref key, ref value)) => {
                 for (k, v) in fields {
-                    try!(k.clone().into_type().assert_sub(&**key, ctx));
-                    try!(v.assert_sub(value.as_slot_without_nil(), ctx));
+                    k.clone().into_type().assert_sub(&**key, ctx)?;
+                    v.assert_sub(value.as_slot_without_nil(), ctx)?;
                 }
                 true
             },
@@ -307,19 +307,19 @@ impl Lattice for Tables {
             (_, &Tables::Fields(..)) => false,
 
             (&Tables::Array(ref value1), &Tables::Array(ref value2)) => {
-                try!(value1.assert_sub(value2, ctx));
+                value1.assert_sub(value2, ctx)?;
                 true
             },
 
             (&Tables::Map(ref key1, ref value1), &Tables::Map(ref key2, ref value2)) => {
-                try!(key1.assert_sub(key2, ctx));
-                try!(value1.assert_sub(value2, ctx));
+                key1.assert_sub(key2, ctx)?;
+                value1.assert_sub(value2, ctx)?;
                 true
             },
 
             (&Tables::Array(ref value1), &Tables::Map(ref key2, ref value2)) => {
-                try!(T::integer().assert_sub(&**key2, ctx));
-                try!(value1.assert_sub(value2, ctx));
+                T::integer().assert_sub(&**key2, ctx)?;
+                value1.assert_sub(value2, ctx)?;
                 true
             },
             (&Tables::Map(..), &Tables::Array(..)) => false,
@@ -334,14 +334,14 @@ impl Lattice for Tables {
             (&Tables::Empty, &Tables::Empty) => true,
             (&Tables::Array(ref a), &Tables::Array(ref b)) => return a.assert_eq(b, ctx),
             (&Tables::Map(ref ak, ref av), &Tables::Map(ref bk, ref bv)) => {
-                try!(ak.assert_eq(bk, ctx));
-                try!(av.assert_eq(bv, ctx));
+                ak.assert_eq(bk, ctx)?;
+                av.assert_eq(bv, ctx)?;
                 true
             }
             (&Tables::Fields(ref a), &Tables::Fields(ref b)) => {
                 for (k, va) in a {
                     if let Some(vb) = b.get(k) {
-                        try!(va.assert_eq(vb, ctx));
+                        va.assert_eq(vb, ctx)?;
                     } else {
                         return error_not_eq(self, other);
                     }

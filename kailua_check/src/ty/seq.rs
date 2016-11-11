@@ -87,11 +87,11 @@ macro_rules! define_tyseq {
             pub fn from_kind_seq(seq: &Seq<Spanned<Kind>>,
                                  resolv: &mut TypeResolver,
                                  $($span: $spanty,)*) -> CheckResult<$tyseq> {
-                let head = try!(seq.head.iter()
-                                        .map(|k| $spanned_kind_to_ty(k, resolv))
-                                        .collect());
+                let head = seq.head.iter()
+                                   .map(|k| $spanned_kind_to_ty(k, resolv))
+                                   .collect::<Result<_,_>>()?;
                 let tail = if let Some(ref k) = seq.tail {
-                    Some($ty_to_tynil(try!($spanned_kind_to_ty(k, resolv))))
+                    Some($ty_to_tynil($spanned_kind_to_ty(k, resolv)?))
                 } else {
                     None
                 };
@@ -149,19 +149,19 @@ macro_rules! define_tyseq {
             fn fmt_generic<WriteTy>(&self, f: &mut fmt::Formatter,
                                     mut write_ty: WriteTy) -> fmt::Result
                     where WriteTy: FnMut(&$unspanned_t, &mut fmt::Formatter) -> fmt::Result {
-                try!(write!(f, "("));
+                write!(f, "(")?;
                 let mut first = true;
                 for t in &self.head {
-                    if first { first = false; } else { try!(write!(f, ", ")); }
-                    try!(write_ty(t, f));
+                    if first { first = false; } else { write!(f, ", ")?; }
+                    write_ty(t, f)?;
                 }
                 if let Some(ref t) = self.tail {
-                    if !first { try!(write!(f, ", ")); }
-                    try!(write_ty(t.as_type_without_nil(), f));
-                    try!(write!(f, "..."));
+                    if !first { write!(f, ", ")?; }
+                    write_ty(t.as_type_without_nil(), f)?;
+                    write!(f, "...")?;
                 }
-                try!(write!(f, ")"));
-                $(try!(fmt::Debug::fmt(&self.$span, f));)*
+                write!(f, ")")?;
+                $(fmt::Debug::fmt(&self.$span, f)?;)*
                 Ok(())
             }
         }
@@ -203,9 +203,9 @@ macro_rules! define_tyseq {
                 let othertail = other.tail_to_type();
                 loop {
                     match (selfhead.next(), otherhead.next()) {
-                        (Some(a), Some(b)) => try!(a.assert_sub(b, ctx)),
-                        (Some(a), None) => try!(a.assert_sub(&othertail, ctx)),
-                        (None, Some(b)) => try!(selftail.assert_sub(b, ctx)),
+                        (Some(a), Some(b)) => a.assert_sub(b, ctx)?,
+                        (Some(a), None) => a.assert_sub(&othertail, ctx)?,
+                        (None, Some(b)) => selftail.assert_sub(b, ctx)?,
                         (None, None) => return selftail.assert_sub(&othertail, ctx),
                     }
                 }
@@ -220,9 +220,9 @@ macro_rules! define_tyseq {
                 let othertail = other.tail_to_type();
                 loop {
                     match (selfhead.next(), otherhead.next()) {
-                        (Some(a), Some(b)) => try!(a.assert_eq(b, ctx)),
-                        (Some(a), None) => try!(a.assert_eq(&othertail, ctx)),
-                        (None, Some(b)) => try!(selftail.assert_eq(b, ctx)),
+                        (Some(a), Some(b)) => a.assert_eq(b, ctx)?,
+                        (Some(a), None) => a.assert_eq(&othertail, ctx)?,
+                        (None, Some(b)) => selftail.assert_eq(b, ctx)?,
                         (None, None) => return selftail.assert_eq(&othertail, ctx),
                     }
                 }
@@ -355,19 +355,19 @@ macro_rules! define_slotseq {
             fn fmt_generic<WriteSlot>(&self, f: &mut fmt::Formatter,
                                       mut write_slot: WriteSlot) -> fmt::Result
                     where WriteSlot: FnMut(&$unspanned_slot, &mut fmt::Formatter) -> fmt::Result {
-                try!(write!(f, "("));
+                write!(f, "(")?;
                 let mut first = true;
                 for t in &self.head {
-                    if first { first = false; } else { try!(write!(f, ", ")); }
-                    try!(write_slot(t, f));
+                    if first { first = false; } else { write!(f, ", ")?; }
+                    write_slot(t, f)?;
                 }
                 if let Some(ref t) = self.tail {
-                    if !first { try!(write!(f, ", ")); }
-                    try!(write_slot(t.as_slot_without_nil(), f));
-                    try!(write!(f, "..."));
+                    if !first { write!(f, ", ")?; }
+                    write_slot(t.as_slot_without_nil(), f)?;
+                    write!(f, "...")?;
                 }
-                try!(write!(f, ")"));
-                $(try!(fmt::Debug::fmt(&self.$span, f));)*
+                write!(f, ")")?;
+                $(fmt::Debug::fmt(&self.$span, f)?;)*
                 Ok(())
             }
         }
@@ -410,9 +410,9 @@ macro_rules! define_slotseq {
                 let othertail = other.tail_to_slot();
                 loop {
                     match (selfhead.next(), otherhead.next()) {
-                        (Some(a), Some(b)) => try!(a.assert_sub(b, ctx)),
-                        (Some(a), None) => try!(a.assert_sub(&othertail, ctx)),
-                        (None, Some(b)) => try!(selftail.assert_sub(b, ctx)),
+                        (Some(a), Some(b)) => a.assert_sub(b, ctx)?,
+                        (Some(a), None) => a.assert_sub(&othertail, ctx)?,
+                        (None, Some(b)) => selftail.assert_sub(b, ctx)?,
                         (None, None) => return selftail.assert_sub(&othertail, ctx),
                     }
                 }
@@ -427,9 +427,9 @@ macro_rules! define_slotseq {
                 let othertail = other.tail_to_slot();
                 loop {
                     match (selfhead.next(), otherhead.next()) {
-                        (Some(a), Some(b)) => try!(a.assert_eq(b, ctx)),
-                        (Some(a), None) => try!(a.assert_eq(&othertail, ctx)),
-                        (None, Some(b)) => try!(selftail.assert_eq(b, ctx)),
+                        (Some(a), Some(b)) => a.assert_eq(b, ctx)?,
+                        (Some(a), None) => a.assert_eq(&othertail, ctx)?,
+                        (None, Some(b)) => selftail.assert_eq(b, ctx)?,
                         (None, None) => return selftail.assert_eq(&othertail, ctx),
                     }
                 }

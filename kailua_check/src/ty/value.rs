@@ -72,7 +72,7 @@ impl<'a> T<'a> {
     pub fn from(kind: &K, resolv: &mut TypeResolver) -> CheckResult<T<'a>> {
         let slot_from_slotkind = |slotkind: &SlotKind,
                                   resolv: &mut TypeResolver| -> CheckResult<Slot> {
-            let ty = try!(T::from(&slotkind.kind.base, resolv));
+            let ty = T::from(&slotkind.kind.base, resolv)?;
             let flex = F::from(slotkind.modf);
             Ok(Slot::new(flex, ty))
         };
@@ -95,14 +95,14 @@ impl<'a> T<'a> {
             K::Thread            => Ok(T::Thread),
             K::UserData          => Ok(T::UserData),
             K::Named(ref name)   => resolv.ty_from_name(name),
-            K::WithNil(ref k)    => Ok(try!(T::from(k, resolv)) | T::Nil), // XXX for now
-            K::WithoutNil(ref k) => Ok(try!(T::from(k, resolv))), // XXX for now
+            K::WithNil(ref k)    => Ok(T::from(k, resolv)? | T::Nil), // XXX for now
+            K::WithoutNil(ref k) => Ok(T::from(k, resolv)?), // XXX for now
             K::Error(..)         => Err(format!("error type not yet supported in checker")),
 
             K::Record(ref fields) => {
                 let mut newfields = BTreeMap::new();
                 for &(ref name, ref slotkind) in fields {
-                    let slot = try!(slot_from_slotkind(&slotkind.base, resolv));
+                    let slot = slot_from_slotkind(&slotkind.base, resolv)?;
                     newfields.insert(name.base.clone().into(), slot);
                 }
                 Ok(T::Tables(Cow::Owned(Tables::Fields(newfields))))
@@ -112,42 +112,42 @@ impl<'a> T<'a> {
                 let mut newfields = BTreeMap::new();
                 for (i, slotkind) in fields.iter().enumerate() {
                     let key = Key::Int(i as i32 + 1);
-                    let slot = try!(slot_from_slotkind(slotkind, resolv));
+                    let slot = slot_from_slotkind(slotkind, resolv)?;
                     newfields.insert(key, slot);
                 }
                 Ok(T::Tables(Cow::Owned(Tables::Fields(newfields))))
             },
 
             K::Array(ref v) => {
-                let slot = SlotWithNil::from_slot(try!(slot_from_slotkind(v, resolv)));
+                let slot = SlotWithNil::from_slot(slot_from_slotkind(v, resolv)?);
                 Ok(T::Tables(Cow::Owned(Tables::Array(slot))))
             },
 
             K::Map(ref k, ref v) => {
-                let slot = SlotWithNil::from_slot(try!(slot_from_slotkind(v, resolv)));
-                Ok(T::Tables(Cow::Owned(Tables::Map(Box::new(try!(T::from(k, resolv))), slot))))
+                let slot = SlotWithNil::from_slot(slot_from_slotkind(v, resolv)?);
+                Ok(T::Tables(Cow::Owned(Tables::Map(Box::new(T::from(k, resolv)?), slot))))
             },
 
             K::Func(ref func) => {
                 let func = Function {
-                    args: try!(TySeq::from_kind_seq(&func.args, resolv)),
-                    returns: try!(TySeq::from_kind_seq(&func.returns, resolv)),
+                    args: TySeq::from_kind_seq(&func.args, resolv)?,
+                    returns: TySeq::from_kind_seq(&func.returns, resolv)?,
                 };
                 Ok(T::Functions(Cow::Owned(Functions::Simple(func))))
             }
 
             K::Union(ref kinds) => {
                 assert!(!kinds.is_empty());
-                let mut ty = try!(T::from(&kinds[0], resolv));
+                let mut ty = T::from(&kinds[0], resolv)?;
                 for kind in &kinds[1..] {
-                    ty = ty | try!(T::from(kind, resolv));
+                    ty = ty | T::from(kind, resolv)?;
                 }
                 Ok(ty)
             }
 
             K::Attr(ref kind, ref attr) => {
-                if let Some(builtin) = try!(Builtin::from(attr, resolv)) {
-                    Ok(T::Builtin(builtin, Box::new(try!(T::from(kind, resolv)))))
+                if let Some(builtin) = Builtin::from(attr, resolv)? {
+                    Ok(T::Builtin(builtin, Box::new(T::from(kind, resolv)?)))
                 } else {
                     T::from(kind, resolv) // `Builtin::from` has already reported the error
                 }
@@ -411,8 +411,8 @@ impl<'a> T<'a> {
 
             // make a type variable i such that i <: ubound and i <: tvar
             let i = ctx.gen_tvar();
-            try!(ctx.assert_tvar_sub_tvar(i, tvar));
-            try!(ctx.assert_tvar_sub(i, &ubound));
+            ctx.assert_tvar_sub_tvar(i, tvar)?;
+            ctx.assert_tvar_sub(i, &ubound)?;
 
             Ok(i)
         }
@@ -448,16 +448,16 @@ impl<'a> T<'a> {
             T::Class(c)        => Ok(flags_or_none(T_TABLE,    T::Class(c))),
 
             T::TVar(tv) => {
-                Ok(T::TVar(try!(narrow_tvar(tv, flags, ctx))))
+                Ok(T::TVar(narrow_tvar(tv, flags, ctx)?))
             },
             T::Builtin(b, t) => {
-                Ok(T::Builtin(b, Box::new(try!((*t).filter_by_flags(flags, ctx)))))
+                Ok(T::Builtin(b, Box::new((*t).filter_by_flags(flags, ctx)?)))
             },
             T::Union(mut u) => {
                 // if the union contains a type variable, that type variable should be
                 // also narrowed (and consequently `u` has to be copied).
                 if let Some(tv) = u.tvar {
-                    let tv = try!(narrow_tvar(tv, flags, ctx));
+                    let tv = narrow_tvar(tv, flags, ctx)?;
                     u.to_mut().tvar = Some(tv);
                 }
 

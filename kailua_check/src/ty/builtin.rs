@@ -143,7 +143,7 @@ impl Builtin {
             b"make_class"    => Ok(Some(Builtin::MakeClass)),
 
             _ => {
-                try!(resolv.warn(&attr.name, m::UnknownAttrName { name: &attr.name.base }).done());
+                resolv.warn(&attr.name, m::UnknownAttrName { name: &attr.name.base }).done()?;
                 Ok(None)
             }
         }

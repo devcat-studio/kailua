@@ -303,7 +303,7 @@ impl<'a> Lexer<'a> {
                     f(0b1000_0000 | (c >>  6 & 0x3f) as u8);
                     f(0b1000_0000 | (c       & 0x3f) as u8);
                 } else {
-                    try!(self.report.error(lastpos..self.pos(), m::BadSurrogate {}).done());
+                    self.report.error(lastpos..self.pos(), m::BadSurrogate {}).done()?;
                     // emit U+FEFF
                     f(0xeb);
                     f(0xbb);
@@ -313,7 +313,7 @@ impl<'a> Lexer<'a> {
 
             // low surrogate (invalid at this position)
             0xdc00...0xdfff => {
-                try!(self.report.error(lastpos..self.pos(), m::BadSurrogate {}).done());
+                self.report.error(lastpos..self.pos(), m::BadSurrogate {}).done()?;
                 // emit U+FEFF
                 f(0xeb);
                 f(0xbb);
@@ -362,7 +362,7 @@ impl<'a> Lexer<'a> {
             c => {
                 self.unread(c);
                 if let Some(unclosed_open) = unclosed_open {
-                    try!(self.report.error(begin..self.pos(), unclosed_open).done());
+                    self.report.error(begin..self.pos(), unclosed_open).done()?;
                 }
                 return Ok(false);
             }
@@ -381,9 +381,9 @@ impl<'a> Lexer<'a> {
                             self.unread(c); // may be the start of closing bracket
                         },
                         EOF => {
-                            try!(self.report.error(self.pos(), premature_eof)
-                                            .note(begin, long_bracket_start)
-                                            .done());
+                            self.report.error(self.pos(), premature_eof)
+                                       .note(begin, long_bracket_start)
+                                       .done()?;
                             return Ok(false);
                         }
                     }
@@ -393,17 +393,17 @@ impl<'a> Lexer<'a> {
                     self.unread(c);
 
                     // do not include newlines in the report span, however
-                    try!(self.report.error(begin..lastpos, no_newline_in_meta)
-                                    .note(self.meta_span, m::MetaStart {})
-                                    .done());
+                    self.report.error(begin..lastpos, no_newline_in_meta)
+                               .note(self.meta_span, m::MetaStart {})
+                               .done()?;
                     return Ok(false);
                 },
                 U8(c) => f(c),
-                U16(c) => try!(self.translate_u16(lastpos, c, &mut f)),
+                U16(c) => self.translate_u16(lastpos, c, &mut f)?,
                 EOF => {
-                    try!(self.report.error(self.pos(), premature_eof)
-                                    .note(begin, long_bracket_start)
-                                    .done());
+                    self.report.error(self.pos(), premature_eof)
+                               .note(begin, long_bracket_start)
+                               .done()?;
                     return Ok(false);
                 }
             }
@@ -448,34 +448,33 @@ impl<'a> Lexer<'a> {
                         f(n)
                     },
                     U8(_) | U16(_) => {
-                        try!(self.report.error(lastpos..self.pos(),
-                                               m::UnrecognizedEscapeInString {})
-                                        .done());
+                        self.report.error(lastpos..self.pos(), m::UnrecognizedEscapeInString {})
+                                   .done()?;
                         // skip this character
                     },
                     EOF => {
                         self.unread(EOF); // should translate to Tok::EOF in the caller
-                        try!(self.report.error(self.pos(), m::PrematureEofInString {})
-                                        .note(begin, m::StringStart {})
-                                        .done());
+                        self.report.error(self.pos(), m::PrematureEofInString {})
+                                   .note(begin, m::StringStart {})
+                                   .done()?;
                         break;
                     },
                 },
                 U8(b'\r') | U8(b'\n') => {
-                    try!(self.report.error(self.pos(), m::UnescapedNewlineInString {})
-                                    .note(begin, m::StringStart {})
-                                    .done());
+                    self.report.error(self.pos(), m::UnescapedNewlineInString {})
+                               .note(begin, m::StringStart {})
+                               .done()?;
                     // return without adding a newline, it's more likely that the quote is missing
                     break;
                 },
                 U8(c) if c == quote => break,
                 U8(c) => f(c),
-                U16(c) => try!(self.translate_u16(lastpos, c, &mut f)),
+                U16(c) => self.translate_u16(lastpos, c, &mut f)?,
                 EOF => {
                     self.unread(EOF); // should translate to Tok::EOF in the caller
-                    try!(self.report.error(self.pos(), m::PrematureEofInString {})
-                                    .note(begin, m::StringStart {})
-                                    .done());
+                    self.report.error(self.pos(), m::PrematureEofInString {})
+                               .note(begin, m::StringStart {})
+                               .done()?;
                     break;
                 },
             }
@@ -583,7 +582,7 @@ impl<'a> Lexer<'a> {
                             }
                         }
 
-                        try!(self.report.error(begin..self.pos(), m::InvalidNumber {}).done());
+                        self.report.error(begin..self.pos(), m::InvalidNumber {}).done()?;
                         // continue reading other tokens
                     }
                 }
@@ -591,7 +590,7 @@ impl<'a> Lexer<'a> {
                 // strings
                 U8(q @ b'\'') | U8(q @ b'"') => {
                     let mut s = Vec::new();
-                    try!(self.scan_quoted_string(begin, q, |c| s.push(c)));
+                    self.scan_quoted_string(begin, q, |c| s.push(c))?;
                     return tok!(Str(s));
                 }
 
@@ -600,12 +599,13 @@ impl<'a> Lexer<'a> {
                     self.unread(c);
                     if c == U8(b'=') || c == U8(b'[') {
                         let mut s = Vec::new();
-                        try!(self.scan_long_bracket(
-                                begin, |c| s.push(c),
-                                Some(&m::UnclosedOpeningLongString {}),
-                                &m::PrematureEofInLongString {},
-                                &m::LongStringStart {},
-                                &m::NoNewlineInLongStringInMeta {}));
+                        self.scan_long_bracket(
+                            begin, |c| s.push(c),
+                            Some(&m::UnclosedOpeningLongString {}),
+                            &m::PrematureEofInLongString {},
+                            &m::LongStringStart {},
+                            &m::NoNewlineInLongStringInMeta {},
+                        )?;
                         return tok!(Str(s));
                     }
                     return tok!(LBracket);
@@ -618,12 +618,13 @@ impl<'a> Lexer<'a> {
                                 if let Some(c) = self.try(|c| c == U8(b'[') || c == U8(b'=')) {
                                     // long comment
                                     self.unread(c);
-                                    let was_long = try!(self.scan_long_bracket(
-                                            begin, |_| {},
-                                            None,
-                                            &m::PrematureEofInLongComment {},
-                                            &m::LongCommentStart {},
-                                            &m::NoNewlineInLongCommentInMeta {}));
+                                    let was_long = self.scan_long_bracket(
+                                        begin, |_| {},
+                                        None,
+                                        &m::PrematureEofInLongComment {},
+                                        &m::LongCommentStart {},
+                                        &m::NoNewlineInLongCommentInMeta {},
+                                    )?;
                                     if !was_long {
                                         // this turned out to be just a simple short comment
                                         self.scan_while(|c| c != U8(b'\r') && c != U8(b'\n'),
@@ -667,7 +668,7 @@ impl<'a> Lexer<'a> {
                 },
                 U8(b'~') => {
                     if let Some(_) = self.try(|c| c == U8(b'=')) { return tok!(TildeEq); }
-                    try!(self.report.error(begin..self.pos(), m::UnexpectedChar {}).done());
+                    self.report.error(begin..self.pos(), m::UnexpectedChar {}).done()?;
                     // continue reading other tokens
                 },
                 U8(b'<') => {
@@ -697,7 +698,7 @@ impl<'a> Lexer<'a> {
                 // Kailua extensions
                 U8(q @ b'`') if self.meta => {
                     let mut s = Vec::new();
-                    try!(self.scan_quoted_string(begin, q, |c| s.push(c)));
+                    self.scan_quoted_string(begin, q, |c| s.push(c))?;
                     return tok!(Name(s));
                 }
                 U8(b'\r') | U8(b'\n') if self.meta => {
@@ -709,7 +710,7 @@ impl<'a> Lexer<'a> {
                 U8(b'|') if self.meta => return tok!(Pipe),
 
                 U8(_) | U16(_) => {
-                    try!(self.report.error(begin..self.pos(), m::UnexpectedChar {}).done());
+                    self.report.error(begin..self.pos(), m::UnexpectedChar {}).done()?;
                 },
                 EOF => {
                     if self.meta { // the last line should be closed by the (dummy) Newline token

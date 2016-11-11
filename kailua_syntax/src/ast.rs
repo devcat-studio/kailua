@@ -6,12 +6,12 @@ use kailua_env::{Spanned, Scope, ScopedId, ScopeMap};
 fn format_ascii_vec(f: &mut fmt::Formatter, s: &[u8]) -> fmt::Result {
     for &c in s {
         match c {
-            b'\t' => try!(write!(f, "\\t")),
-            b'\n' => try!(write!(f, "\\n")),
-            b'\r' => try!(write!(f, "\\r")),
-            b'"' | b'\'' | b'`' | b'\\' => try!(write!(f, "\\{}", c as char)),
-            b'\x20'...b'\x7e' => try!(write!(f, "{}", c as char)),
-            _ => try!(write!(f, "\\x{:02x}", c)),
+            b'\t' => write!(f, "\\t")?,
+            b'\n' => write!(f, "\\n")?,
+            b'\r' => write!(f, "\\r")?,
+            b'"' | b'\'' | b'`' | b'\\' => write!(f, "\\{}", c as char)?,
+            b'\x20'...b'\x7e' => write!(f, "{}", c as char)?,
+            _ => write!(f, "\\x{:02x}", c)?,
         }
     }
     Ok(())
@@ -45,9 +45,9 @@ impl fmt::Display for Name {
 
 impl fmt::Debug for Name {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if !f.sign_minus() { try!(write!(f, "`")); }
-        try!(format_ascii_vec(f, &self.0));
-        if !f.sign_minus() { try!(write!(f, "`")); }
+        if !f.sign_minus() { write!(f, "`")?; }
+        format_ascii_vec(f, &self.0)?;
+        if !f.sign_minus() { write!(f, "`")?; }
         Ok(())
     }
 }
@@ -80,9 +80,9 @@ impl fmt::Display for Str {
 
 impl fmt::Debug for Str {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if !f.sign_minus() { try!(write!(f, "\"")); }
-        try!(format_ascii_vec(f, &self.0));
-        if !f.sign_minus() { try!(write!(f, "\"")); }
+        if !f.sign_minus() { write!(f, "\"")?; }
+        format_ascii_vec(f, &self.0)?;
+        if !f.sign_minus() { write!(f, "\"")?; }
         Ok(())
     }
 }
@@ -156,17 +156,17 @@ impl<Head, Tail> Seq<Head, Tail> {
 
 impl<Head: fmt::Debug, Tail: fmt::Debug> fmt::Debug for Seq<Head, Tail> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if !f.sign_minus() { try!(write!(f, "[")); }
+        if !f.sign_minus() { write!(f, "[")?; }
         let mut first = true;
         for e in &self.head {
-            if first { first = false; } else { try!(write!(f, ", ")); }
-            try!(write!(f, "{:?}", *e));
+            if first { first = false; } else { write!(f, ", ")?; }
+            write!(f, "{:?}", *e)?;
         }
         if let Some(ref e) = self.tail {
-            if !first { try!(write!(f, ", ")); }
-            try!(write!(f, "{:?}...", *e));
+            if !first { write!(f, ", ")?; }
+            write!(f, "{:?}...", *e)?;
         }
-        if !f.sign_minus() { try!(write!(f, "]")); }
+        if !f.sign_minus() { write!(f, "]")?; }
         Ok(())
     }
 }
@@ -201,7 +201,7 @@ impl<T> TypeSpec<T> {
 
 impl<T: fmt::Debug> fmt::Debug for TypeSpec<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "{:?}", self.base));
+        write!(f, "{:?}", self.base)?;
         match (self.modf, &self.kind) {
             (M::None, &None) => Ok(()),
             (modf, &None) => write!(f, ": {:?}", modf),
@@ -228,32 +228,32 @@ pub struct Sig {
 impl fmt::Debug for Sig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for attr in &self.attrs {
-            try!(write!(f, "{:?} ", attr));
+            write!(f, "{:?} ", attr)?;
         }
-        try!(write!(f, "["));
+        write!(f, "[")?;
         let mut first = true;
         for namespec in &self.args.head {
-            if first { first = false; } else { try!(write!(f, ", ")); }
-            try!(write!(f, "{:?}", *namespec));
+            if first { first = false; } else { write!(f, ", ")?; }
+            write!(f, "{:?}", *namespec)?;
         }
         if let Some(ref varargs) = self.args.tail {
-            if !first { try!(write!(f, ", ")); }
-            try!(write!(f, "...: "));
+            if !first { write!(f, ", ")?; }
+            write!(f, "...: ")?;
             if let Some(ref kind) = *varargs {
-                try!(write!(f, "{:?}", *kind));
+                write!(f, "{:?}", *kind)?;
             } else {
-                try!(write!(f, "_"));
+                write!(f, "_")?;
             }
         }
-        try!(write!(f, "]"));
+        write!(f, "]")?;
         if let Some(ref returns) = self.returns {
             if returns.head.len() == 1 && returns.tail.is_none() {
-                try!(write!(f, " --> {:?}", returns.head[0]));
+                write!(f, " --> {:?}", returns.head[0])?;
             } else if !(returns.head.is_empty() && returns.tail.is_none()) {
-                try!(write!(f, " --> {:?}", *returns));
+                write!(f, " --> {:?}", *returns)?;
             }
         } else {
-            try!(write!(f, " --> _"));
+            write!(f, " --> _")?;
         }
         Ok(())
     }
@@ -297,23 +297,23 @@ impl fmt::Debug for Ex {
 
             Ex::Var(ref id) => write!(f, "{:?}", id),
             Ex::FuncCall(ref e, ref args) => {
-                try!(write!(f, "{:?}(", *e));
+                write!(f, "{:?}(", *e)?;
                 let mut first = true;
                 for arg in &args.base {
-                    if first { first = false; } else { try!(write!(f, ", ")); }
-                    try!(write!(f, "{:?}", arg));
+                    if first { first = false; } else { write!(f, ", ")?; }
+                    write!(f, "{:?}", arg)?;
                 }
-                try!(write!(f, ")"));
+                write!(f, ")")?;
                 fmt::Debug::fmt(&args.span, f)
             },
             Ex::MethodCall(ref e, ref n, ref args) => {
-                try!(write!(f, "{:?}:{:?}(", e, n));
+                write!(f, "{:?}:{:?}(", e, n)?;
                 let mut first = true;
                 for arg in &args.base {
-                    if first { first = false; } else { try!(write!(f, ", ")); }
-                    try!(write!(f, "{:?}", arg));
+                    if first { first = false; } else { write!(f, ", ")?; }
+                    write!(f, "{:?}", arg)?;
                 }
-                try!(write!(f, ")"));
+                write!(f, ")")?;
                 fmt::Debug::fmt(&args.span, f)
             },
             Ex::Index(ref e, ref i) => write!(f, "{:?}[{:?}]", *e, *i),
@@ -431,15 +431,15 @@ impl fmt::Debug for St {
             St::While(ref e, ref b) => write!(f, "While({:?}, {:?})", e, b),
             St::Repeat(ref b, ref e) => write!(f, "Repeat({:?}, {:?})", b, e),
             St::If(ref cases, ref else_) => {
-                try!(write!(f, "If("));
+                write!(f, "If(")?;
                 let mut first = true;
                 for &Spanned { base: (ref e, ref b), span } in cases {
-                    if first { first = false; } else { try!(write!(f, ", ")); }
-                    try!(write!(f, "({:?} => {:?}){:?}", e, b, span));
+                    if first { first = false; } else { write!(f, ", ")?; }
+                    write!(f, "({:?} => {:?}){:?}", e, b, span)?;
                 }
                 if let Some(ref b) = *else_ {
-                    if !first { try!(write!(f, ", ")); }
-                    try!(write!(f, "{:?}", b));
+                    if !first { write!(f, ", ")?; }
+                    write!(f, "{:?}", b)?;
                 }
                 write!(f, ")")
             },
@@ -448,8 +448,8 @@ impl fmt::Debug for St {
             St::ForIn(ref ii, ref ee, bs, ref b) =>
                 write!(f, "ForIn({:?}, {:?}, {:?}{:?})", ii, ee, bs, b),
             St::FuncDecl(ref i, ref sig, bs, ref b, is) => {
-                try!(write!(f, "FuncDecl({:?}, {:?}, {:?}{:?})", i, sig, bs, b));
-                if let Some(is) = is { try!(write!(f, "{:?}", is)); }
+                write!(f, "FuncDecl({:?}, {:?}, {:?}{:?})", i, sig, bs, b)?;
+                if let Some(is) = is { write!(f, "{:?}", is)?; }
                 Ok(())
             },
             St::MethodDecl(ref i, ref ii, ref self_, ref sig, bs, ref b) =>
@@ -461,8 +461,8 @@ impl fmt::Debug for St {
             St::KailuaOpen(ref lib) => write!(f, "KailuaOpen({:?})", lib),
             St::KailuaType(ref t, ref k) => write!(f, "KailuaType({:?}, {:?})", t, k),
             St::KailuaAssume(ref i, m, ref k, is) => {
-                try!(write!(f, "KailuaAssume({:?}, {:?}, {:?})", i, m, k));
-                if let Some(is) = is { try!(write!(f, "{:?}", is)); }
+                write!(f, "KailuaAssume({:?}, {:?}, {:?})", i, m, k)?;
+                if let Some(is) = is { write!(f, "{:?}", is)?; }
                 Ok(())
             },
         }
@@ -507,11 +507,11 @@ pub struct FuncKind {
 
 impl fmt::Debug for FuncKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "({:-?})", self.args));
+        write!(f, "({:-?})", self.args)?;
         if self.returns.head.len() == 1 && self.returns.tail.is_none() {
-            try!(write!(f, " --> {:?}", self.returns.head[0]));
+            write!(f, " --> {:?}", self.returns.head[0])?;
         } else {
-            try!(write!(f, " --> ({:-?})", self.returns));
+            write!(f, " --> ({:-?})", self.returns)?;
         }
         Ok(())
     }
@@ -578,13 +578,13 @@ impl fmt::Debug for K {
             K::Error(Some(ref s)) => write!(f, "Error({:?})", *s),
 
             K::Record(ref fields) => {
-                try!(write!(f, "Record(["));
+                write!(f, "Record([")?;
                 let mut first = true;
                 for &(ref name, ref value) in fields {
-                    if first { first = false; } else { try!(write!(f, ", ")); }
-                    try!(write!(f, "{:?}: {:?}", *name, *value));
+                    if first { first = false; } else { write!(f, ", ")?; }
+                    write!(f, "{:?}: {:?}", *name, *value)?;
                 }
-                try!(write!(f, "])"));
+                write!(f, "])")?;
                 Ok(())
             },
             K::Tuple(ref fields) => write!(f, "Tuple({:?})", *fields),

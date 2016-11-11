@@ -11,7 +11,7 @@ use kailua_diag::ConsoleReport;
 
 fn parse_and_dump(path: &str) -> Result<(), String> {
     let mut source = Source::new();
-    let file = try!(SourceFile::from_file(&Path::new(path)).map_err(|e| e.to_string()));
+    let file = SourceFile::from_file(&Path::new(path)).map_err(|e| e.to_string())?;
     let filespan = source.add(file);
     let source = Rc::new(RefCell::new(source));
     let report = ConsoleReport::new(source.clone());

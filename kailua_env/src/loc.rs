@@ -322,8 +322,8 @@ impl<T: fmt::Display> fmt::Display for Spanned<T> {
 
 impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(fmt::Debug::fmt(&self.base, f));
-        try!(fmt::Debug::fmt(&self.span, f));
+        fmt::Debug::fmt(&self.base, f)?;
+        fmt::Debug::fmt(&self.span, f)?;
         Ok(())
     }
 }

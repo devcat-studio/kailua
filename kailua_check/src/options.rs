@@ -43,7 +43,7 @@ impl<S: FsSource> FsOptions<S> {
             let path = self.root.join(path);
             debug!("trying to load {:?}", path);
 
-            if let Some(chunk) = try!(self.source.chunk_from_path(&path)) {
+            if let Some(chunk) = self.source.chunk_from_path(&path)? {
                 return Ok(Some(chunk));
             }
         }
@@ -53,23 +53,23 @@ impl<S: FsSource> FsOptions<S> {
 
 impl<S: FsSource> Options for FsOptions<S> {
     fn set_package_path(&mut self, path: &[u8]) -> Result<(), String> {
-        let path = try!(str::from_utf8(path).map_err(|e| e.to_string()));
+        let path = str::from_utf8(path).map_err(|e| e.to_string())?;
         self.package_path = path.split(";").map(|s| s.to_owned()).collect();
         Ok(())
     }
 
     fn set_package_cpath(&mut self, path: &[u8]) -> Result<(), String> {
-        let path = try!(str::from_utf8(path).map_err(|e| e.to_string()));
+        let path = str::from_utf8(path).map_err(|e| e.to_string())?;
         self.package_cpath = path.split(";").map(|s| s.to_owned()).collect();
         Ok(())
     }
 
     fn require_chunk(&mut self, path: &[u8]) -> Result<Chunk, String> {
-        let path = try!(str::from_utf8(path).map_err(|e| e.to_string()));
+        let path = str::from_utf8(path).map_err(|e| e.to_string())?;
 
         for &search_path in &[&self.package_path, &self.package_cpath][..] {
             for &suffix in &[".kailua", ""][..] {
-                if let Some(chunk) = try!(self.search_file(&path, search_path, suffix)) {
+                if let Some(chunk) = self.search_file(&path, search_path, suffix)? {
                     return Ok(chunk);
                 }
             }

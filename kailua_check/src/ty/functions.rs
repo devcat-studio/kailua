@@ -12,14 +12,14 @@ pub struct Function {
 
 impl Function {
     fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
-        try!(other.args.assert_sub(&self.args, ctx)); // contravariant
-        try!(self.returns.assert_sub(&other.returns, ctx)); // covariant
+        other.args.assert_sub(&self.args, ctx)?; // contravariant
+        self.returns.assert_sub(&other.returns, ctx)?; // covariant
         Ok(())
     }
 
     fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
-        try!(self.args.assert_eq(&other.args, ctx));
-        try!(self.returns.assert_eq(&other.returns, ctx));
+        self.args.assert_eq(&other.args, ctx)?;
+        self.returns.assert_eq(&other.returns, ctx)?;
         Ok(())
     }
 
@@ -28,16 +28,16 @@ impl Function {
                                         mut write_tyseq: WriteTySeq) -> fmt::Result
             where WriteTy: FnMut(&T, &mut fmt::Formatter) -> fmt::Result,
                   WriteTySeq: FnMut(&TySeq, &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "function"));
-        try!(write_tyseq(&self.args, f));
+        write!(f, "function")?;
+        write_tyseq(&self.args, f)?;
         match (self.returns.head.len(), self.returns.tail.is_some()) {
             (0, false) => write!(f, " --> ()"),
             (1, false) => {
-                try!(write!(f, " --> "));
+                write!(f, " --> ")?;
                 write_ty(&self.returns.head[0], f)
             },
             (_, _) => {
-                try!(write!(f, " --> "));
+                write!(f, " --> ")?;
                 write_tyseq(&self.returns, f)
             },
         }

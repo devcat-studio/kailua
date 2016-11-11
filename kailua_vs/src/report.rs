@@ -107,7 +107,7 @@ impl Report for VSReportProxy {
         // it is totally possible that the receiver has been already disconnected;
         // this happens when C# has caught an exception or has reached the error limit.
         // it's no point to continue from now on, so we translate SendError to Stop.
-        try!(self.sender.send(diag).map_err(|_| Stop));
+        self.sender.send(diag).map_err(|_| Stop)?;
 
         if kind == Kind::Fatal { Err(Stop) } else { Ok(()) }
     }

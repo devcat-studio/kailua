@@ -106,11 +106,11 @@ impl fmt::Debug for Numbers {
             Numbers::All => write!(f, "number"),
             Numbers::Int => write!(f, "integer"),
             Numbers::Some(ref set) => {
-                try!(write!(f, "("));
+                write!(f, "(")?;
                 let mut first = true;
                 for v in set.iter() {
-                    if first { first = false; } else { try!(write!(f, "|")); }
-                    try!(write!(f, "{:?}", *v));
+                    if first { first = false; } else { write!(f, "|")?; }
+                    write!(f, "{:?}", *v)?;
                 }
                 write!(f, ")")
             }
@@ -210,11 +210,11 @@ impl fmt::Debug for Strings {
         match *self {
             Strings::All => write!(f, "string"),
             Strings::Some(ref set) => {
-                try!(write!(f, "("));
+                write!(f, "(")?;
                 let mut first = true;
                 for s in set.iter() {
-                    if first { first = false; } else { try!(write!(f, "|")); }
-                    try!(write!(f, "{:?}", *s));
+                    if first { first = false; } else { write!(f, "|")?; }
+                    write!(f, "{:?}", *s)?;
                 }
                 write!(f, ")")
             }

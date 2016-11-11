@@ -71,7 +71,7 @@ impl<'a> fmt::Display for IdDisplay<'a> {
         match *self.id {
             Id::Local(map_index, ref scoped_id) => {
                 let (name, scope) = self.ctx.scope_maps[map_index].find_id(scoped_id);
-                try!(write!(f, "{:?}$", name));
+                write!(f, "{:?}$", name)?;
                 { // bijective numeral: a b c d .. z aa ab .. az ba .. zz aaa ..
                     let mut index = map_index;
                     let mut mult = 26;
@@ -83,7 +83,7 @@ impl<'a> fmt::Display for IdDisplay<'a> {
                     }
                     for _ in 0..len {
                         mult /= 26;
-                        try!(write!(f, "{}", (b'a' + (index / mult) as u8) as char));
+                        write!(f, "{}", (b'a' + (index / mult) as u8) as char)?;
                         index %= mult;
                     }
                 }
@@ -364,20 +364,20 @@ impl MarkDeps {
         if let Some((ref base, ref others)) = self.constraints {
             for &(rel, ref other) in others {
                 match rel {
-                    Rel::Eq => try!(base.assert_eq(other, ctx)),
-                    Rel::Sup => try!(other.assert_sub(base, ctx)),
+                    Rel::Eq => base.assert_eq(other, ctx)?,
+                    Rel::Sup => other.assert_sub(base, ctx)?,
                 }
             }
         }
         if let Some(follows) = self.follows {
-            try!(ctx.assert_mark_true(follows));
+            ctx.assert_mark_true(follows)?;
         }
         Ok(())
     }
 
     fn assert_false(self, ctx: &mut TypeContext) -> CheckResult<()> {
         if let Some(precedes) = self.precedes {
-            try!(ctx.assert_mark_false(precedes));
+            ctx.assert_mark_false(precedes)?;
         }
         Ok(())
     }
@@ -389,7 +389,7 @@ impl MarkDeps {
             (None, Some(r)) => Some(r),
             (Some(l), None) => Some(l),
             (Some((lb, mut lt)), Some((rb, rt))) => {
-                try!(lb.assert_eq(&rb, ctx));
+                lb.assert_eq(&rb, ctx)?;
                 lt.extend(rt.into_iter());
                 Some((lb, lt))
             }
@@ -559,7 +559,7 @@ impl Context {
 
     pub fn open_library(&mut self, name: &Spanned<Name>,
                         opts: Rc<RefCell<Options>>) -> CheckResult<()> {
-        let name_ = try!(str::from_utf8(&name.base).map_err(|e| e.to_string()));
+        let name_ = str::from_utf8(&name.base).map_err(|e| e.to_string())?;
         if let Some(defs) = get_defs(name_) {
             // one library may consist of multiple files, so we defer duplicate check
             for def in defs {
@@ -568,7 +568,7 @@ impl Context {
                     let chunk = def.to_chunk();
                     let mut env = Env::new(self, opts.clone(), chunk.map);
                     let mut checker = Checker::new(&mut env);
-                    try!(checker.visit(&chunk.block))
+                    checker.visit(&chunk.block)?
                 }
             }
             Ok(())
@@ -584,9 +584,9 @@ impl Context {
 
             // this is allowed in Lua 5.2 and later, but will result in a loop anyway.
             Some(&LoadStatus::Ongoing(oldspan)) => {
-                try!(self.error(span, m::RecursiveRequire {})
-                         .note(oldspan, m::PreviousRequire {})
-                         .done());
+                self.error(span, m::RecursiveRequire {})
+                    .note(oldspan, m::PreviousRequire {})
+                    .done()?;
                 Ok(Some(Slot::dummy()))
             }
         }
@@ -617,9 +617,9 @@ impl Context {
     pub fn name_class(&mut self, cid: ClassId, name: Spanned<Name>) -> CheckResult<()> {
         let cls = &mut self.classes[cid.0 as usize];
         if let Some(ref prevname) = cls.name {
-            try!(self.report.warn(name, m::RedefinedClassName {})
-                            .note(prevname, m::PreviousClassName {})
-                            .done());
+            self.report.warn(name, m::RedefinedClassName {})
+                       .note(prevname, m::PreviousClassName {})
+                       .done()?;
         } else {
             cls.name = Some(name);
         }
@@ -649,7 +649,7 @@ impl Context {
 
                     // XXX probably we can test if `base (rel) ty` this early with a wrapped context
                     if let Some(ref mut constraints) = deps.constraints {
-                        try!(base.assert_eq(&mut constraints.0, self));
+                        base.assert_eq(&mut constraints.0, self)?;
                         constraints.1.push((rel, ty.clone().into_send()));
                     } else {
                         deps.constraints = Some((base.clone().into_send(),
@@ -686,7 +686,7 @@ impl TypeContext for Context {
     fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
         debug!("adding a constraint {:?} <: {:?}", lhs, *rhs);
         if let Some(eb) = self.tvar_eq.get_bound(lhs).and_then(|b| b.bound.clone()) {
-            try!((*eb).assert_sub(rhs, self));
+            (*eb).assert_sub(rhs, self)?;
         } else {
             if let Some(ub) = self.tvar_sub.add_bound(lhs, rhs).map(|b| b.clone().into_send()) {
                 // the original bound is not consistent, bound <: rhs still has to hold
@@ -697,7 +697,7 @@ impl TypeContext for Context {
                 }
             }
             if let Some(lb) = self.tvar_sup.get_bound(lhs).and_then(|b| b.bound.clone()) {
-                try!((*lb).assert_sub(rhs, self));
+                (*lb).assert_sub(rhs, self)?;
             }
         }
         Ok(())
@@ -706,7 +706,7 @@ impl TypeContext for Context {
     fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
         debug!("adding a constraint {:?} :> {:?}", lhs, *rhs);
         if let Some(eb) = self.tvar_eq.get_bound(lhs).and_then(|b| b.bound.clone()) {
-            try!(rhs.assert_sub(&*eb, self));
+            rhs.assert_sub(&*eb, self)?;
         } else {
             if let Some(lb) = self.tvar_sup.add_bound(lhs, rhs).map(|b| b.clone().into_send()) {
                 // the original bound is not consistent, bound :> rhs still has to hold
@@ -717,7 +717,7 @@ impl TypeContext for Context {
                 }
             }
             if let Some(ub) = self.tvar_sub.get_bound(lhs).and_then(|b| b.bound.clone()) {
-                try!(rhs.assert_sub(&*ub, self));
+                rhs.assert_sub(&*ub, self)?;
             }
         }
         Ok(())
@@ -734,10 +734,10 @@ impl TypeContext for Context {
             }
         } else {
             if let Some(ub) = self.tvar_sub.get_bound(lhs).and_then(|b| b.bound.clone()) {
-                try!(rhs.assert_sub(&*ub, self));
+                rhs.assert_sub(&*ub, self)?;
             }
             if let Some(lb) = self.tvar_sup.get_bound(lhs).and_then(|b| b.bound.clone()) {
-                try!((*lb).assert_sub(rhs, self));
+                (*lb).assert_sub(rhs, self)?;
             }
         }
         Ok(())
@@ -746,8 +746,8 @@ impl TypeContext for Context {
     fn assert_tvar_sub_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()> {
         debug!("adding a constraint {:?} <: {:?}", lhs, rhs);
         if !self.tvar_eq.is(lhs, rhs) {
-            try!(self.tvar_sub.add_relation(lhs, rhs));
-            try!(self.tvar_sup.add_relation(rhs, lhs));
+            self.tvar_sub.add_relation(lhs, rhs)?;
+            self.tvar_sup.add_relation(rhs, lhs)?;
         }
         Ok(())
     }
@@ -854,13 +854,13 @@ impl TypeContext for Context {
 
             (MarkValue::True, MarkValue::Unknown(deps)) |
             (MarkValue::Unknown(deps), MarkValue::True) => {
-                if let Some(deps) = deps { try!(deps.assert_true(self)); }
+                if let Some(deps) = deps { deps.assert_true(self)?; }
                 MarkValue::True
             }
 
             (MarkValue::False, MarkValue::Unknown(deps)) |
             (MarkValue::Unknown(deps), MarkValue::False) => {
-                if let Some(deps) = deps { try!(deps.assert_false(self)); }
+                if let Some(deps) = deps { deps.assert_false(self)?; }
                 MarkValue::False
             }
 
@@ -878,7 +878,7 @@ impl TypeContext for Context {
                 if rdeps.follows  == Some(Mark(lhs_ as u32)) { rdeps.follows  = None; }
                 if rdeps.precedes == Some(Mark(lhs_ as u32)) { rdeps.precedes = None; }
 
-                let deps = try!(ldeps.merge(*rdeps, self));
+                let deps = ldeps.merge(*rdeps, self)?;
 
                 // update dependencies for *other* marks depending on this mark
                 if let Some(m) = deps.follows {
@@ -985,13 +985,13 @@ impl TypeContext for Context {
 
             Next::AssertRhsTrue => { // true implies unknown
                 if let Some(deps) = take_deps(&mut self.mark_infos, rhs_, MarkValue::True) {
-                    try!(deps.assert_true(self));
+                    deps.assert_true(self)?;
                 }
             }
 
             Next::AssertLhsFalse => { // unknown implies false
                 if let Some(deps) = take_deps(&mut self.mark_infos, lhs_, MarkValue::False) {
-                    try!(deps.assert_false(self));
+                    deps.assert_false(self)?;
                 }
             }
         }
@@ -1158,7 +1158,7 @@ impl<'ctx> Env<'ctx> {
 
             // prepare for the worse
             if !flags.is_dynamic() && flags.contains(T_FALSE) {
-                try!(self.error(span, m::ModCannotReturnFalse {}).done());
+                self.error(span, m::ModCannotReturnFalse {}).done()?;
                 return Ok(Slot::dummy());
             }
 
@@ -1175,9 +1175,8 @@ impl<'ctx> Env<'ctx> {
             Ok(slot)
         } else {
             // TODO ideally we would want to resolve type variables in this type
-            try!(self.error(span,
-                            m::ModCannotReturnInexactType { returns: self.display(&returns) })
-                     .done());
+            self.error(span, m::ModCannotReturnInexactType { returns: self.display(&returns) })
+                .done()?;
             Ok(Slot::dummy())
         }
     }
@@ -1249,7 +1248,7 @@ impl<'ctx> Env<'ctx> {
         let ty = if let Some(ty) = self.resolve_exact_type(&init.unlift()) {
             ty
         } else {
-            try!(self.error(init, m::InexactInitMethod { init: self.display(init) }).done());
+            self.error(init, m::InexactInitMethod { init: self.display(init) }).done()?;
             return Ok(());
         };
 
@@ -1258,13 +1257,13 @@ impl<'ctx> Env<'ctx> {
             T::Functions(ref func) => match **func {
                 Functions::Simple(ref f) => f.to_owned(),
                 _ => {
-                    try!(self.error(init, m::OverloadedFuncInitMethod { init: self.display(init) })
-                             .done());
+                    self.error(init, m::OverloadedFuncInitMethod { init: self.display(init) })
+                        .done()?;
                     return Ok(());
                 }
             },
             _ => {
-                try!(self.error(init, m::NonFuncInitMethod { init: self.display(init) }).done());
+                self.error(init, m::NonFuncInitMethod { init: self.display(init) }).done()?;
                 return Ok(());
             },
         };
@@ -1294,7 +1293,7 @@ impl<'ctx> Env<'ctx> {
             let prevctor = cdef.class_ty.insert(key, ctor);
             assert_eq!(prevctor, None); // should have been prevented
         } else {
-            try!(self.error(init, m::BadSelfInInitMethod { init: self.display(init) }).done());
+            self.error(init, m::BadSelfInInitMethod { init: self.display(init) }).done()?;
             return Ok(());
         }
 
@@ -1308,21 +1307,21 @@ impl<'ctx> Env<'ctx> {
                 if let Some(s) = self.resolve_exact_type(&rhs.unlift())
                                      .and_then(|t| t.as_string().map(|s| s.to_owned())) {
                     if b == Builtin::PackagePath {
-                        try!(self.opts.borrow_mut().set_package_path(&s));
+                        self.opts.borrow_mut().set_package_path(&s)?;
                     } else {
-                        try!(self.opts.borrow_mut().set_package_cpath(&s));
+                        self.opts.borrow_mut().set_package_cpath(&s)?;
                     }
                 } else {
-                    try!(self.warn(rhs, m::UnknownAssignToPackagePath { name: b.name() }).done());
+                    self.warn(rhs, m::UnknownAssignToPackagePath { name: b.name() }).done()?;
                 }
             }
 
             Some(Builtin::Constructible) => {
-                try!(self.error(lhs, m::SelfCannotBeAssignedInCtor {}).done());
+                self.error(lhs, m::SelfCannotBeAssignedInCtor {}).done()?;
             }
 
             Some(Builtin::Constructor) => {
-                try!(self.create_new_method_from_init(rhs));
+                self.create_new_method_from_init(rhs)?;
             }
 
             _ => {}
@@ -1332,12 +1331,11 @@ impl<'ctx> Env<'ctx> {
     }
 
     fn assign_(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>, init: bool) -> CheckResult<()> {
-        try!(self.assign_special(lhs, rhs));
+        self.assign_special(lhs, rhs)?;
         if lhs.accept(rhs, self.context, init).is_err() {
-            try!(self.error(lhs, m::CannotAssign { lhs: self.display(lhs),
-                                                   rhs: self.display(rhs) })
-                     .note_if(rhs, m::OtherTypeOrigin {})
-                     .done());
+            self.error(lhs, m::CannotAssign { lhs: self.display(lhs), rhs: self.display(rhs) })
+                .note_if(rhs, m::OtherTypeOrigin {})
+                .done()?;
         }
         Ok(())
     }
@@ -1360,14 +1358,14 @@ impl<'ctx> Env<'ctx> {
         // if the variable is not yet set, we may still try to assign nil
         // to allow `local x --: string|nil` (which is fine even when "uninitialized").
         let nil = Slot::just(T::Nil).without_loc();
-        try!(self.assign_special(&defslot, &nil));
+        self.assign_special(&defslot, &nil)?;
         if defslot.accept(&nil, self.context, true).is_ok() { // this IS still initialization
             self.context.ids.get_mut(&id).unwrap().set = true;
         } else {
             // won't alter the set flag, so subsequent uses are still errors
-            try!(self.error(&id, m::UseOfUnassignedVar {})
+            self.error(&id, m::UseOfUnassignedVar {})
                      .note_if(&defslot, m::UnassignedVarOrigin { var: self.display(&defslot) })
-                     .done());
+                     .done()?;
         }
 
         Ok(())
@@ -1382,13 +1380,13 @@ impl<'ctx> Env<'ctx> {
                 // note that even when the type is defined in the global scope
                 // we check both the local and global scope for the type name
                 if let Some(def) = self.get_named_type(&name) {
-                    try!(self.error(&name, m::CannotRedefineType { name: &name.base })
-                             .note(def.span, m::AlreadyDefinedType {})
-                             .done());
+                    self.error(&name, m::CannotRedefineType { name: &name.base })
+                        .note(def.span, m::AlreadyDefinedType {})
+                        .done()?;
                     return Ok(());
                 }
 
-                try!(self.context.name_class(cid, name.clone()));
+                self.context.name_class(cid, name.clone())?;
 
                 let scope = match id.base {
                     Id::Local(..) => self.current_scope_mut(),
@@ -1402,8 +1400,8 @@ impl<'ctx> Env<'ctx> {
                 // should raise an error if a prototype is used within a union
                 let is_prototype = |&cls| if let Class::Prototype(_) = cls { true } else { false };
                 if u.classes.iter().any(is_prototype) {
-                    try!(self.error(info, m::CannotNameUnknownClass { cls: self.display(info) })
-                             .done());
+                    self.error(info, m::CannotNameUnknownClass { cls: self.display(info) })
+                        .done()?;
                 }
             }
 
@@ -1426,17 +1424,17 @@ impl<'ctx> Env<'ctx> {
         // (local variables are created uniquely and unlikely to trigger this with a correct AST)
         if self.context.ids.get(&id).is_some() {
             let name = id.name(&self.context);
-            try!(self.error(nameref, m::CannotRedefineVar { name: name }).done());
+            self.error(nameref, m::CannotRedefineVar { name: name }).done()?;
             return Ok(());
         }
 
         let assigned = initinfo.is_some();
         let specinfo = specinfo.unwrap_or_else(|| Slot::var(T::Nil, self.context).without_loc());
         if let Some(initinfo) = initinfo {
-            try!(self.assign_(&specinfo, &initinfo, true));
+            self.assign_(&specinfo, &initinfo, true)?;
 
             // name the class if it is currently unnamed
-            try!(self.name_class_if_any(&id, &initinfo));
+            self.name_class_if_any(&id, &initinfo)?;
         }
 
         self.context.ids.insert(id.base, NameDef { span: id.span, slot: specinfo.base,
@@ -1454,7 +1452,7 @@ impl<'ctx> Env<'ctx> {
         // therefore we just remap `F::Just` to `F::VarOrCurrently`.
         info.adapt(F::Currently, self.context);
 
-        try!(self.name_class_if_any(&id, &info));
+        self.name_class_if_any(&id, &info)?;
 
         self.context.ids.insert(id.base, NameDef { span: id.span, slot: info.base, set: true });
         Ok(())
@@ -1479,8 +1477,8 @@ impl<'ctx> Env<'ctx> {
         debug!("assigning {:?} to a variable {} with type {:?}",
                info, id.display(&self.context), previnfo);
 
-        try!(self.assign_(&previnfo.with_loc(&id), &info, !prevset));
-        try!(self.name_class_if_any(&id, &info));
+        self.assign_(&previnfo.with_loc(&id), &info, !prevset)?;
+        self.name_class_if_any(&id, &info)?;
         Ok(())
     }
 
@@ -1490,9 +1488,9 @@ impl<'ctx> Env<'ctx> {
                 if let Some(ref prevmeta) = self.context.string_meta {
                     // while it is possible to alter the string metatable from C,
                     // we don't think that it is useful after the initialization.
-                    try!(self.error(info, m::CannotRedefineStringMeta {})
-                             .note(prevmeta, m::PreviousStringMeta {})
-                             .done());
+                    self.error(info, m::CannotRedefineStringMeta {})
+                        .note(prevmeta, m::PreviousStringMeta {})
+                        .done()?;
                 }
                 self.context.string_meta = Some(info.clone());
             }
@@ -1506,7 +1504,7 @@ impl<'ctx> Env<'ctx> {
         let id = Id::from(self.map_index, name.base.clone());
         debug!("(force) adding a variable {} as {:?}", id.display(&self.context), info);
 
-        try!(self.assume_special(&info));
+        self.assume_special(&info)?;
         match self.context.ids.entry(id) {
             hash_map::Entry::Vacant(e) => {
                 e.insert(NameDef { span: name.span, slot: info.base, set: true });
@@ -1539,9 +1537,9 @@ impl<'ctx> Env<'ctx> {
 
     pub fn define_type(&mut self, name: &Spanned<Name>, ty: Ty) -> CheckResult<()> {
         if let Some(def) = self.get_named_type(name) {
-            try!(self.error(name, m::CannotRedefineType { name: &name.base })
-                     .note(def.span, m::AlreadyDefinedType {})
-                     .done());
+            self.error(name, m::CannotRedefineType { name: &name.base })
+                .note(def.span, m::AlreadyDefinedType {})
+                .done()?;
             return Ok(());
         }
 
@@ -1562,7 +1560,7 @@ impl<'ctx> TypeResolver for Env<'ctx> {
         if let Some(def) = self.get_named_type(name) {
             Ok(def.ty.clone().into_send())
         } else {
-            try!(self.error(name, m::NoType { name: &name.base }).done());
+            self.error(name, m::NoType { name: &name.base }).done()?;
             Ok(T::dummy())
         }
     }

@@ -51,13 +51,13 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
     let mut context = Context::new(report.clone());
 
     let fssource = LocalFsSource { source: source, report: report.clone() };
-    let filechunk = try!(fssource.chunk_from_path(mainpath));
-    let filechunk = try!(filechunk.ok_or_else(|| format!("cannot found the main path")));
+    let filechunk = fssource.chunk_from_path(mainpath)?;
+    let filechunk = filechunk.ok_or_else(|| format!("cannot found the main path"))?;
 
     let root = mainpath.parent().unwrap_or(&Path::new(".."));
     let opts = Rc::new(RefCell::new(FsOptions::new(fssource, root.to_owned())));
 
-    try!(check_from_chunk(&mut context, filechunk, opts));
+    check_from_chunk(&mut context, filechunk, opts)?;
     if report.can_continue() {
         Ok(())
     } else {

@@ -185,10 +185,10 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 // filter any non-strings and non-numbers
                 // avoid using assert_sub here, it is not accurate enough
                 if !lflags.is_stringy() || !rflags.is_stringy() {
-                    try!(self.env.error(expspan, m::WrongOperand { op: op.symbol(),
-                                                                   lhs: self.display(lhs),
-                                                                   rhs: self.display(rhs) })
-                                 .done());
+                    self.env.error(expspan, m::WrongOperand { op: op.symbol(),
+                                                              lhs: self.display(lhs),
+                                                              rhs: self.display(rhs) })
+                            .done()?;
                     return Ok(Slot::just(T::Boolean));
                 }
 
@@ -198,23 +198,23 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let rstr = rflags.intersects(T_STRING);
                 if (lnum && lstr) || (rnum && rstr) {
                     if lnum && lstr {
-                        try!(self.env.error(lhs,
-                                            m::OperandIsBothNumOrStr { op: op.symbol(),
-                                                                       operand: self.display(lhs) })
-                                     .done());
+                        self.env.error(lhs,
+                                       m::OperandIsBothNumOrStr { op: op.symbol(),
+                                                                  operand: self.display(lhs) })
+                                .done()?;
                     }
                     if rnum && rstr {
-                        try!(self.env.error(rhs,
-                                            m::OperandIsBothNumOrStr { op: op.symbol(),
-                                                                       operand: self.display(rhs) })
-                                     .done());
+                        self.env.error(rhs,
+                                       m::OperandIsBothNumOrStr { op: op.symbol(),
+                                                                  operand: self.display(rhs) })
+                                .done()?;
                     }
                 } else if (lnum && rstr) || (lstr && rnum) {
-                    try!(self.env.error(expspan,
-                                        m::OperandsAreNotBothNumOrStr { op: op.symbol(),
-                                                                        lhs: self.display(lhs),
-                                                                        rhs: self.display(rhs) })
-                                 .done());
+                    self.env.error(expspan,
+                                   m::OperandsAreNotBothNumOrStr { op: op.symbol(),
+                                                                   lhs: self.display(lhs),
+                                                                   rhs: self.display(rhs) })
+                            .done()?;
                 } else if lnum || rnum { // operands are definitely numbers
                     check_op!(lhs.assert_sub(&T::number(), self.context()));
                     check_op!(rhs.assert_sub(&T::number(), self.context()));
@@ -222,11 +222,11 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     check_op!(lhs.assert_sub(&T::string(), self.context()));
                     check_op!(rhs.assert_sub(&T::string(), self.context()));
                 } else { // XXX
-                    try!(self.env.error(expspan,
-                                        m::CannotDeduceBothNumOrStr { op: op.symbol(),
-                                                                      lhs: self.display(lhs),
-                                                                      rhs: self.display(rhs) })
-                                 .done());
+                    self.env.error(expspan,
+                                   m::CannotDeduceBothNumOrStr { op: op.symbol(),
+                                                                 lhs: self.display(lhs),
+                                                                 rhs: self.display(rhs) })
+                            .done()?;
                 }
                 Ok(Slot::just(T::Boolean))
             }
@@ -273,12 +273,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         let functy = if let Some(func) = self.env.resolve_exact_type(&func) {
             func
         } else {
-            try!(self.env.error(func, m::CallToInexactType { func: self.display(func) }).done());
+            self.env.error(func, m::CallToInexactType { func: self.display(func) }).done()?;
             return Ok(TySeq::dummy());
         };
 
         if functy.builtin() == Some(Builtin::Constructor) {
-            try!(self.env.error(func, m::CannotCallCtor {}).done());
+            self.env.error(func, m::CannotCallCtor {}).done()?;
             return Ok(TySeq::dummy());
         }
 
@@ -292,7 +292,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 f.returns.clone()
             }
             Functions::All => {
-                try!(self.env.error(func, m::CallToAnyFunc { func: self.display(func) }).done());
+                self.env.error(func, m::CallToAnyFunc { func: self.display(func) }).done()?;
                 return Ok(TySeq::dummy());
             }
         };
@@ -341,7 +341,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
         let (_, flags) = self.env.get_type_bounds(&ety);
         if !flags.is_tabular() {
-            try!(self.env.error(&*ety0, m::IndexToNonTable { tab: self.display(&*ety0) }).done());
+            self.env.error(&*ety0, m::IndexToNonTable { tab: self.display(&*ety0) }).done()?;
             return Ok(Some(Slot::dummy()));
         }
 
@@ -362,8 +362,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             T::Union(ref u) if !u.classes.is_empty() => {
                 // the union is assumed to be simplified, so even if `u.classes` has one type
                 // it is mixed with other types so it cannot be indexed.
-                try!(self.env.error(&*ety0, m::IndexToUnknownClass { cls: self.display(&*ety0) })
-                             .done());
+                self.env.error(&*ety0, m::IndexToUnknownClass { cls: self.display(&*ety0) })
+                        .done()?;
                 return Ok(Some(Slot::dummy()));
             },
             _ => None,
@@ -378,10 +378,10 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 } else if let Some(key) = kty.as_string() {
                     key.into()
                 } else {
-                    try!(self.env.error(expspan,
-                                        m::IndexToClassWithUnknown { cls: self.display(&*ety0),
-                                                                     key: self.display(&kty) })
-                                 .done());
+                    self.env.error(expspan,
+                                   m::IndexToClassWithUnknown { cls: self.display(&*ety0),
+                                                                key: self.display(&kty) })
+                            .done()?;
                     return Ok(Some(Slot::dummy()));
                 };
 
@@ -405,7 +405,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         if !fields!(class_ty).is_empty() {
                             // since `init` should be the first method ever defined,
                             // non-empty class_ty should always contain `init`.
-                            try!(self.env.error(expspan, m::CannotRedefineCtor {}).done());
+                            self.env.error(expspan, m::CannotRedefineCtor {}).done()?;
                             return Ok(Some(Slot::dummy()));
                         }
 
@@ -418,7 +418,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     } else if litkey == &b"new"[..] {
                         // `new` is handled from the assignment (it cannot be copied from `init`
                         // because it initially starts as as a type varibale, i.e. unknown)
-                        try!(self.env.error(expspan, m::ReservedNewMethod {}).done());
+                        self.env.error(expspan, m::ReservedNewMethod {}).done()?;
                         return Ok(Some(Slot::dummy()));
                     } else if let Some(v) = fields!(class_ty).get(&litkey).cloned() {
                         // for other methods, it should be used as is...
@@ -426,8 +426,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     } else {
                         // ...or created only when the `init` method is available.
                         if fields!(class_ty).is_empty() {
-                            try!(self.env.error(expspan, m::CannotDefineMethodsWithoutCtor {})
-                                         .done());
+                            self.env.error(expspan, m::CannotDefineMethodsWithoutCtor {}).done()?;
                             return Ok(Some(Slot::dummy()));
                         }
 
@@ -445,7 +444,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         (v, false)
                     } else if ety.builtin() != Some(Builtin::Constructible) {
                         // otherwise, only the constructor can add new fields
-                        try!(self.env.error(expspan, m::CannotAddFieldsToInstance {}).done());
+                        self.env.error(expspan, m::CannotAddFieldsToInstance {}).done()?;
                         return Ok(Some(Slot::dummy()));
                     } else {
                         // the constructor (checked earlier) can add Currently slots to instances.
@@ -464,11 +463,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     ety0.adapt(F::Currently, self.context());
                     if let Err(e) = ety0.accept_in_place(self.context()) {
                         error!("{}", e);
-                        try!(self.env.error(&*ety0,
-                                            m::CannotAdaptClass { cls: self.display(&*ety0) })
-                                     .note(kty0,
-                                           m::AdaptTriggeredByIndex { key: self.display(kty0) })
-                                     .done());
+                        self.env.error(&*ety0, m::CannotAdaptClass { cls: self.display(&*ety0) })
+                                .note(kty0, m::AdaptTriggeredByIndex { key: self.display(kty0) })
+                                .done()?;
                         return Ok(Some(Slot::dummy()));
                     }
                 }
@@ -491,9 +488,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             // if ety is a string, we go through the previously defined string metatable
             // note that ety may not be fully resolved here!
             if flags.intersects(!T_STRING) {
-                try!(self.env.error(&*ety0, m::IndexedTypeIsBothTableOrStr
-                                            { indexed: self.display(&*ety0) })
-                             .done());
+                self.env.error(&*ety0,
+                               m::IndexedTypeIsBothTableOrStr { indexed: self.display(&*ety0) })
+                        .done()?;
                 return Ok(Some(Slot::dummy()));
             }
 
@@ -505,20 +502,20 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if let Some(ety) = self.env.resolve_exact_type(&ety0.unlift()) {
                     // now the metatable should be a table proper
                     if !ety.is_dynamic() && ety.flags().intersects(!T_TABLE) {
-                        try!(self.env.error(&*ety0, m::NonTableStringMeta {})
-                                     .note(meta.span, m::PreviousStringMeta {})
-                                     .done());
+                        self.env.error(&*ety0, m::NonTableStringMeta {})
+                                .note(meta.span, m::PreviousStringMeta {})
+                                .done()?;
                         return Ok(Some(Slot::dummy()));
                     }
 
                     ety
                 } else {
-                    try!(self.env.error(&*ety0, m::IndexToInexactType { tab: self.display(&*ety0) })
-                                 .done());
+                    self.env.error(&*ety0, m::IndexToInexactType { tab: self.display(&*ety0) })
+                            .done()?;
                     return Ok(Some(Slot::dummy()));
                 }
             } else {
-                try!(self.env.error(&*ety0, m::UndefinedStringMeta {}).done());
+                self.env.error(&*ety0, m::UndefinedStringMeta {}).done()?;
                 return Ok(Some(Slot::dummy()));
             }
         } else {
@@ -526,8 +523,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             if let Some(ety) = self.env.resolve_exact_type(&ety) {
                 ety
             } else {
-                try!(self.env.error(&*ety0,
-                                    m::IndexToInexactType { tab: self.display(&*ety0) }).done());
+                self.env.error(&*ety0,
+                               m::IndexToInexactType { tab: self.display(&*ety0) }).done()?;
                 return Ok(Some(Slot::dummy()));
             }
         };
@@ -543,9 +540,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         macro_rules! check {
             ($sub:expr) => {
                 if $sub.is_err() {
-                    try!(self.env.error(expspan, m::CannotIndex { tab: self.display(&*ety0),
-                                                                  key: self.display(kty0) })
-                                 .done());
+                    self.env.error(expspan, m::CannotIndex { tab: self.display(&*ety0),
+                                                             key: self.display(kty0) })
+                            .done()?;
                     return Ok(Some(Slot::dummy()));
                 }
             }
@@ -562,11 +559,11 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 let adapted = T::Tables(Cow::Owned($adapted));
                 if ety0.accept(&Slot::just(adapted.clone()), self.context(), false).is_err() {
-                    try!(self.env.error(&*ety0,
-                                        m::CannotAdaptTable { tab: self.display(&*ety0),
-                                                              adapted: self.display(&adapted) })
-                                 .note(kty0, m::AdaptTriggeredByIndex { key: self.display(kty0) })
-                                 .done());
+                    self.env.error(&*ety0,
+                                   m::CannotAdaptTable { tab: self.display(&*ety0),
+                                                         adapted: self.display(&adapted) })
+                            .note(kty0, m::AdaptTriggeredByIndex { key: self.display(kty0) })
+                            .done()?;
                     return Ok(Some(Slot::dummy()));
                 }
             })
@@ -622,10 +619,10 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             },
 
             (Some(&Tables::Fields(..)), false) => {
-                try!(self.env.error(expspan,
-                                    m::IndexToRecWithUnknownStr { tab: self.display(&*ety0),
-                                                                  key: self.display(&kty) })
-                             .done());
+                self.env.error(expspan,
+                               m::IndexToRecWithUnknownStr { tab: self.display(&*ety0),
+                                                             key: self.display(&kty) })
+                        .done()?;
                 Ok(Some(Slot::dummy()))
             },
 
@@ -651,10 +648,10 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             },
 
             (Some(&Tables::Array(..)), false) => {
-                try!(self.env.error(expspan,
-                                    m::IndexToArrayWithNonInt { tab: self.display(&*ety0),
-                                                                key: self.display(&kty) })
-                             .done());
+                self.env.error(expspan,
+                               m::IndexToArrayWithNonInt { tab: self.display(&*ety0),
+                                                           key: self.display(&kty) })
+                        .done()?;
                 Ok(Some(Slot::dummy()))
             },
 
@@ -664,8 +661,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             },
 
             (Some(&Tables::All), _) => {
-                try!(self.env.error(&*ety0,
-                                    m::IndexToAnyTable { tab: self.display(&*ety0) }).done());
+                self.env.error(&*ety0,
+                               m::IndexToAnyTable { tab: self.display(&*ety0) }).done()?;
                 Ok(Some(Slot::dummy()))
             },
 
@@ -688,11 +685,11 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 // this is required for handling Currently slot containing a table
                 let implied = T::Tables(Cow::Owned(Tables::Map(key, value.clone())));
                 if ety0.accept(&Slot::just(implied.clone()), self.context(), false).is_err() {
-                    try!(self.env.error(&*ety0,
-                                        m::CannotAdaptTable { tab: self.display(&*ety0),
-                                                              adapted: self.display(&implied) })
-                                 .note(kty0, m::AdaptTriggeredByIndex { key: self.display(kty0) })
-                                 .done());
+                    self.env.error(&*ety0,
+                                   m::CannotAdaptTable { tab: self.display(&*ety0),
+                                                         adapted: self.display(&implied) })
+                            .note(kty0, m::AdaptTriggeredByIndex { key: self.display(kty0) })
+                            .done()?;
                     return Ok(Some(Slot::dummy()));
                 }
 
@@ -702,7 +699,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     }
 
     pub fn visit(&mut self, chunk: &Spanned<Block>) -> CheckResult<()> {
-        try!(self.visit_block(chunk));
+        self.visit_block(chunk)?;
         Ok(())
     }
 
@@ -714,7 +711,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 // TODO warning
                 continue;
             }
-            exit = try!(scope.visit_stmt(stmt));
+            exit = scope.visit_stmt(stmt)?;
         }
         Ok(exit)
     }
@@ -727,7 +724,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             St::Oops => Ok(Exit::None),
 
             St::Void(ref exp) => {
-                try!(self.visit_exp(exp));
+                self.visit_exp(exp)?;
                 Ok(Exit::None)
             }
 
@@ -738,25 +735,25 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     Slot(Spanned<Slot>),
                 }
 
-                let varrefs = try!(vars.iter().map(|varspec| {
+                let varrefs = vars.iter().map(|varspec| {
                     match varspec.base.base {
                         Var::Name(ref nameref) => Ok(VarRef::Name(nameref)),
 
                         Var::Index(ref e, ref key) => {
                             if let Some(ref kind) = varspec.kind {
-                                try!(self.env.error(kind, m::TypeSpecToIndex {}).done());
+                                self.env.error(kind, m::TypeSpecToIndex {}).done()?;
                             }
 
-                            let ty = try!(self.visit_exp(e)).into_first();
-                            let kty = try!(self.visit_exp(key)).into_first();
-                            let slot = try!(self.check_index(&ty, &kty, varspec.base.span, true));
+                            let ty = self.visit_exp(e)?.into_first();
+                            let kty = self.visit_exp(key)?.into_first();
+                            let slot = self.check_index(&ty, &kty, varspec.base.span, true)?;
                             // since we've requested a lvalue it would never return None
                             Ok(VarRef::Slot(slot.unwrap().with_loc(&varspec.base)))
                         },
                     }
-                }).collect::<CheckResult<Vec<_>>>());
+                }).collect::<CheckResult<Vec<_>>>()?;
 
-                let infos = try!(self.visit_explist(exps));
+                let infos = self.visit_explist(exps)?;
 
                 // unlike St::Local, do not tolerate the uninitialized variables
                 for ((var, varref), info) in vars.iter().zip(varrefs.into_iter())
@@ -766,18 +763,18 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     match (varref, var) {
                         // variable declaration
                         (VarRef::Name(nameref), &TypeSpec { modf, kind: Some(ref kind), .. }) => {
-                            let specinfo = try!(self.visit_kind(F::from(modf), kind));
-                            try!(self.env.add_var(nameref, Some(specinfo), Some(info)));
+                            let specinfo = self.visit_kind(F::from(modf), kind)?;
+                            self.env.add_var(nameref, Some(specinfo), Some(info))?;
                         }
 
                         // variable assignment
                         (VarRef::Name(nameref), &TypeSpec { kind: None, .. }) => {
-                            try!(self.env.assign_to_var(nameref, info));
+                            self.env.assign_to_var(nameref, info)?;
                         }
 
                         // indexed assignment
                         (VarRef::Slot(slot), _) => {
-                            try!(self.env.assign(&slot, &info));
+                            self.env.assign(&slot, &info)?;
                         }
                     }
                 }
@@ -787,23 +784,23 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             St::Do(ref block) => self.visit_block(block),
 
             St::While(ref cond, ref block) => {
-                let ty = try!(self.visit_exp(cond)).into_first();
+                let ty = self.visit_exp(cond)?.into_first();
                 if ty.is_truthy() {
                     // infinite loop
-                    let exit = try!(self.visit_block(block));
+                    let exit = self.visit_block(block)?;
                     if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::Stop) }
                 } else if ty.is_falsy() {
                     // TODO warning
                     Ok(Exit::None)
                 } else {
-                    try!(self.visit_block(block)); // TODO scope merger
+                    self.visit_block(block)?; // TODO scope merger
                     Ok(Exit::None)
                 }
             }
 
             St::Repeat(ref block, ref cond) => {
-                let exit = try!(self.visit_block(block)); // TODO scope merger
-                let ty = try!(self.visit_exp(cond)).into_first();
+                let exit = self.visit_block(block)?; // TODO scope merger
+                let ty = self.visit_exp(cond)?.into_first();
                 if exit == Exit::None {
                     if ty.is_truthy() {
                         Ok(Exit::Stop)
@@ -826,16 +823,16 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         *blocks_span |= span;
                         continue;
                     }
-                    let ty = try!(self.visit_exp(cond)).into_first();
+                    let ty = self.visit_exp(cond)?.into_first();
                     if ty.is_truthy() {
                         ignored_blocks = Some((cond.span, Span::dummy()));
-                        exit = exit.or(try!(self.visit_block(block)));
+                        exit = exit.or(self.visit_block(block)?);
                     } else if ty.is_falsy() {
-                        try!(self.env.warn(span, m::IgnoredIfCase {})
-                                     .note(cond, m::IfCaseWithFalseyCond {})
-                                     .done());
+                        self.env.warn(span, m::IgnoredIfCase {})
+                                .note(cond, m::IfCaseWithFalseyCond {})
+                                .done()?;
                     } else {
-                        exit = exit.or(try!(self.visit_block(block))); // TODO scope merger
+                        exit = exit.or(self.visit_block(block)?); // TODO scope merger
                     }
                 }
 
@@ -843,7 +840,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     if let Some((_, ref mut blocks_span)) = ignored_blocks {
                         *blocks_span |= block.span;
                     } else {
-                        exit = exit.or(try!(self.visit_block(block))); // TODO scope merger
+                        exit = exit.or(self.visit_block(block)?); // TODO scope merger
                     }
                 } else {
                     if ignored_blocks.is_none() {
@@ -853,11 +850,11 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 if let Some((truthy_span, blocks_span)) = ignored_blocks {
                     if blocks_span.is_dummy() {
-                        try!(self.env.warn(truthy_span, m::IfCaseWithTruthyCond {}).done());
+                        self.env.warn(truthy_span, m::IfCaseWithTruthyCond {}).done()?;
                     } else {
-                        try!(self.env.warn(blocks_span, m::IgnoredIfCase {})
-                                     .note(truthy_span, m::IfCaseWithTruthyCond {})
-                                     .done());
+                        self.env.warn(blocks_span, m::IgnoredIfCase {})
+                                .note(truthy_span, m::IfCaseWithTruthyCond {})
+                                .done()?;
                     }
                 }
 
@@ -865,10 +862,10 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             St::For(ref localname, ref start, ref end, ref step, _blockscope, ref block) => {
-                let start = try!(self.visit_exp(start)).into_first();
-                let end = try!(self.visit_exp(end)).into_first();
+                let start = self.visit_exp(start)?.into_first();
+                let end = self.visit_exp(end)?.into_first();
                 let step = if let &Some(ref step) = step {
-                    try!(self.visit_exp(step)).into_first()
+                    self.visit_exp(step)?.into_first()
                 } else {
                     Slot::just(T::integer()).without_loc() // to simplify the matter
                 };
@@ -880,27 +877,27 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let indty;
                 if startflags.is_integral() && endflags.is_integral() && stepflags.is_integral() &&
                    !(startflags.is_dynamic() && endflags.is_dynamic() && stepflags.is_dynamic()) {
-                    try!(start.assert_sub(&T::integer(), self.context()));
-                    try!(end.assert_sub(&T::integer(), self.context()));
-                    try!(step.assert_sub(&T::integer(), self.context()));
+                    start.assert_sub(&T::integer(), self.context())?;
+                    end.assert_sub(&T::integer(), self.context())?;
+                    step.assert_sub(&T::integer(), self.context())?;
                     indty = T::integer();
                 } else {
-                    try!(start.assert_sub(&T::number(), self.context()));
-                    try!(end.assert_sub(&T::number(), self.context()));
-                    try!(step.assert_sub(&T::number(), self.context()));
+                    start.assert_sub(&T::number(), self.context())?;
+                    end.assert_sub(&T::number(), self.context())?;
+                    step.assert_sub(&T::number(), self.context())?;
                     indty = T::number();
                 }
 
                 let mut scope = self.scoped(Scope::new());
                 let indty = Slot::var(indty, scope.context());
                 let nameref = NameRef::Local(localname.base.clone()).with_loc(localname);
-                try!(scope.env.add_var(&nameref, None, Some(indty.without_loc())));
-                let exit = try!(scope.visit_block(block));
+                scope.env.add_var(&nameref, None, Some(indty.without_loc()))?;
+                let exit = scope.visit_block(block)?;
                 if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
             }
 
             St::ForIn(ref names, ref exps, _blockscope, ref block) => {
-                let infos = try!(self.visit_explist(exps));
+                let infos = self.visit_explist(exps)?;
                 let expspan = infos.all_span();
                 let mut infos = infos.into_iter_with_nil();
                 let func = infos.next().unwrap(); // iterator function
@@ -911,8 +908,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let func = func.map(|t| t.unlift().clone().into_send());
                 let indtys;
                 if !self.env.get_type_bounds(&func).1.is_callable() {
-                    try!(self.env.error(expspan, m::NonFuncIterator { iter: self.display(&func) })
-                                 .done());
+                    self.env.error(expspan, m::NonFuncIterator { iter: self.display(&func) })
+                            .done()?;
                     indtys = TySeq::dummy();
                 } else if func.is_dynamic() {
                     // can't determine what func will return
@@ -934,8 +931,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                                          Box::new(indvar.clone()).without_loc()],
                                               tail: None,
                                               span: Span::dummy() };
-                    let mut returns = try!(self.check_callable(&func.with_loc(expspan), &args));
-                    try!(last.assert_sub(&indvar, self.context()));
+                    let mut returns = self.check_callable(&func.with_loc(expspan), &args)?;
+                    last.assert_sub(&indvar, self.context())?;
 
                     // note that we ignore indvar here. it is only kept internally and
                     // not visible outside; returns is what we should assign to variables!
@@ -949,9 +946,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 for (localname, ty) in names.iter().zip(indtys.into_iter_with_nil()) {
                     let ty = Slot::var(*ty, scope.context());
                     let nameref = NameRef::Local(localname.base.clone()).with_loc(localname);
-                    try!(scope.env.add_var(&nameref, None, Some(ty.without_loc())));
+                    scope.env.add_var(&nameref, None, Some(ty.without_loc()))?;
                 }
-                let exit = try!(scope.visit_block(block));
+                let exit = scope.visit_block(block)?;
                 if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::None) }
             }
 
@@ -963,13 +960,13 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     // this is very rare but valid case where the local variable is
                     // overwritten by a local function decl (so the NameRef is local
                     // but there is no new sibling scope). it's equivalent to assignment.
-                    try!(self.env.assign_to_var(name, info));
+                    self.env.assign_to_var(name, info)?;
                 } else {
                     // otherwise it is a new variable.
-                    try!(self.env.add_var(name, None, Some(info)));
+                    self.env.add_var(name, None, Some(info))?;
                 }
-                let functy = try!(self.visit_func_body(None, sig, block, stmt.span));
-                try!(T::TVar(funcv).assert_eq(&*functy.unlift(), self.context()));
+                let functy = self.visit_func_body(None, sig, block, stmt.span)?;
+                T::TVar(funcv).assert_eq(&*functy.unlift(), self.context())?;
                 Ok(Exit::None)
             }
 
@@ -978,10 +975,10 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 // find a slot for the first name
                 let info = if let Some(def) = self.env.get_var(name).cloned() {
-                    try!(self.env.ensure_var(name));
+                    self.env.ensure_var(name)?;
                     def.slot
                 } else {
-                    try!(self.env.error(name, m::NoVar { name: self.env.get_name(name) }).done());
+                    self.env.error(name, m::NoVar { name: self.env.get_name(name) }).done()?;
                     Slot::dummy()
                 };
 
@@ -990,12 +987,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 for subname in &meths[..meths.len()-1] {
                     let kty = Slot::just(T::str(subname.base.clone().into())).with_loc(subname);
                     let subspan = info.span | subname.span; // a subexpr for this indexing
-                    if let Some(subinfo) = try!(self.check_index(&info, &kty, subspan, false)) {
+                    if let Some(subinfo) = self.check_index(&info, &kty, subspan, false)? {
                         info = subinfo.with_loc(subspan);
                     } else {
-                        try!(self.env.error(subspan, m::CannotIndex { tab: self.display(&info),
-                                                                      key: self.display(&kty) })
-                                     .done());
+                        self.env.error(subspan, m::CannotIndex { tab: self.display(&info),
+                                                                 key: self.display(&kty) })
+                                .done()?;
                         info = Slot::dummy().with_loc(subspan);
                     }
                 }
@@ -1004,7 +1001,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let method = meths.last().unwrap();
                 let selfinfo = if let Some(ref selfparam) = *selfparam {
                     let given = if let Some(ref kind) = selfparam.kind {
-                        let ty = try!(T::from(kind, &mut self.env));
+                        let ty = T::from(kind, &mut self.env)?;
                         let flex = F::from(selfparam.modf);
                         Some((flex, ty))
                     } else {
@@ -1031,7 +1028,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         (Some(given), Some(inferred)) => {
                             if given.1.assert_eq(&inferred.1, self.context()).is_err() {
                                 let span = selfparam.kind.as_ref().unwrap().span;
-                                try!(self.env.error(span, m::BadSelfTypeInMethod {}).done());
+                                self.env.error(span, m::BadSelfTypeInMethod {}).done()?;
                             }
 
                             // they may have the same type but different flex.
@@ -1049,8 +1046,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         // except when [no_check] is requested (requires a fixed type)
                         (None, None) => {
                             if sig.attrs.iter().any(|a| *a.name.base == *b"no_check") {
-                                try!(self.env.error(&selfparam.base, m::NoCheckRequiresTypedSelf {})
-                                             .done());
+                                self.env.error(&selfparam.base, m::NoCheckRequiresTypedSelf {})
+                                        .done()?;
                             }
 
                             // var <fresh type variable>
@@ -1063,35 +1060,35 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 } else {
                     None
                 };
-                let methinfo = try!(self.visit_func_body(selfinfo, sig, block, stmt.span));
+                let methinfo = self.visit_func_body(selfinfo, sig, block, stmt.span)?;
 
                 // finally, go through the ordinary table update
                 let subspan = info.span | method.span;
                 let kty = Slot::just(T::str(method.base.clone().into())).with_loc(method);
-                let slot = try!(self.check_index(&info, &kty, subspan, true));
+                let slot = self.check_index(&info, &kty, subspan, true)?;
                 // since we've requested a lvalue it would never return None
-                try!(self.env.assign(&slot.unwrap().with_loc(subspan), &methinfo.with_loc(stmt)));
+                self.env.assign(&slot.unwrap().with_loc(subspan), &methinfo.with_loc(stmt))?;
 
                 Ok(Exit::None)
             }
 
             St::Local(ref names, ref exps, _nextscope) => {
-                let infos = try!(self.visit_explist(exps));
+                let infos = self.visit_explist(exps)?;
                 for (namespec, info) in names.iter().zip(infos.into_iter_with_none()) {
                     let specinfo = if let Some(ref kind) = namespec.kind {
-                        Some(try!(self.visit_kind(F::from(namespec.modf), kind)))
+                        Some(self.visit_kind(F::from(namespec.modf), kind)?)
                     } else {
                         None
                     };
                     let localname = &namespec.base;
                     let nameref = NameRef::Local(localname.base.clone()).with_loc(localname);
-                    try!(self.env.add_var(&nameref, specinfo, info));
+                    self.env.add_var(&nameref, specinfo, info)?;
                 }
                 Ok(Exit::None)
             }
 
             St::Return(ref exps) => {
-                let seq = try!(self.visit_explist(exps));
+                let seq = self.visit_explist(exps)?;
                 let seq = seq.unlift(); // XXX wait, is it safe?
                 let (returns, returns_exact) = {
                     let frame = self.env.get_frame();
@@ -1099,7 +1096,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     (returns, frame.returns_exact)
                 };
                 if returns_exact {
-                    try!(Some(seq).assert_sub(&returns, self.context()));
+                    Some(seq).assert_sub(&returns, self.context())?;
                 } else {
                     // need to infer the return type
                     let returns = Some(seq).union(&returns, self.context());
@@ -1112,13 +1109,13 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             St::KailuaOpen(ref name) => {
                 let opts = self.env.opts().clone();
-                try!(self.env.context().open_library(name, opts));
+                self.env.context().open_library(name, opts)?;
                 Ok(Exit::None)
             }
 
             St::KailuaType(ref name, ref kind) => {
-                let ty = Box::new(try!(T::from(kind, &mut self.env)));
-                try!(self.env.define_type(name, ty));
+                let ty = Box::new(T::from(kind, &mut self.env)?);
+                self.env.define_type(name, ty)?;
                 Ok(Exit::None)
             }
 
@@ -1138,8 +1135,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 }
 
                 let flex = if currently { F::Currently } else { F::from(kindm) };
-                let slot = try!(self.visit_kind(flex, kind));
-                try!(self.env.assume_var(name, slot));
+                let slot = self.visit_kind(flex, kind)?;
+                self.env.assume_var(name, slot)?;
                 Ok(Exit::None)
             }
         }
@@ -1155,12 +1152,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Some(None) => {
                 // varargs present but types are unspecified
                 if no_check {
-                    try!(self.env.error(declspan, m::NoCheckRequiresTypedVarargs {}).done());
+                    self.env.error(declspan, m::NoCheckRequiresTypedVarargs {}).done()?;
                     return Ok(Slot::dummy());
                 }
                 Some(Box::new(TyWithNil::from(T::TVar(self.context().gen_tvar()))))
             },
-            Some(Some(ref k)) => Some(Box::new(TyWithNil::from(try!(T::from(k, &mut self.env))))),
+            Some(Some(ref k)) => Some(Box::new(TyWithNil::from(T::from(k, &mut self.env)?))),
         };
         let vainfo = vatype.clone().map(|t| TySeq { head: Vec::new(), tail: Some(t) });
 
@@ -1170,10 +1167,10 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         // TODO the exception should be made to the recursive usage;
         // we probably need to put a type variable that is later equated to the actual returns
         let frame = if let Some(ref returns) = sig.returns {
-            let returns = try!(TySeq::from_kind_seq(returns, &mut self.env));
+            let returns = TySeq::from_kind_seq(returns, &mut self.env)?;
             Frame { vararg: vainfo, returns: Some(returns), returns_exact: true }
         } else if no_check {
-            try!(self.env.error(declspan, m::NoCheckRequiresTypedReturns {}).done());
+            self.env.error(declspan, m::NoCheckRequiresTypedReturns {}).done()?;
             return Ok(Slot::dummy());
         } else {
             Frame { vararg: vainfo, returns: None, returns_exact: false }
@@ -1185,7 +1182,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         if let Some((selfparam, selfinfo)) = selfparam {
             let ty = selfinfo.unlift().clone().into_send();
             let selfid = selfparam.clone().map(|param| param.0);
-            try!(scope.env.add_local_var_already_set(&selfid, selfinfo.without_loc()));
+            scope.env.add_local_var_already_set(&selfid, selfinfo.without_loc())?;
             argshead.push(Box::new(ty));
         }
 
@@ -1193,28 +1190,28 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             let ty;
             let sty;
             if let Some(ref kind) = param.kind {
-                ty = try!(T::from(kind, &mut scope.env));
+                ty = T::from(kind, &mut scope.env)?;
                 let flex = F::from(param.modf);
                 sty = Slot::new(flex, ty.clone());
             } else if no_check {
-                try!(scope.env.error(&param.base, m::NoCheckRequiresTypedArgs {}).done());
+                scope.env.error(&param.base, m::NoCheckRequiresTypedArgs {}).done()?;
                 return Ok(Slot::dummy());
             } else {
                 let argv = scope.context().gen_tvar();
                 ty = T::TVar(argv);
                 sty = Slot::new(F::Var, T::TVar(argv));
             }
-            try!(scope.env.add_local_var_already_set(&param.base, sty.without_loc()));
+            scope.env.add_local_var_already_set(&param.base, sty.without_loc())?;
             argshead.push(Box::new(ty));
         }
         let args = TySeq { head: argshead, tail: vatype };
 
         if !no_check {
-            if let Exit::None = try!(scope.visit_block(block)) {
+            if let Exit::None = scope.visit_block(block)? {
                 // the last statement is an implicit return
                 let pos = block.span.end(); // the span is conceptually at the end of block
                 let ret = Box::new(St::Return(Vec::new().with_loc(pos))).with_loc(pos);
-                try!(scope.visit_stmt(&ret));
+                scope.visit_stmt(&ret)?;
             }
         }
 
@@ -1225,30 +1222,28 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     fn visit_func_call(&mut self, funcinfo: &Spanned<T>, selfinfo: Option<Spanned<Slot>>,
                        args: &Spanned<Vec<Spanned<Exp>>>, expspan: Span) -> CheckResult<SlotSeq> {
         if !self.env.get_type_bounds(funcinfo).1.is_callable() {
-            try!(self.env.error(funcinfo, m::CallToNonFunc { func: self.display(funcinfo) })
-                         .done());
+            self.env.error(funcinfo, m::CallToNonFunc { func: self.display(funcinfo) }).done()?;
             return Ok(SlotSeq::dummy());
         }
         if funcinfo.is_dynamic() {
             return Ok(SlotSeq::from(T::Dynamic));
         }
 
-        let mut argtys = try!(self.visit_explist(args));
+        let mut argtys = self.visit_explist(args)?;
 
         // handle builtins, which may return different things from the function signature
         match funcinfo.builtin() {
             // require("foo")
             Some(Builtin::Require) => {
                 if args.len() < 1 {
-                    try!(self.env.error(expspan,
-                                        m::BuiltinGivenLessArgs { name: "require", nargs: 1 })
-                                 .done());
+                    self.env.error(expspan, m::BuiltinGivenLessArgs { name: "require", nargs: 1 })
+                            .done()?;
                     return Ok(SlotSeq::dummy());
                 }
 
                 if let Some(modname) = self.env.resolve_exact_type(&argtys.head[0].unlift())
                                                .and_then(|t| t.as_string().map(|s| s.to_owned())) {
-                    if let Some(slot) = try!(self.context().get_loaded_module(&modname, expspan)) {
+                    if let Some(slot) = self.context().get_loaded_module(&modname, expspan)? {
                         info!("requiring {:?} (cached)", modname);
                         return Ok(SlotSeq::from_slot(slot));
                     }
@@ -1259,16 +1254,16 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     let chunk = match opts.borrow_mut().require_chunk(&modname) {
                         Ok(chunk) => chunk,
                         Err(_) => {
-                            try!(self.env.warn(&args[0], m::CannotResolveModName {}).done());
+                            self.env.warn(&args[0], m::CannotResolveModName {}).done()?;
                             return Ok(SlotSeq::from(T::All));
                         }
                     };
                     let mut env = Env::new(self.env.context(), opts, chunk.map);
                     {
                         let mut sub = Checker::new(&mut env);
-                        try!(sub.visit_block(&chunk.block));
+                        sub.visit_block(&chunk.block)?;
                     }
-                    return Ok(SlotSeq::from_slot(try!(env.return_from_module(&modname, expspan))));
+                    return Ok(SlotSeq::from_slot(env.return_from_module(&modname, expspan)?));
                 } else {
                     return Ok(SlotSeq::from(T::All));
                 }
@@ -1278,15 +1273,14 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Some(Builtin::Assert) => {
                 if args.len() < 1 {
                     // TODO should display the true name
-                    try!(self.env.error(expspan,
-                                        m::BuiltinGivenLessArgs { name: "assert", nargs: 1 })
-                                 .done());
+                    self.env.error(expspan, m::BuiltinGivenLessArgs { name: "assert", nargs: 1 })
+                            .done()?;
                     return Ok(SlotSeq::dummy());
                 }
 
-                let (cond, _seq) = try!(self.collect_conds_from_exp(&args[0]));
+                let (cond, _seq) = self.collect_conds_from_exp(&args[0])?;
                 if let Some(cond) = cond {
-                    try!(self.assert_cond(cond, false));
+                    self.assert_cond(cond, false)?;
                 }
             }
 
@@ -1294,15 +1288,15 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Some(Builtin::AssertNot) => {
                 if args.len() < 1 {
                     // TODO should display the true name
-                    try!(self.env.error(expspan,
-                                        m::BuiltinGivenLessArgs { name: "assert-not", nargs: 1 })
-                                 .done());
+                    self.env.error(expspan,
+                                   m::BuiltinGivenLessArgs { name: "assert-not", nargs: 1 })
+                            .done()?;
                     return Ok(SlotSeq::dummy());
                 }
 
-                let (cond, _seq) = try!(self.collect_conds_from_exp(&args[0]));
+                let (cond, _seq) = self.collect_conds_from_exp(&args[0])?;
                 if let Some(cond) = cond {
-                    try!(self.assert_cond(cond, true));
+                    self.assert_cond(cond, true)?;
                 }
             }
 
@@ -1310,15 +1304,15 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Some(Builtin::AssertType) => {
                 if args.len() < 2 {
                     // TODO should display the true name
-                    try!(self.env.error(expspan,
-                                        m::BuiltinGivenLessArgs { name: "assert-type", nargs: 2 })
-                                 .done());
+                    self.env.error(expspan,
+                                   m::BuiltinGivenLessArgs { name: "assert-type", nargs: 2 })
+                            .done()?;
                     return Ok(SlotSeq::dummy());
                 }
 
-                if let Some(flags) = try!(self.ext_literal_ty_to_flags(&argtys.head[1])) {
+                if let Some(flags) = self.ext_literal_ty_to_flags(&argtys.head[1])? {
                     let cond = Cond::Flags(argtys.head[0].clone(), flags);
-                    try!(self.assert_cond(cond, false));
+                    self.assert_cond(cond, false)?;
                 }
             }
 
@@ -1334,12 +1328,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         if let Some(selfinfo) = selfinfo {
             argtys.head.insert(0, selfinfo);
         }
-        let returns = try!(self.check_callable(funcinfo, &argtys.unlift()));
+        let returns = self.check_callable(funcinfo, &argtys.unlift())?;
         Ok(SlotSeq::from_seq(returns))
     }
 
     fn visit_exp(&mut self, exp: &Spanned<Exp>) -> CheckResult<SpannedSlotSeq> {
-        let slotseq = try!(self.visit_exp_(exp));
+        let slotseq = self.visit_exp_(exp)?;
 
         // mark the resulting slot (sequence) to the span
         let slot = if let Some(slot) = slotseq.head.first() {
@@ -1377,22 +1371,22 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if let Some(vararg) = self.env.get_vararg() {
                     Ok(SlotSeq::from_seq(vararg.clone()))
                 } else {
-                    try!(self.env.error(exp, m::NoVarargs {}).done());
+                    self.env.error(exp, m::NoVarargs {}).done()?;
                     Ok(SlotSeq::dummy())
                 }
             },
             Ex::Var(ref name) => {
                 if let Some(def) = self.env.get_var(name).cloned() {
-                    try!(self.env.ensure_var(name));
+                    self.env.ensure_var(name)?;
                     Ok(SlotSeq::from_slot(def.slot))
                 } else {
-                    try!(self.env.error(exp, m::NoVar { name: self.env.get_name(name) }).done());
+                    self.env.error(exp, m::NoVar { name: self.env.get_name(name) }).done()?;
                     Ok(SlotSeq::dummy())
                 }
             },
 
             Ex::Func(ref sig, _scope, ref block) => {
-                let returns = try!(self.visit_func_body(None, sig, block, exp.span));
+                let returns = self.visit_func_body(None, sig, block, exp.span)?;
                 Ok(SlotSeq::from_slot(returns))
             },
             Ex::Table(ref fields) => {
@@ -1402,7 +1396,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 for (idx, &(ref key, ref value)) in fields.iter().enumerate() {
                     // if this is the last entry and no explicit index is set, splice the values
                     if idx == fields.len() - 1 && key.is_none() {
-                        let vty = try!(self.visit_exp(value));
+                        let vty = self.visit_exp(value)?;
                         for ty in &vty.head {
                             let ty = ty.unlift().clone();
                             len += 1;
@@ -1415,7 +1409,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         }
                     } else {
                         let kty = if let Some(ref key) = *key {
-                            let key = try!(self.visit_exp(key)).into_first();
+                            let key = self.visit_exp(key)?.into_first();
                             let key = key.unlift();
                             key.clone().into_send()
                         } else {
@@ -1424,7 +1418,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         };
 
                         // update the table type according to new field
-                        let vty = try!(self.visit_exp(value)).into_first();
+                        let vty = self.visit_exp(value)?.into_first();
                         let vty = vty.unlift().clone();
                         tab = tab.insert(kty, vty, self.context());
                     }
@@ -1435,49 +1429,49 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             },
 
             Ex::FuncCall(ref func, ref args) => {
-                let funcinfo = try!(self.visit_exp(func)).into_first();
+                let funcinfo = self.visit_exp(func)?.into_first();
                 let funcinfo = funcinfo.map(|t| t.unlift().clone().into_send());
                 self.visit_func_call(&funcinfo, None, args, exp.span)
             },
 
             Ex::MethodCall(ref e, ref method, ref args) => {
-                let ty = try!(self.visit_exp(e)).into_first();
+                let ty = self.visit_exp(e)?.into_first();
                 let methodspan = method.span;
                 let kty = Slot::just(T::str(method.base.clone().into())).with_loc(methodspan);
-                if let Some(methinfo) = try!(self.check_index(&ty, &kty, exp.span, false)) {
+                if let Some(methinfo) = self.check_index(&ty, &kty, exp.span, false)? {
                     let methinfo = methinfo.unlift().clone().into_send().with_loc(methodspan);
                     self.visit_func_call(&methinfo, Some(ty), args, exp.span)
                 } else {
-                    try!(self.env.error(exp, m::CannotIndex { tab: self.display(&ty),
-                                                              key: self.display(&kty) })
-                                 .done());
+                    self.env.error(exp, m::CannotIndex { tab: self.display(&ty),
+                                                         key: self.display(&kty) })
+                            .done()?;
                     Ok(SlotSeq::dummy())
                 }
             },
 
             Ex::Index(ref e, ref key) => {
-                let ty = try!(self.visit_exp(e)).into_first();
-                let kty = try!(self.visit_exp(key)).into_first();
-                if let Some(vinfo) = try!(self.check_index(&ty, &kty, exp.span, false)) {
+                let ty = self.visit_exp(e)?.into_first();
+                let kty = self.visit_exp(key)?.into_first();
+                if let Some(vinfo) = self.check_index(&ty, &kty, exp.span, false)? {
                     Ok(SlotSeq::from_slot(vinfo))
                 } else {
-                    try!(self.env.error(exp, m::CannotIndex { tab: self.display(&ty),
-                                                              key: self.display(&kty) })
-                                 .done());
+                    self.env.error(exp, m::CannotIndex { tab: self.display(&ty),
+                                                         key: self.display(&kty) })
+                            .done()?;
                     Ok(SlotSeq::dummy())
                 }
             },
 
             Ex::Un(op, ref e) => {
-                let info = try!(self.visit_exp(e)).into_first();
-                let info = try!(self.check_un_op(op.base, &info, exp.span));
+                let info = self.visit_exp(e)?.into_first();
+                let info = self.check_un_op(op.base, &info, exp.span)?;
                 Ok(SlotSeq::from_slot(info))
             },
 
             Ex::Bin(ref l, op, ref r) => {
-                let lhs = try!(self.visit_exp(l)).into_first();
-                let rhs = try!(self.visit_exp(r)).into_first();
-                let info = try!(self.check_bin_op(&lhs, op.base, &rhs, exp.span));
+                let lhs = self.visit_exp(l)?.into_first();
+                let rhs = self.visit_exp(r)?.into_first();
+                let info = self.check_bin_op(&lhs, op.base, &rhs, exp.span)?;
                 Ok(SlotSeq::from_slot(info))
             },
         }
@@ -1490,7 +1484,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             if let Some(last) = last.take() {
                 head.push(last.into_first());
             }
-            let info = try!(self.visit_exp(exp));
+            let info = self.visit_exp(exp)?;
             last = Some(info);
         }
 
@@ -1503,34 +1497,34 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     }
 
     fn visit_kind(&mut self, flex: F, kind: &Spanned<Kind>) -> CheckResult<Spanned<Slot>> {
-        let ty = try!(T::from(kind, &mut self.env));
+        let ty = T::from(kind, &mut self.env)?;
         Ok(Slot::new(flex, ty).with_loc(kind))
     }
 
     fn collect_type_from_exp(&mut self, exp: &Spanned<Exp>)
             -> CheckResult<(Option<Spanned<Slot>>, SpannedSlotSeq)> {
         if let Ex::FuncCall(ref func, ref args) = *exp.base {
-            let funcseq = try!(self.visit_exp(func));
+            let funcseq = self.visit_exp(func)?;
             let funcspan = funcseq.all_span();
             let funcinfo = funcseq.into_first();
             let funcinfo = funcinfo.unlift();
             let typeofexp = if funcinfo.builtin() == Some(Builtin::Type) {
                 // there should be a single argument there
                 if args.len() != 1 {
-                    try!(self.env.error(exp, m::BuiltinGivenLessArgs { name: "type", nargs: 1 })
-                                 .done());
+                    self.env.error(exp, m::BuiltinGivenLessArgs { name: "type", nargs: 1 })
+                            .done()?;
                     None
                 } else {
-                    Some(try!(self.visit_exp(&args[0])).into_first())
+                    Some(self.visit_exp(&args[0])?.into_first())
                 }
             } else {
                 None
             };
-            let seq = try!(self.visit_func_call(&funcinfo.to_ref().with_loc(funcspan), None,
-                                                args, exp.span));
+            let seq = self.visit_func_call(&funcinfo.to_ref().with_loc(funcspan), None,
+                                           args, exp.span)?;
             Ok((typeofexp, seq.all_with_loc(exp)))
         } else {
-            let seq = try!(self.visit_exp(exp));
+            let seq = self.visit_exp(exp)?;
             Ok((None, seq))
         }
     }
@@ -1542,7 +1536,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
         match *exp.base {
             Ex::Un(Spanned { base: UnOp::Not, .. }, ref e) => {
-                let (cond, seq) = try!(self.collect_conds_from_exp(e));
+                let (cond, seq) = self.collect_conds_from_exp(e)?;
                 let cond = match cond {
                     Some(Cond::Not(cond)) => match *cond {
                         Cond::Not(cond) => Some(*cond),
@@ -1553,13 +1547,13 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     None => None,
                 };
                 let info = seq.into_first();
-                let info = try!(self.check_un_op(UnOp::Not, &info, exp.span));
+                let info = self.check_un_op(UnOp::Not, &info, exp.span)?;
                 Ok((cond, SpannedSlotSeq::from_slot(info.with_loc(exp))))
             }
 
             Ex::Bin(ref l, Spanned { base: BinOp::Eq, .. }, ref r) => {
-                let (lty, linfo) = try!(self.collect_type_from_exp(l));
-                let (rty, rinfo) = try!(self.collect_type_from_exp(r));
+                let (lty, linfo) = self.collect_type_from_exp(l)?;
+                let (rty, rinfo) = self.collect_type_from_exp(r)?;
 
                 let linfo = linfo.into_first();
                 let rinfo = rinfo.into_first();
@@ -1570,14 +1564,14 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 // that we cannot readily handle.
                 let cond = match (lty, rty) {
                     (Some(ty), None) => {
-                        if let Some(flags) = try!(self.literal_ty_to_flags(&rinfo)) {
+                        if let Some(flags) = self.literal_ty_to_flags(&rinfo)? {
                             Some(Cond::Flags(ty, flags))
                         } else {
                             None // the rhs is not a literal, so we don't what it is
                         }
                     },
                     (None, Some(ty)) => {
-                        if let Some(flags) = try!(self.literal_ty_to_flags(&linfo)) {
+                        if let Some(flags) = self.literal_ty_to_flags(&linfo)? {
                             Some(Cond::Flags(ty, flags))
                         } else {
                             None
@@ -1592,8 +1586,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             Ex::Bin(ref l, Spanned { base: BinOp::And, .. }, ref r) => {
-                let (lcond, lseq) = try!(self.collect_conds_from_exp(l));
-                let (rcond, rseq) = try!(self.collect_conds_from_exp(r));
+                let (lcond, lseq) = self.collect_conds_from_exp(l)?;
+                let (rcond, rseq) = self.collect_conds_from_exp(r)?;
 
                 let cond = match (lcond, rcond) {
                     (None, cond) | (cond, None) => cond,
@@ -1613,13 +1607,13 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 let linfo = lseq.into_first();
                 let rinfo = rseq.into_first();
-                let info = try!(self.check_bin_op(&linfo, BinOp::And, &rinfo, exp.span));
+                let info = self.check_bin_op(&linfo, BinOp::And, &rinfo, exp.span)?;
                 Ok((cond, SpannedSlotSeq::from_slot(info.with_loc(exp))))
             }
 
             Ex::Bin(ref l, Spanned { base: BinOp::Or, .. }, ref r) => {
-                let (lcond, lseq) = try!(self.collect_conds_from_exp(l));
-                let (rcond, rseq) = try!(self.collect_conds_from_exp(r));
+                let (lcond, lseq) = self.collect_conds_from_exp(l)?;
+                let (rcond, rseq) = self.collect_conds_from_exp(r)?;
 
                 let cond = match (lcond, rcond) {
                     (None, cond) | (cond, None) => cond,
@@ -1639,12 +1633,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 let linfo = lseq.into_first();
                 let rinfo = rseq.into_first();
-                let info = try!(self.check_bin_op(&linfo, BinOp::Or, &rinfo, exp.span));
+                let info = self.check_bin_op(&linfo, BinOp::Or, &rinfo, exp.span)?;
                 Ok((cond, SpannedSlotSeq::from_slot(info.with_loc(exp))))
             }
 
             _ => {
-                let seq = try!(self.visit_exp(exp));
+                let seq = self.visit_exp(exp)?;
                 let info = seq.into_first();
                 // XXX should detect non-local slots and reject them!
                 // probably we can do that via proper weakening, but who knows.
@@ -1659,26 +1653,26 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         match cond {
             Cond::Flags(info, flags) => {
                 let flags = if negated { !flags } else { flags };
-                try!(info.filter_by_flags(flags, self.context()));
+                info.filter_by_flags(flags, self.context())?;
                 debug!("resulted in {:?}", info);
             }
 
             Cond::And(lcond, rcond) => {
                 if !negated {
-                    try!(self.assert_cond(*lcond, negated));
-                    try!(self.assert_cond(*rcond, negated));
+                    self.assert_cond(*lcond, negated)?;
+                    self.assert_cond(*rcond, negated)?;
                 }
             }
 
             Cond::Or(lcond, rcond) => {
                 if negated {
-                    try!(self.assert_cond(*lcond, negated));
-                    try!(self.assert_cond(*rcond, negated));
+                    self.assert_cond(*lcond, negated)?;
+                    self.assert_cond(*rcond, negated)?;
                 }
             }
 
             Cond::Not(cond) => {
-                try!(self.assert_cond(*cond, !negated));
+                self.assert_cond(*cond, !negated)?;
             }
         }
 
@@ -1698,7 +1692,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 b"thread" => T_THREAD,
                 b"userdata" => T_USERDATA,
                 _ => {
-                    try!(self.env.error(info, m::UnknownLiteralTypeName {}).done());
+                    self.env.error(info, m::UnknownLiteralTypeName {}).done()?;
                     return Ok(None);
                 }
             };
@@ -1728,7 +1722,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 b"thread" => T_THREAD,
                 b"userdata" => T_USERDATA,
                 _ => {
-                    try!(self.env.error(info, m::UnknownLiteralTypeName {}).done());
+                    self.env.error(info, m::UnknownLiteralTypeName {}).done()?;
                     return Ok(None);
                 }
             };

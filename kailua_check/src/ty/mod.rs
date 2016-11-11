@@ -230,10 +230,10 @@ impl<A: Display, B: Display> Lattice<Spanned<B>> for Spanned<A>
 
     fn assert_sub(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> CheckResult<()> {
         if let Err(e) = self.base.assert_sub(&other.base, ctx) {
-            try!(ctx.error(self.span, m::NotSubtype { sub: self.display(ctx),
-                                                      sup: other.display(ctx) })
-                    .note_if(other.span, m::OtherTypeOrigin {})
-                    .done());
+            ctx.error(self.span, m::NotSubtype { sub: self.display(ctx),
+                                                 sup: other.display(ctx) })
+               .note_if(other.span, m::OtherTypeOrigin {})
+               .done()?;
             Err(e) // XXX not sure if we can recover here
         } else {
             Ok(())
@@ -242,10 +242,10 @@ impl<A: Display, B: Display> Lattice<Spanned<B>> for Spanned<A>
 
     fn assert_eq(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> CheckResult<()> {
         if let Err(e) = self.base.assert_eq(&other.base, ctx) {
-            try!(ctx.error(self.span, m::NotEqual { lhs: self.display(ctx),
-                                                    rhs: other.display(ctx) })
-                    .note_if(other.span, m::OtherTypeOrigin {})
-                    .done());
+            ctx.error(self.span, m::NotEqual { lhs: self.display(ctx),
+                                               rhs: other.display(ctx) })
+               .note_if(other.span, m::OtherTypeOrigin {})
+               .done()?;
             Err(e) // XXX not sure if we can recover here
         } else {
             Ok(())
