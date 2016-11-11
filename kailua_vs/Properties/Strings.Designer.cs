@@ -70,6 +70,15 @@ namespace Kailua.Properties {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to .
+        /// </summary>
+        internal static string FieldNameSuffix {
+            get {
+                return ResourceManager.GetString("FieldNameSuffix", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to  (global).
         /// </summary>
         internal static string GlobalNameSuffix {

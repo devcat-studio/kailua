@@ -52,6 +52,7 @@ namespace Kailua.Native
             private IntPtr namePtr;
             private UIntPtr nameLen;
             private int scope;
+            private int flags;
 
             public string Name
             {

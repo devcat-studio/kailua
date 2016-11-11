@@ -34,6 +34,32 @@ namespace Kailua
         Inside,
     }
 
+    namespace Extensions
+    {
+        public static class IntersectionModeExtension
+        {
+            public static bool HasBegin(this IntersectionMode mode)
+            {
+                return (mode == IntersectionMode.Begin || mode == IntersectionMode.Both);
+            }
+
+            public static bool HasEnd(this IntersectionMode mode)
+            {
+                return (mode == IntersectionMode.End || mode == IntersectionMode.Both);
+            }
+
+            public static bool IsBefore(this IntersectionMode mode)
+            {
+                return (mode == IntersectionMode.Begin || mode == IntersectionMode.Both || mode == IntersectionMode.Inside);
+            }
+
+            public static bool IsAfter(this IntersectionMode mode)
+            {
+                return (mode == IntersectionMode.End || mode == IntersectionMode.Both || mode == IntersectionMode.Inside);
+            }
+        }
+    }
+
     public class TokenList : IList<Native.TokenTypeAndSpan>
     {
         private ITextSnapshot snapshot;

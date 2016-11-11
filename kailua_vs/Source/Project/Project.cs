@@ -24,7 +24,8 @@ namespace Kailua
         internal CancellationTokenSource cts;
         internal Native.Report report;
         internal List<ReportData> reportData;
-        private Task checkTask;
+        private Task<Native.CheckerOutput> checkTask;
+        private Native.CheckerOutput lastValidCheckerOutput;
         private readonly object syncLock = new object();
 
         public Project(EnvDTE.Project project)
@@ -41,6 +42,7 @@ namespace Kailua
             this.report = null;
             this.reportData = null;
             this.checkTask = null;
+            this.lastValidCheckerOutput = null;
 
             this.uiThread = new ProjectUIThread(this, project);
         }
@@ -118,7 +120,7 @@ namespace Kailua
             }
         }
 
-        public Task CheckTask
+        public Task<Native.CheckerOutput> CheckTask
         {
             get
             {
@@ -127,6 +129,25 @@ namespace Kailua
                     this.ensureCheckTaskUnlocked();
                     return this.checkTask;
                 }
+            }
+        }
+
+        public Native.CheckerOutput LastValidCheckerOutput
+        {
+            get
+            {
+                try
+                {
+                    var output = this.CheckTask.Result;
+                    if (output != null)
+                    {
+                        return output;
+                    }
+                }
+                catch (Exception)
+                {
+                }
+                return this.lastValidCheckerOutput;
             }
         }
 
@@ -168,7 +189,7 @@ namespace Kailua
             // if there are no parent tasks we just make it dummy
             if (this.files.IsEmpty)
             {
-                this.checkTask = Task.FromResult(false);
+                this.checkTask = Task.FromResult<Native.CheckerOutput>(null);
                 return;
             }
 
@@ -321,7 +342,8 @@ namespace Kailua
                         return newTree;
                     }, report);
 
-                    if (checker.Execute(entryFileName))
+                    Native.CheckerOutput output;
+                    if (checker.Execute(entryFileName, out output))
                     {
                         Log.Write("checking success");
                     }
@@ -329,6 +351,11 @@ namespace Kailua
                     {
                         Log.Write("checking failed");
                     }
+                    if (output != null)
+                    {
+                        this.lastValidCheckerOutput = output;
+                    }
+                    return output;
                 }
                 catch (Exception ee)
                 {

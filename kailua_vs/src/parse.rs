@@ -38,13 +38,13 @@ impl VSParseTree {
     pub fn names_at_pos(&self, pos: Pos) -> Option<VSNameEntries> {
         self.chunk.map.scope_from_pos(pos).map(|scope| {
             self.chunk.map.names_and_scopes(scope).map(|(name, scope, _id)| {
-                VSNameEntry::new(name, scope.to_usize() as i32)
+                VSNameEntry::new(&name[..], scope.to_usize() as i32)
             }).collect()
         })
     }
 
     pub fn global_names(&self) -> VSNameEntries {
-        self.chunk.global_scope.iter().map(|name| VSNameEntry::new(name, 0)).collect()
+        self.chunk.global_scope.iter().map(|name| VSNameEntry::new(&name[..], 0)).collect()
     }
 }
 

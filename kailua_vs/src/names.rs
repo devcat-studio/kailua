@@ -1,24 +1,49 @@
 use std::i32;
 use std::mem;
+use std::borrow::Cow;
 use std::iter::FromIterator;
 use std::panic::{self, AssertUnwindSafe};
 use std::marker::PhantomData;
 
+pub const VS_NAME_ENTRY_NAME_ALLOC: u32 = 1;
+
 #[repr(C)]
 pub struct VSNameEntry<'a> {
-    pub name: *const u8,
-    pub namelen: usize,
-    pub scope: i32, // 0 if global, negative if not applicable
+    nameptr: *const u8,
+    namelen: usize,
+    scope: i32, // 0 if global, negative if not applicable
+    flags: u32,
     _marker: PhantomData<&'a ()>,
 }
 
 impl<'a> VSNameEntry<'a> {
-    pub fn new(name: &'a [u8], scope: i32) -> VSNameEntry<'a> {
+    pub fn new<N: Into<Cow<'a, [u8]>>>(name: N, scope: i32) -> VSNameEntry<'a> {
+        let name: Cow<'a, [u8]> = name.into();
+        let (nameptr, namelen, alloc) = match name {
+            Cow::Borrowed(s) => (s.as_ptr(), s.len(), false),
+            Cow::Owned(s) => {
+                let s = s.into_boxed_slice();
+                let raw = (s.as_ptr(), s.len(), true);
+                mem::forget(s); // essentially owned by VSNameEntry
+                raw
+            }
+        };
         VSNameEntry {
-            name: name.as_ptr(),
-            namelen: name.len(),
+            nameptr: nameptr,
+            namelen: namelen,
             scope: scope,
+            flags: if alloc { VS_NAME_ENTRY_NAME_ALLOC } else { 0 },
             _marker: PhantomData,
+        }
+    }
+}
+
+impl<'a> Drop for VSNameEntry<'a> {
+    fn drop(&mut self) {
+        if self.flags & VS_NAME_ENTRY_NAME_ALLOC != 0 {
+            let name: Box<[u8]> = unsafe { mem::transmute((self.nameptr, self.namelen)) };
+            drop(name);
+            self.flags &= !VS_NAME_ENTRY_NAME_ALLOC;
         }
     }
 }
@@ -52,8 +77,7 @@ impl<'a> FromIterator<VSNameEntry<'a>> for VSNameEntries<'a> {
 
 #[no_mangle]
 pub extern "C" fn kailua_free_names(entries: *mut VSNameEntry, nentries: i32) {
-    if entries.is_null() { return; }
-    if nentries < 0 { return; }
+    if entries.is_null() || nentries < 0 { return; }
     let entries = unsafe { VSNameEntries::from_raw(entries, nentries) };
 
     let entries = AssertUnwindSafe(entries); // XXX use Unique when it is stabilized

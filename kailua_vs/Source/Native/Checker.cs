@@ -7,7 +7,7 @@ namespace Kailua.Native
     internal class CheckerHandle : SafeHandle
     {
         [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern void kailua_checker_free(IntPtr tree);
+        private static extern void kailua_checker_free(IntPtr checker);
 
         private CheckerHandle() : base(IntPtr.Zero, true) { }
 
@@ -47,7 +47,8 @@ namespace Kailua.Native
         private static extern int kailua_checker_exec(
             CheckerHandle checker,
             [MarshalAs(UnmanagedType.LPWStr)] String path,
-            int pathlen);
+            int pathlen,
+            [Out] out CheckerOutputHandle output);
 
         internal CheckerHandle native;
         private SourceCallback nativeCallback; // avoid GC
@@ -89,16 +90,17 @@ namespace Kailua.Native
             }
         }
 
-        public bool Execute(String mainpath)
+        public bool Execute(String mainpath, out CheckerOutput output)
         {
             int ret;
             Exception lastException;
+            CheckerOutputHandle nativeOutput;
             lock (this.native)
             {
                 this.lastException = null;
                 try
                 {
-                    ret = kailua_checker_exec(this.native, mainpath, mainpath.Length);
+                    ret = kailua_checker_exec(this.native, mainpath, mainpath.Length, out nativeOutput);
                 }
                 finally
                 {
@@ -110,7 +112,8 @@ namespace Kailua.Native
             {
                 throw new NativeException("internal error while checking a source code");
             }
-            else if (lastException != null)
+            output = (nativeOutput.IsInvalid ? null : new Native.CheckerOutput(nativeOutput));
+            if (lastException != null)
             {
                 throw lastException;
             }
