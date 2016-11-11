@@ -30,44 +30,6 @@ namespace Kailua.Native
         }
     }
 
-    public struct NameEntry
-    {
-        public string Name;
-        public uint Scope;
-    }
-
-    internal class NameEntriesHandle : SafeHandle
-    {
-        [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern void kailua_parse_tree_free_names(IntPtr entries, int nentries);
-
-        private NameEntriesHandle() : base(IntPtr.Zero, true) { }
-
-        internal int Size = -1;
-
-        public override bool IsInvalid
-        {
-            get
-            {
-                return this.handle.Equals(IntPtr.Zero);
-            }
-        }
-
-        protected override bool ReleaseHandle()
-        {
-            if (this.Size < 0)
-            {
-                throw new NativeException("NameEntriesHandle does not have its Size set");
-            }
-
-            lock (this)
-            {
-                kailua_parse_tree_free_names(this.handle, this.Size);
-            }
-            return true;
-        }
-    }
-
     public class ParseTree : IDisposable
     {
         [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
@@ -89,37 +51,6 @@ namespace Kailua.Native
         private static extern int kailua_parse_tree_global_names(
             ParseTreeHandle tree,
             [Out] out NameEntriesHandle entries);
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct NativeNameEntry
-        {
-            private IntPtr namePtr;
-            private UIntPtr nameLen;
-            private uint scope;
-
-            public string Name
-            {
-                get
-                {
-                    byte[] buffer = new byte[(int)this.nameLen];
-                    Marshal.Copy(this.namePtr, buffer, 0, buffer.Length);
-                    return Encoding.UTF8.GetString(buffer);
-                }
-            }
-
-            public uint Scope
-            {
-                get { return this.scope; }
-            }
-
-            public NameEntry ToManaged()
-            {
-                NameEntry entry;
-                entry.Name = this.Name;
-                entry.Scope = this.Scope;
-                return entry;
-            }
-        }
 
         internal ParseTreeHandle native;
 
@@ -150,22 +81,6 @@ namespace Kailua.Native
             }
         }
 
-        private IEnumerable<NameEntry> wrapNameEntries(int nentries, NameEntriesHandle entries)
-        {
-            var tree = this.native; // avoid GC while iterating
-
-            entries.Size = nentries; // required for deallocation
-
-            // `entriesHandle` refers to the current parse tree
-            long entriesPtr = entries.DangerousGetHandle().ToInt64();
-            for (int i = 0; i < nentries; ++i)
-            {
-                var nameEntry = (NativeNameEntry)Marshal.PtrToStructure(new IntPtr(entriesPtr), typeof(NativeNameEntry));
-                yield return nameEntry.ToManaged();
-                entriesPtr += Marshal.SizeOf(typeof(NativeNameEntry)); // not sizeof()
-            }
-        }
-
         public IEnumerable<NameEntry> NamesAt(Pos pos)
         {
             int nentries;
@@ -178,7 +93,7 @@ namespace Kailua.Native
             {
                 throw new NativeException("internal error while retrieving names visible at given position");
             }
-            return this.wrapNameEntries(nentries, entries);
+            return new NameEntries(this.native, entries, nentries);
         }
 
         public IEnumerable<NameEntry> GlobalNames
@@ -195,7 +110,7 @@ namespace Kailua.Native
                 {
                     throw new NativeException("internal error while retrieving global names");
                 }
-                return this.wrapNameEntries(nentries, entries);
+                return new NameEntries(this.native, entries, nentries);
             }
         }
 

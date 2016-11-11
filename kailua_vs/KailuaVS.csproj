@@ -118,6 +118,7 @@
     <Compile Include="Source\Log.cs" />
     <Compile Include="Source\Classification\ClassificationTypeName.cs" />
     <Compile Include="Source\Native\Checker.cs" />
+    <Compile Include="Source\Native\NameEntries.cs" />
     <Compile Include="Source\Native\RustStringHandle.cs" />
     <Compile Include="Source\Native\Report.cs" />
     <Compile Include="Source\Native\ParseTree.cs" />

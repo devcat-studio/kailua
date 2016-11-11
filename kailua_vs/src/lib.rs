@@ -14,4 +14,5 @@ extern crate kailua_check;
 #[warn(non_snake_case)] pub mod lex;
 #[warn(non_snake_case)] pub mod parse;
 #[warn(non_snake_case)] pub mod check;
+#[warn(non_snake_case)] pub mod names;
 

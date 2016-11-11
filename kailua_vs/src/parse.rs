@@ -3,6 +3,7 @@ use std::ptr;
 use std::i32;
 use std::panic::{self, AssertUnwindSafe};
 use lex::VSTokenStream;
+use names::{VSNameEntry, VSNameEntries};
 use report::VSReport;
 use kailua_env::Pos;
 use kailua_diag::Report;
@@ -10,13 +11,6 @@ use kailua_syntax::{St, Chunk, Parser};
 
 pub struct VSParseTree {
     chunk: Chunk,
-}
-
-#[repr(C)]
-pub struct VSNameEntry {
-    pub name: *const u8,
-    pub namelen: usize,
-    pub scope: u32, // 0 if global
 }
 
 impl VSParseTree {
@@ -41,26 +35,16 @@ impl VSParseTree {
         }
     }
 
-    pub fn names_at_pos(&self, pos: Pos) -> Option<Box<[VSNameEntry]>> {
+    pub fn names_at_pos(&self, pos: Pos) -> Option<VSNameEntries> {
         self.chunk.map.scope_from_pos(pos).map(|scope| {
             self.chunk.map.names_and_scopes(scope).map(|(name, scope, _id)| {
-                VSNameEntry {
-                    name: name.as_ptr(),
-                    namelen: name.len(),
-                    scope: scope.to_usize() as u32,
-                }
-            }).collect::<Vec<_>>().into_boxed_slice()
+                VSNameEntry::new(name, scope.to_usize() as i32)
+            }).collect()
         })
     }
 
-    pub fn global_names(&self) -> Box<[VSNameEntry]> {
-        self.chunk.global_scope.iter().map(|name| {
-            VSNameEntry {
-                name: name.as_ptr(),
-                namelen: name.len(),
-                scope: 0,
-            }
-        }).collect::<Vec<_>>().into_boxed_slice()
+    pub fn global_names(&self) -> VSNameEntries {
+        self.chunk.global_scope.iter().map(|name| VSNameEntry::new(name, 0)).collect()
     }
 }
 
@@ -108,10 +92,7 @@ pub extern "C" fn kailua_parse_tree_names_at_pos(tree: *const VSParseTree, pos: 
     let out = AssertUnwindSafe(out);
     panic::catch_unwind(move || {
         if let Some(entries) = tree.0.names_at_pos(pos) {
-            assert!(entries.len() <= i32::MAX as usize);
-            let (entries, nentries): (*mut VSNameEntry, usize) = unsafe { mem::transmute(entries) };
-            *out.0 = entries;
-            nentries as i32
+            entries.into_raw(out.0)
         } else {
             *out.0 = ptr::null_mut();
             0
@@ -131,24 +112,8 @@ pub extern "C" fn kailua_parse_tree_global_names(tree: *const VSParseTree,
     let tree = AssertUnwindSafe(tree);
     let out = AssertUnwindSafe(out);
     panic::catch_unwind(move || {
-        let entries = tree.0.global_names();
-        assert!(entries.len() <= i32::MAX as usize);
-        let (entries, nentries): (*mut VSNameEntry, usize) = unsafe { mem::transmute(entries) };
-        *out.0 = entries;
-        nentries as i32
+        tree.0.global_names().into_raw(out.0)
     }).unwrap_or(-1)
-}
-
-#[no_mangle]
-pub extern "C" fn kailua_parse_tree_free_names(entries: *mut VSNameEntry, nentries: i32) {
-    if entries.is_null() { return; }
-    let nentries = nentries as usize;
-    let entries: Box<[VSNameEntry]> = unsafe { mem::transmute((entries, nentries)) };
-
-    let entries = AssertUnwindSafe(entries); // XXX use Unique when it is stabilized
-    let _ = panic::catch_unwind(move || {
-        drop(entries);
-    }); // cannot do much beyond this
 }
 
 #[no_mangle]
