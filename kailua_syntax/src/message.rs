@@ -166,6 +166,11 @@ define_msg! { pub NoForInSep<'a> { read: &'a Tok }:
     _    => "Expected `=`, `,`, `in` or `--:` after `for NAME`, got {read}",
 }
 
+define_msg! { pub NoFuncArgs<'a> { read: &'a Tok }:
+    "ko" => "`function`이나 `function <이름>` 뒤에 `(`가 나와야 하는데 {read}이(가) 나왔습니다",
+    _    => "Expected `(` after `function` or `function <name>`, got {read}",
+}
+
 define_msg! { pub BadFuncArg<'a> { read: &'a Tok }:
     "ko" => "인자 이름, `)` 또는 `...`가 나와야 하는데 {read}이(가) 나왔습니다",
     _    => "Expected an argument name, `)` or `...`, got {read}",

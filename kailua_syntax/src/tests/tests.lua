@@ -502,8 +502,9 @@ do end
 --! [KailuaAssume(`a`_, _, String)]
 
 --8<-- assume-global-global
---# assume global global --@< Fatal: Expected a name, got a keyword `global`
---! error
+--# assume global global --@< Error: Expected a name, got a keyword `global`
+f()
+--! [Oops, Void(`f`_())]
 
 --8<-- assume-incomplete
 --# assume a:
@@ -517,8 +518,9 @@ do end
 --!  KailuaAssume(`b`$1, _, Record(["y": _ String]))$1]
 
 --8<-- assume-assume
---# assume assume: WHATEVER --@< Fatal: Expected a name, got a keyword `assume`
---! error
+--# assume assume: WHATEVER --@< Error: Expected a name, got a keyword `assume`
+f()
+--! [Oops, Void(`f`_())]
 
 --8<-- assume-quoted-assume
 --# assume `assume`: WHATEVER
@@ -582,12 +584,17 @@ local x --: (function (boolean...)) | string?
 local x --: `function`
 --! [Local([`x`$1: _ Function], [])$1]
 
---8<-- kind-any-func-recover
+--8<-- kind-any-func-recover-1
 local x --: `function`() --@< Error: Expected a newline, got `(`
-local                    --@< Fatal: Expected a name or `function` after `local`, got the end of file
---! error
-
+local                    --@< Error: Expected a name or `function` after `local`, got the end of file
 --&
+--! [Local([`x`$1: _ Function], [])$1, Oops]
+
+--8<-- kind-any-func-recover-2
+local x --: `function`() --@< Error: Expected a newline, got `(`
+local
+do end --@< Error: Expected a name or `function` after `local`, got a keyword `do`
+--! [Local([`x`$1: _ Function], [])$1, Oops, Do([])]
 
 --8<-- kind-thread
 local x --: thread
@@ -1282,15 +1289,36 @@ for a, b, c in pairs({}) do end
 --! [ForIn([`a`$1, `b`$1, `c`$1], [`pairs`_(Table([]))], $1[])]
 
 --8<-- local-seq
-local (x, y) = (1, 2) --@< Fatal: Expected a name or `function` after `local`, got `(`
---! error
+local (x, y) = (1, 2) --@< Error: Expected a name or `function` after `local`, got `(`
+                      --@^ Error: Expected `)`, got `,`
+                      --@ Error: Only function calls are allowed as statement-level expressions
+                      --@^^^ Error: Expected a statement, got `=`
+                      --@^^^^ Error: Expected `)`, got `,`
+                      --@ Error: Only function calls are allowed as statement-level expressions
+f()
+--! [Oops, Void(Oops), Oops, Void(Oops), Void(`f`_())]
 
 --8<-- func-args-invalid-char
-function p(# --@< Fatal: Expected an argument name, `)` or `...`, got `#`
---! error
+function p(# --@< Error: Expected an argument name, `)` or `...`, got `#`
+             --@^ Error: Expected a keyword `end`, got the end of file
+--! [FuncDecl(`p`_, [] --> _, $1[])]
 
 --&
 ) -- highlighting fix
+
+--8<-- func-args-recover
+function p(a, *) --@< Error: Expected a name, got `*`
+    print(a)
+end
+p(4)
+--! [FuncDecl(`p`_, [`a`$1] --> _, $1[Void(`print`_(`a`$1))]), Void(`p`_(4))]
+
+--8<-- func-no-args-recover
+function p
+    print(a) --@< Error: Expected `(` after `function` or `function <name>`, got a name
+end
+p(4)
+--! [Oops, Void(`p`_(4))]
 
 --8<-- argtype-slot
 function p(...) --: const integer --@< Error: Variadic argument specifier cannot have modifiers
@@ -1317,20 +1345,25 @@ f(2, *3) --@< Error: Expected an expression, got `*`
 --! [Void(`f`_(2))]
 
 --8<-- op-invalid-char-1
-f(2 + *3) --@< Fatal: Expected an expression, got `*`
---! error
+f(2 + *3) --@< Error: Expected an expression, got `*`
+          --@^ Error: Expected `)`, got `*`
+--! [Void(`f`_(2))]
 
 --8<-- op-invalid-char-2
-f(2 .. *3) --@< Fatal: Expected an expression, got `*`
---! error
+f(2 .. *3) --@< Error: Expected an expression, got `*`
+           --@^ Error: Expected `)`, got `*`
+--! [Void(`f`_(2))]
 
 --8<-- op-invalid-char-3
-f(#*3) --@< Fatal: Expected an expression, got `*`
---! error
+f(#*3) --@< Error: Expected an expression, got `*`
+       --@^ Error: Expected `)`, got `*`
+--! [Void(`f`_())]
 
 --8<-- lval-invalid-char
 a, *b = 5 --@< Error: Expected a left-hand-side expression, got `*`
---! error
+          --@^ Error: Expected a statement, got `*`
+f()
+--! [Oops, Oops, Assign([`b`_], [5]), Void(`f`_())]
 
 --8<-- assume-invalid-char
 --# assume x: #foo --@< Error: Expected a single type, got `#`
@@ -1340,28 +1373,35 @@ f()
 --8<-- assume-seq-varargs-1
 --# assume x: (...) --@< Error: `...` should be preceded with a kind in the ordinary kinds
                     --@^ Error: Expected a single type, not type sequence
---! [KailuaAssume(`x`$1, _, Oops)$1]
+f()
+--! [KailuaAssume(`x`$1, _, Oops)$1, Void(`f`_())]
 
 --8<-- assume-seq-1
 --# assume x: (string...) --@< Error: Expected a single type, not type sequence
---! [KailuaAssume(`x`$1, _, Oops)$1]
+f()
+--! [KailuaAssume(`x`$1, _, Oops)$1, Void(`f`_())]
 
 --8<-- assume-seq-varargs-2
 --# assume x: (integer, ...) --@< Error: `...` should be preceded with a kind in the ordinary kinds
                              --@^ Error: Expected a single type, not type sequence
---! [KailuaAssume(`x`$1, _, Oops)$1]
+f()
+--! [KailuaAssume(`x`$1, _, Oops)$1, Void(`f`_())]
 
 --8<-- assume-seq-2
 --# assume x: (integer, string) --@< Error: Expected a single type, not type sequence
---! [KailuaAssume(`x`$1, _, Oops)$1]
+f()
+--! [KailuaAssume(`x`$1, _, Oops)$1, Void(`f`_())]
 
 --8<-- assume-seq-varargs-3
 --# assume x: (integer, string...) --@< Error: Expected a single type, not type sequence
---! [KailuaAssume(`x`$1, _, Oops)$1]
+f()
+--! [KailuaAssume(`x`$1, _, Oops)$1, Void(`f`_())]
 
 --8<-- assume-seq-invalid-char
---# assume x: (integer, #) --@< Fatal: Expected a type, got `#`
---! error
+--# assume x: (integer, #) --@< Error: Expected a type, got `#`
+                           --@^ Error: Expected `)`, got `#`
+f()
+--! [KailuaAssume(`x`$1, _, Oops)$1, Void(`f`_())]
 
 --8<-- assume-func-invalid-char
 --# assume x: function () --> #foo --@< Error: Expected a single type or type sequence, got `#`
@@ -1414,8 +1454,9 @@ f(                             --@< Error: Expected `)`, got the end of file
 ) -- highlighting fix
 
 --8<-- assume-or-invalid-char
---# assume x: integer | # --@< Fatal: Expected a type, got `#`
---! error
+--# assume x: integer | # --@< Error: Expected a type, got `#`
+f()
+--! [KailuaAssume(`x`$1, _, Union([Integer]))$1, Void(`f`_())]
 
 --8<-- assume-or-seq-1
 --# assume x: integer | () | nil --@< Error: A sequence of types cannot be inside a union
@@ -1440,8 +1481,9 @@ f(                                      --@< Error: Expected `)`, got the end of
 
 --8<-- open-incomplete
 --# open
---# open your heart --@< Fatal: Expected a name, got a keyword `open`
---! error
+--# open your heart --@< Error: Expected a name, got a keyword `open`
+f()
+--! [Oops, Void(`f`_())]
 
 --8<-- alias
 --# type int = integer
@@ -1478,8 +1520,9 @@ goto = 42
 
 --8<-- lua51-goto-as-a-name-in-meta-1
 --# open lua51
---# type goto = integer --@< Fatal: Expected a name, got a keyword `goto`
---! error
+--# type goto = integer --@< Error: Expected a name, got a keyword `goto`
+f()
+--! [KailuaOpen(`lua51`), Oops, Void(`f`_())]
 
 --8<-- lua51-goto-as-a-name-in-meta-2
 --# open lua51
