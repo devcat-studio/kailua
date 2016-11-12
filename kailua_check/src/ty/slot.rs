@@ -7,7 +7,7 @@ use kailua_env::Spanned;
 use kailua_diag::Reporter;
 use kailua_syntax::M;
 use diag::CheckResult;
-use super::{T, TypeContext, Lattice, Display, Mark, TVar, Builtin};
+use super::{Dyn, T, TypeContext, Lattice, Display, Mark, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::Flags;
 use message as m;
@@ -19,7 +19,7 @@ pub enum F {
     // for the typing convenience the type information itself is retained, but never used.
     Any,
     // dynamic slot; all assignments are allowed and ignored
-    Dynamic,
+    Dynamic(Dyn),
     // temporary r-value slot
     // coerces to VarOrCurrently when used in the table fields
     Just,
@@ -59,7 +59,7 @@ impl F {
         match *self {
             F::Any => Ok(F::Any),
 
-            F::Dynamic => Ok(F::Dynamic),
+            F::Dynamic(dyn) => Ok(F::Dynamic(dyn)),
 
             // if the Just slot contains a table it should be recursively weakened.
             // this is not handled here, but via `Slot::adapt` which gets called
@@ -107,7 +107,7 @@ impl PartialEq for F {
     fn eq(&self, other: &F) -> bool {
         match (*self, *other) {
             (F::Any, F::Any) => true,
-            (F::Dynamic, F::Dynamic) => true,
+            (F::Dynamic(dyn1), F::Dynamic(dyn2)) => dyn1 == dyn2,
             (F::Just, F::Just) => true,
             (F::Const, F::Const) => true,
             (F::Var, F::Var) => true,
@@ -127,14 +127,15 @@ impl PartialEq for F {
 impl<'a> fmt::Debug for F {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            F::Any               => write!(f, "any"),
-            F::Dynamic           => write!(f, "?"),
-            F::Just              => write!(f, "just"),
-            F::Const             => write!(f, "const"),
-            F::Var               => write!(f, "var"),
-            F::Currently         => write!(f, "currently"),
-            F::VarOrConst(m)     => write!(f, "{:?}?var:const", m),
-            F::VarOrCurrently(m) => write!(f, "{:?}?var:currently", m),
+            F::Any                => write!(f, "any"),
+            F::Dynamic(Dyn::User) => write!(f, "?"),
+            F::Dynamic(Dyn::Oops) => write!(f, "?!"),
+            F::Just               => write!(f, "just"),
+            F::Const              => write!(f, "const"),
+            F::Var                => write!(f, "var"),
+            F::Currently          => write!(f, "currently"),
+            F::VarOrConst(m)      => write!(f, "{:?}?var:const", m),
+            F::VarOrCurrently(m)  => write!(f, "{:?}?var:currently", m),
         }
     }
 }
@@ -177,7 +178,12 @@ impl<'a> S<'a> {
         if other.flex.is_linear() { other.flex = F::Var; }
 
         let (flex, ty) = match (self.flex, other.flex) {
-            (F::Dynamic, _) | (_, F::Dynamic) => (F::Dynamic, T::Dynamic),
+            (F::Dynamic(dyn1), F::Dynamic(dyn2)) => {
+                let dyn = dyn1 | dyn2;
+                (F::Dynamic(dyn), T::Dynamic(dyn))
+            },
+            (F::Dynamic(dyn), _) | (_, F::Dynamic(dyn)) =>
+                (F::Dynamic(dyn), T::Dynamic(dyn)),
             (F::Any, _) | (_, F::Any) => (F::Any, T::None),
 
             // it's fine to merge r-values
@@ -238,7 +244,8 @@ impl<'a> S<'a> {
 
         match (self.flex, other.flex) {
             (_, F::Any) => {}
-            (_, F::Dynamic) | (F::Dynamic, _) => {}
+            (F::Dynamic(dyn1), F::Dynamic(dyn2)) => dyn1.assert_sub(&dyn2, ctx)?,
+            (_, F::Dynamic(_)) | (F::Dynamic(_), _) => {}
 
             (F::Just, F::Just) => m!(a <: b),
 
@@ -292,7 +299,8 @@ impl<'a> S<'a> {
 
         match (self.flex, other.flex) {
             (F::Any, F::Any) => {}
-            (_, F::Dynamic) | (F::Dynamic, _) => {}
+            (F::Dynamic(dyn1), F::Dynamic(dyn2)) => dyn1.assert_eq(&dyn2, ctx)?,
+            (_, F::Dynamic(_)) | (F::Dynamic(_), _) => {}
 
             (F::Just, F::Just) => m!(a = b),
 
@@ -350,7 +358,7 @@ impl Slot {
     }
 
     pub fn dummy() -> Slot {
-        Slot::new(F::Dynamic, T::Dynamic)
+        Slot::new(F::Dynamic(Dyn::Oops), T::dummy())
     }
 
     pub fn unlift<'a>(&'a self) -> Ref<'a, T<'static>> {
@@ -388,7 +396,7 @@ impl Slot {
             lty.is_referential() && rhs.flex().is_linear() && rhs.unlift().is_referential();
 
         match (lhs.flex, rhs.flex, init) {
-            (F::Dynamic, _, _) => {}
+            (F::Dynamic(_), _, _) => {}
 
             (_, F::Any, _) |
             (F::Any, _, _) |
@@ -398,12 +406,12 @@ impl Slot {
             }
 
             // dynamic rhs *may* change the flex of lhs as well, if the initial flex permits
-            (F::Currently, F::Dynamic, _) | (F::VarOrCurrently(_), F::Dynamic, _) => {
-                lhs.flex = F::Dynamic;
-                lhs.ty = T::Dynamic;
+            (F::Currently, F::Dynamic(dyn), _) | (F::VarOrCurrently(_), F::Dynamic(dyn), _) => {
+                lhs.flex = F::Dynamic(dyn);
+                lhs.ty = T::Dynamic(dyn);
             }
 
-            (_, F::Dynamic, _) => {}
+            (_, F::Dynamic(_), _) => {}
 
             // as long as the type is in agreement, Var can be assigned
             (F::Var, _, _) => {
@@ -466,7 +474,7 @@ impl Slot {
         let s = self.0.borrow();
 
         match s.flex {
-            F::Dynamic => {}
+            F::Dynamic(_) => {}
 
             F::Any | F::Just | F::Const | F::Var | F::VarOrConst(_) => {
                 return Err(format!("impossible to update {:?}", s));
@@ -495,7 +503,6 @@ impl Slot {
     pub fn flex(&self) -> F { self.0.borrow().flex() }
     pub fn flags(&self) -> Flags { self.unlift().flags() }
 
-    pub fn is_dynamic(&self)  -> bool { self.flags().is_dynamic() }
     pub fn is_integral(&self) -> bool { self.flags().is_integral() }
     pub fn is_numeric(&self)  -> bool { self.flags().is_numeric() }
     pub fn is_stringy(&self)  -> bool { self.flags().is_stringy() }
@@ -504,6 +511,7 @@ impl Slot {
     pub fn is_truthy(&self)   -> bool { self.flags().is_truthy() }
     pub fn is_falsy(&self)    -> bool { self.flags().is_falsy() }
 
+    pub fn get_dynamic(&self) -> Option<Dyn> { self.flags().get_dynamic() }
     pub fn get_tvar(&self) -> Option<TVar> { self.unlift().get_tvar() }
     pub fn builtin(&self) -> Option<Builtin> { self.unlift().builtin() }
 
@@ -581,14 +589,15 @@ impl Display for Slot {
         // for the purpose of display, Currently is most powerful *and* most constrained,
         // Var is second, and Const is least powerful.
         let prefix = match s.flex.resolve(ctx) {
-            F::Any               => return write!(f, "<inaccessible type>"),
-            F::Dynamic           => return write!(f, "WHATEVER"),
-            F::Just              => "", // can be seen as a mutable value yet to be assigned
-            F::Const             => "const ",
-            F::Var               => "",
-            F::Currently         => "<currently> ",
-            F::VarOrConst(_)     => "",
-            F::VarOrCurrently(_) => "<currently> ",
+            F::Any                => return write!(f, "<inaccessible type>"),
+            F::Dynamic(Dyn::User) => return write!(f, "WHATEVER"),
+            F::Dynamic(Dyn::Oops) => return write!(f, "<error type>"),
+            F::Just               => "", // can be seen as a mutable value yet to be assigned
+            F::Const              => "const ",
+            F::Var                => "",
+            F::Currently          => "<currently> ",
+            F::VarOrConst(_)      => "",
+            F::VarOrCurrently(_)  => "<currently> ",
         };
 
         write!(f, "{}{}", prefix, s.ty.display(ctx))

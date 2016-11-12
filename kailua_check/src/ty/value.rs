@@ -11,10 +11,43 @@ use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, B
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Dyn {
+    User, // user-generated dynamic type: WHATEVER
+    Oops, // checker-generated dynamic type: <error type>
+}
+
+impl Dyn {
+    pub fn or(lhs: Option<Dyn>, rhs: Option<Dyn>) -> Option<Dyn> {
+        match (lhs, rhs) {
+            (Some(Dyn::Oops), _) | (_, Some(Dyn::Oops)) => Some(Dyn::Oops),
+            (Some(Dyn::User), _) | (_, Some(Dyn::User)) => Some(Dyn::User),
+            (None, None) => None,
+        }
+    }
+}
+
+impl ops::BitOr<Dyn> for Dyn {
+    type Output = Dyn;
+    fn bitor(self, rhs: Dyn) -> Dyn {
+        match (self, rhs) {
+            (Dyn::Oops, _) | (_, Dyn::Oops) => Dyn::Oops,
+            (Dyn::User, Dyn::User) => Dyn::User,
+        }
+    }
+}
+
+impl Lattice<Dyn> for Dyn {
+    type Output = Dyn;
+    fn union(&self, other: &Dyn, _ctx: &mut TypeContext) -> Dyn { *self | *other }
+    fn assert_sub(&self, _other: &Dyn, _ctx: &mut TypeContext) -> CheckResult<()> { Ok(()) }
+    fn assert_eq(&self, _other: &Dyn, _ctx: &mut TypeContext) -> CheckResult<()> { Ok(()) }
+}
+
 // basic value types, also used for enumeration and construction
 #[derive(Clone)]
 pub enum T<'a> {
-    Dynamic,                            // WHATEVER
+    Dynamic(Dyn),                       // dynamic type
     All,                                // any (top)
     None,                               // (bottom)
     Nil,                                // nil
@@ -34,7 +67,7 @@ pub enum T<'a> {
 }
 
 impl<'a> T<'a> {
-    pub fn dummy() -> T<'a> { T::Dynamic }
+    pub fn dummy() -> T<'a> { T::Dynamic(Dyn::Oops) }
 
     pub fn number()          -> T<'a> { T::Numbers(Cow::Owned(Numbers::All)) }
     pub fn integer()         -> T<'a> { T::Numbers(Cow::Owned(Numbers::Int)) }
@@ -78,7 +111,8 @@ impl<'a> T<'a> {
         };
 
         match *kind {
-            K::Oops | K::Dynamic => Ok(T::Dynamic),
+            K::Oops              => Ok(T::Dynamic(Dyn::Oops)), // typically from a parser error
+            K::Dynamic           => Ok(T::Dynamic(Dyn::User)),
             K::Any               => Ok(T::All),
             K::Nil               => Ok(T::Nil),
             K::Boolean           => Ok(T::Boolean),
@@ -157,7 +191,9 @@ impl<'a> T<'a> {
 
     pub fn flags(&self) -> Flags {
         match *self {
-            T::Dynamic  => T_ALL | T_DYNAMIC,
+            T::Dynamic(Dyn::User) => T_ALL | T_WHATEVER,
+            T::Dynamic(Dyn::Oops) => T_ALL | T_DYNAMIC,
+
             T::All      => T_ALL,
             T::None     => T_NONE,
             T::Nil      => T_NIL,
@@ -184,7 +220,8 @@ impl<'a> T<'a> {
 
     pub fn to_ref<'b: 'a>(&'b self) -> T<'b> {
         match *self {
-            T::Dynamic  => T::Dynamic,
+            T::Dynamic(dyn) => T::Dynamic(dyn),
+
             T::All      => T::All,
             T::None     => T::None,
             T::Nil      => T::Nil,
@@ -246,6 +283,14 @@ impl<'a> T<'a> {
 
     // XXX for now
     pub fn is_referential(&self) -> bool { self.flags().is_tabular() }
+
+    pub fn get_dynamic(&self) -> Option<Dyn> {
+        match *self {
+            T::Dynamic(dyn) => Some(dyn),
+            T::Builtin(_, ref t) => t.get_dynamic(),
+            _ => None,
+        }
+    }
 
     pub fn get_numbers(&self) -> Option<&Numbers> {
         match *self {
@@ -354,7 +399,8 @@ impl<'a> T<'a> {
 
     pub fn into_send(self) -> T<'static> {
         match self {
-            T::Dynamic    => T::Dynamic,
+            T::Dynamic(dyn) => T::Dynamic(dyn),
+
             T::All        => T::All,
             T::None       => T::None,
             T::Nil        => T::Nil,
@@ -378,22 +424,20 @@ impl<'a> T<'a> {
 
     pub fn filter_by_flags(self, flags: Flags, ctx: &mut TypeContext) -> CheckResult<T<'a>> {
         fn flags_to_ubound(flags: Flags) -> T<'static> {
-            if flags.contains(T_DYNAMIC) {
-                T::Dynamic
-            } else {
-                let mut t = T::None;
-                if flags.contains(T_NIL)        { t = t | T::Nil; }
-                if flags.contains(T_TRUE)       { t = t | T::True; }
-                if flags.contains(T_FALSE)      { t = t | T::False; }
-                if flags.contains(T_NONINTEGER) { t = t | T::number(); }
-                if flags.contains(T_INTEGER)    { t = t | T::integer(); }
-                if flags.contains(T_STRING)     { t = t | T::string(); }
-                if flags.contains(T_TABLE)      { t = t | T::table(); }
-                if flags.contains(T_FUNCTION)   { t = t | T::function(); }
-                if flags.contains(T_THREAD)     { t = t | T::Thread; }
-                if flags.contains(T_USERDATA)   { t = t | T::UserData; }
-                t
-            }
+            assert!(!flags.intersects(T_DYNAMIC));
+
+            let mut t = T::None;
+            if flags.contains(T_NIL)        { t = t | T::Nil; }
+            if flags.contains(T_TRUE)       { t = t | T::True; }
+            if flags.contains(T_FALSE)      { t = t | T::False; }
+            if flags.contains(T_NONINTEGER) { t = t | T::number(); }
+            if flags.contains(T_INTEGER)    { t = t | T::integer(); }
+            if flags.contains(T_STRING)     { t = t | T::string(); }
+            if flags.contains(T_TABLE)      { t = t | T::table(); }
+            if flags.contains(T_FUNCTION)   { t = t | T::function(); }
+            if flags.contains(T_THREAD)     { t = t | T::Thread; }
+            if flags.contains(T_USERDATA)   { t = t | T::UserData; }
+            t
         }
 
         fn narrow_numbers<'a>(num: Cow<'a, Numbers>, flags: Flags) -> Option<Cow<'a, Numbers>> {
@@ -420,7 +464,7 @@ impl<'a> T<'a> {
         let flags_or_none = |bit, t| if flags.contains(bit) { t } else { T::None };
 
         match self {
-            T::Dynamic => Ok(T::Dynamic),
+            T::Dynamic(dyn) => Ok(T::Dynamic(dyn)),
             T::None => Ok(T::None),
             T::All => Ok(flags_to_ubound(flags)),
             T::Boolean => match flags & T_BOOLEAN {
@@ -492,7 +536,7 @@ impl<'a> Lattice<Unioned> for T<'a> {
     fn assert_sub(&self, other: &Unioned, ctx: &mut TypeContext) -> CheckResult<()> {
         // try to match each component
         match *self {
-            T::Dynamic | T::None => return Ok(()),
+            T::Dynamic(_) | T::None => return Ok(()),
 
             T::Nil      => if other.simple.contains(U_NIL)      { return Ok(()); },
             T::Boolean  => if other.simple.contains(U_BOOLEAN)  { return Ok(()); },
@@ -533,7 +577,7 @@ impl<'a> Lattice<Unioned> for T<'a> {
     // assumes that the Unioned itself has been simplified.
     fn assert_eq(&self, other: &Unioned, ctx: &mut TypeContext) -> CheckResult<()> {
         match *self {
-            T::Dynamic => return Ok(()),
+            T::Dynamic(_) => return Ok(()),
             T::Union(ref lhs) => return lhs.assert_eq(other, ctx),
             _ => {}
         }
@@ -555,10 +599,11 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (lhs, &T::Builtin(_, ref rhs)) => lhs.union(&**rhs, ctx),
 
             // dynamic eclipses everything else
-            (&T::Dynamic, _) => T::Dynamic,
-            (_, &T::Dynamic) => T::Dynamic,
+            (&T::Dynamic(dyn1), &T::Dynamic(dyn2)) => T::Dynamic(dyn1.union(&dyn2, ctx)),
+            (&T::Dynamic(dyn), _) => T::Dynamic(dyn),
+            (_, &T::Dynamic(dyn)) => T::Dynamic(dyn),
 
-            // top eclipses everything else except for dynamic
+            // top eclipses everything else except for dynamic and oops
             (&T::All, _) => T::All,
             (_, &T::All) => T::All,
 
@@ -621,8 +666,9 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
                 }
             },
 
-            (&T::Dynamic, _) => true,
-            (_, &T::Dynamic) => true,
+            (&T::Dynamic(dyn1), &T::Dynamic(dyn2)) => return dyn1.assert_sub(&dyn2, ctx),
+            (&T::Dynamic(_), _) => true,
+            (_, &T::Dynamic(_)) => true,
 
             (_, &T::All) => true,
 
@@ -699,8 +745,9 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
                 }
             },
 
-            (&T::Dynamic, _) => true,
-            (_, &T::Dynamic) => true,
+            (&T::Dynamic(dyn1), &T::Dynamic(dyn2)) => return dyn1.assert_eq(&dyn2, ctx),
+            (&T::Dynamic(_), _) => true,
+            (_, &T::Dynamic(_)) => true,
 
             (&T::All, _) => true,
             (_, &T::All) => true,
@@ -746,7 +793,8 @@ impl<'a, 'b> ops::BitOr<T<'b>> for T<'a> {
 impl<'a, 'b> PartialEq<T<'b>> for T<'a> {
     fn eq(&self, other: &T<'b>) -> bool {
         match (self, other) {
-            (&T::Dynamic,  &T::Dynamic)  => true,
+            (&T::Dynamic(dyn1), &T::Dynamic(dyn2)) => dyn1 == dyn2,
+
             (&T::All,      &T::All)      => true,
             (&T::None,     &T::None)     => true,
             (&T::Nil,      &T::Nil)      => true,
@@ -773,7 +821,9 @@ impl<'a, 'b> PartialEq<T<'b>> for T<'a> {
 impl<'a> Display for T<'a> {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
         match *self {
-            T::Dynamic  => write!(f, "WHATEVER"),
+            T::Dynamic(Dyn::User) => write!(f, "WHATEVER"),
+            T::Dynamic(Dyn::Oops) => write!(f, "<error type>"),
+
             T::All      => write!(f, "any"),
             T::None     => write!(f, "<impossible type>"),
             T::Nil      => write!(f, "nil"),
@@ -805,7 +855,9 @@ impl<'a> Display for T<'a> {
 impl<'a> fmt::Debug for T<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            T::Dynamic  => write!(f, "WHATEVER"),
+            T::Dynamic(Dyn::User) => write!(f, "WHATEVER"),
+            T::Dynamic(Dyn::Oops) => write!(f, "<error>"),
+
             T::All      => write!(f, "any"),
             T::None     => write!(f, "<bottom>"),
             T::Nil      => write!(f, "nil"),
@@ -873,11 +925,15 @@ mod tests {
         }
 
         // dynamic & top vs. everything else
-        check!(T::Dynamic, T::Dynamic; T::Dynamic);
-        check!(T::Dynamic, T::integer(); T::Dynamic);
-        check!(T::tuple(vec![var(T::integer()), curr(T::Boolean)]), T::Dynamic; T::Dynamic);
+        check!(T::Dynamic(Dyn::Oops), T::Dynamic(Dyn::Oops); T::Dynamic(Dyn::Oops));
+        check!(T::Dynamic(Dyn::Oops), T::Dynamic(Dyn::User); T::Dynamic(Dyn::Oops));
+        check!(T::Dynamic(Dyn::User), T::Dynamic(Dyn::Oops); T::Dynamic(Dyn::Oops));
+        check!(T::Dynamic(Dyn::User), T::Dynamic(Dyn::User); T::Dynamic(Dyn::User));
+        check!(T::Dynamic(Dyn::User), T::integer(); T::Dynamic(Dyn::User));
+        check!(T::tuple(vec![var(T::integer()), curr(T::Boolean)]), T::Dynamic(Dyn::User);
+               T::Dynamic(Dyn::User));
         check!(T::All, T::Boolean; T::All);
-        check!(T::Dynamic, T::All; T::Dynamic);
+        check!(T::Dynamic(Dyn::User), T::All; T::Dynamic(Dyn::User));
         check!(T::All, T::All; T::All);
 
         // integer literals
@@ -930,12 +986,13 @@ mod tests {
         check!(T::array(var(T::int(3))), T::array(just(T::int(4)));
                T::array(varcnst(T::ints(vec![3, 4]))));
         check!(T::tuple(vec![just(T::integer()), just(T::string())]),
-               T::tuple(vec![just(T::number()), just(T::Dynamic), just(T::Boolean)]);
-               T::tuple(vec![just(T::number()), just(T::Dynamic), just(T::Boolean | T::Nil)]));
+               T::tuple(vec![just(T::number()), just(T::Dynamic(Dyn::User)), just(T::Boolean)]);
+               T::tuple(vec![just(T::number()), just(T::Dynamic(Dyn::User)),
+                             just(T::Boolean | T::Nil)]));
         check!(T::tuple(vec![just(T::integer()), just(T::string())]),
-               T::tuple(vec![just(T::number()), just(T::Boolean), just(T::Dynamic)]);
+               T::tuple(vec![just(T::number()), just(T::Boolean), just(T::Dynamic(Dyn::User))]);
                T::tuple(vec![just(T::number()), just(T::string() | T::Boolean),
-                             just(T::Dynamic)]));
+                             just(T::Dynamic(Dyn::User))]));
         { // self-modifying unions
             let (lhs, rhs, _) = check!(
                 T::tuple(vec![var(T::integer()), curr(T::string())]),
@@ -968,11 +1025,11 @@ mod tests {
                T::record(hash![foo=just(T::int(4))]);
                T::record(hash![foo=just(T::ints(vec![3, 4])), bar=just(T::string() | T::Nil)]));
         check!(T::record(hash![foo=just(T::integer()), bar=just(T::number()),
-                                    quux=just(T::array(just(T::Dynamic)))]),
+                                    quux=just(T::array(just(T::Dynamic(Dyn::User))))]),
                T::record(hash![foo=just(T::number()), bar=just(T::string()),
                                     quux=just(T::array(just(T::Boolean)))]);
                T::record(hash![foo=just(T::number()), bar=just(T::number() | T::string()),
-                                    quux=just(T::array(just(T::Dynamic)))]));
+                                    quux=just(T::array(just(T::Dynamic(Dyn::User))))]));
         check!(T::record(hash![foo=just(T::int(3)), bar=just(T::number())]),
                T::map(T::string(), just(T::integer()));
                T::map(T::string(), just(T::number())));
@@ -981,8 +1038,8 @@ mod tests {
         check!(T::map(T::str(s("wat")), just(T::integer())),
                T::map(T::string(), just(T::int(42)));
                T::map(T::string(), just(T::integer())));
-        check!(T::array(just(T::number())), T::map(T::Dynamic, just(T::integer()));
-               T::map(T::Dynamic, just(T::number())));
+        check!(T::array(just(T::number())), T::map(T::Dynamic(Dyn::User), just(T::integer()));
+               T::map(T::Dynamic(Dyn::User), just(T::number())));
         check!(T::empty_table(), T::array(just(T::integer()));
                T::array(just(T::integer())));
 
@@ -990,7 +1047,7 @@ mod tests {
         check!(T::Thread, T::Thread; T::Thread);
         check!(T::UserData, T::UserData; T::UserData);
         check!(T::All, T::UserData; T::All);
-        check!(T::Thread, T::Dynamic; T::Dynamic);
+        check!(T::Thread, T::Dynamic(Dyn::User); T::Dynamic(Dyn::User));
 
         // general unions
         check!(T::True, T::False; T::Boolean);

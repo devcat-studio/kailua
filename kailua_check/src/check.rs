@@ -10,7 +10,7 @@ use kailua_diag::Reporter;
 use kailua_syntax::{NameRef, Var, M, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
 use kailua_syntax::{SelfParam, St, Stmt, Block, K};
 use diag::CheckResult;
-use ty::{T, TySeq, SpannedTySeq, Lattice, Displayed, Display, TypeContext};
+use ty::{Dyn, T, TySeq, SpannedTySeq, Lattice, Displayed, Display, TypeContext};
 use ty::{Tables, Function, Functions, TyWithNil};
 use ty::{F, Slot, SlotSeq, SpannedSlotSeq, SlotWithNil, Builtin, Class};
 use ty::flags::*;
@@ -236,8 +236,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             BinOp::And => {
-                if lhs.is_dynamic() || rhs.is_dynamic() {
-                    return Ok(Slot::just(T::Dynamic));
+                if let Some(dyn) = Dyn::or(lhs.get_dynamic(), rhs.get_dynamic()) {
+                    return Ok(Slot::just(T::Dynamic(dyn)));
                 }
 
                 if lhs.get_tvar().is_none() {
@@ -251,8 +251,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             BinOp::Or => {
-                if lhs.is_dynamic() || rhs.is_dynamic() {
-                    return Ok(Slot::just(T::Dynamic));
+                if let Some(dyn) = Dyn::or(lhs.get_dynamic(), rhs.get_dynamic()) {
+                    return Ok(Slot::just(T::Dynamic(dyn)));
                 }
 
                 if lhs.get_tvar().is_none() {
@@ -530,8 +530,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         };
 
         // this also handles the case where the string metatable itself is dynamic
-        if flags.is_dynamic() {
-            let value = Slot::just(T::Dynamic);
+        if let Some(dyn) = flags.get_dynamic() {
+            let value = Slot::just(T::Dynamic(dyn));
             // the flex should be retained
             if lval { value.adapt(ety0.flex(), self.context()); }
             return Ok(Some(value));
@@ -612,7 +612,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         match (ety.get_tables(), lval) {
             // possible! this happens when the string metatable was resolved *and* it is wrong.
             (None, _) => {
-                let value = Slot::just(T::Dynamic);
+                let value = Slot::just(T::Dynamic(Dyn::Oops));
                 // the flex should be retained
                 if lval { value.adapt(ety0.flex(), self.context()); }
                 Ok(Some(value))
@@ -925,10 +925,10 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     self.env.error(expspan, m::NonFuncIterator { iter: self.display(&func) })
                             .done()?;
                     indtys = TySeq::dummy();
-                } else if func.is_dynamic() {
+                } else if let Some(dyn) = func.get_dynamic() {
                     // can't determine what func will return
                     indtys = TySeq { head: vec![],
-                                     tail: Some(Box::new(TyWithNil::from(T::Dynamic))) };
+                                     tail: Some(Box::new(TyWithNil::from(T::Dynamic(dyn)))) };
                 } else {
                     // last can be updated, so one should assume that its type can be much wider.
                     let indvar = T::TVar(self.context().gen_tvar());
@@ -1239,8 +1239,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             self.env.error(funcinfo, m::CallToNonFunc { func: self.display(funcinfo) }).done()?;
             return Ok(SlotSeq::dummy());
         }
-        if funcinfo.is_dynamic() {
-            return Ok(SlotSeq::from(T::Dynamic));
+        if let Some(dyn) = funcinfo.get_dynamic() {
+            return Ok(SlotSeq::from(T::Dynamic(dyn)));
         }
 
         let mut argtys = self.visit_explist(args)?;

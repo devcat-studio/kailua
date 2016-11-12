@@ -18,7 +18,7 @@ impl TyWithNil {
     }
 
     pub fn dummy() -> TyWithNil {
-        TyWithNil::from(T::Dynamic)
+        TyWithNil::from(T::dummy())
     }
 
     pub fn as_type_without_nil(&self) -> &T<'static> {

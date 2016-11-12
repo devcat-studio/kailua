@@ -247,7 +247,7 @@ struct Constraints {
 fn is_bound_trivial(t: &Option<Ty>) -> bool {
     // TODO special casing ? is not enough, should resolve b.bound's inner ?s as well
     if let Some(ref t) = *t {
-        match **t { T::None | T::Dynamic => true, _ => false }
+        match **t { T::None | T::Dynamic(_) => true, _ => false }
     } else {
         true
     }

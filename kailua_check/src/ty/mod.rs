@@ -9,7 +9,7 @@ pub use self::literals::{Numbers, Strings};
 pub use self::tables::{Key, Tables};
 pub use self::functions::{Function, Functions};
 pub use self::union::Unioned;
-pub use self::value::{T, Ty};
+pub use self::value::{Dyn, T, Ty};
 pub use self::slot::{F, S, Slot};
 pub use self::with_nil::{TyWithNil, SlotWithNil};
 pub use self::seq::{SeqIter, TySeq, SpannedTySeq, SlotSeq, SpannedSlotSeq};
@@ -385,23 +385,26 @@ impl<'b, 'c, T: Display + fmt::Debug + 'b> fmt::Debug for Displayed<'b, 'c, T> {
 }
 
 pub mod flags {
+    use ty::value::Dyn;
+
     bitflags! {
         pub flags Flags: u16 {
-            const T_NONE       = 0b000_0000_0000,
-            const T_DYNAMIC    = 0b000_0000_0001,
-            const T_NIL        = 0b000_0000_0010,
-            const T_TRUE       = 0b000_0000_0100,
-            const T_FALSE      = 0b000_0000_1000,
-            const T_BOOLEAN    = 0b000_0000_1100,
-            const T_NONINTEGER = 0b000_0001_0000,
-            const T_INTEGER    = 0b000_0010_0000,
-            const T_NUMBER     = 0b000_0011_0000,
-            const T_STRING     = 0b000_0100_0000,
-            const T_TABLE      = 0b000_1000_0000,
-            const T_FUNCTION   = 0b001_0000_0000,
-            const T_THREAD     = 0b010_0000_0000,
-            const T_USERDATA   = 0b100_0000_0000,
-            const T_ALL        = 0b111_1111_1110,
+            const T_NONE       = 0b0000_0000_0000,
+            const T_WHATEVER   = 0b0000_0000_0001,
+            const T_DYNAMIC    = 0b0000_0000_0011,
+            const T_NIL        = 0b0000_0000_0100,
+            const T_TRUE       = 0b0000_0000_1000,
+            const T_FALSE      = 0b0000_0001_0000,
+            const T_BOOLEAN    = 0b0000_0001_1000,
+            const T_NONINTEGER = 0b0000_0010_0000,
+            const T_INTEGER    = 0b0000_0100_0000,
+            const T_NUMBER     = 0b0000_0110_0000,
+            const T_STRING     = 0b0000_1000_0000,
+            const T_TABLE      = 0b0001_0000_0000,
+            const T_FUNCTION   = 0b0010_0000_0000,
+            const T_THREAD     = 0b0100_0000_0000,
+            const T_USERDATA   = 0b1000_0000_0000,
+            const T_ALL        = 0b1111_1111_1100,
 
             const T_INTEGRAL   = T_DYNAMIC.bits | T_INTEGER.bits,
             // strings can be also used in place of numbers in Lua but omitted here
@@ -417,7 +420,7 @@ pub mod flags {
     }
 
     impl Flags {
-        pub fn is_dynamic(&self) -> bool { self.contains(T_DYNAMIC) }
+        pub fn is_dynamic(&self) -> bool { self.intersects(T_DYNAMIC) }
 
         pub fn is_integral(&self) -> bool {
             self.is_dynamic() || (self.intersects(T_INTEGRAL) && !self.intersects(!T_INTEGRAL))
@@ -445,6 +448,16 @@ pub mod flags {
 
         pub fn is_falsy(&self) -> bool {
             self.intersects(T_FALSY) && !self.intersects(!T_FALSY)
+        }
+
+        pub fn get_dynamic(&self) -> Option<Dyn> {
+            if self.contains(T_DYNAMIC) {
+                Some(Dyn::Oops)
+            } else if self.contains(T_WHATEVER) {
+                Some(Dyn::User)
+            } else {
+                None
+            }
         }
     }
 

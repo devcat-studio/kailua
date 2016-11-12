@@ -28,7 +28,7 @@ impl Unioned {
         };
 
         match ty.as_base() {
-            &T::Dynamic | &T::All => panic!("Unioned::from called with T::Dynamic or T::All"),
+            &T::Dynamic(_) | &T::All => panic!("Unioned::from called with T::Dynamic or T::All"),
 
             &T::None     => {}
             &T::Nil      => { u.simple = U_NIL; }
