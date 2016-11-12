@@ -124,6 +124,9 @@ impl<Exp: Expectable> ExpectableDelim for Exp {
     }
 }
 
+// when used with `Parser::recover[_with]`, it means that the enclosed closure will end
+// the closing token as well. this is normally not recommended (easy to miss) but
+// meta comments typically have a longer cleanup process, so this is required.
 #[derive(Copy, Clone)]
 struct NoDelim;
 
@@ -1017,7 +1020,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         // if there exists a spec stmt return it first.
         // a spec may be empty, so loop until no spec exists or a spec is found.
         loop {
-            match self.recover(|p| p.try_parse_kailua_spec(), NoDelim)? {
+            match self.try_parse_kailua_spec()? {
                 Some(Some(spec)) => return Ok(Some(spec)),
                 Some(None) => continue,
                 None => break,
@@ -1236,45 +1239,58 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             tok => {
                 self.unread(tok);
 
-                if let Some(exp) = self.try_parse_prefix_exp()? {
-                    // prefixexp consumes pretty much everything.
-                    // it might be a single statement as whole,
-                    // or the beginning of `varlist "=" explist`.
-                    // determine if prefixexp is a function call or an indexing op,
-                    // and convert it to `Var` for the latter.
-                    // (note that the prefixexp might as well be an op
-                    // indexing the return from a function call!)
-                    match self.convert_prefix_exp_to_var(exp) {
-                        // var {"," var} "=" explist
-                        Ok(firstvar) => {
-                            let mut lhs = Vec::new();
-                            let mut span = firstvar.span;
-                            let mut eq = false;
+                // only prefixexp can appear at this position, but it is very common that
+                // incomplete expression results in a (partial) non-prefix expression.
+                let exp = match self.try_parse_exp()? {
+                    Some(exp) => exp,
+                    None => return Ok(None),
+                };
 
-                            // we've already read the first var, but not comma and/or specs yet
-                            // read the spec for the first var (if any) first,
-                            // then proceed to normal var w/ spec list,
-                            // then an equal sign (to allow the last spec to appear after `=`)
-                            let mut firstspec = self.try_parse_kailua_type_spec()?;
-                            if self.may_expect(Punct::Comma) {
-                                if firstspec.is_none() {
-                                    firstspec = self.try_parse_kailua_type_spec()?;
-                                }
-                                lhs.push(self.make_kailua_typespec(firstvar, firstspec));
-                                let (span_, eq_) =
-                                    self.scan_list_with_spec(Self::parse_var,
-                                                             |varspec| lhs.push(varspec))?;
-                                span |= span_;
-                                eq = eq_;
-                            } else {
-                                lhs.push(self.make_kailua_typespec(firstvar, firstspec));
-                            }
-                            if !eq {
-                                // the equal sign is mandatory, so ensure it here
-                                self.expect(Punct::Eq)?;
-                            }
-                            let mut lhs = lhs.with_loc(span);
+                // now there are three cases possible:
+                // it might be a single statement as whole (a function call),
+                // the beginning of `varlist "=" explist`,
+                // or just an error otherwise.
+                //
+                // determine if prefixexp is a function call or an indexing op,
+                // and convert it to `Var` for the second case.
+                // (note that the prefixexp might as well be an op
+                // indexing the return from a function call!)
+                match self.convert_exp_to_var(exp) {
+                    // var {"," var} "=" explist
+                    Ok(firstvar) => {
+                        let mut lhs = Vec::new();
+                        let mut span = firstvar.span;
+                        let mut eq = false;
 
+                        // we've already read the first var, but not comma and/or specs yet
+                        // read the spec for the first var (if any) first,
+                        // then proceed to normal var w/ spec list,
+                        // then an equal sign (to allow the last spec to appear after `=`)
+                        let mut firstspec = self.try_parse_kailua_type_spec()?;
+                        if self.may_expect(Punct::Comma) {
+                            if firstspec.is_none() {
+                                firstspec = self.try_parse_kailua_type_spec()?;
+                            }
+                            lhs.push(self.make_kailua_typespec(firstvar, firstspec));
+                            let (span_, eq_) =
+                                self.scan_list_with_spec(Self::parse_var,
+                                                         |varspec| lhs.push(varspec))?;
+                            span |= span_;
+                            eq = eq_;
+                        } else {
+                            lhs.push(self.make_kailua_typespec(firstvar, firstspec));
+                        }
+
+                        // the equal sign is mandatory, so ensure it here
+                        let mut lhs = lhs.with_loc(span);
+                        if !eq && !self.may_expect(Punct::Eq) {
+                            let read = self.read();
+                            self.error(&read.1, m::NoEq { read: &read.1 }).done()?;
+                            self.unread(read);
+
+                            // assume that it is like an assignment but without rhs
+                            Box::new(St::Assign(lhs, None))
+                        } else {
                             let mut rhs = Vec::new();
                             let span = self.scan_list(Self::parse_exp, |exp| rhs.push(exp))?;
                             let rhs = rhs.with_loc(span);
@@ -1287,16 +1303,20 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                     &m::ExcessTypeSpecsInAssign {})?;
                             }
 
-                            Box::new(St::Assign(lhs, rhs))
-                        }
-
-                        // prefixexp
-                        Err(exp) => {
-                            Box::new(St::Void(exp))
+                            Box::new(St::Assign(lhs, Some(rhs)))
                         }
                     }
-                } else {
-                    return Ok(None);
+
+                    // prefixexp
+                    Err(exp) => {
+                        // non-prefix expression is an error but otherwise can be recovered
+                        match *exp.base {
+                            Ex::FuncCall(..) | Ex::MethodCall(..) => {}
+                            _ => { self.error(&exp, m::NoFuncCall {}).done()?; }
+                        }
+
+                        Box::new(St::Void(exp))
+                    }
                 }
             }
         };
@@ -1603,14 +1623,15 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             match self.read() {
                 // prefixexp "." ...
                 (_, Spanned { base: Tok::Punct(Punct::Dot), .. }) => {
-                    let tok = self.read().1;
-                    if let Tok::Name(name) = tok.base {
-                        let name = Box::new(Ex::Str(name.into())).with_loc(tok.span);
+                    if let Some(name) = self.try_parse_name() {
+                        let name = Box::new(Ex::Str(name.base.into())).with_loc(name.span);
                         let span = begin..self.last_pos();
                         exp = Box::new(Ex::Index(exp, name)).with_loc(span);
                     } else {
-                        return self.fatal(tok.span, m::NoNameAfterExpDot { read: &tok.base })
-                                   .done();
+                        let tok = self.read();
+                        self.error(tok.1.span, m::NoNameAfterExpDot { read: &tok.1.base }).done()?;
+                        self.unread(tok);
+                        break;
                     }
                 }
 
@@ -1624,14 +1645,30 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
                 // prefixexp ":" ...
                 (_, Spanned { base: Tok::Punct(Punct::Colon), .. }) => {
-                    let name = self.parse_name()?;
+                    let name = if let Some(name) = self.try_parse_name() {
+                        name
+                    } else {
+                        let tok = self.read();
+                        self.error(tok.1.span, m::NoArgsAfterExpColon { read: &tok.1.base })
+                            .done()?;
+                        self.unread(tok);
+                        break;
+                    };
+
                     if let Some(args) = self.try_parse_args()? {
                         let span = begin..self.last_pos();
                         exp = Box::new(Ex::MethodCall(exp, name, args)).with_loc(span);
                     } else {
-                        let tok = self.read().1;
-                        return self.fatal(tok.span, m::NoArgsAfterExpColonName { read: &tok.base })
-                                   .done();
+                        let tok = self.read();
+                        self.error(tok.1.span, m::NoArgsAfterExpColonName { read: &tok.1.base })
+                            .done()?;
+                        self.unread(tok);
+
+                        // convert `prefixexp ":" NAME` into `prefixexp "." NAME`
+                        let name = Box::new(Ex::Str(name.base.into())).with_loc(name.span);
+                        let span = begin..self.last_pos();
+                        exp = Box::new(Ex::Index(exp, name)).with_loc(span);
+                        break;
                     }
                 }
 
@@ -1652,8 +1689,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         Ok(Some(exp))
     }
 
-    fn convert_prefix_exp_to_var(&self,
-                                 exp: Spanned<Exp>) -> result::Result<Spanned<Var>, Spanned<Exp>> {
+    fn convert_exp_to_var(&self, exp: Spanned<Exp>) -> result::Result<Spanned<Var>, Spanned<Exp>> {
         let span = exp.span;
         let base = *exp.base;
         match base {
@@ -1862,21 +1898,23 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         }
     }
 
-    fn try_parse_var(&mut self) -> Result<Option<Spanned<Var>>> {
-        if let Some(exp) = self.try_parse_prefix_exp()? {
-            let var = self.convert_prefix_exp_to_var(exp).unwrap();
-            Ok(Some(var))
-        } else {
-            Ok(None)
-        }
-    }
-
     fn parse_var(&mut self) -> Result<Spanned<Var>> {
-        if let Some(var) = self.try_parse_var()? {
-            Ok(var)
+        if let Some(exp) = self.try_parse_exp()? {
+            match self.convert_exp_to_var(exp) {
+                Ok(var) => Ok(var),
+                Err(exp) => {
+                    self.error(&exp, m::NoVarButExp {}).done()?;
+                    // since it's already a complete expression, it is beneficial to treat it
+                    // as a part of incomplete AST---missing indexing key in this case.
+                    let expspan = exp.span;
+                    Ok(Var::Index(exp, Box::new(Ex::Oops).without_loc()).with_loc(expspan))
+                }
+            }
         } else {
-            let tok = self.read().1;
-            self.fatal(tok.span, m::NoVar { read: &tok.base }).done()
+            let tok = self.read();
+            self.error(tok.1.span, m::NoVar { read: &tok.1.base }).done()?;
+            self.unread(tok);
+            Err(Stop::Recover)
         }
     }
 
@@ -2453,23 +2491,25 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             -> Result<Option<Spanned<(Spanned<M>, Spanned<Kind>)>>> {
         let metabegin = self.pos();
         if self.may_expect(Punct::DashDashColon) {
-            // allow for `--: { a = foo,
-            //            --:   b = bar }`
-            self.begin_meta_comment(Punct::DashDashColon);
-            let spec = self.parse_kailua_kind_with_spanned_modf()?;
-            let metaend = self.last_pos();
-            // allow for `--: last type --> return type` in the function decl
-            if !self.lookahead(Punct::DashDashGt) {
-                self.end_meta_comment(Punct::DashDashColon)?;
-            } else {
-                assert_eq!(self.ignore_after_newline, Some(Punct::DashDashColon));
-                self.ignore_after_newline = None;
-                // it is possible to have `--: { a = foo,
-                //                         --:   b = bar }
-                //                         --: --> return_type`. seems harmless though.
-                self.elided_newline = None;
-            }
-            Ok(Some(spec.with_loc(metabegin..metaend)))
+            self.recover(|parser| {
+                // allow for `--: { a = foo,
+                //            --:   b = bar }`
+                parser.begin_meta_comment(Punct::DashDashColon);
+                let spec = parser.parse_kailua_kind_with_spanned_modf()?;
+                let metaend = parser.last_pos();
+                // allow for `--: last type --> return type` in the function decl
+                if !parser.lookahead(Punct::DashDashGt) {
+                    parser.end_meta_comment(Punct::DashDashColon)?;
+                } else {
+                    assert_eq!(parser.ignore_after_newline, Some(Punct::DashDashColon));
+                    parser.ignore_after_newline = None;
+                    // it is possible to have `--: { a = foo,
+                    //                         --:   b = bar }
+                    //                         --: --> return_type`. seems harmless though.
+                    parser.elided_newline = None;
+                }
+                Ok(Some(spec.with_loc(metabegin..metaend)))
+            }, NoDelim)
         } else {
             Ok(None)
         }
@@ -2486,26 +2526,28 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         trace!("parsing kailua type sequence spec");
         let metabegin = self.pos();
         if self.may_expect(Punct::DashDashColon) {
-            self.begin_meta_comment(Punct::DashDashColon);
+            self.recover(|parser| {
+                parser.begin_meta_comment(Punct::DashDashColon);
 
-            let mut specs = Vec::new();
-            self.scan_list(|parser| {
-                let begin = parser.pos();
-                let spec = parser.parse_kailua_kind_with_spanned_modf()?;
-                Ok(spec.with_loc(begin..parser.last_pos()))
-            }, |spec| {
-                specs.push(spec.map(|(m,k)| (m.base, k)));
-            })?;
+                let mut specs = Vec::new();
+                parser.scan_list(|parser| {
+                    let begin = parser.pos();
+                    let spec = parser.parse_kailua_kind_with_spanned_modf()?;
+                    Ok(spec.with_loc(begin..parser.last_pos()))
+                }, |spec| {
+                    specs.push(spec.map(|(m,k)| (m.base, k)));
+                })?;
 
-            let metaend = self.last_pos();
-            if !self.lookahead(Punct::DashDashGt) {
-                self.end_meta_comment(Punct::DashDashColon)?;
-            } else {
-                assert_eq!(self.ignore_after_newline, Some(Punct::DashDashColon));
-                self.ignore_after_newline = None;
-                self.elided_newline = None;
-            }
-            Ok(Some(specs.with_loc(metabegin..metaend)))
+                let metaend = parser.last_pos();
+                if !parser.lookahead(Punct::DashDashGt) {
+                    parser.end_meta_comment(Punct::DashDashColon)?;
+                } else {
+                    assert_eq!(parser.ignore_after_newline, Some(Punct::DashDashColon));
+                    parser.ignore_after_newline = None;
+                    parser.elided_newline = None;
+                }
+                Ok(Some(specs.with_loc(metabegin..metaend)))
+            }, NoDelim)
         } else {
             Ok(None)
         }
@@ -2516,12 +2558,14 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         trace!("parsing kailua return type spec");
         let begin = self.pos();
         if self.may_expect(Punct::DashDashGt) {
-            self.begin_meta_comment(Punct::DashDashGt);
-            let kinds = self.parse_kailua_kind_seq()?;
-            let end = self.last_pos();
-            self.end_meta_comment(Punct::DashDashGt)?;
+            self.recover(|parser| {
+                parser.begin_meta_comment(Punct::DashDashGt);
+                let kinds = parser.parse_kailua_kind_seq()?;
+                let end = parser.last_pos();
+                parser.end_meta_comment(Punct::DashDashGt)?;
 
-            Ok(Some(kinds.with_loc(begin..end)))
+                Ok(Some(kinds.with_loc(begin..end)))
+            }, NoDelim)
         } else {
             Ok(None)
         }
@@ -2534,47 +2578,49 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         let metabegin = self.pos();
 
         if self.may_expect(Punct::DashDashV) {
-            self.begin_meta_comment(Punct::DashDashV);
+            self.recover(|parser| {
+                parser.begin_meta_comment(Punct::DashDashV);
 
-            let mut attrs = Vec::new();
-            let mut attrs_seen = false;
-            loop {
-                match self.try_parse_kailua_attr() {
-                    Ok(Some(attr)) => { attrs_seen = true; attrs.push(attr); }
-                    Ok(None) => break,
-                    Err(Stop::Fatal) => return Err(Stop::Fatal),
-                    // we have seen an attribute but couldn't parse it
-                    Err(Stop::Recover) => { attrs_seen = true; }
+                let mut attrs = Vec::new();
+                let mut attrs_seen = false;
+                loop {
+                    match parser.try_parse_kailua_attr() {
+                        Ok(Some(attr)) => { attrs_seen = true; attrs.push(attr); }
+                        Ok(None) => break,
+                        Err(Stop::Fatal) => return Err(Stop::Fatal),
+                        // we have seen an attribute but couldn't parse it
+                        Err(Stop::Recover) => { attrs_seen = true; }
+                    }
                 }
-            }
 
-            // function "(" [NAME ":" KIND] {"," NAME ":" KIND} ["," "..."] ")" ["-->" KIND]
-            let begin = self.pos();
-            let has_sig = if !attrs_seen {
-                // force reading signatures if no attributes are present
-                self.expect(Keyword::Function)?;
-                true
-            } else {
-                self.may_expect(Keyword::Function)
-            };
-            let sig = if has_sig {
-                self.expect(Punct::LParen)?;
-                let args = self.parse_kailua_namekindlist()?;
-                self.expect(Punct::RParen)?;
-                let returns = if self.may_expect(Punct::DashDashGt) {
-                    self.parse_kailua_kind_seq()?
+                // function "(" [NAME ":" KIND] {"," NAME ":" KIND} ["," "..."] ")" ["-->" KIND]
+                let begin = parser.pos();
+                let has_sig = if !attrs_seen {
+                    // force reading signatures if no attributes are present
+                    parser.expect(Keyword::Function)?;
+                    true
                 } else {
-                    Seq { head: Vec::new(), tail: None }
+                    parser.may_expect(Keyword::Function)
                 };
-                let end = self.last_pos();
-                Some(Presig { args: args, returns: Some(returns) }.with_loc(begin..end))
-            } else {
-                None
-            };
+                let sig = if has_sig {
+                    parser.expect(Punct::LParen)?;
+                    let args = parser.parse_kailua_namekindlist()?;
+                    parser.expect(Punct::RParen)?;
+                    let returns = if parser.may_expect(Punct::DashDashGt) {
+                        parser.parse_kailua_kind_seq()?
+                    } else {
+                        Seq { head: Vec::new(), tail: None }
+                    };
+                    let end = parser.last_pos();
+                    Some(Presig { args: args, returns: Some(returns) }.with_loc(begin..end))
+                } else {
+                    None
+                };
 
-            let metaend = self.last_pos();
-            self.end_meta_comment(Punct::DashDashV)?;
-            Ok(Some((attrs, sig).with_loc(metabegin..metaend)))
+                let metaend = parser.last_pos();
+                parser.end_meta_comment(Punct::DashDashV)?;
+                Ok(Some((attrs, sig).with_loc(metabegin..metaend)))
+            }, NoDelim)
         } else {
             Ok(None)
         }
@@ -2585,65 +2631,67 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         let begin = self.pos();
 
         if self.may_expect(Punct::DashDashHash) {
-            self.begin_meta_comment(Punct::DashDashHash);
+            self.recover(|parser| {
+                parser.begin_meta_comment(Punct::DashDashHash);
 
-            let mut sibling_scope = None;
-            let stmt = match self.read() {
-                // assume [global] NAME ":" MODF KIND
-                (_, Spanned { base: Tok::Keyword(Keyword::Assume), .. }) => {
-                    let global = self.may_expect(Keyword::Global);
-                    let name = self.parse_name()?;
-                    self.expect(Punct::Colon)?;
-                    let modf = self.parse_kailua_mod();
-                    let kind = self.recover_upto(Self::parse_kailua_kind)?;
+                let mut sibling_scope = None;
+                let stmt = match parser.read() {
+                    // assume [global] NAME ":" MODF KIND
+                    (_, Spanned { base: Tok::Keyword(Keyword::Assume), .. }) => {
+                        let global = parser.may_expect(Keyword::Global);
+                        let name = parser.parse_name()?;
+                        parser.expect(Punct::Colon)?;
+                        let modf = parser.parse_kailua_mod();
+                        let kind = parser.recover_upto(Self::parse_kailua_kind)?;
 
-                    let name = if global {
-                        self.global_scope.insert(name.base.clone());
-                        name.map(NameRef::Global)
-                    } else {
-                        let scope = self.generate_sibling_scope();
-                        sibling_scope = Some(scope);
-                        name.map(|name| NameRef::Local(self.scope_map.add_name(scope, name)))
-                    };
-                    Some(Box::new(St::KailuaAssume(name, modf, kind, sibling_scope)))
-                }
-
-                // open NAME
-                (_, Spanned { base: Tok::Keyword(Keyword::Open), .. }) => {
-                    let name = self.parse_name()?;
-                    // TODO also set the parser option
-                    Some(Box::new(St::KailuaOpen(name)))
-                }
-
-                // type NAME = KIND
-                (_, Spanned { base: Tok::Keyword(Keyword::Type), .. }) => {
-                    let name = self.parse_name()?;
-                    self.expect(Punct::Eq)?;
-                    let kind = self.recover_upto(Self::parse_kailua_kind)?;
-
-                    // forbid overriding builtin types
-                    if self.builtin_kind(&*name.base).is_some() {
-                        self.error(name.span, m::CannotRedefineBuiltin {}).done()?;
+                        let name = if global {
+                            parser.global_scope.insert(name.base.clone());
+                            name.map(NameRef::Global)
+                        } else {
+                            let scope = parser.generate_sibling_scope();
+                            sibling_scope = Some(scope);
+                            name.map(|name| NameRef::Local(parser.scope_map.add_name(scope, name)))
+                        };
+                        Some(Box::new(St::KailuaAssume(name, modf, kind, sibling_scope)))
                     }
 
-                    Some(Box::new(St::KailuaType(name, kind)))
-                }
+                    // open NAME
+                    (_, Spanned { base: Tok::Keyword(Keyword::Open), .. }) => {
+                        let name = parser.parse_name()?;
+                        // TODO also set the parser option
+                        Some(Box::new(St::KailuaOpen(name)))
+                    }
 
-                tok => {
-                    self.unread(tok);
-                    None // empty `--#` is valid
-                }
-            };
+                    // type NAME = KIND
+                    (_, Spanned { base: Tok::Keyword(Keyword::Type), .. }) => {
+                        let name = parser.parse_name()?;
+                        parser.expect(Punct::Eq)?;
+                        let kind = parser.recover_upto(Self::parse_kailua_kind)?;
 
-            let end = self.last_pos();
-            { // the new sibling scope should happen after the meta block
-                let ret = self.end_meta_comment(Punct::DashDashHash);
-                if let Some(scope) = sibling_scope {
-                    self.push_scope(scope);
+                        // forbid overriding builtin types
+                        if parser.builtin_kind(&*name.base).is_some() {
+                            parser.error(name.span, m::CannotRedefineBuiltin {}).done()?;
+                        }
+
+                        Some(Box::new(St::KailuaType(name, kind)))
+                    }
+
+                    tok => {
+                        parser.unread(tok);
+                        None // empty `--#` is valid
+                    }
+                };
+
+                let end = parser.last_pos();
+                { // the new sibling scope should happen after the meta block
+                    let ret = parser.end_meta_comment(Punct::DashDashHash);
+                    if let Some(scope) = sibling_scope {
+                        parser.push_scope(scope);
+                    }
+                    ret?;
                 }
-                ret?;
-            }
-            Ok(Some(stmt.map(|st| st.with_loc(begin..end))))
+                Ok(Some(stmt.map(|st| st.with_loc(begin..end))))
+            }, NoDelim)
         } else {
             Ok(None)
         }

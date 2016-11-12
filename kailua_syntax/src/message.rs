@@ -106,6 +106,11 @@ define_msg! { pub NoExp<'a> { read: &'a Tok }:
     _    => "Expected an expression, got {read}",
 }
 
+define_msg! { pub NoFuncCall:
+    "ko" => "문장 위치에 나오는 수식은 함수 호출이어야 합니다",
+    _    => "Only function calls are allowed as statement-level expressions",
+}
+
 define_msg! { pub NoStmt<'a> { read: &'a Tok }:
     "ko" => "문장이 나와야 하는데 {read}이(가) 나왔습니다",
     _    => "Expected a statement, got {read}",
@@ -114,6 +119,11 @@ define_msg! { pub NoStmt<'a> { read: &'a Tok }:
 define_msg! { pub NoVar<'a> { read: &'a Tok }:
     "ko" => "변수나 인덱스 수식이 나와야 하는데 {read}이(가) 나왔습니다",
     _    => "Expected a left-hand-side expression, got {read}",
+}
+
+define_msg! { pub NoVarButExp:
+    "ko" => "대입문 좌항에 변수나 인덱스 수식이 아닌 수식이 들어 있습니다",
+    _    => "Got a non-assignable expression at the left hand side of assignment",
 }
 
 define_msg! { pub NoKind<'a> { read: &'a Tok }:
@@ -141,6 +151,11 @@ define_msg! { pub NoKindParams<'a> { read: &'a Tok }:
     _    => "Expected a list of type parameters, got {read}",
 }
 
+define_msg! { pub NoEq<'a> { read: &'a Tok }:
+    "ko" => "`=`이 나와야 하는데 {read}이(가) 나왔습니다",
+    _    => "Expected `=`, got {read}",
+}
+
 define_msg! { pub NoTableSep<'a> { read: &'a Tok }:
     "ko" => "`,`, `;`이나 `}}`가 나와야 하는데 {read}이(가) 나왔습니다",
     _    => "Expected `,`, `;` or `}}`, got {read}",
@@ -159,6 +174,11 @@ define_msg! { pub BadFuncArg<'a> { read: &'a Tok }:
 define_msg! { pub NoNameAfterExpDot<'a> { read: &'a Tok }:
     "ko" => "`<수식> .` 뒤에 이름이 나와야 하는데 {read}이(가) 나왔습니다",
     _    => "Expected a name after `<expression> .`, got {read}",
+}
+
+define_msg! { pub NoArgsAfterExpColon<'a> { read: &'a Tok }:
+    "ko" => "`<수식> :` 뒤에 이름이 나와야 하는데 {read}이(가) 나왔습니다",
+    _    => "Expected a name after `<expression> :`, got {read}",
 }
 
 define_msg! { pub NoArgsAfterExpColonName<'a> { read: &'a Tok }:

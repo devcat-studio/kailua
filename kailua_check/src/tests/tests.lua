@@ -2139,3 +2139,19 @@ do
 end
 --! ok
 
+--8<-- void-arbitrary
+x = 42
+y = "foo"
+-- the first is a parsing error, and the second is a type error from the recovered AST
+x + y --@< Error: Only function calls are allowed as statement-level expressions
+      --@^ Error: `"foo"` is not a subtype of `number`
+--! error
+
+--8<-- assign-empty-rhs
+a = 42 --: integer
+b = "string" --: string
+do
+    a, b -- this won't generate any type error! the following is a parsing error.
+end --@< Error: Expected `=`, got a keyword `end`
+--! ok
+

@@ -900,12 +900,12 @@ function foo() end
 --8<-- funcspec-no-empty
 --v --@<-v Error: Expected a keyword `function`, got a newline
 function foo() end
---! error
+--! [FuncDecl(`foo`_, [] --> _, $1[])]
 
 --8<-- funcspec-no-bare-parens
 --v () --@< Error: Expected a keyword `function`, got `(`
 function foo() end
---! error
+--! [FuncDecl(`foo`_, [] --> _, $1[])]
 
 --8<-- rettype-none
 function foo() --> ()
@@ -1187,7 +1187,9 @@ f()
                   yyy]] --@^ Note: The meta block started here
                         --@^^-^ Error: Expected a single type, got a newline
                         --@^^ Error: Expected `=`, got `]`
---! error
+                        --@^^^ Error: Expected a statement, got `]`
+                        --@^^^^ Error: Expected a statement, got `]`
+--! [KailuaAssume(`p`$1, _, Oops)$1, Assign([`yyy`_], _), Oops, Oops]
 
 --8<-- string-multi-line
 f('foo\
@@ -1302,12 +1304,13 @@ g({y#}) --@< Error: Expected `,`, `;` or `}`, got `#`
 --!  Void(`g`_(Table([(None, `y`_)])))]
 
 --8<-- index-with-number
-f(x.0) --@< Fatal: Expected a name after `<expression> .`, got a number
---! error
+f(x.0) --@< Error: Expected a name after `<expression> .`, got a number
+       --@^ Error: Expected `)`, got a number
+--! [Void(`f`_(`x`_))]
 
 --8<-- methodcall-no-args
-f(x:g - 1) --@< Fatal: Expected argument(s) after `<expression> : <name>`, got `-`
---! error
+f(x:g - 1) --@< Error: Expected argument(s) after `<expression> : <name>`, got `-`
+--! [Void(`f`_((`x`_["g"] - 1)))]
 
 --8<-- funccall-invalid-char
 f(2, *3) --@< Error: Expected an expression, got `*`
@@ -1326,7 +1329,7 @@ f(#*3) --@< Fatal: Expected an expression, got `*`
 --! error
 
 --8<-- lval-invalid-char
-a, *b = 5 --@< Fatal: Expected a left-hand-side expression, got `*`
+a, *b = 5 --@< Error: Expected a left-hand-side expression, got `*`
 --! error
 
 --8<-- assume-invalid-char
@@ -1487,4 +1490,134 @@ goto = 42
 local a = {} --: var { var { } } --@< Error: Expected a single type, got a keyword `var`
 local b --: var { var { } }      --@< Error: Expected a single type, got a keyword `var`
 --! [Local([`a`$1: _ Oops], [Table([])])$1, Local([`b`$2: _ Oops], [])$2]
+
+--8<-- non-prefix-expr-at-top-level-1
+f --@< Error: Expected `=`, got the end of file
+--&
+--! [Assign([`f`_], _)]
+
+--8<-- non-prefix-expr-at-top-level-2
+f.a --@< Error: Expected `=`, got the end of file
+--&
+--! [Assign([(`f`_)["a"]], _)]
+
+--8<-- non-prefix-expr-at-top-level-3
+f[3] --@< Error: Expected `=`, got the end of file
+--&
+--! [Assign([(`f`_)[3]], _)]
+
+--8<-- non-prefix-expr-at-top-level-4
+"string" --@< Error: Only function calls are allowed as statement-level expressions
+f()
+--! [Void("string"), Void(`f`_())]
+
+--8<-- non-prefix-expr-at-top-level-5
+42 --@< Error: Only function calls are allowed as statement-level expressions
+f()
+--! [Void(42), Void(`f`_())]
+
+--8<-- non-prefix-expr-at-top-level-6
+f(a).b --@< Error: Expected `=`, got the end of file
+--&
+--! [Assign([(`f`_(`a`_))["b"]], _)]
+
+--8<-- non-prefix-expr-at-top-level-7
+f(a).b
+g() --@< Error: Expected `=`, got a name
+--! [Assign([(`f`_(`a`_))["b"]], _), Void(`g`_())]
+
+--8<-- non-prefix-expr-at-top-level-8
+3 + 4 --@< Error: Only function calls are allowed as statement-level expressions
+f()
+--! [Void((3 + 4)), Void(`f`_())]
+
+--8<-- non-prefix-expr-at-top-level-9
+{} --@< Error: Only function calls are allowed as statement-level expressions
+f()
+--! [Void(Table([])), Void(`f`_())]
+
+--8<-- expr-seq-at-top-level-1
+a, b --@< Error: Expected `=`, got the end of file
+--&
+--! [Assign([`a`_, `b`_], _)]
+
+--8<-- expr-seq-at-top-level-2
+a, b.c
+f() --@< Error: Expected `=`, got a name
+--! [Assign([`a`_, (`b`_)["c"]], _), Void(`f`_())]
+
+--8<-- expr-seq-at-top-level-3
+a, b.c
+do end --@< Error: Expected `=`, got a keyword `do`
+--! [Assign([`a`_, (`b`_)["c"]], _), Do([])]
+
+--8<-- expr-seq-at-top-level-4
+a(), b --@< Error: Expected a statement, got `,`
+do end --@< Error: Expected `=`, got a keyword `do`
+--! [Void(`a`_()), Oops, Assign([`b`_], _), Do([])]
+
+--8<-- index-recover-eof-1
+f. --@< Error: Expected a name after `<expression> .`, got the end of file
+   --@^ Error: Expected `=`, got the end of file
+--&
+--! [Assign([`f`_], _)]
+
+--8<-- index-recover-eof-2
+f: --@< Error: Expected a name after `<expression> :`, got the end of file
+   --@^ Error: Expected `=`, got the end of file
+--&
+--! [Assign([`f`_], _)]
+
+--8<-- index-recover-eof-3
+f:g --@< Error: Expected argument(s) after `<expression> : <name>`, got the end of file
+    --@^ Error: Expected `=`, got the end of file
+--&
+--! [Assign([(`f`_)["g"]], _)]
+
+--8<-- index-recover-keyword
+f.
+for i = 1, 5 do end --@< Error: Expected a name after `<expression> .`, got a keyword `for`
+                    --@^ Error: Expected `=`, got a keyword `for`
+f:
+repeat until false --@< Error: Expected a name after `<expression> :`, got a keyword `repeat`
+                   --@^ Error: Expected `=`, got a keyword `repeat`
+f:g
+do end --@< Error: Expected argument(s) after `<expression> : <name>`, got a keyword `do`
+       --@^ Error: Expected `=`, got a keyword `do`
+--! [Assign([`f`_], _), For(`i`$1, 1, 5, None, $1[]), \
+--!  Assign([`f`_], _), Repeat([], false), \
+--!  Assign([(`f`_)["g"]], _), Do([])]
+
+--8<-- index-recover-meta
+f.
+--# assume f: WHATEVER --@< Error: Expected a name after `<expression> .`, got `--#`
+                       --@^ Error: Expected `=`, got `--#`
+f:
+--# assume f: WHATEVER --@< Error: Expected a name after `<expression> :`, got `--#`
+                       --@^ Error: Expected `=`, got `--#`
+f:g
+--# assume f: WHATEVER --@< Error: Expected argument(s) after `<expression> : <name>`, got `--#`
+                       --@^ Error: Expected `=`, got `--#`
+--! [Assign([`f`_], _), KailuaAssume(`f`$1, _, Dynamic)$1, \
+--!  Assign([`f`$1], _), KailuaAssume(`f`$2, _, Dynamic)$2, \
+--!  Assign([(`f`$2)["g"]], _), KailuaAssume(`f`$3, _, Dynamic)$3]
+
+--8<-- index-recover-do-end
+do
+    f.
+end --@< Error: Expected a name after `<expression> .`, got a keyword `end`
+    --@^ Error: Expected `=`, got a keyword `end`
+do
+    f:
+end --@< Error: Expected a name after `<expression> :`, got a keyword `end`
+    --@^ Error: Expected `=`, got a keyword `end`
+do
+    f:g
+end --@< Error: Expected argument(s) after `<expression> : <name>`, got a keyword `end`
+    --@^ Error: Expected `=`, got a keyword `end`
+g()
+--! [Do([Assign([`f`_], _)]), \
+--!  Do([Assign([`f`_], _)]), \
+--!  Do([Assign([(`f`_)["g"]], _)]), \
+--!  Void(`g`_())]
 

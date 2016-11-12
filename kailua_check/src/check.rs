@@ -753,7 +753,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     }
                 }).collect::<CheckResult<Vec<_>>>()?;
 
-                let infos = self.visit_explist(exps)?;
+                // the incomplete expression is parsed as Assign without rhs,
+                // so we won't generate further errors due to mismatching types
+                let infos = match *exps {
+                    Some(ref exps) => self.visit_explist(exps)?,
+                    None => SpannedSlotSeq::dummy(),
+                };
 
                 // unlike St::Local, do not tolerate the uninitialized variables
                 for ((var, varref), info) in vars.iter().zip(varrefs.into_iter())

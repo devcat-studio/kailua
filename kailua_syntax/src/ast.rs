@@ -400,7 +400,7 @@ pub enum St {
     // in which case it is a sibling scope applied to the following stmts.
 
     Void(Spanned<Exp>), // technically not every Exp is valid here, but for simplicity.
-    Assign(Spanned<Vec<TypeSpec<Spanned<Var>>>>, Spanned<Vec<Spanned<Exp>>>),
+    Assign(Spanned<Vec<TypeSpec<Spanned<Var>>>>, Option<Spanned<Vec<Spanned<Exp>>>>),
     Do(Spanned<Block>),
     While(Spanned<Exp>, Spanned<Block>),
     Repeat(Spanned<Block>, Spanned<Exp>),
@@ -426,7 +426,8 @@ impl fmt::Debug for St {
             St::Oops => write!(f, "Oops"),
 
             St::Void(ref e) => write!(f, "Void({:?})", e),
-            St::Assign(ref l, ref r) => write!(f, "Assign({:?}, {:?})", l, r),
+            St::Assign(ref l, Some(ref r)) => write!(f, "Assign({:?}, {:?})", l, r),
+            St::Assign(ref l, None) => write!(f, "Assign({:?}, _)", l),
             St::Do(ref b) => write!(f, "Do({:?})", b),
             St::While(ref e, ref b) => write!(f, "While({:?}, {:?})", e, b),
             St::Repeat(ref b, ref e) => write!(f, "Repeat({:?}, {:?})", b, e),
