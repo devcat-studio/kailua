@@ -765,21 +765,30 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                                         .zip(infos.into_iter_with_nil()) {
                     debug!("assigning {:?} to {:?} with type {:?}", info, var, varref);
 
-                    match (varref, var) {
-                        // variable declaration
-                        (VarRef::Name(nameref), &TypeSpec { modf, kind: Some(ref kind), .. }) => {
-                            let specinfo = self.visit_kind(F::from(modf), kind)?;
-                            self.env.add_var(nameref, Some(specinfo), Some(info))?;
-                        }
+                    match varref {
+                        VarRef::Name(nameref) => {
+                            match *var {
+                                // variable declaration
+                                TypeSpec { modf, kind: Some(ref kind), .. } => {
+                                    let specinfo = self.visit_kind(F::from(modf), kind)?;
+                                    self.env.add_var(nameref, Some(specinfo), Some(info))?;
+                                }
 
-                        // variable assignment
-                        (VarRef::Name(nameref), &TypeSpec { kind: None, .. }) => {
-                            self.env.assign_to_var(nameref, info)?;
+                                // variable assignment
+                                TypeSpec { kind: None, .. } => {
+                                    self.env.assign_to_var(nameref, info)?;
+                                }
+                            }
+
+                            // map the name span to the resulting slot
+                            let varslot = self.env.get_var(nameref).unwrap().slot.clone();
+                            self.context().spanned_slots_mut().insert(varslot.with_loc(nameref));
                         }
 
                         // indexed assignment
-                        (VarRef::Slot(slot), _) => {
+                        VarRef::Slot(slot) => {
                             self.env.assign(&slot, &info)?;
+                            self.context().spanned_slots_mut().insert(slot);
                         }
                     }
                 }
