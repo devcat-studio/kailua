@@ -175,13 +175,15 @@ impl<Head: fmt::Debug, Tail: fmt::Debug> fmt::Debug for Seq<Head, Tail> {
 pub enum Var {
     Name(Spanned<NameRef>),
     Index(Spanned<Exp>, Spanned<Exp>),
+    IndexName(Spanned<Exp>, Spanned<Name>),
 }
 
 impl fmt::Debug for Var {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Var::Name(ref id) => write!(f, "{:?}", id),
-            Var::Index(ref lhs, ref rhs) => write!(f, "({:?})[{:?}]", lhs, rhs),
+            Var::Index(ref lhs, ref rhs) => write!(f, "{:?}[{:?}]", lhs, rhs),
+            Var::IndexName(ref lhs, ref name) => write!(f, "{:?}.{:?}", lhs, name),
         }
     }
 }
@@ -276,8 +278,9 @@ pub enum Ex {
     // expressions
     Var(Spanned<NameRef>),
     FuncCall(Spanned<Exp>, Spanned<Vec<Spanned<Exp>>>), // desugared form
-    MethodCall(Spanned<Exp>, Spanned<Name>, Spanned<Vec<Spanned<Exp>>>),
+    MethodCall(Spanned<(Spanned<Exp>, Spanned<Name>)>, Spanned<Vec<Spanned<Exp>>>),
     Index(Spanned<Exp>, Spanned<Exp>),
+    IndexName(Spanned<Exp>, Spanned<Name>),
     Un(Spanned<UnOp>, Spanned<Exp>),
     Bin(Spanned<Exp>, Spanned<BinOp>, Spanned<Exp>),
 }
@@ -306,8 +309,8 @@ impl fmt::Debug for Ex {
                 write!(f, ")")?;
                 fmt::Debug::fmt(&args.span, f)
             },
-            Ex::MethodCall(ref e, ref n, ref args) => {
-                write!(f, "{:?}:{:?}(", e, n)?;
+            Ex::MethodCall(ref en, ref args) => {
+                write!(f, "({:?}:{:?}){:?}(", en.base.0, en.base.1, en.span)?;
                 let mut first = true;
                 for arg in &args.base {
                     if first { first = false; } else { write!(f, ", ")?; }
@@ -317,6 +320,7 @@ impl fmt::Debug for Ex {
                 fmt::Debug::fmt(&args.span, f)
             },
             Ex::Index(ref e, ref i) => write!(f, "{:?}[{:?}]", *e, *i),
+            Ex::IndexName(ref e, ref i) => write!(f, "{:?}.{:?}", e, i),
             Ex::Un(op, ref e) => write!(f, "({} {:?})", op.symbol(), *e),
             Ex::Bin(ref l, op, ref r) => write!(f, "({:?} {} {:?})", *l, op.symbol(), *r),
         }
@@ -408,8 +412,8 @@ pub enum St {
     For(Spanned<ScopedId>, Spanned<Exp>, Spanned<Exp>, Option<Spanned<Exp>>, Scope, Spanned<Block>),
     ForIn(Spanned<Vec<Spanned<ScopedId>>>, Spanned<Vec<Spanned<Exp>>>, Scope, Spanned<Block>),
     FuncDecl(Spanned<NameRef>, Sig, Scope, Spanned<Block>, Option<Scope>),
-    MethodDecl(Spanned<NameRef>, Vec<Spanned<Name>>, Option<TypeSpec<Spanned<SelfParam>>>,
-               Sig, Scope, Spanned<Block>),
+    MethodDecl(Spanned<(Spanned<NameRef>, Vec<Spanned<Name>>)>,
+               Option<TypeSpec<Spanned<SelfParam>>>, Sig, Scope, Spanned<Block>),
     Local(Spanned<Vec<TypeSpec<Spanned<ScopedId>>>>, Spanned<Vec<Spanned<Exp>>>, Scope),
     Return(Spanned<Vec<Spanned<Exp>>>),
     Break,
@@ -453,8 +457,11 @@ impl fmt::Debug for St {
                 if let Some(is) = is { write!(f, "{:?}", is)?; }
                 Ok(())
             },
-            St::MethodDecl(ref i, ref ii, ref self_, ref sig, bs, ref b) =>
-                write!(f, "MethodDecl({:?}, {:?}, {:?}, {:?}, {:?}{:?})", i, ii, self_, sig, bs, b),
+            St::MethodDecl(ref ii, ref self_, ref sig, bs, ref b) => {
+                write!(f, "MethodDecl(({:?}", ii.base.0)?;
+                for i in &ii.base.1 { write!(f, ".{:?}", i)?; }
+                write!(f, "){:?}, {:?}, {:?}, {:?}{:?})", ii.span, self_, sig, bs, b)
+            },
             St::Local(ref ii, ref ee, is) => write!(f, "Local({:?}, {:?}){:?}", ii, ee, is),
             St::Return(ref ee) => write!(f, "Return({:?})", ee),
             St::Break => write!(f, "Break"),

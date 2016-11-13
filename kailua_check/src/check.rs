@@ -750,6 +750,18 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                             // since we've requested a lvalue it would never return None
                             Ok(VarRef::Slot(slot.unwrap().with_loc(&varspec.base)))
                         },
+
+                        Var::IndexName(ref e, ref key) => {
+                            if let Some(ref kind) = varspec.kind {
+                                self.env.error(kind, m::TypeSpecToIndex {}).done()?;
+                            }
+
+                            let ty = self.visit_exp(e)?.into_first();
+                            let kty = Slot::just(T::str(key.base.clone().into())).with_loc(key);
+                            let slot = self.check_index(&ty, &kty, varspec.base.span, true)?;
+                            // since we've requested a lvalue it would never return None
+                            Ok(VarRef::Slot(slot.unwrap().with_loc(&varspec.base)))
+                        },
                     }
                 }).collect::<CheckResult<Vec<_>>>()?;
 
@@ -984,7 +996,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 Ok(Exit::None)
             }
 
-            St::MethodDecl(ref name, ref meths, ref selfparam, ref sig, _blockscope, ref block) => {
+            St::MethodDecl(Spanned { base: (ref name, ref meths), .. },
+                           ref selfparam, ref sig, _blockscope, ref block) => {
                 assert!(meths.len() >= 1);
 
                 // find a slot for the first name
@@ -1235,6 +1248,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
     fn visit_func_call(&mut self, funcinfo: &Spanned<T>, selfinfo: Option<Spanned<Slot>>,
                        args: &Spanned<Vec<Spanned<Exp>>>, expspan: Span) -> CheckResult<SlotSeq> {
+        // should be visited first, otherwise a WHATEVER function will ignore slots in arguments
+        let mut argtys = self.visit_explist(args)?;
+
         if !self.env.get_type_bounds(funcinfo).1.is_callable() {
             self.env.error(funcinfo, m::CallToNonFunc { func: self.display(funcinfo) }).done()?;
             return Ok(SlotSeq::dummy());
@@ -1242,8 +1258,6 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         if let Some(dyn) = funcinfo.get_dynamic() {
             return Ok(SlotSeq::from(T::Dynamic(dyn)));
         }
-
-        let mut argtys = self.visit_explist(args)?;
 
         // handle builtins, which may return different things from the function signature
         match funcinfo.builtin() {
@@ -1448,12 +1462,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 self.visit_func_call(&funcinfo, None, args, exp.span)
             },
 
-            Ex::MethodCall(ref e, ref method, ref args) => {
+            Ex::MethodCall(Spanned { base: (ref e, ref method), span }, ref args) => {
                 let ty = self.visit_exp(e)?.into_first();
-                let methodspan = method.span;
-                let kty = Slot::just(T::str(method.base.clone().into())).with_loc(methodspan);
+                let kty = Slot::just(T::str(method.base.clone().into())).with_loc(method.span);
                 if let Some(methinfo) = self.check_index(&ty, &kty, exp.span, false)? {
-                    let methinfo = methinfo.unlift().clone().into_send().with_loc(methodspan);
+                    self.context().spanned_slots_mut().insert(methinfo.clone().with_loc(span));
+                    let methinfo = methinfo.unlift().clone().into_send().with_loc(span);
                     self.visit_func_call(&methinfo, Some(ty), args, exp.span)
                 } else {
                     self.env.error(exp, m::CannotIndex { tab: self.display(&ty),
@@ -1466,6 +1480,18 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Ex::Index(ref e, ref key) => {
                 let ty = self.visit_exp(e)?.into_first();
                 let kty = self.visit_exp(key)?.into_first();
+                if let Some(vinfo) = self.check_index(&ty, &kty, exp.span, false)? {
+                    Ok(SlotSeq::from_slot(vinfo))
+                } else {
+                    self.env.error(exp, m::CannotIndex { tab: self.display(&ty),
+                                                         key: self.display(&kty) })
+                            .done()?;
+                    Ok(SlotSeq::dummy())
+                }
+            },
+            Ex::IndexName(ref e, ref key) => {
+                let ty = self.visit_exp(e)?.into_first();
+                let kty = Slot::just(T::str(key.base.clone().into())).with_loc(key);
                 if let Some(vinfo) = self.check_index(&ty, &kty, exp.span, false)? {
                     Ok(SlotSeq::from_slot(vinfo))
                 } else {

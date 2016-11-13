@@ -76,7 +76,7 @@ impl<'a> fmt::Display for IdDisplay<'a> {
                     let mut index = map_index;
                     let mut mult = 26;
                     let mut len = 1;
-                    while index < mult {
+                    while index >= mult {
                         index -= mult;
                         mult *= 26;
                         len += 1;

@@ -110,11 +110,11 @@ end
 
 --8<-- func-in-table
 function a.b.c(p) --[[...]] end
---! [MethodDecl(`a`_, [`b`, `c`], None, [`p`$1] --> _, $1[])]
+--! [MethodDecl((`a`_.`b`.`c`), None, [`p`$1] --> _, $1[])]
 
 --8<-- method
 function a.b:c(p) --[[...]] end
---! [MethodDecl(`a`_, [`b`, `c`], Some(self=`self`$1), [`p`$1] --> _, $1[])]
+--! [MethodDecl((`a`_.`b`.`c`), Some(self=`self`$1), [`p`$1] --> _, $1[])]
 
 --8<-- local
 local a, b
@@ -216,35 +216,35 @@ a, b = f(), g(), h()
 
 --8<-- assign-index-name-1
 ab.cde = f(), g(), h()
---! [Assign([(`ab`_)["cde"]], [`f`_(), `g`_(), `h`_()])]
+--! [Assign([`ab`_.`cde`], [`f`_(), `g`_(), `h`_()])]
 
 --8<-- assign-index-name-2
 ab.cde.fg = f(), g(), h()
---! [Assign([(`ab`_["cde"])["fg"]], [`f`_(), `g`_(), `h`_()])]
+--! [Assign([`ab`_.`cde`.`fg`], [`f`_(), `g`_(), `h`_()])]
 
 --8<-- assign-index-name-3
 a, b.cde = f(), g(), h()
---! [Assign([`a`_, (`b`_)["cde"]], [`f`_(), `g`_(), `h`_()])]
+--! [Assign([`a`_, `b`_.`cde`], [`f`_(), `g`_(), `h`_()])]
 
 --8<-- assign-index-name-4
 a, b.cde.fg = f(), g(), h()
---! [Assign([`a`_, (`b`_["cde"])["fg"]], [`f`_(), `g`_(), `h`_()])]
+--! [Assign([`a`_, `b`_.`cde`.`fg`], [`f`_(), `g`_(), `h`_()])]
 
 --8<-- assign-index-exp-1
 a[a*a] = f(), g(), h()
---! [Assign([(`a`_)[(`a`_ * `a`_)]], [`f`_(), `g`_(), `h`_()])]
+--! [Assign([`a`_[(`a`_ * `a`_)]], [`f`_(), `g`_(), `h`_()])]
 
 --8<-- assign-index-exp-2
 a, b[a*a] = f(), g(), h()
---! [Assign([`a`_, (`b`_)[(`a`_ * `a`_)]], [`f`_(), `g`_(), `h`_()])]
+--! [Assign([`a`_, `b`_[(`a`_ * `a`_)]], [`f`_(), `g`_(), `h`_()])]
 
 --8<-- assign-index-func-exp-1
 x().y[a*a] = f(), g(), h()
---! [Assign([(`x`_()["y"])[(`a`_ * `a`_)]], [`f`_(), `g`_(), `h`_()])]
+--! [Assign([`x`_().`y`[(`a`_ * `a`_)]], [`f`_(), `g`_(), `h`_()])]
 
 --8<-- assign-index-func-exp-2
 a, x().y[a*a] = f(), g(), h()
---! [Assign([`a`_, (`x`_()["y"])[(`a`_ * `a`_)]], [`f`_(), `g`_(), `h`_()])]
+--! [Assign([`a`_, `x`_().`y`[(`a`_ * `a`_)]], [`f`_(), `g`_(), `h`_()])]
 
 --8<-- assign-type
 a --: integer
@@ -387,21 +387,21 @@ f{a=a; a();}
 
 --8<-- funccall-index
 f.a()
---! [Void(`f`_["a"]())]
+--! [Void(`f`_.`a`())]
 
 --8<-- methodcall
 f:a(1)
---! [Void(`f`_:`a`(1))]
+--! [Void((`f`_:`a`)(1))]
 
 --8<-- methodcall-index
 f.a:b(1, 2)
---! [Void(`f`_["a"]:`b`(1, 2))]
+--! [Void((`f`_.`a`:`b`)(1, 2))]
 
 --8<-- desugared-call
 a = r"string":sub(3)
 a = r{a=4}.a
---! [Assign([`a`_], [`r`_("string"):`sub`(3)]), \
---!  Assign([`a`_], [`r`_(Table([(Some("a"), 4)]))["a"]])]
+--! [Assign([`a`_], [(`r`_("string"):`sub`)(3)]), \
+--!  Assign([`a`_], [`r`_(Table([(Some("a"), 4)])).`a`])]
 
 --8<-- comment-bracket-1
 --[a]
@@ -1043,52 +1043,52 @@ end
 --8<-- funcspec-method-no-self-1
 --v function() --@< Error: The first argument in the function specification for a method is not `self`
 function foo:bar() end
---! [MethodDecl(`foo`_, [`bar`], Some(self=`self`$1), [], $1[])]
+--! [MethodDecl((`foo`_.`bar`), Some(self=`self`$1), [], $1[])]
 
 --8<-- funcspec-method-no-self-2
 --@v-vv Error: The first argument in the function specification for a method is not `self`
 --v function(x: integer,
 --v          y: string)
 function foo:bar(x, y) end
---! [MethodDecl(`foo`_, [`bar`], Some(self=`self`$1), [`x`$1: _ Integer, `y`$1: _ String], $1[])]
+--! [MethodDecl((`foo`_.`bar`), Some(self=`self`$1), [`x`$1: _ Integer, `y`$1: _ String], $1[])]
 
 --8<-- funcspec-method-self
 --v function(self)
 function foo:bar() end
---! [MethodDecl(`foo`_, [`bar`], Some(self=`self`$1), [], $1[])]
+--! [MethodDecl((`foo`_.`bar`), Some(self=`self`$1), [], $1[])]
 
 --8<-- funcspec-method-self-typed
 --v function(self: table)
 function foo:bar() end
---! [MethodDecl(`foo`_, [`bar`], Some(self=`self`$1: _ Table), [], $1[])]
+--! [MethodDecl((`foo`_.`bar`), Some(self=`self`$1: _ Table), [], $1[])]
 
 --8<-- funcspec-method-self-typed-with-modf
 --v function(self: const table)
 function foo:bar() end
---! [MethodDecl(`foo`_, [`bar`], Some(self=`self`$1: Const Table), [], $1[])]
+--! [MethodDecl((`foo`_.`bar`), Some(self=`self`$1: Const Table), [], $1[])]
 
 --8<-- funcspec-non-method-self-1
 --v function(self, x: integer) --@< Error: Arguments in the function specification are missing their types
                                --@^ Error: Excess arguments in the function specification
 function foo.bar(x) end --@< Error: Mismatching argument name in the function specification
                         --@^^^ Note: The corresponding argument was here
---! [MethodDecl(`foo`_, [`bar`], None, [`self`$1, `x`$1: _ Integer], $1[])]
+--! [MethodDecl((`foo`_.`bar`), None, [`self`$1, `x`$1: _ Integer], $1[])]
 
 --8<-- funcspec-non-method-self-2
 --v function(self, x: integer) --@< Error: Arguments in the function specification are missing their types
 function foo.bar(self, x) end
---! [MethodDecl(`foo`_, [`bar`], None, [`self`$1, `x`$1: _ Integer], $1[])]
+--! [MethodDecl((`foo`_.`bar`), None, [`self`$1, `x`$1: _ Integer], $1[])]
 
 --8<-- funcspec-non-method-self-typed-1
 --v function(self: table, x: integer) --@< Error: Excess arguments in the function specification
 function foo.bar(x) end --@< Error: Mismatching argument name in the function specification
                         --@^^ Note: The corresponding argument was here
---! [MethodDecl(`foo`_, [`bar`], None, [`self`$1: _ Table, `x`$1: _ Integer], $1[])]
+--! [MethodDecl((`foo`_.`bar`), None, [`self`$1: _ Table, `x`$1: _ Integer], $1[])]
 
 --8<-- funcspec-non-method-self-typed-2
 --v function(self: table, x: integer)
 function foo.bar(self, x) end
---! [MethodDecl(`foo`_, [`bar`], None, [`self`$1: _ Table, `x`$1: _ Integer], $1[])]
+--! [MethodDecl((`foo`_.`bar`), None, [`self`$1: _ Table, `x`$1: _ Integer], $1[])]
 
 --8<-- assume-multiline-recover
 --# assume a: { integer, string
@@ -1338,7 +1338,7 @@ f(x.0) --@< Error: Expected a name after `<expression> .`, got a number
 
 --8<-- methodcall-no-args
 f(x:g - 1) --@< Error: Expected argument(s) after `<expression> : <name>`, got `-`
---! [Void(`f`_((`x`_["g"] - 1)))]
+--! [Void(`f`_((`x`_.`g` - 1)))]
 
 --8<-- funccall-invalid-char
 f(2, *3) --@< Error: Expected an expression, got `*`
@@ -1542,12 +1542,12 @@ f --@< Error: Expected `=`, got the end of file
 --8<-- non-prefix-expr-at-top-level-2
 f.a --@< Error: Expected `=`, got the end of file
 --&
---! [Assign([(`f`_)["a"]], _)]
+--! [Assign([`f`_.`a`], _)]
 
 --8<-- non-prefix-expr-at-top-level-3
 f[3] --@< Error: Expected `=`, got the end of file
 --&
---! [Assign([(`f`_)[3]], _)]
+--! [Assign([`f`_[3]], _)]
 
 --8<-- non-prefix-expr-at-top-level-4
 "string" --@< Error: Only function calls are allowed as statement-level expressions
@@ -1562,12 +1562,12 @@ f()
 --8<-- non-prefix-expr-at-top-level-6
 f(a).b --@< Error: Expected `=`, got the end of file
 --&
---! [Assign([(`f`_(`a`_))["b"]], _)]
+--! [Assign([`f`_(`a`_).`b`], _)]
 
 --8<-- non-prefix-expr-at-top-level-7
 f(a).b
 g() --@< Error: Expected `=`, got a name
---! [Assign([(`f`_(`a`_))["b"]], _), Void(`g`_())]
+--! [Assign([`f`_(`a`_).`b`], _), Void(`g`_())]
 
 --8<-- non-prefix-expr-at-top-level-8
 3 + 4 --@< Error: Only function calls are allowed as statement-level expressions
@@ -1587,12 +1587,12 @@ a, b --@< Error: Expected `=`, got the end of file
 --8<-- expr-seq-at-top-level-2
 a, b.c
 f() --@< Error: Expected `=`, got a name
---! [Assign([`a`_, (`b`_)["c"]], _), Void(`f`_())]
+--! [Assign([`a`_, `b`_.`c`], _), Void(`f`_())]
 
 --8<-- expr-seq-at-top-level-3
 a, b.c
 do end --@< Error: Expected `=`, got a keyword `do`
---! [Assign([`a`_, (`b`_)["c"]], _), Do([])]
+--! [Assign([`a`_, `b`_.`c`], _), Do([])]
 
 --8<-- expr-seq-at-top-level-4
 a(), b --@< Error: Expected a statement, got `,`
@@ -1615,7 +1615,7 @@ f: --@< Error: Expected a name after `<expression> :`, got the end of file
 f:g --@< Error: Expected argument(s) after `<expression> : <name>`, got the end of file
     --@^ Error: Expected `=`, got the end of file
 --&
---! [Assign([(`f`_)["g"]], _)]
+--! [Assign([`f`_.`g`], _)]
 
 --8<-- index-recover-keyword
 f.
@@ -1629,7 +1629,7 @@ do end --@< Error: Expected argument(s) after `<expression> : <name>`, got a key
        --@^ Error: Expected `=`, got a keyword `do`
 --! [Assign([`f`_], _), For(`i`$1, 1, 5, None, $1[]), \
 --!  Assign([`f`_], _), Repeat([], false), \
---!  Assign([(`f`_)["g"]], _), Do([])]
+--!  Assign([`f`_.`g`], _), Do([])]
 
 --8<-- index-recover-meta
 f.
@@ -1643,7 +1643,7 @@ f:g
                        --@^ Error: Expected `=`, got `--#`
 --! [Assign([`f`_], _), KailuaAssume(`f`$1, _, Dynamic)$1, \
 --!  Assign([`f`$1], _), KailuaAssume(`f`$2, _, Dynamic)$2, \
---!  Assign([(`f`$2)["g"]], _), KailuaAssume(`f`$3, _, Dynamic)$3]
+--!  Assign([`f`$2.`g`], _), KailuaAssume(`f`$3, _, Dynamic)$3]
 
 --8<-- index-recover-do-end
 do
@@ -1661,6 +1661,6 @@ end --@< Error: Expected argument(s) after `<expression> : <name>`, got a keywor
 g()
 --! [Do([Assign([`f`_], _)]), \
 --!  Do([Assign([`f`_], _)]), \
---!  Do([Assign([(`f`_)["g"]], _)]), \
+--!  Do([Assign([`f`_.`g`], _)]), \
 --!  Void(`g`_())]
 

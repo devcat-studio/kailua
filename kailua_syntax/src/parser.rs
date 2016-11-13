@@ -1130,6 +1130,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             }
 
             (_, Spanned { base: Tok::Keyword(Keyword::Function), .. }) => {
+                let namesbegin = self.pos();
                 let rootname = self.parse_name()?.map(|name| self.resolve_name(name));
                 let mut names = Vec::new();
                 while self.may_expect(Punct::Dot) {
@@ -1160,6 +1161,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                                     modf: M::None, kind: None });
                     }
                 }
+                let namesend = self.last_pos();
 
                 if let Some((selfparam, sig, scope, body)) = self.parse_func_body(selfparam,
                                                                                   funcspec)? {
@@ -1168,7 +1170,8 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                                 "ordinary function cannot have an implicit self");
                         Box::new(St::FuncDecl(rootname, sig, scope, body, None))
                     } else {
-                        Box::new(St::MethodDecl(rootname, names, selfparam, sig, scope, body))
+                        Box::new(St::MethodDecl((rootname, names).with_loc(namesbegin..namesend),
+                                 selfparam, sig, scope, body))
                     }
                 } else {
                     Box::new(St::Oops)
@@ -1662,9 +1665,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 // prefixexp "." ...
                 (_, Spanned { base: Tok::Punct(Punct::Dot), .. }) => {
                     if let Some(name) = self.try_parse_name() {
-                        let name = Box::new(Ex::Str(name.base.into())).with_loc(name.span);
-                        let span = begin..self.last_pos();
-                        exp = Box::new(Ex::Index(exp, name)).with_loc(span);
+                        exp = Box::new(Ex::IndexName(exp, name)).with_loc(begin..self.last_pos());
                     } else {
                         let tok = self.read();
                         self.error(tok.1.span, m::NoNameAfterExpDot { read: &tok.1.base }).done()?;
@@ -1692,10 +1693,12 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         self.unread(tok);
                         break;
                     };
+                    let namesend = self.last_pos();
 
                     if let Some(args) = self.try_parse_args()? {
+                        let expname = (exp, name).with_loc(begin..namesend);
                         let span = begin..self.last_pos();
-                        exp = Box::new(Ex::MethodCall(exp, name, args)).with_loc(span);
+                        exp = Box::new(Ex::MethodCall(expname, args)).with_loc(span);
                     } else {
                         let tok = self.read();
                         self.error(tok.1.span, m::NoArgsAfterExpColonName { read: &tok.1.base })
@@ -1703,9 +1706,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                         self.unread(tok);
 
                         // convert `prefixexp ":" NAME` into `prefixexp "." NAME`
-                        let name = Box::new(Ex::Str(name.base.into())).with_loc(name.span);
-                        let span = begin..self.last_pos();
-                        exp = Box::new(Ex::Index(exp, name)).with_loc(span);
+                        exp = Box::new(Ex::IndexName(exp, name)).with_loc(begin..namesend);
                         break;
                     }
                 }
@@ -1733,6 +1734,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         match base {
             Ex::Var(name) => Ok(Var::Name(name).with_loc(span)),
             Ex::Index(e1, e2) => Ok(Var::Index(e1, e2).with_loc(span)),
+            Ex::IndexName(e, name) => Ok(Var::IndexName(e, name).with_loc(span)),
             base => Err(Box::new(base).with_loc(span)),
         }
     }
