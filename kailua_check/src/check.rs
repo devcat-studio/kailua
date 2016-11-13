@@ -8,7 +8,7 @@ use take_mut::take;
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag::Reporter;
 use kailua_syntax::{NameRef, Var, M, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
-use kailua_syntax::{SelfParam, St, Stmt, Block, K};
+use kailua_syntax::{SelfParam, Args, St, Stmt, Block, K};
 use diag::CheckResult;
 use ty::{Dyn, T, TySeq, SpannedTySeq, Lattice, Displayed, Display, TypeContext};
 use ty::{Tables, Function, Functions, TyWithNil};
@@ -1247,9 +1247,16 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     }
 
     fn visit_func_call(&mut self, funcinfo: &Spanned<T>, selfinfo: Option<Spanned<Slot>>,
-                       args: &Spanned<Vec<Spanned<Exp>>>, expspan: Span) -> CheckResult<SlotSeq> {
+                       args: &Spanned<Args>, expspan: Span) -> CheckResult<SlotSeq> {
         // should be visited first, otherwise a WHATEVER function will ignore slots in arguments
-        let mut argtys = self.visit_explist(args)?;
+        let (nargs, mut argtys) = match args.base {
+            Args::List(ref ee) =>
+                (ee.len(), self.visit_explist_with_span(ee, args.span)?),
+            Args::Str(ref s) =>
+                (1, SpannedSlotSeq::from(T::str(s.to_owned()).with_loc(args))),
+            Args::Table(ref fields) =>
+                (1, SpannedSlotSeq::from(self.visit_table(fields)?.with_loc(args))),
+        };
 
         if !self.env.get_type_bounds(funcinfo).1.is_callable() {
             self.env.error(funcinfo, m::CallToNonFunc { func: self.display(funcinfo) }).done()?;
@@ -1263,7 +1270,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         match funcinfo.builtin() {
             // require("foo")
             Some(Builtin::Require) => {
-                if args.len() < 1 {
+                if nargs < 1 {
                     self.env.error(expspan, m::BuiltinGivenLessArgs { name: "require", nargs: 1 })
                             .done()?;
                     return Ok(SlotSeq::dummy());
@@ -1282,7 +1289,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     let chunk = match opts.borrow_mut().require_chunk(&modname) {
                         Ok(chunk) => chunk,
                         Err(_) => {
-                            self.env.warn(&args[0], m::CannotResolveModName {}).done()?;
+                            self.env.warn(&argtys.head[0], m::CannotResolveModName {}).done()?;
                             return Ok(SlotSeq::from(T::All));
                         }
                     };
@@ -1299,22 +1306,24 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             // assert(expr)
             Some(Builtin::Assert) => {
-                if args.len() < 1 {
+                if nargs < 1 {
                     // TODO should display the true name
                     self.env.error(expspan, m::BuiltinGivenLessArgs { name: "assert", nargs: 1 })
                             .done()?;
                     return Ok(SlotSeq::dummy());
                 }
 
-                let (cond, _seq) = self.collect_conds_from_exp(&args[0])?;
-                if let Some(cond) = cond {
-                    self.assert_cond(cond, false)?;
+                // non-list arguments have no usable conditions (always evaluate to true)
+                if let Args::List(ref args) = args.base {
+                    if let (Some(cond), _seq) = self.collect_conds_from_exp(&args[0])? {
+                        self.assert_cond(cond, false)?;
+                    }
                 }
             }
 
             // assert_not(expr)
             Some(Builtin::AssertNot) => {
-                if args.len() < 1 {
+                if nargs < 1 {
                     // TODO should display the true name
                     self.env.error(expspan,
                                    m::BuiltinGivenLessArgs { name: "assert-not", nargs: 1 })
@@ -1322,15 +1331,16 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     return Ok(SlotSeq::dummy());
                 }
 
-                let (cond, _seq) = self.collect_conds_from_exp(&args[0])?;
-                if let Some(cond) = cond {
-                    self.assert_cond(cond, true)?;
+                if let Args::List(ref args) = args.base {
+                    if let (Some(cond), _seq) = self.collect_conds_from_exp(&args[0])? {
+                        self.assert_cond(cond, true)?;
+                    }
                 }
             }
 
             // assert_type(expr)
             Some(Builtin::AssertType) => {
-                if args.len() < 2 {
+                if nargs < 2 {
                     // TODO should display the true name
                     self.env.error(expspan,
                                    m::BuiltinGivenLessArgs { name: "assert-type", nargs: 2 })
@@ -1338,9 +1348,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     return Ok(SlotSeq::dummy());
                 }
 
-                if let Some(flags) = self.ext_literal_ty_to_flags(&argtys.head[1])? {
-                    let cond = Cond::Flags(argtys.head[0].clone(), flags);
-                    self.assert_cond(cond, false)?;
+                // other cases are eliminated by `nargs < 2` condition
+                if let Args::List(_) = args.base {
+                    if let Some(flags) = self.ext_literal_ty_to_flags(&argtys.head[1])? {
+                        let cond = Cond::Flags(argtys.head[0].clone(), flags);
+                        self.assert_cond(cond, false)?;
+                    }
                 }
             }
 
@@ -1358,6 +1371,45 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         }
         let returns = self.check_callable(funcinfo, &argtys.unlift())?;
         Ok(SlotSeq::from_seq(returns))
+    }
+
+    fn visit_table(&mut self, fields: &[(Option<Spanned<Exp>>, Spanned<Exp>)]) -> CheckResult<T> {
+        let mut tab = Tables::Empty;
+
+        let mut len = 0;
+        for (idx, &(ref key, ref value)) in fields.iter().enumerate() {
+            // if this is the last entry and no explicit index is set, splice the values
+            if idx == fields.len() - 1 && key.is_none() {
+                let vty = self.visit_exp(value)?;
+                for ty in &vty.head {
+                    let ty = ty.unlift().clone();
+                    len += 1;
+                    tab = tab.insert(T::int(len), ty, self.context());
+                }
+                if let Some(ty) = vty.tail {
+                    // a simple array is no longer sufficient now
+                    let ty = ty.as_slot_without_nil().unlift().clone();
+                    tab = tab.insert(T::integer(), ty, self.context());
+                }
+            } else {
+                let kty = if let Some(ref key) = *key {
+                    let key = self.visit_exp(key)?.into_first();
+                    let key = key.unlift();
+                    key.clone().into_send()
+                } else {
+                    len += 1;
+                    T::int(len)
+                };
+
+                // update the table type according to new field
+                let vty = self.visit_exp(value)?.into_first();
+                let vty = vty.unlift().clone();
+                tab = tab.insert(kty, vty, self.context());
+            }
+        }
+
+        // if the table remains intact, it is an empty table
+        Ok(T::Tables(Cow::Owned(tab)))
     }
 
     fn visit_exp(&mut self, exp: &Spanned<Exp>) -> CheckResult<SpannedSlotSeq> {
@@ -1417,44 +1469,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let returns = self.visit_func_body(None, sig, block, exp.span)?;
                 Ok(SlotSeq::from_slot(returns))
             },
-            Ex::Table(ref fields) => {
-                let mut tab = Tables::Empty;
-
-                let mut len = 0;
-                for (idx, &(ref key, ref value)) in fields.iter().enumerate() {
-                    // if this is the last entry and no explicit index is set, splice the values
-                    if idx == fields.len() - 1 && key.is_none() {
-                        let vty = self.visit_exp(value)?;
-                        for ty in &vty.head {
-                            let ty = ty.unlift().clone();
-                            len += 1;
-                            tab = tab.insert(T::int(len), ty, self.context());
-                        }
-                        if let Some(ty) = vty.tail {
-                            // a simple array is no longer sufficient now
-                            let ty = ty.as_slot_without_nil().unlift().clone();
-                            tab = tab.insert(T::integer(), ty, self.context());
-                        }
-                    } else {
-                        let kty = if let Some(ref key) = *key {
-                            let key = self.visit_exp(key)?.into_first();
-                            let key = key.unlift();
-                            key.clone().into_send()
-                        } else {
-                            len += 1;
-                            T::int(len)
-                        };
-
-                        // update the table type according to new field
-                        let vty = self.visit_exp(value)?.into_first();
-                        let vty = vty.unlift().clone();
-                        tab = tab.insert(kty, vty, self.context());
-                    }
-                }
-
-                // if the table remains intact, it is an empty table
-                Ok(SlotSeq::from(T::Tables(Cow::Owned(tab))))
-            },
+            Ex::Table(ref fields) => Ok(SlotSeq::from(self.visit_table(fields)?)),
 
             Ex::FuncCall(ref func, ref args) => {
                 let funcinfo = self.visit_exp(func)?.into_first();
@@ -1518,9 +1533,14 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     }
 
     fn visit_explist(&mut self, exps: &Spanned<Vec<Spanned<Exp>>>) -> CheckResult<SpannedSlotSeq> {
+        self.visit_explist_with_span(&exps.base, exps.span)
+    }
+
+    fn visit_explist_with_span(&mut self, exps: &[Spanned<Exp>],
+                               expspan: Span) -> CheckResult<SpannedSlotSeq> {
         let mut head = Vec::new();
         let mut last: Option<SpannedSlotSeq> = None;
-        for exp in &exps.base {
+        for exp in exps {
             if let Some(last) = last.take() {
                 head.push(last.into_first());
             }
@@ -1528,7 +1548,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             last = Some(info);
         }
 
-        let mut seq = SpannedSlotSeq { head: head, tail: None, span: exps.span };
+        let mut seq = SpannedSlotSeq { head: head, tail: None, span: expspan };
         if let Some(last) = last {
             seq.head.extend(last.head.into_iter());
             seq.tail = last.tail;
@@ -1550,12 +1570,21 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             let funcinfo = funcinfo.unlift();
             let typeofexp = if funcinfo.builtin() == Some(Builtin::Type) {
                 // there should be a single argument there
-                if args.len() != 1 {
-                    self.env.error(exp, m::BuiltinGivenLessArgs { name: "type", nargs: 1 })
-                            .done()?;
-                    None
-                } else {
-                    Some(self.visit_exp(&args[0])?.into_first())
+                match args.base {
+                    Args::List(ref args) if args.len() >= 1 => {
+                        Some(self.visit_exp(&args[0])?.into_first())
+                    },
+                    Args::List(_) => {
+                        self.env.error(exp, m::BuiltinGivenLessArgs { name: "type", nargs: 1 })
+                                .done()?;
+                        None
+                    },
+                    Args::Str(ref s) => {
+                        Some(Slot::just(T::str(s.to_owned())).with_loc(args))
+                    },
+                    Args::Table(ref fields) => {
+                        Some(Slot::just(self.visit_table(fields)?).with_loc(args))
+                    },
                 }
             } else {
                 None

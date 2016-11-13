@@ -1,5 +1,6 @@
 use std::fmt;
 use std::ops;
+use std::cell::Cell;
 use std::collections::HashSet;
 use kailua_env::{Spanned, Scope, ScopedId, ScopeMap};
 
@@ -15,6 +16,22 @@ fn format_ascii_vec(f: &mut fmt::Formatter, s: &[u8]) -> fmt::Result {
         }
     }
     Ok(())
+}
+
+// a helper type for printing commas
+struct Comma(Cell<bool>);
+impl Comma {
+    fn new() -> Comma { Comma(Cell::new(true)) }
+}
+impl fmt::Display for Comma {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.0.get() {
+            self.0.set(false);
+            Ok(())
+        } else {
+            write!(f, ", ")
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -157,15 +174,9 @@ impl<Head, Tail> Seq<Head, Tail> {
 impl<Head: fmt::Debug, Tail: fmt::Debug> fmt::Debug for Seq<Head, Tail> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if !f.sign_minus() { write!(f, "[")?; }
-        let mut first = true;
-        for e in &self.head {
-            if first { first = false; } else { write!(f, ", ")?; }
-            write!(f, "{:?}", *e)?;
-        }
-        if let Some(ref e) = self.tail {
-            if !first { write!(f, ", ")?; }
-            write!(f, "{:?}...", *e)?;
-        }
+        let comma = Comma::new();
+        for e in &self.head { write!(f, "{}{:?}", comma, e)?; }
+        if let Some(ref e) = self.tail { write!(f, "{}{:?}...", comma, e)?; }
         if !f.sign_minus() { write!(f, "]")?; }
         Ok(())
     }
@@ -233,14 +244,12 @@ impl fmt::Debug for Sig {
             write!(f, "{:?} ", attr)?;
         }
         write!(f, "[")?;
-        let mut first = true;
+        let comma = Comma::new();
         for namespec in &self.args.head {
-            if first { first = false; } else { write!(f, ", ")?; }
-            write!(f, "{:?}", *namespec)?;
+            write!(f, "{}{:?}", comma, *namespec)?;
         }
         if let Some(ref varargs) = self.args.tail {
-            if !first { write!(f, ", ")?; }
-            write!(f, "...: ")?;
+            write!(f, "{}...: ", comma)?;
             if let Some(ref kind) = *varargs {
                 write!(f, "{:?}", *kind)?;
             } else {
@@ -262,6 +271,37 @@ impl fmt::Debug for Sig {
 }
 
 #[derive(Clone, PartialEq)]
+pub enum Args {
+    List(Vec<Spanned<Exp>>), // f(...)
+    Str(Str), // f"string", f[[string]]
+    Table(Vec<(Option<Spanned<Exp>>, Spanned<Exp>)>), // f{1, 2, 3}
+}
+
+impl fmt::Debug for Args {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Args::List(ref args) => {
+                write!(f, "(")?;
+                let comma = Comma::new();
+                for arg in args { write!(f, "{}{:?}", comma, arg)?; }
+                write!(f, ")")
+            },
+            Args::Str(ref s) => write!(f, "{:?}", s),
+            Args::Table(ref fs) => {
+                write!(f, "{{")?;
+                let comma = Comma::new();
+                for &(ref k, ref v) in fs {
+                    write!(f, "{}", comma)?;
+                    if let Some(ref k) = *k { write!(f, "[{:?}] = ", k)?; }
+                    write!(f, "{:?}", v)?;
+                }
+                write!(f, "}}")
+            },
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
 pub enum Ex {
     Oops,
 
@@ -277,8 +317,8 @@ pub enum Ex {
 
     // expressions
     Var(Spanned<NameRef>),
-    FuncCall(Spanned<Exp>, Spanned<Vec<Spanned<Exp>>>), // desugared form
-    MethodCall(Spanned<(Spanned<Exp>, Spanned<Name>)>, Spanned<Vec<Spanned<Exp>>>),
+    FuncCall(Spanned<Exp>, Spanned<Args>),
+    MethodCall(Spanned<(Spanned<Exp>, Spanned<Name>)>, Spanned<Args>),
     Index(Spanned<Exp>, Spanned<Exp>),
     IndexName(Spanned<Exp>, Spanned<Name>),
     Un(Spanned<UnOp>, Spanned<Exp>),
@@ -296,29 +336,21 @@ impl fmt::Debug for Ex {
             Ex::Str(ref s) => write!(f, "{:?}", *s),
             Ex::Varargs => write!(f, "..."),
             Ex::Func(ref p, bs, ref b) => write!(f, "Func({:?}, {:?}{:?})", *p, bs, *b),
-            Ex::Table(ref fs) => write!(f, "Table({:?})", *fs),
+            Ex::Table(ref fs) => {
+                write!(f, "{{")?;
+                let comma = Comma::new();
+                for &(ref k, ref v) in fs {
+                    write!(f, "{}", comma)?;
+                    if let Some(ref k) = *k { write!(f, "[{:?}] = ", k)?; }
+                    write!(f, "{:?}", v)?;
+                }
+                write!(f, "}}")
+            },
 
             Ex::Var(ref id) => write!(f, "{:?}", id),
-            Ex::FuncCall(ref e, ref args) => {
-                write!(f, "{:?}(", *e)?;
-                let mut first = true;
-                for arg in &args.base {
-                    if first { first = false; } else { write!(f, ", ")?; }
-                    write!(f, "{:?}", arg)?;
-                }
-                write!(f, ")")?;
-                fmt::Debug::fmt(&args.span, f)
-            },
-            Ex::MethodCall(ref en, ref args) => {
-                write!(f, "({:?}:{:?}){:?}(", en.base.0, en.base.1, en.span)?;
-                let mut first = true;
-                for arg in &args.base {
-                    if first { first = false; } else { write!(f, ", ")?; }
-                    write!(f, "{:?}", arg)?;
-                }
-                write!(f, ")")?;
-                fmt::Debug::fmt(&args.span, f)
-            },
+            Ex::FuncCall(ref e, ref args) => write!(f, "{:?}{:?}", e, args),
+            Ex::MethodCall(Spanned { base: (ref e, ref n), span }, ref args) =>
+                write!(f, "({:?}:{:?}){:?}{:?}", e, n, span, args),
             Ex::Index(ref e, ref i) => write!(f, "{:?}[{:?}]", *e, *i),
             Ex::IndexName(ref e, ref i) => write!(f, "{:?}.{:?}", e, i),
             Ex::Un(op, ref e) => write!(f, "({} {:?})", op.symbol(), *e),
@@ -437,14 +469,12 @@ impl fmt::Debug for St {
             St::Repeat(ref b, ref e) => write!(f, "Repeat({:?}, {:?})", b, e),
             St::If(ref cases, ref else_) => {
                 write!(f, "If(")?;
-                let mut first = true;
+                let comma = Comma::new();
                 for &Spanned { base: (ref e, ref b), span } in cases {
-                    if first { first = false; } else { write!(f, ", ")?; }
-                    write!(f, "({:?} => {:?}){:?}", e, b, span)?;
+                    write!(f, "{}({:?} => {:?}){:?}", comma, e, b, span)?;
                 }
                 if let Some(ref b) = *else_ {
-                    if !first { write!(f, ", ")?; }
-                    write!(f, "{:?}", b)?;
+                    write!(f, "{}{:?}", comma, b)?;
                 }
                 write!(f, ")")
             },
@@ -457,10 +487,11 @@ impl fmt::Debug for St {
                 if let Some(is) = is { write!(f, "{:?}", is)?; }
                 Ok(())
             },
-            St::MethodDecl(ref ii, ref self_, ref sig, bs, ref b) => {
-                write!(f, "MethodDecl(({:?}", ii.base.0)?;
-                for i in &ii.base.1 { write!(f, ".{:?}", i)?; }
-                write!(f, "){:?}, {:?}, {:?}, {:?}{:?})", ii.span, self_, sig, bs, b)
+            St::MethodDecl(Spanned { base: (ref i, ref ii), span },
+                           ref selfparam, ref sig, bs, ref b) => {
+                write!(f, "MethodDecl(({:?}", i)?;
+                for i in ii { write!(f, ".{:?}", i)?; }
+                write!(f, "){:?}, {:?}, {:?}, {:?}{:?})", span, selfparam, sig, bs, b)
             },
             St::Local(ref ii, ref ee, is) => write!(f, "Local({:?}, {:?}){:?}", ii, ee, is),
             St::Return(ref ee) => write!(f, "Return({:?})", ee),
@@ -587,10 +618,9 @@ impl fmt::Debug for K {
 
             K::Record(ref fields) => {
                 write!(f, "Record([")?;
-                let mut first = true;
+                let comma = Comma::new();
                 for &(ref name, ref value) in fields {
-                    if first { first = false; } else { write!(f, ", ")?; }
-                    write!(f, "{:?}: {:?}", *name, *value)?;
+                    write!(f, "{}{:?}: {:?}", comma, name, value)?;
                 }
                 write!(f, "])")?;
                 Ok(())

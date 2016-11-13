@@ -9,7 +9,7 @@ use kailua_diag::{Report, Localize};
 
 use message as m;
 use lex::{Tok, Punct, Keyword};
-use ast::{Name, NameRef, Str, Var, Seq, Presig, Sig, Attr};
+use ast::{Name, NameRef, Str, Var, Seq, Presig, Sig, Attr, Args};
 use ast::{Ex, Exp, UnOp, BinOp, SelfParam, St, Stmt, Block};
 use ast::{M, K, Kind, SlotKind, FuncKind, TypeSpec, Chunk};
 
@@ -1614,7 +1614,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         })
     }
 
-    fn try_parse_args(&mut self) -> Result<Option<Spanned<Vec<Spanned<Exp>>>>> {
+    fn try_parse_args(&mut self) -> Result<Option<Spanned<Args>>> {
         let begin = self.pos();
         match self.read() {
             (_, Spanned { base: Tok::Punct(Punct::LParen), .. }) => {
@@ -1623,15 +1623,14 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     |p| p.try_scan_explist(|exp| args.push(exp)), Punct::RParen,
                     || (Span::dummy(), false)
                 )?;
-                Ok(Some(args.with_loc(span)))
+                Ok(Some(Args::List(args).with_loc(span)))
             }
             (_, Spanned { base: Tok::Str(s), span }) => {
-                Ok(Some(vec![Box::new(Ex::Str(s.into())).with_loc(span)].with_loc(span)))
+                Ok(Some(Args::Str(s.into()).with_loc(span)))
             }
             (_, Spanned { base: Tok::Punct(Punct::LBrace), .. }) => {
-                let exp = Box::new(Ex::Table(self.parse_table_body()?));
-                let span = Span::new(begin, self.last_pos());
-                Ok(Some(vec![exp.with_loc(span)].with_loc(span)))
+                let fields = self.parse_table_body()?;
+                Ok(Some(Args::Table(fields).with_loc(begin..self.last_pos())))
             }
             tok => {
                 self.unread(tok);

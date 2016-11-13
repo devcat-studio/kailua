@@ -365,25 +365,28 @@ f(2^3^4)
 
 --8<-- funccall-string
 f'oo'
---! [Void(`f`_("oo"))]
+--! [Void(`f`_"oo")]
 
 --8<-- funccall-table
 f{a=1,[3.1]=4e5;[=[[[]]]=],}
---! [Void(`f`_(Table([(Some("a"), 1), \
---!                  (Some(3.1), 400000), \
---!                  (None, "[[]]")])))]
+--! [Void(`f`_{["a"] = 1, [3.1] = 400000, "[[]]"})]
 
 --8<-- funccall-table-1
 f{a=a, a}
---! [Void(`f`_(Table([(Some("a"), `a`_), (None, `a`_)])))]
+--! [Void(`f`_{["a"] = `a`_, `a`_})]
 
 --8<-- funccall-table-2
 f{a=a; a;}
---! [Void(`f`_(Table([(Some("a"), `a`_), (None, `a`_)])))]
+--! [Void(`f`_{["a"] = `a`_, `a`_})]
 
 --8<-- funccall-table-3
 f{a=a; a();}
---! [Void(`f`_(Table([(Some("a"), `a`_), (None, `a`_())])))]
+--! [Void(`f`_{["a"] = `a`_, `a`_()})]
+
+--8<-- funccall-table-empty
+f{}
+f({})
+--! [Void(`f`_{}), Void(`f`_({}))]
 
 --8<-- funccall-index
 f.a()
@@ -400,8 +403,8 @@ f.a:b(1, 2)
 --8<-- desugared-call
 a = r"string":sub(3)
 a = r{a=4}.a
---! [Assign([`a`_], [(`r`_("string"):`sub`)(3)]), \
---!  Assign([`a`_], [`r`_(Table([(Some("a"), 4)])).`a`])]
+--! [Assign([`a`_], [(`r`_"string":`sub`)(3)]), \
+--!  Assign([`a`_], [`r`_{["a"] = 4}.`a`])]
 
 --8<-- comment-bracket-1
 --[a]
@@ -1286,7 +1289,7 @@ for a of x --@< Error: Expected `=`, `,`, `in` or `--:` after `for NAME`, got a 
 
 --8<-- for-in
 for a, b, c in pairs({}) do end
---! [ForIn([`a`$1, `b`$1, `c`$1], [`pairs`_(Table([]))], $1[])]
+--! [ForIn([`a`$1, `b`$1, `c`$1], [`pairs`_({})], $1[])]
 
 --8<-- local-seq
 local (x, y) = (1, 2) --@< Error: Expected a name or `function` after `local`, got `(`
@@ -1328,8 +1331,8 @@ end
 --8<-- table-invalid-char
 f({x#}) --@< Error: Expected `,`, `;` or `}`, got `#`
 g({y#}) --@< Error: Expected `,`, `;` or `}`, got `#`
---! [Void(`f`_(Table([(None, `x`_)]))), \
---!  Void(`g`_(Table([(None, `y`_)])))]
+--! [Void(`f`_({`x`_})), \
+--!  Void(`g`_({`y`_}))]
 
 --8<-- index-with-number
 f(x.0) --@< Error: Expected a name after `<expression> .`, got a number
@@ -1532,7 +1535,7 @@ f()
 --8<-- type-spec-recover-negative-span
 local a = {} --: var { var { } } --@< Error: Expected a single type, got a keyword `var`
 local b --: var { var { } }      --@< Error: Expected a single type, got a keyword `var`
---! [Local([`a`$1: _ Oops], [Table([])])$1, Local([`b`$2: _ Oops], [])$2]
+--! [Local([`a`$1: _ Oops], [{}])$1, Local([`b`$2: _ Oops], [])$2]
 
 --8<-- non-prefix-expr-at-top-level-1
 f --@< Error: Expected `=`, got the end of file
@@ -1577,7 +1580,7 @@ f()
 --8<-- non-prefix-expr-at-top-level-9
 {} --@< Error: Only function calls are allowed as statement-level expressions
 f()
---! [Void(Table([])), Void(`f`_())]
+--! [Void({}), Void(`f`_())]
 
 --8<-- expr-seq-at-top-level-1
 a, b --@< Error: Expected `=`, got the end of file

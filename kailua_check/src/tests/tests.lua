@@ -2155,3 +2155,11 @@ do
 end --@< Error: Expected `=`, got a keyword `end`
 --! ok
 
+--8<-- funccall-desugared
+local function f(x) --: any
+end
+f'oo'
+f[[unction]]
+f{reak=true}
+--! ok
+

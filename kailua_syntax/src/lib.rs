@@ -8,7 +8,7 @@ use kailua_diag::Report;
 
 pub use lex::{Tok, Punct, Keyword, Lexer};
 pub use ast::{Name, NameRef, Str, Seq, Var, TypeSpec, Sig, Ex, Exp, UnOp, BinOp, SelfParam};
-pub use ast::{St, Stmt, Block, M, K, Kind, FuncKind, SlotKind, Attr, Chunk};
+pub use ast::{St, Stmt, Block, M, K, Kind, FuncKind, SlotKind, Attr, Args, Chunk};
 pub use parser::Parser;
 
 mod message;
