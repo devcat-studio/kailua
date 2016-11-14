@@ -126,6 +126,9 @@
   <data name="GlobalNameSuffix" xml:space="preserve">
     <value> (global)</value>
   </data>
+  <data name="KeywordSuffix" xml:space="preserve">
+    <value> (keyword)</value>
+  </data>
   <data name="LocalNameSuffix" xml:space="preserve">
     <value />
   </data>

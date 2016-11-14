@@ -88,6 +88,15 @@ namespace Kailua.Properties {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to  (keyword).
+        /// </summary>
+        internal static string KeywordSuffix {
+            get {
+                return ResourceManager.GetString("KeywordSuffix", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to .
         /// </summary>
         internal static string LocalNameSuffix {

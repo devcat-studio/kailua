@@ -48,49 +48,51 @@ namespace Kailua
             }
         }
 
-        private void completeVariable(
+        private IEnumerable<Completion> completeVariableAndKeyword(
             Project project,
             ProjectFile file,
-            SnapshotPoint triggerPoint,
-            SnapshotSpan targetSpan,
-            IList<CompletionSet> completionSets)
+            SnapshotPoint triggerPoint)
         {
             // grab the last valid parse tree, which may not be current but can be useful for completion
             var tree = file.LastValidParseTree;
             if (tree == null)
             {
-                return;
+                yield break;
             }
 
             // the trigger point might not be in the correct span
             var translatedTriggerPoint = triggerPoint.TranslateTo(file.SourceSnapshot, PointTrackingMode.Positive);
             var pos = new Native.Pos(file.Unit, (uint)translatedTriggerPoint.Position);
-            var completions = new List<Completion>();
             var names = new SortedSet<Native.NameEntry>(tree.NamesAt(pos), new NameEntryComparer());
             foreach (var entry in names)
             {
                 var name = entry.Name;
-                completions.Add(new Completion(name + Properties.Strings.LocalNameSuffix, name, null, null, null));
+                yield return new Completion(name + Properties.Strings.LocalNameSuffix, name, null, null, null);
             }
             var globalNames = new SortedSet<string>(project.GlobalScope, new NameComparer());
             globalNames.ExceptWith(from entry in names select entry.Name);
             foreach (var name in project.GlobalScope)
             {
-                completions.Add(new Completion(name + Properties.Strings.GlobalNameSuffix, name, null, null, null));
+                yield return new Completion(name + Properties.Strings.GlobalNameSuffix, name, null, null, null);
             }
-
-            var applicableTo = triggerPoint.Snapshot.CreateTrackingSpan(targetSpan, SpanTrackingMode.EdgeInclusive);
-            completionSets.Add(new CompletionSet("All", "All", applicableTo, completions, Enumerable.Empty<Completion>()));
+            // TODO contextual keywords
+            var keywords = new string[]
+            {
+                "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in",
+                "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while"
+            };
+            foreach (var keyword in keywords)
+            {
+                yield return new Completion(keyword + Properties.Strings.KeywordSuffix, keyword, null, null, null);
+            }
         }
 
-        private void completeField(
+        private IEnumerable<Completion> completeField(
             Project project,
             ProjectFile file,
             SnapshotPoint triggerPoint,
             TokenList tokenList,
-            int sepTokenIndex,
-            SnapshotSpan targetSpan,
-            IList<CompletionSet> completionSets)
+            int sepTokenIndex)
         {
             // TODO we should really distinguish desugared subexpression from normal prefix expression,
             // but for now we use the most common criterion to distinguish them.
@@ -113,29 +115,25 @@ namespace Kailua
 
             if (!prefixExprEnd.HasValue)
             {
-                return;
+                yield break;
             }
 
             // grab the last valid checker output, which may not be current but can be useful for completion
             var output = project.LastValidCheckerOutput;
             if (output == null)
             {
-                return;
+                yield break;
             }
 
             // the trigger point might not be in the correct span
             var translatedPrefixExprEnd = prefixExprEnd.Value.TranslateTo(file.SourceSnapshot, PointTrackingMode.Positive);
             var pos = new Native.Pos(file.Unit, (uint)translatedPrefixExprEnd.Position);
-            var completions = new List<Completion>();
             var names = new SortedSet<Native.NameEntry>(output.FieldsAfter(pos), new NameEntryComparer());
             foreach (var entry in names)
             {
                 var name = entry.Name;
-                completions.Add(new Completion(name + Properties.Strings.FieldNameSuffix, name, null, null, null));
+                yield return new Completion(name + Properties.Strings.FieldNameSuffix, name, null, null, null);
             }
-
-            var applicableTo = triggerPoint.Snapshot.CreateTrackingSpan(targetSpan, SpanTrackingMode.EdgeInclusive);
-            completionSets.Add(new CompletionSet("All", "All", applicableTo, completions, Enumerable.Empty<Completion>()));
         }
 
         public void AugmentCompletionSession(ICompletionSession session, IList<CompletionSet> completionSets)
@@ -186,14 +184,16 @@ namespace Kailua
             var mode = tokenList.IntersectionWith(triggerPoint, out index);
             var token = tokenList.WithSnapshot[index];
 
+            SnapshotSpan targetSpan;
+            IEnumerable<Completion> completions;
             if (mode.HasEnd() && (token.Type == Native.TokenType.Dot || token.Type == Native.TokenType.Colon))
             {
                 // ... `.` | ...
                 // ... `:` | ...
                 // possibly mode 2
 
-                var targetSpan = new SnapshotSpan(triggerPoint, triggerPoint);
-                this.completeField(project, file, triggerPoint, tokenList, index, targetSpan, completionSets);
+                targetSpan = new SnapshotSpan(triggerPoint, triggerPoint);
+                completions = this.completeField(project, file, triggerPoint, tokenList, index);
             }
             else if (mode.IsAfter() && (token.Type.IsKeyword() || token.Type == Native.TokenType.Name))
             {
@@ -211,15 +211,23 @@ namespace Kailua
                     }
                 }
 
+                targetSpan = token.Span;
                 if (dotOrColon)
                 {
-                    this.completeField(project, file, triggerPoint, tokenList, index, token.Span, completionSets);
+                    completions = this.completeField(project, file, triggerPoint, tokenList, index);
                 }
                 else
                 {
-                    this.completeVariable(project, file, triggerPoint, token.Span, completionSets);
+                    completions = this.completeVariableAndKeyword(project, file, triggerPoint);
                 }
             }
+            else
+            {
+                return;
+            }
+
+            var applicableTo = triggerPoint.Snapshot.CreateTrackingSpan(targetSpan, SpanTrackingMode.EdgeInclusive);
+            completionSets.Add(new CompletionSet("All", "All", applicableTo, completions.ToList(), Enumerable.Empty<Completion>()));
         }
 
         public void Dispose()

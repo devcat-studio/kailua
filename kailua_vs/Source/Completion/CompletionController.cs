@@ -152,6 +152,33 @@ namespace Kailua
             return true;
         }
 
+        // inspired from Python Tools for Visual Studio (PTVS).
+        // unlike C-like languages, in Lua (and Python as well) most lines end with a name or a keyword.
+        // but as both a name and keyword trigger an autocompletion session,
+        // pressing enter at the end of line may not start a newline but will simply commit the current session.
+        // we want that, if the commit is a no-op (pressing enter won't insert any additional text),
+        // pressing enter is considered a newline in addition to the session commit.
+        private bool willInsertNewlineAfterCommit()
+        {
+            var completionSet = this.currentSession.SelectedCompletionSet;
+            if (completionSet == null)
+            {
+                return false;
+            }
+
+            var status = completionSet.SelectionStatus;
+            var caret = this.TextView.Caret.Position.BufferPosition;
+            var insertionText = status.Completion.InsertionText;
+            if (caret.Position < insertionText.Length)
+            {
+                // the caret is too early to have a complete copy of insertionText
+                return false;
+            }
+
+            var bufferText = new SnapshotSpan(caret - insertionText.Length, caret).GetText();
+            return insertionText == bufferText;
+        }
+
         internal bool Complete(bool force)
         {
             if (this.currentSession == null)
@@ -166,8 +193,9 @@ namespace Kailua
             }
             else
             {
+                var eatKeyPress = force || !this.willInsertNewlineAfterCommit();
                 this.currentSession.Commit();
-                return true;
+                return eatKeyPress;
             }
         }
 
