@@ -1,18 +1,24 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011">
   <Metadata>
-    <Identity Id="Kailua" Version="0.1.0" Language="en-US" Publisher="Nexon Corporation" />
+    <Identity Id="47ce18d4-d6c7-46a0-958f-f2173f8b511b" Version="0.1.0" Language="en-US" Publisher="Nexon Corporation" />
     <DisplayName>Kailua</DisplayName>
     <Description xml:space="preserve">Kailua VS integration</Description>
   </Metadata>
   <Installation>
+    <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[12.0,15.0)" />
     <InstallationTarget Id="Microsoft.VisualStudio.Pro" Version="[12.0,15.0)" />
+    <InstallationTarget Id="Microsoft.VisualStudio.Enterprise" Version="[12.0,15.0)" />
+    <InstallationTarget Id="Microsoft.VisualStudio.Ultimate" Version="[12.0,15.0)" />
+    <InstallationTarget Id="Microsoft.VisualStudio.Premium" Version="[12.0,15.0)" />
   </Installation>
   <Dependencies>
-    <Dependency Id="Microsoft.Framework.NDP" DisplayName="Microsoft .NET Framework" d:Source="Manual" Version="[4.5,4.6]" />
+    <Dependency Id="Microsoft.Framework.NDP" DisplayName="Microsoft .NET Framework" d:Source="Manual" Version="[4.5,)" />
   </Dependencies>
   <Assets>
     <Asset Type="Microsoft.VisualStudio.MefComponent" d:Source="Project" d:ProjectName="%CurrentProject%" Path="|%CurrentProject%|" />
     <Asset d:Source="File" Path="KailuaVSNative.dll" Type="KailuaVSNative" />
+    <Asset Type="Microsoft.VisualStudio.ItemTemplate" d:Source="Project" d:ProjectName="KailuaSourceItemTemplate" d:TargetPath="|KailuaSourceItemTemplate;TemplateProjectOutputGroup|" Path="ItemTemplates" d:VsixSubPath="ItemTemplates" />
+    <Asset Type="Microsoft.VisualStudio.ProjectTemplate" d:Source="Project" d:ProjectName="KailuaProjectTemplate" d:TargetPath="|KailuaProjectTemplate;TemplateProjectOutputGroup|" Path="ProjectTemplates" d:VsixSubPath="ProjectTemplates" />
   </Assets>
 </PackageManifest>

@@ -1,0 +1,15 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<VSTemplate Version="3.0.0" Type="Item" xmlns="http://schemas.microsoft.com/developer/vstemplate/2005" xmlns:sdk="http://schemas.microsoft.com/developer/vstemplate-sdkextension/2010">
+  <TemplateData>
+    <Name>Lua/Kailua source file</Name>
+    <Description>An empty Lua file, with Kailua enabled by default.</Description>
+    <Icon>KailuaSourceItemTemplate.ico</Icon>
+    <TemplateID>bc9cb1c8-4bd7-40d3-acaf-8b52e8140f3f</TemplateID>
+    <ProjectType>VC</ProjectType>
+    <NumberOfParentCategoriesToRollUp>1</NumberOfParentCategoriesToRollUp>
+    <DefaultName>Empty.lua</DefaultName>
+  </TemplateData>
+  <TemplateContent>
+    <ProjectItem>Empty.lua</ProjectItem>
+  </TemplateContent>
+</VSTemplate>
