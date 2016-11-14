@@ -767,14 +767,15 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 // the incomplete expression is parsed as Assign without rhs,
                 // so we won't generate further errors due to mismatching types
-                let infos = match *exps {
-                    Some(ref exps) => self.visit_explist(exps)?,
-                    None => SpannedSlotSeq::dummy(),
+                let mut infos = match *exps {
+                    Some(ref exps) => Some(self.visit_explist(exps)?.into_iter_with_nil()),
+                    None => None,
                 };
 
                 // unlike St::Local, do not tolerate the uninitialized variables
-                for ((var, varref), info) in vars.iter().zip(varrefs.into_iter())
-                                                        .zip(infos.into_iter_with_nil()) {
+                for (var, varref) in vars.iter().zip(varrefs.into_iter()) {
+                    // ideally should be done via zip, but then concrete types will collide
+                    let info = infos.as_mut().and_then(|it| it.next());
                     debug!("assigning {:?} to {:?} with type {:?}", info, var, varref);
 
                     match varref {
@@ -783,12 +784,14 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                 // variable declaration
                                 TypeSpec { modf, kind: Some(ref kind), .. } => {
                                     let specinfo = self.visit_kind(F::from(modf), kind)?;
-                                    self.env.add_var(nameref, Some(specinfo), Some(info))?;
+                                    self.env.add_var(nameref, Some(specinfo), info)?;
                                 }
 
                                 // variable assignment
                                 TypeSpec { kind: None, .. } => {
-                                    self.env.assign_to_var(nameref, info)?;
+                                    if let Some(info) = info {
+                                        self.env.assign_to_var(nameref, info)?;
+                                    }
                                 }
                             }
 
@@ -799,7 +802,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                         // indexed assignment
                         VarRef::Slot(slot) => {
-                            self.env.assign(&slot, &info)?;
+                            if let Some(info) = info {
+                                self.env.assign(&slot, &info)?;
+                            }
                             self.context().spanned_slots_mut().insert(slot);
                         }
                     }
