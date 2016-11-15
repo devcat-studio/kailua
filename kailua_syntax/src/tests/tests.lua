@@ -1328,11 +1328,100 @@ function p(...) --: const integer --@< Error: Variadic argument specifier cannot
 end
 --! [FuncDecl(`p`_, [...: Integer] --> _, $1[])]
 
---8<-- table-invalid-char
+--8<-- table-recover-invalid-char
+f({x@})  --@< Error: Unexpected character
+g({y@})  --@< Error: Unexpected character
+h({z,@}) --@< Error: Unexpected character
+i({@})   --@< Error: Unexpected character
+--! [Void(`f`_({`x`_})), \
+--!  Void(`g`_({`y`_})), \
+--!  Void(`h`_({`z`_})), \
+--!  Void(`i`_({}))]
+
+--8<-- table-recover-invalid-exp
+-- in this case `#` is a valid unary operator so the recovery procedure is a bit different
 f({x#}) --@< Error: Expected `,`, `;` or `}`, got `#`
 g({y#}) --@< Error: Expected `,`, `;` or `}`, got `#`
+h({z,#}) --@< Error: Expected an expression, got `}`
+i({#}) --@< Error: Expected an expression, got `}`
 --! [Void(`f`_({`x`_})), \
---!  Void(`g`_({`y`_}))]
+--!  Void(`g`_({`y`_})), \
+--!  Void(`h`_({`z`_, (# Oops)})), \
+--!  Void(`i`_({(# Oops)}))]
+
+--8<-- table-recover-key-1
+f({[a]=b, [}) --@< Error: Expected an expression, got `}`
+              --@^ Error: Expected `=`, got `}`
+f({[a]=})     --@< Error: Expected an expression, got `}`
+f({[a=})      --@< Error: Expected `]`, got `=`
+              --@^ Error: Expected `=`, got `}`
+f({[a]})      --@< Error: Expected `=`, got `}`
+f({[a})       --@< Error: Expected `]`, got `}`
+              --@^ Error: Expected `=`, got `}`
+f({[})        --@< Error: Expected an expression, got `}`
+              --@^ Error: Expected `=`, got `}`
+--! [Void(`f`_({[`a`_] = `b`_, [Oops] = Oops})), \
+--!  Void(`f`_({[`a`_] = Oops})), \
+--!  Void(`f`_({[Oops] = Oops})), \
+--!  Void(`f`_({[`a`_] = Oops})), \
+--!  Void(`f`_({[Oops] = Oops})), \
+--!  Void(`f`_({[Oops] = Oops}))]
+
+--8<-- table-recover-key-2
+f({[a]=b, [) --@< Error: Expected an expression, got `)`
+             --@^ Error: Expected `=`, got `)`
+             --@^^ Error: Expected `,`, `;` or `}`, got `)`
+f({[a]=)     --@< Error: Expected an expression, got `)`
+             --@^ Error: Expected `,`, `;` or `}`, got `)`
+f({[a=)      --@< Error: Expected `]`, got `=`
+             --@^ Error: Expected `=`, got `)`
+             --@^^ Error: Expected `,`, `;` or `}`, got `)`
+f({[a])      --@< Error: Expected `=`, got `)`
+             --@^ Error: Expected `,`, `;` or `}`, got `)`
+f({[a)       --@< Error: Expected `]`, got `)`
+             --@^ Error: Expected `=`, got `)`
+             --@^^ Error: Expected `,`, `;` or `}`, got `)`
+f({[)        --@< Error: Expected an expression, got `)`
+             --@^ Error: Expected `=`, got `)`
+             --@^^ Error: Expected `,`, `;` or `}`, got `)`
+f({)         --@< Error: Expected an expression, got `)`
+             --@^ Error: Expected `,`, `;` or `}`, got `)`
+--! [Void(`f`_({[`a`_] = `b`_, [Oops] = Oops})), \
+--!  Void(`f`_({[`a`_] = Oops})), \
+--!  Void(`f`_({[Oops] = Oops})), \
+--!  Void(`f`_({[`a`_] = Oops})), \
+--!  Void(`f`_({[Oops] = Oops})), \
+--!  Void(`f`_({[Oops] = Oops})), \
+--!  Void(`f`_({Oops}))]
+
+--&
+})]})]})]})]})]})]}) -- highlighting fix
+
+--8<-- table-recover-key-3
+f({[
+f({[ --@< Error: Expected an expression, got the end of file
+     --@^ Error: Expected `=`, got the end of file
+     --@^^ Error: Expected `,`, `;` or `}`, got the end of file
+     --@^^^ Error: Expected `)`, got the end of file
+     --@^^^^ Error: Expected `]`, got the end of file
+     --@^^^^^ Error: Expected `=`, got the end of file
+     --@^^^^^^ Error: Expected `,`, `;` or `}`, got the end of file
+     --@^^^^^^^ Error: Expected `)`, got the end of file
+--! [Void(`f`_({[Oops] = Oops}))]
+
+--&
+]})]}) -- highlighting fix
+
+--8<-- table-recover-key-4
+f({[a
+f({[a --@< Error: Expected `]`, got a name
+      --@^ Error: Expected `=`, got the end of file
+      --@^^ Error: Expected `,`, `;` or `}`, got the end of file
+      --@^^^ Error: Expected `)`, got the end of file
+--! [Void(`f`_({[Oops] = Oops}))]
+
+--&
+]})]}) -- highlighting fix
 
 --8<-- index-with-number
 f(x.0) --@< Error: Expected a name after `<expression> .`, got a number
@@ -1359,8 +1448,7 @@ f(2 .. *3) --@< Error: Expected an expression, got `*`
 
 --8<-- op-invalid-char-3
 f(#*3) --@< Error: Expected an expression, got `*`
-       --@^ Error: Expected `)`, got `*`
---! [Void(`f`_())]
+--! [Void(`f`_(((# Oops) * 3)))]
 
 --8<-- lval-invalid-char
 a, *b = 5 --@< Error: Expected a left-hand-side expression, got `*`
@@ -1608,25 +1696,25 @@ a(), b --@< Error: Expected a statement, got `,`
 do end
 --! [Void(`a`_()), Oops, Void(`b`_), Do([])]
 
---8<-- index-recover-eof-1
+--8<-- index-name-recover-eof-1
 f. --@< Error: Expected a name after `<expression> .`, got the end of file
    --@^ Error: Only function calls are allowed as statement-level expressions
 --&
 --! [Void(`f`_)]
 
---8<-- index-recover-eof-2
+--8<-- index-name-recover-eof-2
 f: --@< Error: Expected a name after `<expression> :`, got the end of file
    --@^ Error: Only function calls are allowed as statement-level expressions
 --&
 --! [Void(`f`_)]
 
---8<-- index-recover-eof-3
+--8<-- index-name-recover-eof-3
 f:g --@< Error: Expected argument(s) after `<expression> : <name>`, got the end of file
     --@^ Error: Only function calls are allowed as statement-level expressions
 --&
 --! [Void(`f`_.`g`)]
 
---8<-- index-recover-keyword
+--8<-- index-name-recover-keyword
 f.
 for i = 1, 5 do end --@< Error: Expected a name after `<expression> .`, got a keyword `for`
                     --@^^ Error: Only function calls are allowed as statement-level expressions
@@ -1640,7 +1728,7 @@ do end --@< Error: Expected argument(s) after `<expression> : <name>`, got a key
 --!  Void(`f`_), Repeat([], false), \
 --!  Void(`f`_.`g`), Do([])]
 
---8<-- index-recover-meta
+--8<-- index-name-recover-meta
 f.
 --# assume f: WHATEVER --@< Error: Expected a name after `<expression> .`, got `--#`
                        --@^^ Error: Only function calls are allowed as statement-level expressions
@@ -1654,7 +1742,7 @@ f:g
 --!  Void(`f`$1), KailuaAssume(`f`$2, _, Dynamic)$2, \
 --!  Void(`f`$2.`g`), KailuaAssume(`f`$3, _, Dynamic)$3]
 
---8<-- index-recover-do-end
+--8<-- index-name-recover-do-end
 do
     f.
 end --@< Error: Expected a name after `<expression> .`, got a keyword `end`
@@ -1672,4 +1760,24 @@ g()
 --!  Do([Void(`f`_)]), \
 --!  Do([Void(`f`_.`g`)]), \
 --!  Void(`g`_())]
+
+--8<-- index-exp-recover-eof
+f[ --@< Error: Expected an expression, got the end of file
+   --@^ Error: Only function calls are allowed as statement-level expressions
+--&
+--! [Void(`f`_[Oops])]
+
+--8<-- index-exp-recover-keyword
+f[
+do end --@< Error: Expected an expression, got a keyword `do`
+       --@^^ Error: Only function calls are allowed as statement-level expressions
+--! [Void(`f`_[Oops]), Do([])]
+
+--8<-- index-exp-recover-do-end
+do
+    f[
+end --@< Error: Expected an expression, got a keyword `end`
+    --@^^ Error: Only function calls are allowed as statement-level expressions
+g()
+--! [Do([Void(`f`_[Oops])]), Void(`g`_())]
 

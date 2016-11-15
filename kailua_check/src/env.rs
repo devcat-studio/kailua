@@ -87,7 +87,7 @@ impl<'a> fmt::Display for IdDisplay<'a> {
                         index %= mult;
                     }
                 }
-                write!(f, "/{}", scope.to_usize())
+                write!(f, "{}", scope.to_usize())
             }
             Id::Global(ref name) => {
                 write!(f, "{:?}_", name)

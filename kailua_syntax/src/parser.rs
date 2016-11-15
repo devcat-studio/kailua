@@ -65,6 +65,16 @@ enum Nesting {
     Until,
 }
 
+impl Nesting {
+    fn is_stmt_level(&self) -> bool {
+        match *self {
+            Nesting::Top | Nesting::Meta |
+            Nesting::Do | Nesting::Then | Nesting::Else | Nesting::End | Nesting::Until => true,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct EOF; // a placeholder arg to `expect`
 
@@ -128,9 +138,9 @@ impl<Exp: Expectable> ExpectableDelim for Exp {
 // the closing token as well. this is normally not recommended (easy to miss) but
 // meta comments typically have a longer cleanup process, so this is required.
 #[derive(Copy, Clone)]
-struct NoDelim;
+struct DelimAlreadyRead;
 
-impl ExpectableDelim for NoDelim {
+impl ExpectableDelim for DelimAlreadyRead {
     fn expect_delim<'a, T>(self, _parser: &mut Parser<'a, T>) -> Result<()>
         where T: Iterator<Item=Spanned<Tok>>
     {
@@ -308,8 +318,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         let mut next = self.lookahead.take().or_else(|| self.lookahead2.take())
                                             .or_else(|| self._next());
 
-        let mut elided = self.elided_newline;
-        self.elided_newline = None;
+        let mut elided = self.elided_newline.take();
         if let Some(meta) = self.ignore_after_newline {
             // lookahead2 can definitely be made empty, let's simplify the assumption
             assert_eq!(self.lookahead, None);
@@ -492,23 +501,30 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             PopOrPush(Nesting, Nesting),
         }
 
-        let action = match *tok {
+        let meta = self.ignore_after_newline.is_some();
+        // `pop_non_stmt` is a statement-level flag; it will always pop any punctuation-delimted
+        // nestings before actually executing an action (even if it would be a no-op).
+        let (pop_non_stmt, action) = match (meta, tok) {
             // natural delimiters
             // no angle brackets, hard to distinguish comparison ops from delimiters
-            Tok::Punct(Punct::LParen) => Action::Push(Nesting::Paren),
-            Tok::Punct(Punct::LBrace) => Action::Push(Nesting::Brace),
-            Tok::Punct(Punct::LBracket) => Action::Push(Nesting::Bracket),
-            Tok::Punct(Punct::RParen) => Action::Pop(Nesting::Paren),
-            Tok::Punct(Punct::RBrace) => Action::Pop(Nesting::Brace),
-            Tok::Punct(Punct::RBracket) => Action::Pop(Nesting::Bracket),
+            (_, &Tok::Punct(Punct::LParen)) => (false, Action::Push(Nesting::Paren)),
+            (_, &Tok::Punct(Punct::LBrace)) => (false, Action::Push(Nesting::Brace)),
+            (_, &Tok::Punct(Punct::LBracket)) => (false, Action::Push(Nesting::Bracket)),
+            (_, &Tok::Punct(Punct::RParen)) => (false, Action::Pop(Nesting::Paren)),
+            (_, &Tok::Punct(Punct::RBrace)) => (false, Action::Pop(Nesting::Brace)),
+            (_, &Tok::Punct(Punct::RBracket)) => (false, Action::Pop(Nesting::Bracket)),
 
             // meta blocks
             // Newline token is only generated inside a meta block by the lexer
-            Tok::Punct(Punct::DashDashHash) |
-            Tok::Punct(Punct::DashDashV) |
-            Tok::Punct(Punct::DashDashColon) |
-            Tok::Punct(Punct::DashDashGt) => Action::Push(Nesting::Meta),
-            Tok::Punct(Punct::Newline) => Action::Pop(Nesting::Meta),
+            (_, &Tok::Punct(Punct::DashDashV)) =>
+                // `--v` can appear in an expression (in front of a function literal)
+                (false, Action::Push(Nesting::Meta)),
+            (_, &Tok::Punct(Punct::DashDashHash)) |
+            (_, &Tok::Punct(Punct::DashDashColon)) |
+            (_, &Tok::Punct(Punct::DashDashGt)) =>
+                (true, Action::Push(Nesting::Meta)),
+            (_, &Tok::Punct(Punct::Newline)) =>
+                (true, Action::Pop(Nesting::Meta)),
 
             // while, for and do blocks
             //
@@ -518,16 +534,19 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             //
             // do ... end
             // ----End---
-            Tok::Keyword(Keyword::While) |
-            Tok::Keyword(Keyword::For) => Action::Push2(Nesting::End, Nesting::Do),
-            Tok::Keyword(Keyword::Do) => Action::PopOrPush(Nesting::Do, Nesting::End),
+            (false, &Tok::Keyword(Keyword::While)) |
+            (false, &Tok::Keyword(Keyword::For)) =>
+                (true, Action::Push2(Nesting::End, Nesting::Do)),
+            (false, &Tok::Keyword(Keyword::Do)) =>
+                (true, Action::PopOrPush(Nesting::Do, Nesting::End)),
 
             // function block
             //
             // function [NAME] ( ... ) ... end
             // -------------End-------------
             //                 -Paren-
-            Tok::Keyword(Keyword::Function) => Action::Push(Nesting::End),
+            (false, &Tok::Keyword(Keyword::Function)) =>
+                (false, Action::Push(Nesting::End)), // can appear in an expression
 
             // if blocks
             //
@@ -541,32 +560,44 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             // it is conceptually closing the if--else nesting but should open one simultaneously.
             // therefore while the affected nesting does not change per se,
             // we mark the (conceptual) change in the delta so that the caller can recognize it.
-            Tok::Keyword(Keyword::If) =>
-                Action::Push3(Nesting::End, Nesting::Else, Nesting::Then),
-            Tok::Keyword(Keyword::Then) =>
-                Action::Pop(Nesting::Then),
-            Tok::Keyword(Keyword::Elseif) =>
-                Action::PopAndPush(Nesting::Else, Nesting::Else),
-            Tok::Keyword(Keyword::Else) =>
-                Action::Pop(Nesting::Else),
+            (false, &Tok::Keyword(Keyword::If)) =>
+                (true, Action::Push3(Nesting::End, Nesting::Else, Nesting::Then)),
+            (false, &Tok::Keyword(Keyword::Then)) =>
+                (true, Action::Pop(Nesting::Then)),
+            (false, &Tok::Keyword(Keyword::Elseif)) =>
+                (true, Action::PopAndPush(Nesting::Else, Nesting::Else)),
+            (false, &Tok::Keyword(Keyword::Else)) =>
+                (true, Action::Pop(Nesting::Else)),
 
             // repeat-until block
             //
             // repeat ... until ...
             // -----Until------
-            Tok::Keyword(Keyword::Repeat) => Action::Push(Nesting::Until),
-            Tok::Keyword(Keyword::Until) => Action::Pop(Nesting::Until),
+            (false, &Tok::Keyword(Keyword::Repeat)) => (true, Action::Push(Nesting::Until)),
+            (false, &Tok::Keyword(Keyword::Until)) => (true, Action::Pop(Nesting::Until)),
 
             // the universal `end` token
-            Tok::Keyword(Keyword::End) => Action::Pop(Nesting::End),
+            (_, &Tok::Keyword(Keyword::End)) => (!meta, Action::Pop(Nesting::End)),
 
             // EOF (conceptually forms the top-level nesting)
-            Tok::EOF => Action::Pop(Nesting::Top),
+            (_, &Tok::EOF) => (true, Action::Pop(Nesting::Top)),
 
-            _ => Action::None,
+            _ => (false, Action::None),
         };
 
-        let (removed, added) = match action {
+        let mut preremoved = if pop_non_stmt {
+            let stmt = self.open_nestings.iter().rposition(Nesting::is_stmt_level);
+            let i = stmt.expect("Parser::update_nestings got a corrupted list of nestings") + 1;
+            if i < self.open_nestings.len() {
+                trace!("token {:?} closed {} non-statement nesting(s)",
+                       tok, self.open_nestings.len() - i);
+            }
+            self.open_nestings.drain(i..).collect()
+        } else {
+            Vec::new()
+        };
+
+        let (mut removed, added) = match action {
             Action::None => (Vec::new(), 0),
 
             Action::Push(e) => {
@@ -630,6 +661,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             },
         };
 
+        removed.append(&mut preremoved);
         NestingDelta { removed: removed, added: added }
     }
 
@@ -645,29 +677,47 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         where F: FnOnce(&mut Parser<'a, T>) -> Result<R>
     {
         let depth = self.open_nestings.len();
+        assert!(depth > 0);
         trace!("set the recover trap, nestings = {:?}", self.open_nestings);
+
         let ret = f(self);
+
         if ret.is_err() {
             debug!("recovering from the error, init nestings = {:?}", self.open_nestings);
-            let mut last_tok = None;
-            while self.open_nestings.len() >= depth {
-                let tok = self.read();
-                trace!("skipping {:?}, nestings = {:?}", tok.1, self.open_nestings);
-                last_tok = Some(tok);
-            }
-            if let Some(tok) = last_tok {
+
+            if self.open_nestings.len() >= depth {
+                let mut last_tok;
+                let mut last_min_depth;
+                loop {
+                    // we stop when the nesting depth falls below the initial depth _at any time_,
+                    // not just after the call. the side information has enough data for this.
+                    last_tok = self.read();
+                    last_min_depth = self.open_nestings.len() - last_tok.0.nesting_delta.added;
+                    trace!("skipping {:?}, nestings = {:?}, min_depth = {}",
+                           last_tok.1, self.open_nestings, last_min_depth);
+                    if last_min_depth < depth { break; }
+                }
+
                 // if the last token has closed too many nestings we need to keep
                 // that last token to allow the further match from the caller.
                 // this case includes a premature EOF, where reading EOF would close
                 // at least two nestings (the initial nesting, the top-level nesting).
-                if always_unread || depth - self.open_nestings.len() > 1 {
-                    self.unread(tok);
+                //
+                // on the other hands, a different minimal depth and current depth indicates
+                // that a new nesting is introduced by this token and that token should be kept.
+                let cur_depth = self.open_nestings.len();
+                if always_unread || depth - cur_depth > 1 || last_min_depth < cur_depth {
+                    trace!("unreading the final token {}",
+                           if always_unread { "at a request" } else { "due to excessive closing" });
+                    self.unread(last_tok);
                 }
             }
+
             debug!("recovered from the error, final nestings = {:?}", self.open_nestings);
         } else {
             trace!("no recovery required, nestings = {:?}", self.open_nestings);
         }
+
         ret
     }
 
@@ -742,7 +792,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             } else {
                 let next = self.peek().clone();
                 self.error(next.span, m::NoNewline { read: &next.base }).done()?;
-                return self.skip_meta_comment(meta);
+                self.skip_meta_comment(meta);
             }
         }
 
@@ -751,7 +801,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
     }
 
     // consumes a newline, used for error recovery
-    fn skip_meta_comment(&mut self, meta: Punct) -> Result<()> {
+    fn skip_meta_comment(&mut self, meta: Punct) {
         assert_eq!(self.ignore_after_newline, Some(meta));
         loop {
             match self.read() {
@@ -766,12 +816,6 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 _ => {}
             }
         }
-        self.ignore_after_newline = None;
-        Ok(())
-    }
-
-    fn dummy_kind(&self) -> Spanned<Kind> {
-        Box::new(K::Oops).without_loc()
     }
 
     // Some(Some(k)) for concrete kinds, Some(None) for generic kinds
@@ -1475,7 +1519,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             }
 
             Ok(Some(end))
-        }, NoDelim)?;
+        }, DelimAlreadyRead)?;
         let end = end.unwrap_or_else(|| self.last_pos());
         returns = self.try_parse_kailua_rettype_spec()?;
 
@@ -1582,53 +1626,63 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             where Scan: FnMut(&mut Self) -> Result<Item> {
         let mut items = Vec::new();
 
-        while !self.may_expect(Punct::RBrace) {
-            let item = scan(self)?;
-            items.push(item);
+        self.recover(|parser| {
+            while !parser.may_expect(Punct::RBrace) {
+                let item = scan(parser)?;
+                items.push(item);
 
-            // ";" - "," - ";" "}" - "," "}" - "}"
-            match self.read() {
-                (_, Spanned { base: Tok::Punct(Punct::Comma), .. }) |
-                (_, Spanned { base: Tok::Punct(Punct::Semicolon), .. }) => {}
-                (_, Spanned { base: Tok::Punct(Punct::RBrace), .. }) => break,
-                tok => {
-                    self.error(tok.1.span, m::NoTableSep { read: &tok.1.base }).done()?;
-                    self.recover_to_close();
-                    break;
+                match parser.read() {
+                    // `,` [`}`]
+                    // `;` [`}`]
+                    (_, Spanned { base: Tok::Punct(Punct::Comma), .. }) |
+                    (_, Spanned { base: Tok::Punct(Punct::Semicolon), .. }) => {}
+
+                    // `}`
+                    (_, Spanned { base: Tok::Punct(Punct::RBrace), .. }) => break,
+
+                    tok => {
+                        parser.error(tok.1.span, m::NoTableSep { read: &tok.1.base }).done()?;
+                        parser.unread(tok);
+                        return Err(Stop::Recover);
+                    }
                 }
             }
-        }
+            Ok(())
+        }, DelimAlreadyRead)?;
 
         Ok(items)
     }
 
     fn parse_table_body(&mut self) -> Result<Vec<(Option<Spanned<Exp>>, Spanned<Exp>)>> {
         self.scan_tabular_body(|parser| {
-            if parser.may_expect(Punct::LBracket) {
-                let key = Some(parser.parse_exp()?);
-                parser.expect(Punct::RBracket)?;
-                parser.expect(Punct::Eq)?;
-                let value = parser.parse_exp()?;
-                Ok((key, value))
-            } else {
-                // try to disambiguate `NAME "=" exp` from `exp`
-                let key = match parser.read() {
-                    (side, Spanned { base: Tok::Name(name), span }) => {
-                        if parser.may_expect(Punct::Eq) {
-                            Some(Box::new(Ex::Str(Str::from(name))).with_loc(span))
-                        } else {
-                            parser.unread((side, Tok::Name(name).with_loc(span)));
+            parser.recover_upto(|parser| {
+                if parser.may_expect(Punct::LBracket) {
+                    let key = parser.recover(Self::parse_exp, Punct::RBracket)?;
+                    let value = parser.recover_upto(|parser| {
+                        parser.expect(Punct::Eq)?;
+                        parser.parse_exp()
+                    })?;
+                    Ok((Some(key), value))
+                } else {
+                    // try to disambiguate `NAME "=" exp` from `exp`
+                    let key = match parser.read() {
+                        (side, Spanned { base: Tok::Name(name), span }) => {
+                            if parser.may_expect(Punct::Eq) {
+                                Some(Box::new(Ex::Str(Str::from(name))).with_loc(span))
+                            } else {
+                                parser.unread((side, Tok::Name(name).with_loc(span)));
+                                None
+                            }
+                        }
+                        tok => {
+                            parser.unread(tok);
                             None
                         }
-                    }
-                    tok => {
-                        parser.unread(tok);
-                        None
-                    }
-                };
-                let value = parser.parse_exp()?;
-                Ok((key, value))
-            }
+                    };
+                    let value = parser.parse_exp()?;
+                    Ok((key, value))
+                }
+            })
         })
     }
 
@@ -1693,8 +1747,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
                 // prefixexp "[" ...
                 (_, Spanned { base: Tok::Punct(Punct::LBracket), .. }) => {
-                    let exp2 = self.parse_exp()?;
-                    self.expect(Punct::RBracket)?;
+                    let exp2 = self.recover(Self::parse_exp, Punct::RBracket)?;
                     let span = begin..self.last_pos();
                     exp = Box::new(Ex::Index(exp, exp2)).with_loc(span);
                 }
@@ -1827,21 +1880,27 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             let opspan = self.read().1.span;
             ops.push(op.with_loc(opspan));
         }
-        if let Some(exp) = try_parse_term(self)? {
-            let mut exp = exp;
-            while let Some(op) = ops.pop() {
-                let span = op.span | exp.span;
-                exp = Box::new(Ex::Un(op, exp)).with_loc(span);
-            }
-            Ok(Some(exp))
+
+        let mut exp = if let Some(exp) = try_parse_term(self)? {
+            exp
         } else if ops.is_empty() {
-            Ok(None)
+            // if there is no operator and expression read,
+            // it's a normal case as we allow the expression to be absent.
+            return Ok(None);
         } else {
             let tok = self.read();
             self.error(tok.1.span, m::NoExp { read: &tok.1.base }).done()?;
             self.unread(tok);
-            Ok(None)
+
+            // if a series of unary operators is not followed by a proper expression,
+            // do not read further and instead apply those operators to a dummy node (Ex::Oops).
+            Box::new(Ex::Oops).with_loc(self.last_pos())
+        };
+        while let Some(op) = ops.pop() {
+            let span = op.span | exp.span;
+            exp = Box::new(Ex::Un(op, exp)).with_loc(span);
         }
+        Ok(Some(exp))
     }
 
     fn try_parse_left_assoc_binary_exp<Term, Op>(&mut self,
@@ -2306,7 +2365,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
                     // tuple or record -- distinguished by the secondary lookahead
                     tok => {
-                        let is_record = if let (_, Spanned { base: Tok::Name(_), .. }) = tok {
+                        let is_record = if let Tok::Name(_) = tok.1.base {
                             self.lookahead(Punct::Eq)
                         } else {
                             false
@@ -2361,7 +2420,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     if !params.is_empty() {
                         self.error(&params, m::WrongVectorParamsArity {}).done()?;
                     }
-                    self.dummy_kind()
+                    Recover::recover()
                 } else {
                     let mut it = params.base.into_iter();
                     let (vm, v) = it.next().unwrap();
@@ -2376,7 +2435,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     if !params.is_empty() {
                         self.error(&params, m::WrongMapParamsArity {}).done()?;
                     }
-                    self.dummy_kind()
+                    Recover::recover()
                 } else {
                     let mut it = params.base.into_iter();
                     let (km, k) = it.next().unwrap();
@@ -2508,7 +2567,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                             Some(AtomicKind::Seq(..)) => {
                                 self.error(begin..self.last_pos(), m::NoTypeSeqInUnion {})
                                     .done()?;
-                                kinds.push(self.dummy_kind());
+                                kinds.push(Recover::recover());
                             }
                             None => {
                                 let tok = self.read();
@@ -2533,7 +2592,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 Ok(Some(first.base.with_loc(span)))
             } else {
                 self.error(kindseq.span, m::NoSingleTypeButTypeSeq {}).done()?;
-                Ok(Some(self.dummy_kind()))
+                Ok(Some(Recover::recover()))
             }
         } else {
             Ok(None)
@@ -2546,7 +2605,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         } else {
             let tok = self.read().1;
             self.error(tok.span, m::NoTypeOrTypeSeq { read: &tok.base }).done()?;
-            Ok(Seq { head: vec![self.dummy_kind()], tail: None })
+            Ok(Seq { head: vec![Recover::recover()], tail: None })
         }
     }
 
@@ -2593,7 +2652,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     parser.elided_newline = None;
                 }
                 Ok(Some(spec.with_loc(metabegin..metaend)))
-            }, NoDelim)
+            }, DelimAlreadyRead)
         } else {
             Ok(None)
         }
@@ -2631,7 +2690,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     parser.elided_newline = None;
                 }
                 Ok(Some(specs.with_loc(metabegin..metaend)))
-            }, NoDelim)
+            }, DelimAlreadyRead)
         } else {
             Ok(None)
         }
@@ -2649,7 +2708,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 parser.end_meta_comment(Punct::DashDashGt)?;
 
                 Ok(Some(kinds.with_loc(begin..end)))
-            }, NoDelim)
+            }, DelimAlreadyRead)
         } else {
             Ok(None)
         }
@@ -2704,7 +2763,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 let metaend = parser.last_pos();
                 parser.end_meta_comment(Punct::DashDashV)?;
                 Ok(Some((attrs, sig).with_loc(metabegin..metaend)))
-            }, NoDelim)
+            }, DelimAlreadyRead)
         } else {
             Ok(None)
         }
@@ -2775,7 +2834,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                     ret?;
                 }
                 Ok((stmt, Some(end)))
-            }, NoDelim, || (Some(Box::new(St::Oops)), None))?;
+            }, DelimAlreadyRead, || (Some(Box::new(St::Oops)), None))?;
 
             let end = end.unwrap_or_else(|| self.last_pos());
             Ok(Some(stmt.map(|st| st.with_loc(begin..end))))
