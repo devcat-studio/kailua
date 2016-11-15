@@ -803,7 +803,6 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         if let Some((_, scoped_id)) = local {
             NameRef::Local(scoped_id)
         } else {
-            self.global_scope.insert(name.clone());
             NameRef::Global(name)
         }
     }
@@ -1132,6 +1131,10 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
             (_, Spanned { base: Tok::Keyword(Keyword::Function), .. }) => {
                 let namesbegin = self.pos();
                 let rootname = self.parse_name()?.map(|name| self.resolve_name(name));
+                if let NameRef::Global(ref name) = rootname.base {
+                    // this will assign a global name, and is handled like a global assignment
+                    self.global_scope.insert(name.clone());
+                }
                 let mut names = Vec::new();
                 while self.may_expect(Punct::Dot) {
                     names.push(self.parse_name()?);
@@ -1277,7 +1280,22 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
                 // and convert it to `Var` for the second case.
                 // (note that the prefixexp might as well be an op
                 // indexing the return from a function call!)
-                match self.convert_exp_to_var(exp) {
+
+                let possibly_lhs = match self.peek().base {
+                    Tok::Punct(Punct::Comma) => true,           // exp `,` (exp ... `=` ...)
+                    Tok::Punct(Punct::DashDashColon) => true,   // exp `--:` (KIND ...)
+                    Tok::Punct(Punct::Eq) => true,              // exp `=` (...)
+                    _ => false,
+                };
+
+                let exp_or_var = if possibly_lhs {
+                    self.convert_and_register_var_from_exp(exp)
+                } else {
+                    // even when exp is prefixexp, if it is surely not a part of assignment,
+                    // we will avoid putting it into var to avoid excess autocompletion entries.
+                    Err(exp)
+                };
+                match exp_or_var {
                     // var {"," var} "=" explist
                     Ok(firstvar) => {
                         let mut lhs = Vec::new();
@@ -1727,14 +1745,29 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
         Ok(Some(exp))
     }
 
-    fn convert_exp_to_var(&self, exp: Spanned<Exp>) -> result::Result<Spanned<Var>, Spanned<Exp>> {
+    fn convert_and_register_var_from_exp(&mut self, exp: Spanned<Exp>)
+        -> result::Result<Spanned<Var>, Spanned<Exp>>
+    {
         let span = exp.span;
         let base = *exp.base;
         match base {
-            Ex::Var(name) => Ok(Var::Name(name).with_loc(span)),
-            Ex::Index(e1, e2) => Ok(Var::Index(e1, e2).with_loc(span)),
-            Ex::IndexName(e, name) => Ok(Var::IndexName(e, name).with_loc(span)),
-            base => Err(Box::new(base).with_loc(span)),
+            Ex::Var(name) => {
+                // if Var refers to a global variable assignment,
+                // register its name to the global scope
+                if let NameRef::Global(ref name) = name.base {
+                    self.global_scope.insert(name.clone());
+                }
+                Ok(Var::Name(name).with_loc(span))
+            },
+            Ex::Index(e1, e2) => {
+                Ok(Var::Index(e1, e2).with_loc(span))
+            },
+            Ex::IndexName(e, name) => {
+                Ok(Var::IndexName(e, name).with_loc(span))
+            },
+            base => {
+                Err(Box::new(base).with_loc(span))
+            },
         }
     }
 
@@ -1948,7 +1981,7 @@ impl<'a, T: Iterator<Item=Spanned<Tok>>> Parser<'a, T> {
 
     fn parse_var(&mut self) -> Result<Spanned<Var>> {
         if let Some(exp) = self.try_parse_exp()? {
-            match self.convert_exp_to_var(exp) {
+            match self.convert_and_register_var_from_exp(exp) {
                 Ok(var) => Ok(var),
                 Err(exp) => {
                     self.error(&exp, m::NoVarButExp {}).done()?;

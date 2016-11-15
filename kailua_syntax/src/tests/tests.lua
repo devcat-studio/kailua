@@ -1196,10 +1196,10 @@ f()
 --# assume p: --[[xxx   --@< Error: A newline is disallowed in a long comment inside the meta block
                   yyy]] --@^ Note: The meta block started here
                         --@^^-^ Error: Expected a single type, got a newline
-                        --@^^ Error: Expected `=`, got `]`
+                        --@^^ Error: Only function calls are allowed as statement-level expressions
                         --@^^^ Error: Expected a statement, got `]`
                         --@^^^^ Error: Expected a statement, got `]`
---! [KailuaAssume(`p`$1, _, Oops)$1, Assign([`yyy`_], _), Oops, Oops]
+--! [KailuaAssume(`p`$1, _, Oops)$1, Void(`yyy`_), Oops, Oops]
 
 --8<-- string-multi-line
 f('foo\
@@ -1538,19 +1538,19 @@ local b --: var { var { } }      --@< Error: Expected a single type, got a keywo
 --! [Local([`a`$1: _ Oops], [{}])$1, Local([`b`$2: _ Oops], [])$2]
 
 --8<-- non-prefix-expr-at-top-level-1
-f --@< Error: Expected `=`, got the end of file
+f --@< Error: Only function calls are allowed as statement-level expressions
 --&
---! [Assign([`f`_], _)]
+--! [Void(`f`_)]
 
 --8<-- non-prefix-expr-at-top-level-2
-f.a --@< Error: Expected `=`, got the end of file
+f.a --@< Error: Only function calls are allowed as statement-level expressions
 --&
---! [Assign([`f`_.`a`], _)]
+--! [Void(`f`_.`a`)]
 
 --8<-- non-prefix-expr-at-top-level-3
-f[3] --@< Error: Expected `=`, got the end of file
+f[3] --@< Error: Only function calls are allowed as statement-level expressions
 --&
---! [Assign([`f`_[3]], _)]
+--! [Void(`f`_[3])]
 
 --8<-- non-prefix-expr-at-top-level-4
 "string" --@< Error: Only function calls are allowed as statement-level expressions
@@ -1563,14 +1563,14 @@ f()
 --! [Void(42), Void(`f`_())]
 
 --8<-- non-prefix-expr-at-top-level-6
-f(a).b --@< Error: Expected `=`, got the end of file
+f(a).b --@< Error: Only function calls are allowed as statement-level expressions
 --&
---! [Assign([`f`_(`a`_).`b`], _)]
+--! [Void(`f`_(`a`_).`b`)]
 
 --8<-- non-prefix-expr-at-top-level-7
-f(a).b
-g() --@< Error: Expected `=`, got a name
---! [Assign([`f`_(`a`_).`b`], _), Void(`g`_())]
+f(a).b --@< Error: Only function calls are allowed as statement-level expressions
+g()
+--! [Void(`f`_(`a`_).`b`), Void(`g`_())]
 
 --8<-- non-prefix-expr-at-top-level-8
 3 + 4 --@< Error: Only function calls are allowed as statement-level expressions
@@ -1581,6 +1581,11 @@ f()
 {} --@< Error: Only function calls are allowed as statement-level expressions
 f()
 --! [Void({}), Void(`f`_())]
+
+--8<-- expr-seq-at-top-level-0
+a, --@< Error: Expected a left-hand-side expression, got the end of file
+--&
+--! []
 
 --8<-- expr-seq-at-top-level-1
 a, b --@< Error: Expected `=`, got the end of file
@@ -1599,71 +1604,72 @@ do end --@< Error: Expected `=`, got a keyword `do`
 
 --8<-- expr-seq-at-top-level-4
 a(), b --@< Error: Expected a statement, got `,`
-do end --@< Error: Expected `=`, got a keyword `do`
---! [Void(`a`_()), Oops, Assign([`b`_], _), Do([])]
+       --@^ Error: Only function calls are allowed as statement-level expressions
+do end
+--! [Void(`a`_()), Oops, Void(`b`_), Do([])]
 
 --8<-- index-recover-eof-1
 f. --@< Error: Expected a name after `<expression> .`, got the end of file
-   --@^ Error: Expected `=`, got the end of file
+   --@^ Error: Only function calls are allowed as statement-level expressions
 --&
---! [Assign([`f`_], _)]
+--! [Void(`f`_)]
 
 --8<-- index-recover-eof-2
 f: --@< Error: Expected a name after `<expression> :`, got the end of file
-   --@^ Error: Expected `=`, got the end of file
+   --@^ Error: Only function calls are allowed as statement-level expressions
 --&
---! [Assign([`f`_], _)]
+--! [Void(`f`_)]
 
 --8<-- index-recover-eof-3
 f:g --@< Error: Expected argument(s) after `<expression> : <name>`, got the end of file
-    --@^ Error: Expected `=`, got the end of file
+    --@^ Error: Only function calls are allowed as statement-level expressions
 --&
---! [Assign([`f`_.`g`], _)]
+--! [Void(`f`_.`g`)]
 
 --8<-- index-recover-keyword
 f.
 for i = 1, 5 do end --@< Error: Expected a name after `<expression> .`, got a keyword `for`
-                    --@^ Error: Expected `=`, got a keyword `for`
+                    --@^^ Error: Only function calls are allowed as statement-level expressions
 f:
 repeat until false --@< Error: Expected a name after `<expression> :`, got a keyword `repeat`
-                   --@^ Error: Expected `=`, got a keyword `repeat`
+                   --@^^ Error: Only function calls are allowed as statement-level expressions
 f:g
 do end --@< Error: Expected argument(s) after `<expression> : <name>`, got a keyword `do`
-       --@^ Error: Expected `=`, got a keyword `do`
---! [Assign([`f`_], _), For(`i`$1, 1, 5, None, $1[]), \
---!  Assign([`f`_], _), Repeat([], false), \
---!  Assign([`f`_.`g`], _), Do([])]
+       --@^^ Error: Only function calls are allowed as statement-level expressions
+--! [Void(`f`_), For(`i`$1, 1, 5, None, $1[]), \
+--!  Void(`f`_), Repeat([], false), \
+--!  Void(`f`_.`g`), Do([])]
 
 --8<-- index-recover-meta
 f.
 --# assume f: WHATEVER --@< Error: Expected a name after `<expression> .`, got `--#`
-                       --@^ Error: Expected `=`, got `--#`
+                       --@^^ Error: Only function calls are allowed as statement-level expressions
 f:
 --# assume f: WHATEVER --@< Error: Expected a name after `<expression> :`, got `--#`
-                       --@^ Error: Expected `=`, got `--#`
+                       --@^^ Error: Only function calls are allowed as statement-level expressions
 f:g
 --# assume f: WHATEVER --@< Error: Expected argument(s) after `<expression> : <name>`, got `--#`
-                       --@^ Error: Expected `=`, got `--#`
---! [Assign([`f`_], _), KailuaAssume(`f`$1, _, Dynamic)$1, \
---!  Assign([`f`$1], _), KailuaAssume(`f`$2, _, Dynamic)$2, \
---!  Assign([`f`$2.`g`], _), KailuaAssume(`f`$3, _, Dynamic)$3]
+                       --@^^ Error: Only function calls are allowed as statement-level expressions
+--! [Void(`f`_), KailuaAssume(`f`$1, _, Dynamic)$1, \
+--!  Void(`f`$1), KailuaAssume(`f`$2, _, Dynamic)$2, \
+--!  Void(`f`$2.`g`), KailuaAssume(`f`$3, _, Dynamic)$3]
 
 --8<-- index-recover-do-end
 do
     f.
 end --@< Error: Expected a name after `<expression> .`, got a keyword `end`
-    --@^ Error: Expected `=`, got a keyword `end`
+    --@^^ Error: Only function calls are allowed as statement-level expressions
 do
     f:
 end --@< Error: Expected a name after `<expression> :`, got a keyword `end`
-    --@^ Error: Expected `=`, got a keyword `end`
+    --@^^ Error: Only function calls are allowed as statement-level expressions
 do
     f:g
 end --@< Error: Expected argument(s) after `<expression> : <name>`, got a keyword `end`
-    --@^ Error: Expected `=`, got a keyword `end`
+    --@^^ Error: Only function calls are allowed as statement-level expressions
 g()
---! [Do([Assign([`f`_], _)]), \
---!  Do([Assign([`f`_], _)]), \
---!  Do([Assign([`f`_.`g`], _)]), \
+--! [Do([Void(`f`_)]), \
+--!  Do([Void(`f`_)]), \
+--!  Do([Void(`f`_.`g`)]), \
 --!  Void(`g`_())]
 
