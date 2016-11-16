@@ -10,7 +10,6 @@ namespace Kailua
     {
         internal WeakReference<Project> project;
         internal ReportErrorListProvider errorListProvider;
-        private IList<ReportData> lastReportData;
         private bool disposed = false;
         private object syncLock = new object();
 
@@ -19,16 +18,26 @@ namespace Kailua
             project.ReportDataChanged += this.OnReportDataChanged;
             this.project = new WeakReference<Project>(project);
             this.errorListProvider = new ReportErrorListProvider(dteProject);
-            this.lastReportData = null;
-            this.Launch();
         }
 
         internal void OnReportDataChanged(IList<ReportData> reportData)
         {
-            lock (this.syncLock)
+            ThreadHelper.JoinableTaskFactory.RunAsync(async delegate ()
             {
-                this.lastReportData = reportData;
-            }
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+                Project project;
+                if (this.disposed || !this.project.TryGetTarget(out project))
+                {
+                    // the project is dead, no need to continue
+                    return;
+                }
+
+                lock (this.syncLock)
+                {
+                    this.updateErrorListUnlocked(project, reportData);
+                }
+            });
         }
 
         private void updateErrorListUnlocked(Project project, IList<ReportData> reportData)
@@ -39,39 +48,6 @@ namespace Kailua
                 this.errorListProvider.AddReport(data);
             }
             this.errorListProvider.Refresh();
-        }
-
-        internal void Launch()
-        {
-            ThreadHelper.JoinableTaskFactory.RunAsync(async delegate()
-            {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-
-                // try to relaunch the parsing job every second
-                while (true)
-                {
-                    Project project;
-                    if (this.disposed || !this.project.TryGetTarget(out project))
-                    {
-                        // the project is dead, no need to continue
-                        break;
-                    }
-
-                    // note that we do NOT await for this task, we just launch them and leave it as is
-                    var _ = project.CheckTask;
-
-                    lock (this.syncLock)
-                    {
-                        if (this.lastReportData != null)
-                        {
-                            this.updateErrorListUnlocked(project, this.lastReportData);
-                            this.lastReportData = null;
-                        }
-                    }
-
-                    await Task.Delay(1000);
-                }
-            });
         }
 
         public void Dispose()

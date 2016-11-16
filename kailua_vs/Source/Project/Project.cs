@@ -234,9 +234,6 @@ namespace Kailua
                         throw;
                     }
                 }
-
-                // wait for a short amount of time, and if the cancel is requested restart the timer
-                Task.Delay(500, this.cts.Token).Wait();
                 return trees;
             }, this.cts.Token, TaskContinuationOptions.None, TaskScheduler.Default).ContinueWith(treesTask =>
             {

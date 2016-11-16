@@ -10,6 +10,7 @@ namespace Kailua
     {
         public static void Write(string format, params object[] args)
         {
+#if DEBUG
             var window = Package.GetGlobalService(typeof(SVsOutputWindow)) as IVsOutputWindow;
             Guid paneGuid = VSConstants.GUID_OutWindowDebugPane;
             IVsOutputWindowPane pane;
@@ -17,6 +18,7 @@ namespace Kailua
             Trace.Assert(pane != null);
             pane.OutputString(String.Format(format, args) + "\n");
             pane.Activate();
+#endif
         }
     }
 }
