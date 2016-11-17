@@ -16,36 +16,26 @@ namespace Kailua
     [Name("kailuaCompletion")]
     class CompletionSourceProvider : ICompletionSourceProvider
     {
+        // see http://glyphlist.azurewebsites.net/standardglyphgroup/ for the list of icons
+        [Import]
+        IGlyphService GlyphService { get; set; }
+
         public ICompletionSource TryCreateCompletionSource(ITextBuffer textBuffer)
         {
-            return new CompletionSource(textBuffer);
+            return new CompletionSource(textBuffer, GlyphService);
         }
     }
 
     class CompletionSource : ICompletionSource
     {
         private ITextBuffer buffer;
+        private IGlyphService glyphService;
         private bool disposed = false;
 
-        public CompletionSource(ITextBuffer buffer)
+        public CompletionSource(ITextBuffer buffer, IGlyphService glyphService)
         {
             this.buffer = buffer;
-        }
-
-        private class NameComparer : IComparer<string>
-        {
-            public int Compare(string x, string y)
-            {
-                return x.ToUpperInvariant().CompareTo(y.ToUpperInvariant());
-            }
-        }
-
-        private class NameEntryComparer : IComparer<Native.NameEntry>
-        {
-            public int Compare(Native.NameEntry x, Native.NameEntry y)
-            {
-                return x.Name.ToUpperInvariant().CompareTo(y.Name.ToUpperInvariant());
-            }
+            this.glyphService = glyphService;
         }
 
         private IEnumerable<Completion> completeVariableAndKeyword(
@@ -63,27 +53,33 @@ namespace Kailua
             // the trigger point might not be in the correct span
             var translatedTriggerPoint = triggerPoint.TranslateTo(file.SourceSnapshot, PointTrackingMode.Positive);
             var pos = new Native.Pos(file.Unit, (uint)translatedTriggerPoint.Position);
-            var names = new SortedSet<Native.NameEntry>(tree.NamesAt(pos), new NameEntryComparer());
+
+            var localNameIcon = this.glyphService.GetGlyph(StandardGlyphGroup.GlyphGroupVariable, StandardGlyphItem.GlyphItemPrivate);
+            var names = new HashSet<Native.NameEntry>(tree.NamesAt(pos));
             foreach (var entry in names)
             {
                 var name = entry.Name;
-                yield return new Completion(name + Properties.Strings.LocalNameSuffix, name, null, null, null);
+                yield return new Completion(name, name, null, localNameIcon, null);
             }
-            var globalNames = new SortedSet<string>(project.GlobalScope, new NameComparer());
+
+            var globalNameIcon = this.glyphService.GetGlyph(StandardGlyphGroup.GlyphGroupVariable, StandardGlyphItem.GlyphItemPublic);
+            var globalNames = new HashSet<string>(project.GlobalScope);
             globalNames.ExceptWith(from entry in names select entry.Name);
             foreach (var name in project.GlobalScope)
             {
-                yield return new Completion(name + Properties.Strings.GlobalNameSuffix, name, null, null, null);
+                yield return new Completion(name, name, null, globalNameIcon, null);
             }
+
             // TODO contextual keywords
             var keywords = new string[]
             {
                 "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in",
                 "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while"
             };
+            var keywordIcon = this.glyphService.GetGlyph(StandardGlyphGroup.GlyphKeyword, StandardGlyphItem.GlyphItemPublic);
             foreach (var keyword in keywords)
             {
-                yield return new Completion(keyword + Properties.Strings.KeywordSuffix, keyword, null, null, null);
+                yield return new Completion(keyword, keyword, null, keywordIcon, null);
             }
         }
 
@@ -128,11 +124,12 @@ namespace Kailua
             // the trigger point might not be in the correct span
             var translatedPrefixExprEnd = prefixExprEnd.Value.TranslateTo(file.SourceSnapshot, PointTrackingMode.Positive);
             var pos = new Native.Pos(file.Unit, (uint)translatedPrefixExprEnd.Position);
-            var names = new SortedSet<Native.NameEntry>(output.FieldsAfter(pos), new NameEntryComparer());
-            foreach (var entry in names)
+
+            var fieldNameIcon = this.glyphService.GetGlyph(StandardGlyphGroup.GlyphGroupProperty, StandardGlyphItem.GlyphItemPublic);
+            foreach (var entry in output.FieldsAfter(pos))
             {
                 var name = entry.Name;
-                yield return new Completion(name + Properties.Strings.FieldNameSuffix, name, null, null, null);
+                yield return new Completion(name, name, null, fieldNameIcon, null);
             }
         }
 
@@ -227,7 +224,8 @@ namespace Kailua
             }
 
             var applicableTo = triggerPoint.Snapshot.CreateTrackingSpan(targetSpan, SpanTrackingMode.EdgeInclusive);
-            completionSets.Add(new CompletionSet("All", "All", applicableTo, completions.ToList(), Enumerable.Empty<Completion>()));
+            var sortedCompletions = completions.OrderBy(c => c.InsertionText).ToList();
+            completionSets.Add(new CompletionSet("All", "All", applicableTo, sortedCompletions, Enumerable.Empty<Completion>()));
         }
 
         public void Dispose()

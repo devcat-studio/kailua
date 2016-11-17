@@ -83,7 +83,7 @@ namespace Kailua
                         break;
                     case VSConstants.VSStd2KCmdID.TYPECHAR:
                         char ch = this.getTypeChar(pvaIn);
-                        if (char.IsPunctuation(ch))
+                        if (char.IsPunctuation(ch) && ch != '_')
                         {
                             this.Complete(false);
                             // and continue to the next handler

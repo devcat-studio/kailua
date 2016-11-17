@@ -70,42 +70,6 @@ namespace Kailua.Properties {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to .
-        /// </summary>
-        internal static string FieldNameSuffix {
-            get {
-                return ResourceManager.GetString("FieldNameSuffix", resourceCulture);
-            }
-        }
-        
-        /// <summary>
-        ///   Looks up a localized string similar to  (global).
-        /// </summary>
-        internal static string GlobalNameSuffix {
-            get {
-                return ResourceManager.GetString("GlobalNameSuffix", resourceCulture);
-            }
-        }
-        
-        /// <summary>
-        ///   Looks up a localized string similar to  (keyword).
-        /// </summary>
-        internal static string KeywordSuffix {
-            get {
-                return ResourceManager.GetString("KeywordSuffix", resourceCulture);
-            }
-        }
-        
-        /// <summary>
-        ///   Looks up a localized string similar to .
-        /// </summary>
-        internal static string LocalNameSuffix {
-            get {
-                return ResourceManager.GetString("LocalNameSuffix", resourceCulture);
-            }
-        }
-        
-        /// <summary>
         ///   Looks up a localized string similar to There seems multiple entry point files detected in the project {0}.
         /// </summary>
         internal static string MultipleEntryPoints {
