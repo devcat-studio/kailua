@@ -345,27 +345,34 @@ f(3)
 
 --8<-- funccall-op-1
 f(3+4)
---! [Void(`f`_((3 + 4)))]
+f(3+4-5)
+f(3+4*5)
+f((3+4)*5)
+--! [Void(`f`_((3 + 4))), \
+--!  Void(`f`_(((3 + 4) - 5))), \
+--!  Void(`f`_((3 + (4 * 5)))), \
+--!  Void(`f`_(((3 + 4) * 5)))]
 
 --8<-- funccall-op-2
-f(3+4-5)
---! [Void(`f`_(((3 + 4) - 5)))]
-
---8<-- funccall-op-3
-f(3+4*5)
---! [Void(`f`_((3 + (4 * 5))))]
-
---8<-- funccall-op-4
-f((3+4)*5)
---! [Void(`f`_(((3 + 4) * 5)))]
-
---8<-- funccall-op-5
 f(2^3^4)
---! [Void(`f`_((2 ^ (3 ^ 4))))]
+f(-2^4)
+f(-2^-4)
+f(- -3)
+--! [Void(`f`_((2 ^ (3 ^ 4)))), \
+--!  Void(`f`_((- (2 ^ 4)))), \
+--!  Void(`f`_((- (2 ^ (- 4))))), \
+--!  Void(`f`_((- (- 3))))]
 
 --8<-- funccall-string
 f'oo'
 --! [Void(`f`_"oo")]
+
+--8<-- funccall-string-string
+f'oo''bar'
+f'oo'[[bar]]
+f[=[oo]=]"bar"
+f[=[oo]=][[bar]]
+--! [Void(`f`_"oo""bar"), Void(`f`_"oo""bar"), Void(`f`_"oo""bar"), Void(`f`_"oo""bar")]
 
 --8<-- funccall-table
 f{a=1,[3.1]=4e5;[=[[[]]]=],}
@@ -387,6 +394,11 @@ f{a=a; a();}
 f{}
 f({})
 --! [Void(`f`_{}), Void(`f`_({}))]
+
+--8<-- funccall-table-string
+f"oo"{ba=r}
+f{o=o}[[bar]]
+--! [Void(`f`_"oo"{["ba"] = `r`_}), Void(`f`_{["o"] = `o`_}"bar")]
 
 --8<-- funccall-index
 f.a()
@@ -1351,7 +1363,8 @@ i({#}) --@< Error: Expected an expression, got `}`
 
 --8<-- table-recover-key-1
 f({[a]=b, [}) --@< Error: Expected an expression, got `}`
-              --@^ Error: Expected `=`, got `}`
+              --@^ Error: Expected `]`, got `}`
+              --@^^ Error: Expected `=`, got `}`
 f({[a]=})     --@< Error: Expected an expression, got `}`
 f({[a=})      --@< Error: Expected `]`, got `=`
               --@^ Error: Expected `=`, got `}`
@@ -1359,7 +1372,8 @@ f({[a]})      --@< Error: Expected `=`, got `}`
 f({[a})       --@< Error: Expected `]`, got `}`
               --@^ Error: Expected `=`, got `}`
 f({[})        --@< Error: Expected an expression, got `}`
-              --@^ Error: Expected `=`, got `}`
+              --@^ Error: Expected `]`, got `}`
+              --@^^ Error: Expected `=`, got `}`
 --! [Void(`f`_({[`a`_] = `b`_, [Oops] = Oops})), \
 --!  Void(`f`_({[`a`_] = Oops})), \
 --!  Void(`f`_({[Oops] = Oops})), \
@@ -1369,8 +1383,9 @@ f({[})        --@< Error: Expected an expression, got `}`
 
 --8<-- table-recover-key-2
 f({[a]=b, [) --@< Error: Expected an expression, got `)`
-             --@^ Error: Expected `=`, got `)`
-             --@^^ Error: Expected `,`, `;` or `}`, got `)`
+             --@^ Error: Expected `]`, got `)`
+             --@^^ Error: Expected `=`, got `)`
+             --@^^^ Error: Expected `,`, `;` or `}`, got `)`
 f({[a]=)     --@< Error: Expected an expression, got `)`
              --@^ Error: Expected `,`, `;` or `}`, got `)`
 f({[a=)      --@< Error: Expected `]`, got `=`
@@ -1382,8 +1397,9 @@ f({[a)       --@< Error: Expected `]`, got `)`
              --@^ Error: Expected `=`, got `)`
              --@^^ Error: Expected `,`, `;` or `}`, got `)`
 f({[)        --@< Error: Expected an expression, got `)`
-             --@^ Error: Expected `=`, got `)`
-             --@^^ Error: Expected `,`, `;` or `}`, got `)`
+             --@^ Error: Expected `]`, got `)`
+             --@^^ Error: Expected `=`, got `)`
+             --@^^^ Error: Expected `,`, `;` or `}`, got `)`
 f({)         --@< Error: Expected an expression, got `)`
              --@^ Error: Expected `,`, `;` or `}`, got `)`
 --! [Void(`f`_({[`a`_] = `b`_, [Oops] = Oops})), \
@@ -1400,13 +1416,14 @@ f({)         --@< Error: Expected an expression, got `)`
 --8<-- table-recover-key-3
 f({[
 f({[ --@< Error: Expected an expression, got the end of file
-     --@^ Error: Expected `=`, got the end of file
-     --@^^ Error: Expected `,`, `;` or `}`, got the end of file
-     --@^^^ Error: Expected `)`, got the end of file
-     --@^^^^ Error: Expected `]`, got the end of file
-     --@^^^^^ Error: Expected `=`, got the end of file
-     --@^^^^^^ Error: Expected `,`, `;` or `}`, got the end of file
-     --@^^^^^^^ Error: Expected `)`, got the end of file
+     --@^ Error: Expected `]`, got the end of file
+     --@^^ Error: Expected `=`, got the end of file
+     --@^^^ Error: Expected `,`, `;` or `}`, got the end of file
+     --@^^^^ Error: Expected `)`, got the end of file
+     --@^^^^^ Error: Expected `]`, got the end of file
+     --@^^^^^^ Error: Expected `=`, got the end of file
+     --@^^^^^^^ Error: Expected `,`, `;` or `}`, got the end of file
+     --@^^^^^^^^ Error: Expected `)`, got the end of file
 --! [Void(`f`_({[Oops] = Oops}))]
 
 --&
@@ -1434,17 +1451,16 @@ f(x:g - 1) --@< Error: Expected argument(s) after `<expression> : <name>`, got `
 
 --8<-- funccall-invalid-char
 f(2, *3) --@< Error: Expected an expression, got `*`
---! [Void(`f`_(2))]
+         --@^ Error: Expected `)`, got `*`
+--! [Void(`f`_(2, Oops))]
 
 --8<-- op-invalid-char-1
 f(2 + *3) --@< Error: Expected an expression, got `*`
-          --@^ Error: Expected `)`, got `*`
---! [Void(`f`_(2))]
+--! [Void(`f`_(((2 + Oops) * 3)))]
 
 --8<-- op-invalid-char-2
 f(2 .. *3) --@< Error: Expected an expression, got `*`
-           --@^ Error: Expected `)`, got `*`
---! [Void(`f`_(2))]
+--! [Void(`f`_(((2 .. Oops) * 3)))]
 
 --8<-- op-invalid-char-3
 f(#*3) --@< Error: Expected an expression, got `*`
@@ -1763,21 +1779,24 @@ g()
 
 --8<-- index-exp-recover-eof
 f[ --@< Error: Expected an expression, got the end of file
-   --@^ Error: Only function calls are allowed as statement-level expressions
+   --@^ Error: Expected `]`, got the end of file
+   --@^^ Error: Only function calls are allowed as statement-level expressions
 --&
 --! [Void(`f`_[Oops])]
 
 --8<-- index-exp-recover-keyword
 f[
 do end --@< Error: Expected an expression, got a keyword `do`
-       --@^^ Error: Only function calls are allowed as statement-level expressions
+       --@^ Error: Expected `]`, got a keyword `do`
+       --@^^^ Error: Only function calls are allowed as statement-level expressions
 --! [Void(`f`_[Oops]), Do([])]
 
 --8<-- index-exp-recover-do-end
 do
     f[
 end --@< Error: Expected an expression, got a keyword `end`
-    --@^^ Error: Only function calls are allowed as statement-level expressions
+    --@^ Error: Expected `]`, got a keyword `end`
+    --@^^^ Error: Only function calls are allowed as statement-level expressions
 g()
 --! [Do([Void(`f`_[Oops])]), Void(`g`_())]
 

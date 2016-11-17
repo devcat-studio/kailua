@@ -91,6 +91,11 @@ local function p() end
 local x = p + 'foo' --@< Error: `function() --> ()` is not a subtype of `number`
 --! error
 
+--8<-- arith-integer
+--# assume p: integer
+p = 2 + 3 * (4 + 5 - 6) % 7
+--! ok
+
 --8<-- lt-number-integer-1
 --# assume p: number
 local x = p < 3

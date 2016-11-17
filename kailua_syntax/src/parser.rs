@@ -1,4 +1,5 @@
 use std::iter;
+use std::u8;
 use std::i32;
 use std::fmt;
 use std::result;
@@ -1722,173 +1723,135 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn try_parse_prefix_unary_exp<Term, Op>(&mut self,
-                                            mut check_op: Op,
-                                            mut try_parse_term: Term)
-            -> Result<Option<Spanned<Exp>>>
-            where Term: FnMut(&mut Self) -> Result<Option<Spanned<Exp>>>,
-                  Op: FnMut(&Tok) -> Option<UnOp> {
-        let mut ops = Vec::new();
-        while let Some(op) = check_op(self.peek()) {
-            let opspan = self.read().1.span;
-            ops.push(op.with_loc(opspan));
-        }
+    // operator-precedence parser for a subset of the Lua expression grammar.
+    // more accurately, this is a "precedence climbing" algorithm [1] as used by Lua as well.
+    // in short one function call will try to collect subexpressions in the form of...
+    //     ((atom op1 subexpr1) op2 subexpr2) ... opN subexprN
+    // ...so that operators' precedences are _monotonically_ decreasing and
+    // each subexprK only has operators with higher precedence than opK.
+    //
+    // this is represented by `minprec` argument, where higher precedence assigns
+    // a larger number and only operators with precedence > minprec get accepted.
+    // we don't need to actually track if the precedences are decreasing;
+    // due to prior requirements, every operator in subexprK has lower precedence than opK,
+    // thus op(K+1) is the first token with precedence higher than or equal to opK.
+    //
+    // for right-associative operators precedences should be _strictly_ decreasing instead.
+    // to simplify the matter we have a difference precedence for comparison and recursion.
+    // while left-associative operators have the same precedence for both,
+    // right-associative operators have comparison precedence higher than recusion precedence;
+    // if opK is right-associative, subexprK can contain opK and result in a correct tree.
+    //
+    // for prefix unary operators the above form can be rewritten as follows...
+    //     (((opU subexprU) op1 subexpr1) op2 subexpr2) ... opN subexprN
+    // ...where the relation between opU and subexprU is same to others.
+    // practically, though, Lua allows an unary operator before any atomic expression,
+    // so opU itself is not affected by `minprec`.
+    //
+    // [1] https://www.engr.mun.ca/~theo/Misc/exp_parsing.htm#climbing
 
-        let mut exp = if let Some(exp) = try_parse_term(self)? {
-            exp
-        } else if ops.is_empty() {
-            // if there is no operator and expression read,
-            // it's a normal case as we allow the expression to be absent.
-            return Ok(None);
-        } else {
-            let tok = self.read();
-            self.error(tok.1.span, m::NoExp { read: &tok.1.base }).done()?;
-            self.unread(tok);
-
-            // if a series of unary operators is not followed by a proper expression,
-            // do not read further and instead apply those operators to a dummy node (Ex::Oops).
-            Box::new(Ex::Oops).with_loc(self.last_pos())
+    fn try_peek_unary_op(&mut self) -> Option<Spanned<UnOp>> {
+        let tok = self.peek();
+        let op = match tok.base {
+            Tok::Punct(Punct::Dash) => Some(UnOp::Neg),
+            Tok::Keyword(Keyword::Not) => Some(UnOp::Not),
+            Tok::Punct(Punct::Hash) => Some(UnOp::Len),
+            _ => None,
         };
-        while let Some(op) = ops.pop() {
-            let span = op.span | exp.span;
-            exp = Box::new(Ex::Un(op, exp)).with_loc(span);
+        op.map(|op| op.with_loc(tok))
+    }
+
+    fn try_peek_binary_op(&mut self) -> Option<Spanned<BinOp>> {
+        let tok = self.peek();
+        let op = match tok.base {
+            Tok::Punct(Punct::Plus) => Some(BinOp::Add),
+            Tok::Punct(Punct::Dash) => Some(BinOp::Sub),
+            Tok::Punct(Punct::Star) => Some(BinOp::Mul),
+            Tok::Punct(Punct::Slash) => Some(BinOp::Div),
+            Tok::Punct(Punct::Caret) => Some(BinOp::Pow),
+            Tok::Punct(Punct::Percent) => Some(BinOp::Mod),
+            Tok::Punct(Punct::DotDot) => Some(BinOp::Cat),
+            Tok::Punct(Punct::Lt) => Some(BinOp::Lt),
+            Tok::Punct(Punct::LtEq) => Some(BinOp::Le),
+            Tok::Punct(Punct::Gt) => Some(BinOp::Gt),
+            Tok::Punct(Punct::GtEq) => Some(BinOp::Ge),
+            Tok::Punct(Punct::EqEq) => Some(BinOp::Eq),
+            Tok::Punct(Punct::TildeEq) => Some(BinOp::Ne),
+            Tok::Keyword(Keyword::And) => Some(BinOp::And),
+            Tok::Keyword(Keyword::Or) => Some(BinOp::Or),
+            _ => None,
+        };
+        op.map(|op| op.with_loc(tok))
+    }
+
+    // the precedence level 0 is reserved and used at the top level
+    fn try_parse_partial_exp(&mut self, minprec: u8) -> Result<Option<Spanned<Exp>>> {
+        fn unary_prec(op: UnOp) -> /*recursion*/ u8 {
+            match op {
+                // binary ^ operator here
+                UnOp::Neg | UnOp::Not | UnOp::Len => 8,
+                // other binary operators here
+            }
         }
+
+        fn binary_prec(op: BinOp) -> (/*comparison*/ u8, /*recursion*/ u8) {
+            match op {
+                BinOp::Pow => (10, 9),
+                // unary operators here
+                BinOp::Mul | BinOp::Div | BinOp::Mod => (7, 7),
+                BinOp::Add | BinOp::Sub => (6, 6),
+                BinOp::Cat => (5, 4),
+                BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne => (3, 3),
+                BinOp::And => (2, 2),
+                BinOp::Or => (1, 1),
+            }
+        }
+
+        trace!("parsing exp with min prec {}", minprec);
+
+        let begin = self.pos();
+        let mut exp = if let Some(op) = self.try_peek_unary_op() {
+            // unop exp ...
+            self.read();
+            let rprec = unary_prec(op.base);
+            let exp = self.parse_partial_exp(rprec)?;
+            Box::new(Ex::Un(op, exp)).with_loc(begin..self.last_pos())
+        } else if let Some(exp) = self.try_parse_atomic_exp()? {
+            // atomicexp ...
+            exp
+        } else {
+            return Ok(None);
+        };
+
+        // (unop exp | atomicexp) {binop <exp with lower prec>}
+        while let Some(op) = self.try_peek_binary_op() {
+            let (cprec, rprec) = binary_prec(op.base);
+            if cprec <= minprec { break; }
+            self.read();
+            let exp2 = self.parse_partial_exp(rprec)?;
+            exp = Box::new(Ex::Bin(exp, op, exp2)).with_loc(begin..self.last_pos());
+        }
+
         Ok(Some(exp))
     }
 
-    fn try_parse_left_assoc_binary_exp<Term, Op>(&mut self,
-                                                 mut check_op: Op,
-                                                 mut try_parse_term: Term)
-            -> Result<Option<Spanned<Exp>>>
-            where Term: FnMut(&mut Self) -> Result<Option<Spanned<Exp>>>,
-                  Op: FnMut(&Tok) -> Option<BinOp> {
-        if let Some(exp) = try_parse_term(self)? {
-            let mut exp = exp;
-            while let Some(op) = check_op(self.peek()) {
-                let opspan = self.read().1.span;
-                if let Some(exp2) = try_parse_term(self)? {
-                    let span = exp.span | opspan | exp2.span;
-                    exp = Box::new(Ex::Bin(exp, op.with_loc(opspan), exp2)).with_loc(span);
-                } else {
-                    let tok = self.read();
-                    self.error(tok.1.span, m::NoExp { read: &tok.1.base }).done()?;
-                    self.unread(tok);
-                    break;
-                }
-            }
-            Ok(Some(exp))
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn try_parse_right_assoc_binary_exp<Term, Op>(&mut self,
-                                                  mut check_op: Op,
-                                                  mut try_parse_term: Term)
-            -> Result<Option<Spanned<Exp>>>
-            where Term: FnMut(&mut Self) -> Result<Option<Spanned<Exp>>>,
-                  Op: FnMut(&Tok) -> Option<BinOp> {
-        if let Some(exp) = try_parse_term(self)? {
-            // store the terms and process in the reverse order
-            // e.g. <exp:terms[0].0> <op:terms[0].1> <exp:terms[1].0> <op:terms[1].1> <exp:last_exp>
-            let mut exp = exp;
-            let mut terms = vec![];
-            while let Some(op) = check_op(self.peek()) {
-                let opspan = self.read().1.span;
-                if let Some(e) = try_parse_term(self)? {
-                    terms.push((exp, op.with_loc(opspan)));
-                    exp = e;
-                } else {
-                    let tok = self.read();
-                    self.error(tok.1.span, m::NoExp { read: &tok.1.base }).done()?;
-                    self.unread(tok);
-                    break;
-                }
-            }
-            while let Some((exp1, op)) = terms.pop() {
-                let span = exp1.span | op.span | exp.span;
-                exp = Box::new(Ex::Bin(exp1, op, exp)).with_loc(span);
-            }
-            Ok(Some(exp))
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn try_parse_exp(&mut self) -> Result<Option<Spanned<Exp>>> {
-        trace!("parsing exp");
-
-        macro_rules! make_check_ops {
-            ($($name:ident: $ty:ident { $($tokty:ident::$tok:ident => $op:ident),+ $(,)* };)*) => (
-                $(
-                    fn $name(tok: &Tok) -> Option<$ty> {
-                        match *tok {
-                            $(Tok::$tokty($tokty::$tok) => Some($ty::$op),)*
-                            _ => None,
-                        }
-                    }
-                )*
-            )
-        }
-
-        make_check_ops! {
-            check_pow_op: BinOp {
-                Punct::Caret => Pow,
-            };
-            check_un_op: UnOp {
-                Keyword::Not => Not,
-                Punct::Hash => Len,
-                Punct::Dash => Neg,
-            };
-            check_mul_op: BinOp {
-                Punct::Star => Mul,
-                Punct::Slash => Div,
-                Punct::Percent => Mod,
-            };
-            check_add_op: BinOp {
-                Punct::Plus => Add,
-                Punct::Dash => Sub,
-            };
-            check_cat_op: BinOp {
-                Punct::DotDot => Cat,
-            };
-            check_comp_op: BinOp {
-                Punct::Lt => Lt,
-                Punct::Gt => Gt,
-                Punct::LtEq => Le,
-                Punct::GtEq => Ge,
-                Punct::TildeEq => Ne,
-                Punct::EqEq => Eq,
-            };
-            check_and_op: BinOp {
-                Keyword::And => And,
-            };
-            check_or_op: BinOp {
-                Keyword::Or => Or,
-            };
-        }
-
-        let mut parser = self;
-        parser.try_parse_left_assoc_binary_exp(check_or_op, |parser|
-            parser.try_parse_left_assoc_binary_exp(check_and_op, |parser|
-                parser.try_parse_left_assoc_binary_exp(check_comp_op, |parser|
-                    parser.try_parse_right_assoc_binary_exp(check_cat_op, |parser|
-                        parser.try_parse_left_assoc_binary_exp(check_add_op, |parser|
-                            parser.try_parse_left_assoc_binary_exp(check_mul_op, |parser|
-                                parser.try_parse_prefix_unary_exp(check_un_op, |parser|
-                                    parser.try_parse_right_assoc_binary_exp(check_pow_op, |parser|
-                                        parser.try_parse_atomic_exp()))))))))
-    }
-
-    fn parse_exp(&mut self) -> Result<Spanned<Exp>> {
-        if let Some(exp) = self.try_parse_exp()? {
+    fn parse_partial_exp(&mut self, minprec: u8) -> Result<Spanned<Exp>> {
+        if let Some(exp) = self.try_parse_partial_exp(minprec)? {
             Ok(exp)
         } else {
             let tok = self.read();
             self.error(tok.1.span, m::NoExp { read: &tok.1.base }).done()?;
             self.unread(tok);
-            Err(Stop::Recover)
+            Ok(Box::new(Ex::Oops).with_loc(self.last_pos()))
         }
+    }
+
+    fn try_parse_exp(&mut self) -> Result<Option<Spanned<Exp>>> {
+        self.try_parse_partial_exp(0)
+    }
+
+    fn parse_exp(&mut self) -> Result<Spanned<Exp>> {
+        self.parse_partial_exp(0)
     }
 
     fn parse_var(&mut self) -> Result<Spanned<Var>> {
