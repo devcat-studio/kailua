@@ -15,8 +15,8 @@ pub struct VSParseTree {
 
 impl VSParseTree {
     pub fn new(stream: Box<VSTokenStream>, report: &Report) -> Option<Box<VSParseTree>> {
-        let tokens = stream.into_tokens();
-        let parser = Parser::new(tokens.into_iter(), report);
+        let mut tokens = stream.into_tokens().into_iter();
+        let parser = Parser::new(&mut tokens, report);
         if let Ok(chunk) = parser.into_chunk() {
             Some(Box::new(VSParseTree { chunk: chunk }))
         } else {

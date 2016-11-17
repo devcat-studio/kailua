@@ -3,9 +3,9 @@ use std::ptr;
 use std::panic::{self, AssertUnwindSafe};
 use source::VSSource;
 use report::VSReport;
-use kailua_env::{Span, Spanned};
+use kailua_env::Span;
 use kailua_diag::Report;
-use kailua_syntax::{Tok, Punct, Keyword, Lexer};
+use kailua_syntax::{Tok, Punct, Keyword, Lexer, Nest, NestedToken};
 
 macro_rules! define_token_type {
     (
@@ -130,7 +130,7 @@ define_token_type! {
 }
 
 pub struct VSTokenStream {
-    tokens: Vec<Spanned<Tok>>,
+    tokens: Vec<NestedToken>,
     cursor: usize,
 }
 
@@ -138,8 +138,9 @@ impl VSTokenStream {
     pub fn new(source: &VSSource, span: Span, report: &Report) -> Option<Box<VSTokenStream>> {
         let source = source.source().write().unwrap();
         if let Some(mut iter) = source.iter_from_span(span) {
-            let lexer = Lexer::new(&mut iter, report);
-            let tokens: Vec<_> = lexer.collect();
+            let mut lexer = Lexer::new(&mut iter, report);
+            let nest = Nest::new(&mut lexer);
+            let tokens: Vec<_> = nest.collect();
             assert!(!tokens.is_empty()); // should include EOF
             Some(Box::new(VSTokenStream { tokens: tokens, cursor: 0 }))
         } else {
@@ -147,7 +148,7 @@ impl VSTokenStream {
         }
     }
 
-    pub fn into_tokens(self) -> Vec<Spanned<Tok>> {
+    pub fn into_tokens(self) -> Vec<NestedToken> {
         self.tokens
     }
 
@@ -156,8 +157,8 @@ impl VSTokenStream {
         if self.cursor + 1 < self.tokens.len() {
             self.cursor += 1;
         }
-        *span = token.span;
-        VSTokenType::from(&token.base)
+        *span = token.tok.span;
+        VSTokenType::from(&token.tok.base)
     }
 }
 

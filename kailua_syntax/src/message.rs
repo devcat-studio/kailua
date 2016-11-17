@@ -1,3 +1,4 @@
+use lang::Lua;
 use lex::Tok;
 use ast::Name;
 use parser::Expectable;
@@ -373,5 +374,12 @@ define_msg! { pub ReservedKindName<'a> { name: &'a Name }:
 define_msg! { pub NoKindParamsClose<'a> { read: &'a Tok }:
     "ko" => "`>`이나 `>>`가 나와야 하는데 {read}이(가) 나왔습니다",
     _    => "Expected `>` or `>>`, got {read}",
+}
+
+define_msg! { pub FutureKeyword<'a> { read: &'a Tok, current: Lua, future: Lua }:
+    "ko" => "{read}은(는) {current}에서는 이름으로 처리되지만 \
+             {future}부터는 예약어가 되었으므로 쓰지 않는 것이 좋습니다",
+    _    => "The use of {read} is discouraged as it was a name in {current} \
+             but it became a keyword since {future}",
 }
 

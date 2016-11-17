@@ -512,7 +512,7 @@ f()
 --8<-- assume-incomplete
 --# assume a:
 --# assume b: string --@< Error: Expected a single type, got a keyword `assume`
---! [KailuaAssume(`a`$1, _, Oops)$1]
+--! [KailuaAssume(`a`$1, _, Oops)$1, KailuaAssume(`b`$2, _, String)$2]
 
 --8<-- assume-global-local
 --# assume global a: {x=string}
@@ -1590,7 +1590,7 @@ f()
 --8<-- alias-incomplete
 --# type int =
 --# assume x: vector<int> --@< Error: Expected a single type, got a keyword `assume`
---! [KailuaType(`int`, Oops)]
+--! [KailuaType(`int`, Oops), KailuaAssume(`x`$1, _, Array(_ `int`))$1]
 
 --8<-- kind-error
 --# type x = error
@@ -1606,14 +1606,14 @@ f()
 
 --8<-- lua51-goto-as-a-name
 --# open lua51
-goto = 42
+goto = 42 --@< Warning: The use of a keyword `goto` is discouraged as it was a name in Lua 5.1 but it became a keyword since Lua 5.2
 --! [KailuaOpen(`lua51`), Assign([`goto`_], [42])]
 
 --8<-- lua51-goto-as-a-name-in-meta-1
 --# open lua51
---# type goto = integer --@< Error: Expected a name, got a keyword `goto`
+--# type goto = integer --@< Warning: The use of a keyword `goto` is discouraged as it was a name in Lua 5.1 but it became a keyword since Lua 5.2
 f()
---! [KailuaOpen(`lua51`), Oops, Void(`f`_())]
+--! [KailuaOpen(`lua51`), KailuaType(`goto`, Integer), Void(`f`_())]
 
 --8<-- lua51-goto-as-a-name-in-meta-2
 --# open lua51

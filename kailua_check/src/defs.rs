@@ -1,6 +1,6 @@
 use kailua_env::{Span, SourceData, WithLoc};
 use kailua_diag::NoReport;
-use kailua_syntax::{Chunk, Lexer, Parser};
+use kailua_syntax::{Chunk, Lexer, Nest, Parser};
 
 pub struct Def {
     pub name: &'static str,
@@ -13,8 +13,9 @@ impl Def {
         let mut iter = self.code.iter().map(|&c| SourceData::U8(c).with_loc(span))
                                        .chain(Some(SourceData::EOF.with_loc(span)));
         let no_report = NoReport;
-        let lexer = Lexer::new(&mut iter, &no_report);
-        let parser = Parser::new(lexer, &no_report);
+        let mut lexer = Lexer::new(&mut iter, &no_report);
+        let mut nest = Nest::new(&mut lexer);
+        let parser = Parser::new(&mut nest, &no_report);
         match parser.into_chunk() {
             Ok(chunk) => chunk,
             Err(e) => panic!("failed to parse a built-in definition {:?}: {:?}", self.name, e),
