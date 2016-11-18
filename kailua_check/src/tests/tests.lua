@@ -315,6 +315,11 @@ local a = (nil and 'string') + 42 --@< Error: `nil` is not a subtype of `number`
 local a = (nil and 53) + 42 --@< Error: `nil` is not a subtype of `number`
 --! error
 
+--8<-- conjunctive-type-erasure
+--# assume x: nil | boolean
+local a = x and 53 --: integer | nil | false
+--! ok
+
 --8<-- disjunctive-lhs-1
 local a = (53 or 'string') + 42
 --! ok
@@ -329,6 +334,13 @@ local a = (nil or 'string') + 42 --@< Error: `"string"` is not a subtype of `num
 
 --8<-- disjunctive-rhs-2
 local a = (nil or 53) + 42
+--! ok
+
+--8<-- disjunctive-type-erasure
+--# assume x: integer?
+--# assume y: integer | boolean
+local a = (x or 53) + 42
+local b = y or 53 --: integer | true
 --! ok
 
 --8<-- conjunctive-lhs-dynamic

@@ -242,33 +242,74 @@ impl<'a> T<'a> {
         }
     }
 
-    // used for value slots in array and mapping types
-    pub fn to_ref_without_nil<'b: 'a>(&'b self) -> T<'b> {
+    pub fn to_ref_without_simple<'b: 'a>(&'b self, filter: UnionedSimple) -> T<'b> {
         match *self {
-            T::Nil => T::None,
-            T::Union(ref u) if u.simple.contains(U_NIL) => {
+            T::Nil      if filter.contains(U_NIL)      => T::None,
+            T::Boolean  if filter.contains(U_BOOLEAN)  => T::None,
+            T::Boolean  if filter.contains(U_TRUE)     => T::False,
+            T::Boolean  if filter.contains(U_FALSE)    => T::True,
+            T::True     if filter.contains(U_TRUE)     => T::None,
+            T::False    if filter.contains(U_FALSE)    => T::None,
+            T::Thread   if filter.contains(U_THREAD)   => T::None,
+            T::UserData if filter.contains(U_USERDATA) => T::None,
+            T::Union(ref u) if u.simple.intersects(filter) => {
                 let mut u = u.clone().into_owned();
-                u.simple.remove(U_NIL);
+                u.simple.remove(filter);
                 u.simplify()
             },
             _ => self.to_ref(),
         }
     }
 
-    // used for value slots in array and mapping types
-    pub fn without_nil(self) -> T<'a> {
+    pub fn without_simple(self, filter: UnionedSimple) -> T<'a> {
         match self {
-            T::Nil => T::None,
+            T::Nil      if filter.contains(U_NIL)      => T::None,
+            T::Boolean  if filter.contains(U_BOOLEAN)  => T::None,
+            T::Boolean  if filter.contains(U_TRUE)     => T::False,
+            T::Boolean  if filter.contains(U_FALSE)    => T::True,
+            T::True     if filter.contains(U_TRUE)     => T::None,
+            T::False    if filter.contains(U_FALSE)    => T::None,
+            T::Thread   if filter.contains(U_THREAD)   => T::None,
+            T::UserData if filter.contains(U_USERDATA) => T::None,
             T::Union(u) => {
-                if u.simple.contains(U_NIL) {
+                if u.simple.intersects(filter) {
                     let mut u = u.into_owned();
-                    u.simple.remove(U_NIL);
+                    u.simple.remove(filter);
                     u.simplify()
                 } else {
                     T::Union(u)
                 }
             },
             t => t,
+        }
+    }
+
+    // used for value slots in array and mapping types
+
+    pub fn to_ref_without_nil<'b: 'a>(&'b self) -> T<'b> { self.to_ref_without_simple(U_NIL) }
+    pub fn without_nil(self) -> T<'a> { self.without_simple(U_NIL) }
+
+    // used for simplifying logical conditions
+
+    pub fn to_ref_truthy<'b: 'a>(&'b self) -> T<'b> { self.to_ref_without_simple(U_NIL | U_FALSE) }
+    pub fn truthy(self) -> T<'a> { self.without_simple(U_NIL | U_FALSE) }
+
+    pub fn falsey(&self) -> T<'static> {
+        match *self {
+            T::Nil => T::Nil,
+            T::Boolean | T::False => T::False,
+            T::Union(ref u) => {
+                let has_nil = u.simple & U_NIL != U_NONE;
+                let has_false = u.simple & U_FALSE != U_NONE;
+                match (has_nil, has_false) {
+                    (true, true) => T::Nil | T::False,
+                    (true, false) => T::Nil,
+                    (false, true) => T::False,
+                    (false, false) => T::None,
+                }
+            },
+            T::Builtin(b, ref t) => T::Builtin(b, Box::new(t.falsey())),
+            _ => T::None,
         }
     }
 

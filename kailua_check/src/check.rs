@@ -246,8 +246,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     // False and T => False
                     if lhs.is_falsy() { return Ok(Slot::just(lhs.unlift().clone())); }
                 }
-                // unsure, both can be possible
-                Ok(Slot::just((*lhs.unlift()).union(&*rhs.unlift(), self.context())))
+                // unsure, both can be possible (but truthy types in lhs are not kept)
+                Ok(Slot::just(lhs.unlift().falsey().union(&*rhs.unlift(), self.context())))
             }
 
             BinOp::Or => {
@@ -261,8 +261,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     // False or T => T
                     if lhs.is_falsy() { return Ok(Slot::just(rhs.unlift().clone())); }
                 }
-                // unsure, both can be possible
-                Ok(Slot::just((*lhs.unlift()).union(&*rhs.unlift(), self.context())))
+                // unsure, both can be possible (but falsey types in lhs are not kept)
+                Ok(Slot::just(lhs.unlift().to_ref_truthy().union(&*rhs.unlift(), self.context())))
             }
         }
     }
