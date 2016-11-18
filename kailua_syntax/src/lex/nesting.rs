@@ -133,15 +133,17 @@ impl<'a> Nest<'a> {
             // meta blocks
             // Newline token is only generated inside a meta block by the lexer
             // Meta can be nested (sometimes), but closes the prior open Meta nesting
-            (_, &Tok::Punct(Punct::DashDashV)) =>
-                // `--v` can appear in an expression (in front of a function literal)
+            (_, &Tok::Punct(Punct::DashDashV)) |
+            (_, &Tok::Punct(Punct::DashDashColon)) =>
+                // can appear in the expression context:
+                // `--v` before function literals, `--:` inside an argument list (separate nesting)
+                // note that `-->` always appear at the statement level due to the positioning
                 (false, Action::ReplaceMeta),
-            (_, &Tok::Punct(Punct::DashDashHash)) |
-            (_, &Tok::Punct(Punct::DashDashColon)) |
-            (_, &Tok::Punct(Punct::DashDashGt)) =>
+            (_, &Tok::Punct(Punct::DashDashGt)) |
+            (_, &Tok::Punct(Punct::DashDashHash)) =>
                 (true, Action::ReplaceMeta),
             (_, &Tok::Punct(Punct::Newline)) =>
-                (true, Action::Pop(Nesting::Meta)),
+                (false, Action::Pop(Nesting::Meta)),
 
             // while, for and do blocks
             //
