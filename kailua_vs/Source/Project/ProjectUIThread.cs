@@ -18,6 +18,7 @@ namespace Kailua
             project.ReportDataChanged += this.OnReportDataChanged;
             this.project = new WeakReference<Project>(project);
             this.errorListProvider = new ReportErrorListProvider(dteProject);
+            this.Launch();
         }
 
         internal void OnReportDataChanged(IList<ReportData> reportData)
@@ -48,6 +49,30 @@ namespace Kailua
                 this.errorListProvider.AddReport(data);
             }
             this.errorListProvider.Refresh();
+        }
+
+        internal void Launch()
+        {
+            ThreadHelper.JoinableTaskFactory.RunAsync(async delegate()
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+                // try to relaunch the parsing job every second
+                while (true)
+                {
+                    Project project;
+                    if (this.disposed || !this.project.TryGetTarget(out project))
+                    {
+                        // the project is dead, no need to continue
+                        break;
+                    }
+
+                    // note that we do NOT await for this task, we just launch them and leave it as is
+                    var _ = project.CheckTask;
+
+                    await Task.Delay(1000);
+                }
+            });
         }
 
         public void Dispose()
