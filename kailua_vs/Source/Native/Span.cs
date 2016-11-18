@@ -1,8 +1,10 @@
 ﻿using System;
+using System.Runtime.InteropServices;
 using Microsoft.VisualStudio.Text;
 
 namespace Kailua.Native
 {
+    [StructLayout(LayoutKind.Sequential)]
     public struct Span : IEquatable<Span>
     {
         private UInt32 unit;

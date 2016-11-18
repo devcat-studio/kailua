@@ -38,11 +38,152 @@ namespace Kailua
             this.glyphService = glyphService;
         }
 
+        private string[] keywordsForNestingCategory(Native.TokenNestingCategory nestingCategory)
+        {
+            switch (nestingCategory)
+            {
+                case Native.TokenNestingCategory.Expr:
+                default:
+                    return new string[]
+                    {
+                        "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if",
+                        "in", "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
+                    };
+
+                case Native.TokenNestingCategory.Meta:
+                    return new string[]
+                    {
+                        "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if",
+                        "in", "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
+                        "assume", "const", "global", "map", "module", "once", "open", "type", "var", "vector",
+                    };
+            }
+        }
+
+        // check if the caret is located in regions where the autocompletion should be disabled:
+        //
+        // 1. `local NAME ... | ... [= ...]`
+        // 2. `for NAME ... | ... = ... do ... end`
+        // 3. `function NAME ... | ( ... )`
+        // 4. `function [NAME ...] ( ... | ... )`
+        //
+        // the check for 1 and 2 is handled by looking backward for the first token
+        // that is not a comment, a name or a comma and is in the same nesting as the caret.
+        // if the token exists and it's `local` or `for`, autocompletion is disabled.
+        //
+        // the check for 3 is handled by looking backward for the first token
+        // that is not a comment, a name, a dot or a colon and is in the same nesting as the caret.
+        // if the token exists and it's `function`, autocompletion is disabled.
+        //
+        // the check for 4 is handled similarly to the check for 1 and 2,
+        // but once seen a `(` token, it will switch to the check for 3 at the parent nesting.
+        //
+        // for the interactivity, the lookbehind is limited to a reasonable number.
+        private bool isNameCompletionDisabled(TokenList tokenList, int nameTokenIndex)
+        {
+            const int LOOKBEHIND_LIMIT = 4096;
+
+            var tokenListWithSnapshot = tokenList.WithSnapshot;
+            var nameToken = tokenListWithSnapshot[nameTokenIndex];
+            var initNesting = nameToken.Nesting;
+#if TRACE_COMPLETION
+            Log.Write("starting at token {0} {1} - target nesting {2} {3}",
+                nameToken.Type, nameToken.Span, initNesting.Depth, initNesting.Serial);
+#endif
+
+            var isNameDeclPossible = true; // case 1, 2 and 4a
+            var isFuncSigPossible = true; // case 3 and 4b
+            var count = 0;
+            for (int i = nameTokenIndex - 1;
+                 i >= 0 && count < LOOKBEHIND_LIMIT && (isNameDeclPossible || isFuncSigPossible);
+                 --i, ++count)
+            {
+                var token = tokenListWithSnapshot[i];
+#if TRACE_COMPLETION
+                Log.Write("looking at token {0} {1} (namedecl {2}, sig {3}) - current nesting {4} {5}",
+                    token.Type, token.Span, isNameDeclPossible, isFuncSigPossible, token.Nesting.Depth, token.Nesting.Serial);
+#endif
+                if (token.Nesting.Depth <= initNesting.Depth && token.Nesting.Serial != initNesting.Serial)
+                {
+                    // escaped the current nesting, stop the search
+                    return false;
+                }
+                else if (token.Nesting.Depth > initNesting.Depth)
+                {
+                    // ignore more nested tokens (but count them towards the threshold)
+                    continue;
+                }
+
+                // isNameDeclPossible can continue to isFuncSigPossible in place, so this should be first
+                if (isFuncSigPossible)
+                {
+                    switch (token.Type)
+                    {
+                        case Native.TokenType.Comment:
+                        case Native.TokenType.Name:
+                        case Native.TokenType.Dot:
+                        case Native.TokenType.Colon:
+                            break;
+
+                        case Native.TokenType.Function:
+                            return true;
+
+                        default:
+                            isFuncSigPossible = false;
+                            break;
+                    }
+                }
+
+                if (isNameDeclPossible)
+                {
+                    switch (token.Type)
+                    {
+                        case Native.TokenType.Comment:
+                        case Native.TokenType.Name:
+                        case Native.TokenType.Comma:
+                        case Native.TokenType.Newline: // to account for meta comments (other tokens are nested)
+                            break;
+
+                        case Native.TokenType.LParen:
+                            // `function ... ( ... | ... )` is possible
+                            // update the initial nesting to point to a token before `(` and proceed
+                            if (i == 0)
+                            {
+                                return false;
+                            }
+                            initNesting = tokenListWithSnapshot[i - 1].Nesting;
+                            isNameDeclPossible = false;
+                            isFuncSigPossible = true;
+                            break;
+
+                        case Native.TokenType.Local:
+                        case Native.TokenType.For:
+                            return true;
+
+                        default:
+                            isNameDeclPossible = false;
+                            break;
+                    }
+                }
+            }
+
+            return false;
+        }
+        
         private IEnumerable<Completion> completeVariableAndKeyword(
             Project project,
             ProjectFile file,
-            SnapshotPoint triggerPoint)
+            SnapshotPoint triggerPoint,
+            TokenList tokenList,
+            int nameTokenIndex,
+            Native.TokenNestingCategory nestingCategory)
         {
+            // check if the caret is at the name definition and autocompletion should be disabled
+            if (nestingCategory == Native.TokenNestingCategory.Expr && this.isNameCompletionDisabled(tokenList, nameTokenIndex))
+            {
+                yield break;
+            }
+
             // grab the last valid parse tree, which may not be current but can be useful for completion
             var tree = file.LastValidParseTree;
             if (tree == null)
@@ -70,14 +211,8 @@ namespace Kailua
                 yield return new Completion(name, name, null, globalNameIcon, null);
             }
 
-            // TODO contextual keywords
-            var keywords = new string[]
-            {
-                "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in",
-                "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while"
-            };
             var keywordIcon = this.glyphService.GetGlyph(StandardGlyphGroup.GlyphKeyword, StandardGlyphItem.GlyphItemPublic);
-            foreach (var keyword in keywords)
+            foreach (var keyword in this.keywordsForNestingCategory(nestingCategory))
             {
                 yield return new Completion(keyword, keyword, null, keywordIcon, null);
             }
@@ -90,21 +225,16 @@ namespace Kailua
             TokenList tokenList,
             int sepTokenIndex)
         {
-            // TODO we should really distinguish desugared subexpression from normal prefix expression,
-            // but for now we use the most common criterion to distinguish them.
-            // one of known problems in this approach is that `x"":foo()` etc wouldn't work.
+            // note that this approach of using the closest non-comment token's end is prone to syntax error;
+            // while completing `f"":` should work, `"":` (invalid, should have been `(""):`) will also work.
+            // as such a mistake can be readily reported, however, we don't try to perfect the approach.
             SnapshotPoint? prefixExprEnd = null;
             for (int i = sepTokenIndex - 1; i >= 0; --i)
             {
                 var prevToken = tokenList.WithSnapshot[i];
-                if (prevToken.Type == Native.TokenType.RParen || prevToken.Type == Native.TokenType.Name)
+                if (prevToken.Type != Native.TokenType.Comment)
                 {
                     prefixExprEnd = prevToken.Span.End;
-                    break;
-                }
-                else if (prevToken.Type != Native.TokenType.Comment)
-                {
-                    // skip comments to be sure
                     break;
                 }
             }
@@ -215,7 +345,8 @@ namespace Kailua
                 }
                 else
                 {
-                    completions = this.completeVariableAndKeyword(project, file, triggerPoint);
+                    // due to mode.IsAfter() condition, the token used for the nesting category is correct
+                    completions = this.completeVariableAndKeyword(project, file, triggerPoint, tokenList, index, token.Nesting.Category);
                 }
             }
             else

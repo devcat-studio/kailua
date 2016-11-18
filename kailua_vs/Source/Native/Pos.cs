@@ -1,7 +1,9 @@
 ﻿using System;
+using System.Runtime.InteropServices;
 
 namespace Kailua.Native
 {
+    [StructLayout(LayoutKind.Sequential)]
     public struct Pos : IEquatable<Pos>
     {
         private UInt32 unit;

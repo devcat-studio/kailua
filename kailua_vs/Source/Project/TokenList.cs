@@ -10,18 +10,21 @@ namespace Kailua
     public struct TokenTypeAndSnapshotSpan
     {
         public Native.TokenType Type;
+        public Native.TokenNesting Nesting;
         public SnapshotSpan Span;
 
-        public TokenTypeAndSnapshotSpan(Native.TokenType type, SnapshotSpan span)
+        public TokenTypeAndSnapshotSpan(Native.TokenType type, SnapshotSpan span, Native.TokenNesting nesting)
         {
             this.Type = type;
             this.Span = span;
+            this.Nesting = nesting;
         }
 
         public TokenTypeAndSnapshotSpan(Native.TokenTypeAndSpan token, ITextSnapshot snapshot)
         {
             this.Type = token.Type;
             this.Span = token.Span.AttachSnapshot(snapshot);
+            this.Nesting = token.Nesting;
         }
     }
 
@@ -200,7 +203,7 @@ namespace Kailua
 
         private IntersectionMode doIntersectionWith(Native.Pos pos, out int index)
         {
-            var needle = new Native.TokenTypeAndSpan(Native.TokenType.Error, new Native.Span(pos));
+            var needle = new Native.TokenTypeAndSpan(Native.TokenType.Error, new Native.Span(pos), new Native.TokenNesting());
             var i = this.tokens.BinarySearch(needle, new SearchComparer());
             if (i < 0)
             {

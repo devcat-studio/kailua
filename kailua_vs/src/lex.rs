@@ -129,6 +129,16 @@ define_token_type! {
     }
 }
 
+pub const VS_TOKEN_NESTING_IS_EXPR: u8 = 0;
+pub const VS_TOKEN_NESTING_IS_META: u8 = 1;
+
+#[repr(C)]
+pub struct VSTokenNesting {
+    serial: u32,
+    depth: u16,
+    category: u8,
+}
+
 pub struct VSTokenStream {
     tokens: Vec<NestedToken>,
     cursor: usize,
@@ -152,12 +162,17 @@ impl VSTokenStream {
         self.tokens
     }
 
-    pub fn next(&mut self, span: &mut Span) -> VSTokenType {
+    pub fn next(&mut self, span: &mut Span, nesting: &mut VSTokenNesting) -> VSTokenType {
         let token = &self.tokens[self.cursor];
         if self.cursor + 1 < self.tokens.len() {
             self.cursor += 1;
         }
         *span = token.tok.span;
+        *nesting = VSTokenNesting {
+            serial: token.serial.to_usize() as u32,
+            depth: token.depth,
+            category: token.category as u8,
+        };
         VSTokenType::from(&token.tok.base)
     }
 }
@@ -185,17 +200,21 @@ pub extern "C" fn kailua_token_stream_new(src: *const VSSource,
 
 #[no_mangle]
 pub extern "C" fn kailua_token_stream_next(stream: *mut VSTokenStream,
-                                           span: *mut Span) -> VSTokenType {
+                                           span: *mut Span,
+                                           nesting: *mut VSTokenNesting) -> VSTokenType {
     if stream.is_null() { return VSTokenType::Dead; }
     if span.is_null() { return VSTokenType::Dead; }
+    if nesting.is_null() { return VSTokenType::Dead; }
 
     let stream: &mut VSTokenStream = unsafe { mem::transmute(stream) };
     let span = unsafe { span.as_mut().unwrap() };
+    let nesting = unsafe { nesting.as_mut().unwrap() };
 
     let mut stream = AssertUnwindSafe(stream);
     let span = AssertUnwindSafe(span);
+    let nesting = AssertUnwindSafe(nesting);
     panic::catch_unwind(move || {
-        stream.next(span.0)
+        stream.next(span.0, nesting.0)
     }).unwrap_or(VSTokenType::Dead)
 }
 

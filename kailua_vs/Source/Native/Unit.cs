@@ -1,7 +1,9 @@
 ﻿using System;
+using System.Runtime.InteropServices;
 
 namespace Kailua.Native
 {
+    [StructLayout(LayoutKind.Sequential)]
     public struct Unit : IEquatable<Unit>
     {
         private UInt32 unit;

@@ -38,15 +38,31 @@ namespace Kailua.Native
         }
     }
 
+    public enum TokenNestingCategory : byte
+    {
+        Expr = 0,
+        Meta = 1,
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct TokenNesting
+    {
+        public UInt32 Serial;
+        public UInt16 Depth;
+        public TokenNestingCategory Category;
+    }
+
     public struct TokenTypeAndSpan
     {
         public TokenType Type;
         public Span Span;
+        public TokenNesting Nesting;
 
-        public TokenTypeAndSpan(TokenType type, Span span)
+        public TokenTypeAndSpan(TokenType type, Span span, TokenNesting nesting)
         {
             this.Type = type;
             this.Span = span;
+            this.Nesting = nesting;
         }
     }
 
@@ -55,7 +71,8 @@ namespace Kailua.Native
         [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern TokenType kailua_token_stream_next(
             TokenStreamHandle stream,
-            out Span span);
+            out Span span,
+            out TokenNesting nesting);
 
         internal TokenStream stream;
         internal TokenTypeAndSpan last;
@@ -68,16 +85,17 @@ namespace Kailua.Native
         public bool MoveNext()
         {
             Span span;
+            TokenNesting nesting;
             TokenType ret;
             lock (this.stream.native)
             {
-                ret = kailua_token_stream_next(this.stream.native, out span);
+                ret = kailua_token_stream_next(this.stream.native, out span, out nesting);
             }
             if (ret == TokenType.Dead)
             {
                 throw new NativeException("internal error while tokenizing a source code");
             }
-            this.last = new TokenTypeAndSpan(ret, span);
+            this.last = new TokenTypeAndSpan(ret, span, nesting);
             return ret != TokenType.EOF;
         }
 
