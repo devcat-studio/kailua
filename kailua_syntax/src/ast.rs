@@ -317,6 +317,7 @@ pub enum Ex {
 
     // expressions
     Var(Spanned<NameRef>),
+    Exp(Spanned<Exp>), // mostly for parentheses
     FuncCall(Spanned<Exp>, Spanned<Args>),
     MethodCall(Spanned<(Spanned<Exp>, Spanned<Name>)>, Spanned<Args>),
     Index(Spanned<Exp>, Spanned<Exp>),
@@ -348,6 +349,7 @@ impl fmt::Debug for Ex {
             },
 
             Ex::Var(ref id) => write!(f, "{:?}", id),
+            Ex::Exp(ref e) => write!(f, "({:?})", e),
             Ex::FuncCall(ref e, ref args) => write!(f, "{:?}{:?}", e, args),
             Ex::MethodCall(Spanned { base: (ref e, ref n), span }, ref args) =>
                 write!(f, "({:?}:{:?}){:?}{:?}", e, n, span, args),

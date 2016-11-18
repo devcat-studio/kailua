@@ -2168,3 +2168,23 @@ f[[unction]]
 f{reak=true}
 --! ok
 
+--8<-- seq-type-without-paren
+local function f()
+    return 1, 2, 3
+end
+--v function(a: integer, b: integer)
+local function g(a, b)
+end
+g(0, f()) --@< Error: `2` is not a subtype of `nil`
+--! error
+
+--8<-- seq-type-with-paren
+local function f()
+    return 1, 2, 3
+end
+--v function(a: integer, b: integer)
+local function g(a, b)
+end
+g(0, (f()))
+--! ok
+

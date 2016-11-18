@@ -1572,7 +1572,8 @@ impl<'a> Parser<'a> {
         match self.read() {
             (_, Spanned { base: Tok::Punct(Punct::LParen), .. }) => {
                 // TODO should we ignore the span for parentheses?
-                exp = self.recover(Self::parse_exp, Punct::RParen)?;
+                let exp_ = self.recover(Self::parse_exp, Punct::RParen)?;
+                exp = Box::new(Ex::Exp(exp_)).with_loc(begin..self.last_pos());
             }
             (_, Spanned { base: Tok::Name(name), span }) => {
                 let nameref = self.resolve_name(Name::from(name));

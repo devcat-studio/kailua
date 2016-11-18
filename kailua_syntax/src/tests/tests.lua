@@ -78,7 +78,7 @@ f()) g() --@< Error: Expected a statement, got `)`
 --8<-- paren-recover
 f((a@)+(@b)*c) --@< Error: Unexpected character
                --@^ Error: Unexpected character
---! [Void(`f`_((`a`_ + (`b`_ * `c`_))))]
+--! [Void(`f`_(((`a`_) + ((`b`_) * `c`_))))]
 
 --8<-- func
 function r(p) --[[...]] end
@@ -351,7 +351,7 @@ f((3+4)*5)
 --! [Void(`f`_((3 + 4))), \
 --!  Void(`f`_(((3 + 4) - 5))), \
 --!  Void(`f`_((3 + (4 * 5)))), \
---!  Void(`f`_(((3 + 4) * 5)))]
+--!  Void(`f`_((((3 + 4)) * 5)))]
 
 --8<-- funccall-op-2
 f(2^3^4)
@@ -883,7 +883,7 @@ local function foo(a) end
  --v          ...)
  --v         --> string
  function(a, ...) end)()
---! [Void(Func([`a`$1: Const Integer, ...: _] --> String, $1[])())]
+--! [Void((Func([`a`$1: Const Integer, ...: _] --> String, $1[]))())]
 
 --8<-- funcspec-attr-1
 --v [no_check] function()
@@ -1306,12 +1306,12 @@ for a, b, c in pairs({}) do end
 --8<-- local-seq
 local (x, y) = (1, 2) --@< Error: Expected a name or `function` after `local`, got `(`
                       --@^ Error: Expected `)`, got `,`
-                      --@ Error: Only function calls are allowed as statement-level expressions
+                      --@^^ Error: Only function calls are allowed as statement-level expressions
                       --@^^^ Error: Expected a statement, got `=`
                       --@^^^^ Error: Expected `)`, got `,`
-                      --@ Error: Only function calls are allowed as statement-level expressions
+                      --@^^^^^ Error: Only function calls are allowed as statement-level expressions
 f()
---! [Oops, Void(Oops), Oops, Void(Oops), Void(`f`_())]
+--! [Oops, Void((Oops)), Oops, Void((Oops)), Void(`f`_())]
 
 --8<-- func-args-invalid-char
 function p(# --@< Error: Expected an argument name, `)` or `...`, got `#`

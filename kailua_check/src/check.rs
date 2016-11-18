@@ -1470,6 +1470,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 }
             },
 
+            Ex::Exp(ref e) => Ok(SlotSeq::from_slot(self.visit_exp(e)?.into_first().base)),
             Ex::Func(ref sig, _scope, ref block) => {
                 let returns = self.visit_func_body(None, sig, block, exp.span)?;
                 Ok(SlotSeq::from_slot(returns))
