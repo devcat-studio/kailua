@@ -626,6 +626,36 @@ impl Context {
         Ok(())
     }
 
+    // returns a pair of type flags that is an exact lower and upper bound for that type
+    // used as an approximate type bound testing like arithmetics;
+    // better be replaced with a non-instantiating assertion though.
+    pub fn get_type_bounds(&self, ty: &T) -> (/*lb*/ Flags, /*ub*/ Flags) {
+        let flags = ty.flags();
+        let (lb, ub) = ty.get_tvar().map_or((T_NONE, T_NONE), |v| self.get_tvar_bounds(v));
+        (flags | lb, flags | ub)
+    }
+
+    // exactly resolves the type variable inside `ty` if possible
+    // this is a requirement for table indexing and function calls
+    pub fn resolve_exact_type<'a>(&mut self, ty: &T<'a>) -> Option<T<'a>> {
+        match ty.split_tvar() {
+            (None, None) => unreachable!(),
+            (None, Some(t)) => Some(t),
+            (Some(tv), None) => self.get_tvar_exact_type(tv),
+            (Some(tv), Some(t)) => {
+                if let Some(t_) = self.get_tvar_exact_type(tv) {
+                    Some(t.union(&t_, self))
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    pub fn get_string_meta(&self) -> Option<Spanned<Slot>> {
+        self.string_meta.clone()
+    }
+
     // used by assert_mark_require_{eq,sup}
     fn assert_mark_require(&mut self, mark: Mark, base: &T, rel: Rel, ty: &T) -> CheckResult<()> {
         let mark_ = self.mark_infos.find(mark.0 as usize);
@@ -1122,26 +1152,13 @@ impl<'ctx> Env<'ctx> {
     // used as an approximate type bound testing like arithmetics;
     // better be replaced with a non-instantiating assertion though.
     pub fn get_type_bounds(&self, ty: &T) -> (/*lb*/ Flags, /*ub*/ Flags) {
-        let flags = ty.flags();
-        let (lb, ub) = ty.get_tvar().map_or((T_NONE, T_NONE), |v| self.get_tvar_bounds(v));
-        (flags | lb, flags | ub)
+        self.context.get_type_bounds(ty)
     }
 
     // exactly resolves the type variable inside `ty` if possible
     // this is a requirement for table indexing and function calls
     pub fn resolve_exact_type<'a>(&mut self, ty: &T<'a>) -> Option<T<'a>> {
-        match ty.split_tvar() {
-            (None, None) => unreachable!(),
-            (None, Some(t)) => Some(t),
-            (Some(tv), None) => self.get_tvar_exact_type(tv),
-            (Some(tv), Some(t)) => {
-                if let Some(t_) = self.get_tvar_exact_type(tv) {
-                    Some(t.union(&t_, self.context))
-                } else {
-                    None
-                }
-            }
-        }
+        self.context.resolve_exact_type(ty)
     }
 
     pub fn return_from_module(mut self, modname: &[u8], span: Span) -> CheckResult<Slot> {
@@ -1234,7 +1251,7 @@ impl<'ctx> Env<'ctx> {
     }
 
     pub fn get_string_meta(&self) -> Option<Spanned<Slot>> {
-        self.context.string_meta.clone()
+        self.context.get_string_meta()
     }
 
     // why do we need this special method?

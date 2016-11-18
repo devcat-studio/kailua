@@ -101,18 +101,31 @@ impl VSCheckerOutput {
         spans_before.min_by_key(|slot| slot.span.len())
     }
 
-    pub fn fields_after_pos(&self, pos: Pos) -> Option<VSNameEntries> {
-        if let Some(slot) = self.slot_before_pos(pos) {
-            if let Some(&Tables::Fields(ref fields)) = slot.unlift().get_tables() {
-                let fields = fields.keys().filter_map(|key| {
-                    match *key {
-                        Key::Str(ref s) => Some(VSNameEntry::new(s[..].to_owned(), -1)),
-                        Key::Int(_) => None,
+    // XXX required to be mutable because it can generate a union currently
+    pub fn fields_after_pos(&mut self, pos: Pos) -> Option<VSNameEntries> {
+        if let Some(slot) = self.slot_before_pos(pos).map(|s| s.map(|s| s.clone())) {
+            if let Some(mut ty) = self.context.resolve_exact_type(&slot.unlift()) {
+                if ty.get_strings().is_some() {
+                    if let Some(metaslot) = self.context.get_string_meta() {
+                        // use the string meta table for strings
+                        if let Some(metaty) = self.context.resolve_exact_type(&metaslot.unlift()) {
+                            ty = metaty;
+                        }
                     }
-                }).collect();
-                return Some(fields);
+                }
+
+                if let Some(&Tables::Fields(ref fields)) = ty.get_tables() {
+                    let fields = fields.keys().filter_map(|key| {
+                        match *key {
+                            Key::Str(ref s) => Some(VSNameEntry::new(s[..].to_owned(), -1)),
+                            Key::Int(_) => None,
+                        }
+                    }).collect();
+                    return Some(fields);
+                }
             }
         }
+
         None
     }
 }
@@ -162,14 +175,14 @@ pub extern "C" fn kailua_checker_free(checker: *mut VSChecker) {
 }
 
 #[no_mangle]
-pub extern "C" fn kailua_checker_output_fields_after_pos(output: *const VSCheckerOutput,
+pub extern "C" fn kailua_checker_output_fields_after_pos(output: *mut VSCheckerOutput,
                                                          pos: *const Pos,
                                                          fields: *mut *mut VSNameEntry) -> i32 {
     if output.is_null() { return -1; }
     if pos.is_null() { return -1; }
     if fields.is_null() { return -1; }
 
-    let output: &VSCheckerOutput = unsafe { mem::transmute(output) };
+    let output: &mut VSCheckerOutput = unsafe { mem::transmute(output) };
     let pos = unsafe { *pos };
     let fields = unsafe { fields.as_mut().unwrap() };
 
