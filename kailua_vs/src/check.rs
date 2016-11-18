@@ -11,7 +11,7 @@ use widestring::{WideStr, WideString};
 use kailua_env::{Pos, Span, Spanned};
 use kailua_diag::Report;
 use kailua_syntax::Chunk;
-use kailua_check::{self, FsSource, FsOptions, Context, Slot, Tables, Key};
+use kailua_check::{self, FsSource, FsOptions, Id, Context, Slot, Tables, Key};
 
 pub type VSFsSourceCallback =
     extern "system" fn(*const u16, i32, usize, *mut *const VSParseTree) -> i32;
@@ -92,6 +92,15 @@ pub struct VSCheckerOutput {
 }
 
 impl VSCheckerOutput {
+    pub fn global_names(&self) -> VSNameEntries {
+        self.context.all().filter_map(|(id, _)| {
+            match *id {
+                Id::Global(ref s) => Some(VSNameEntry::new(s[..].to_owned(), 0)),
+                Id::Local(..) => None
+            }
+        }).collect()
+    }
+
     fn slot_before_pos(&self, pos: Pos) -> Option<Spanned<&Slot>> {
         // find all slot-associated spans that intersects (even at the end points) `pos`...
         let spans = self.context.spanned_slots().adjacencies(Span::from(pos));
@@ -172,6 +181,22 @@ pub extern "C" fn kailua_checker_free(checker: *mut VSChecker) {
     let _ = panic::catch_unwind(move || {
         drop(checker);
     }); // cannot do much beyond this
+}
+
+#[no_mangle]
+pub extern "C" fn kailua_checker_output_global_names(output: *mut VSCheckerOutput,
+                                                     names: *mut *mut VSNameEntry) -> i32 {
+    if output.is_null() { return -1; }
+    if names.is_null() { return -1; }
+
+    let output: &mut VSCheckerOutput = unsafe { mem::transmute(output) };
+    let names = unsafe { names.as_mut().unwrap() };
+
+    let output = AssertUnwindSafe(output);
+    let names = AssertUnwindSafe(names);
+    panic::catch_unwind(move || {
+        output.0.global_names().into_raw(names.0)
+    }).unwrap_or(-1)
 }
 
 #[no_mangle]

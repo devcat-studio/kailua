@@ -26,6 +26,7 @@ namespace Kailua
         internal List<ReportData> reportData;
         private Task<Native.CheckerOutput> checkTask;
         private Native.CheckerOutput lastValidCheckerOutput;
+        private SortedSet<string> lastValidGlobalScopeFromChecker;
         private readonly object syncLock = new object();
 
         public Project(EnvDTE.Project project)
@@ -43,6 +44,7 @@ namespace Kailua
             this.reportData = null;
             this.checkTask = null;
             this.lastValidCheckerOutput = null;
+            this.lastValidGlobalScopeFromChecker = null;
 
             this.uiThread = new ProjectUIThread(this, project);
         }
@@ -115,6 +117,13 @@ namespace Kailua
                     {
                         names.UnionWith(globalNames);
                     }
+                }
+                // this essentially overwrites the prior list.
+                // the prior list is used for the case when the check fails or it is out of sync.
+                var globalNamesFromChecker = this.lastValidGlobalScopeFromChecker;
+                if (globalNamesFromChecker != null)
+                {
+                    names.UnionWith(globalNamesFromChecker);
                 }
                 return names;
             }
@@ -317,7 +326,7 @@ namespace Kailua
                             return spanAndTree.Item2;
                         }
 
-#if DEBUG
+#if TRACE_CHECK_DEPS
                         Log.Write("the checker requires an external dependency {0}", path);
 #endif
 
@@ -351,6 +360,7 @@ namespace Kailua
                     if (output != null)
                     {
                         this.lastValidCheckerOutput = output;
+                        this.lastValidGlobalScopeFromChecker = new SortedSet<string>(from ee in output.GlobalNames select ee.Name);
                     }
                     return output;
                 }

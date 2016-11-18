@@ -557,6 +557,10 @@ impl Context {
         self.ids.get_mut(id)
     }
 
+    pub fn all<'a>(&'a self) -> hash_map::Iter<'a, Id, NameDef> {
+        self.ids.iter()
+    }
+
     pub fn open_library(&mut self, name: &Spanned<Name>,
                         opts: Rc<RefCell<Options>>) -> CheckResult<()> {
         let name_ = str::from_utf8(&name.base).map_err(|e| e.to_string())?;

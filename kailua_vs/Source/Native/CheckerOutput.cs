@@ -32,6 +32,11 @@ namespace Kailua.Native
     public class CheckerOutput : IDisposable
     {
         [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int kailua_checker_output_global_names(
+            CheckerOutputHandle output,
+            [Out] out NameEntriesHandle entries);
+
+        [DllImport("KailuaVSNative.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern int kailua_checker_output_fields_after_pos(
             CheckerOutputHandle output,
             ref Pos pos,
@@ -46,6 +51,24 @@ namespace Kailua.Native
                 throw new ArgumentException("invalid handle", "output");
             }
             this.native = output;
+        }
+
+        public IEnumerable<NameEntry> GlobalNames
+        {
+            get
+            {
+                int nentries;
+                NameEntriesHandle entries;
+                lock (this.native)
+                {
+                    nentries = kailua_checker_output_global_names(this.native, out entries);
+                }
+                if (nentries < 0)
+                {
+                    throw new NativeException("internal error while retrieving global names");
+                }
+                return new NameEntries(this.native, entries, nentries);
+            }
         }
 
         public IEnumerable<NameEntry> FieldsAfter(Pos pos)
