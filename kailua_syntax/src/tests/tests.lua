@@ -595,6 +595,11 @@ local x --: function (boolean...) | string? --@< Error: Expected a newline, got 
 local x --: (function (boolean...)) | string?
 --! [Local([`x`$1: _ Union([Func((Boolean...) --> ()), String?])], [])$1]
 
+--8<-- kind-func-recover
+local x --: function (integer, @) --> string --@< Error: Unexpected character
+                                             --@^ Error: Expected a type, got `)`
+--! [Local([`x`$1: _ Func((Integer, Oops) --> String)], [])$1]
+
 --8<-- kind-any-func
 local x --: `function`
 --! [Local([`x`$1: _ Function], [])$1]

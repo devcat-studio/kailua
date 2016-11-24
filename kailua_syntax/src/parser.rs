@@ -1571,7 +1571,6 @@ impl<'a> Parser<'a> {
         let begin = self.pos();
         match self.read() {
             (_, Spanned { base: Tok::Punct(Punct::LParen), .. }) => {
-                // TODO should we ignore the span for parentheses?
                 let exp_ = self.recover(Self::parse_exp, Punct::RParen)?;
                 exp = Box::new(Ex::Exp(exp_)).with_loc(begin..self.last_pos());
             }

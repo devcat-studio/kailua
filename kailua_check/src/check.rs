@@ -578,6 +578,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             } else {
                 None
             };
+        let had_litkey = litkey.is_some();
         if let Some(litkey) = litkey {
             match (ety.get_tables(), lval) {
                 (Some(&Tables::Empty), true) => {
@@ -618,7 +619,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 Ok(Some(value))
             },
 
-            (Some(&Tables::Fields(..)), false) => {
+            (Some(&Tables::Fields(..)), _) => {
+                assert!(!had_litkey);
                 self.env.error(expspan,
                                m::IndexToRecWithUnknownStr { tab: self.display(&*ety0),
                                                              key: self.display(&kty) })
@@ -647,7 +649,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 Ok(Some((*value).clone().into_slot()))
             },
 
-            (Some(&Tables::Array(..)), false) => {
+            (Some(&Tables::Array(..)), _) => {
                 self.env.error(expspan,
                                m::IndexToArrayWithNonInt { tab: self.display(&*ety0),
                                                            key: self.display(&kty) })
@@ -660,41 +662,18 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 Ok(Some((*value).clone().into_slot()))
             },
 
+            (Some(&Tables::Map(ref key, ref value)), true) => {
+                let key = Box::new((**key).union(&kty, self.context()));
+                value.as_slot_without_nil().adapt(ety0.flex(), self.context());
+                adapt_table!(Tables::Map(key, value.clone()));
+                Ok(Some(value.clone().into_slot()))
+            },
+
             (Some(&Tables::All), _) => {
                 self.env.error(&*ety0,
                                m::IndexToAnyTable { tab: self.display(&*ety0) }).done()?;
                 Ok(Some(Slot::dummy()))
             },
-
-            // Fields with no keys resolved in compile time, Array with non-integral keys, Map
-            (Some(tab), true) => {
-                // we cannot keep the specialized table type, lift and adapt to a mapping
-                let tab = tab.clone().lift_to_map(self.context());
-                adapt_table!(tab);
-
-                // reborrow ety0 to check against the final mapping type
-                let (key, value) = match ety0.unlift().get_tables() {
-                    Some(&Tables::Map(ref key, ref value)) => {
-                        (Box::new((**key).union(&kty, self.context())), value.clone())
-                    },
-                    _ => unreachable!(),
-                };
-                value.as_slot_without_nil().adapt(ety0.flex(), self.context());
-
-                // try to assign an implied type to the new mapping type
-                // this is required for handling Currently slot containing a table
-                let implied = T::Tables(Cow::Owned(Tables::Map(key, value.clone())));
-                if ety0.accept(&Slot::just(implied.clone()), self.context(), false).is_err() {
-                    self.env.error(&*ety0,
-                                   m::CannotAdaptTable { tab: self.display(&*ety0),
-                                                         adapted: self.display(&implied) })
-                            .note(kty0, m::AdaptTriggeredByIndex { key: self.display(kty0) })
-                            .done()?;
-                    return Ok(Some(Slot::dummy()));
-                }
-
-                Ok(Some(value.into_slot()))
-            }
         }
     }
 

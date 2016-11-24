@@ -700,8 +700,7 @@ local a = {} --: vector<number>
 local a = {} --: vector<number>
 a[1] = 42
 a.what = 54
---@^ Error: Cannot adapt the table type `vector<number>` into `map<integer, number>`
---@^^ Note: The table had to be adapted in order to index it with `"what"`
+--@^ Error: Cannot index an array `vector<number>` with a non-integral index `"what"`
 --! error
 
 --8<-- var-map-update-and-index
