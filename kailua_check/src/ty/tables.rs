@@ -105,62 +105,6 @@ fn lift_fields_to_map(fields: &BTreeMap<Key, Slot>, ctx: &mut TypeContext)
 }
 
 impl Tables {
-    pub fn lift_to_map(self, ctx: &mut TypeContext) -> Tables {
-        match self {
-            Tables::Fields(fields) => {
-                let (key, value) = lift_fields_to_map(&fields, ctx);
-                Tables::Map(Box::new(key), value)
-            },
-            Tables::Array(value) => Tables::Map(Box::new(T::integer()), value),
-            tab => tab,
-        }
-    }
-
-    // used by table constructors
-    // for missing keys the caller should count the number of prior missing keys and put
-    // appropriate literal types: `{a=1, 2, [2]=3, 4, b=5}` => `{a=1, [1]=2, [2]=3, [2]=4, b=5}`
-    pub fn insert(self, key: T<'static>, value: T<'static>, ctx: &mut TypeContext) -> Tables {
-        let litkey =
-            if let Some(key) = key.as_integer() {
-                Some(key.into())
-            } else if let Some(key) = key.as_string() {
-                Some(key.into())
-            } else {
-                None
-            };
-
-        match (litkey, self) {
-            (Some(litkey), Tables::Empty) => {
-                // promote Empty to Fields
-                let mut fields = BTreeMap::new();
-                fields.insert(litkey, Slot::just(value));
-                Tables::Fields(fields)
-            }
-
-            (None, Tables::Empty) => {
-                // promote Empty to Map
-                Tables::Map(Box::new(key), SlotWithNil::from(value))
-            }
-
-            (Some(litkey), Tables::Fields(mut fields)) => {
-                // should override a duplicate field if any
-                fields.insert(litkey, Slot::just(value));
-                Tables::Fields(fields)
-            }
-
-            // fall back to the map when in doubt
-            (_, tab) => match tab.lift_to_map(ctx) {
-                Tables::Map(key_, value_) => {
-                    let key = key.union(&*key_, ctx);
-                    let value = Slot::just(value).union(value_.as_slot_without_nil(), ctx);
-                    let value = SlotWithNil::from_slot(value);
-                    Tables::Map(Box::new(key), value)
-                },
-                tab => tab,
-            }
-        }
-    }
-
     fn fmt_generic<WriteTy, WriteSlot>(&self, f: &mut fmt::Formatter,
                                        mut write_ty: WriteTy,
                                        mut write_slot: WriteSlot) -> fmt::Result
@@ -185,7 +129,7 @@ impl Tables {
                 // print other keys
                 for (name, t) in fields.iter() {
                     match *name {
-                        Key::Int(v) if 1 <= v && v < nextlen => break, // strip duplicates
+                        Key::Int(v) if 1 <= v && v < nextlen => continue, // strip duplicates
                         _ => {}
                     }
                     if first { first = false; } else { write!(f, ", ")?; }
@@ -303,7 +247,15 @@ impl Lattice for Tables {
                 true
             },
 
-            (&Tables::Fields(..), _) => false,
+            (&Tables::Fields(ref fields), &Tables::Array(ref value)) => {
+                // the fields should have consecutive integer keys
+                for (idx, (k, v)) in fields.iter().enumerate() {
+                    k.clone().into_type().assert_sub(&T::int(idx as i32 + 1), ctx)?;
+                    v.assert_sub(value.as_slot_without_nil(), ctx)?;
+                }
+                true
+            },
+
             (_, &Tables::Fields(..)) => false,
 
             (&Tables::Array(ref value1), &Tables::Array(ref value2)) => {

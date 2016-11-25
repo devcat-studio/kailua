@@ -1,4 +1,4 @@
-use ty::{self, Display, Displayed};
+use ty::{self, Key, Display, Displayed};
 use kailua_syntax::Name;
 
 pub type T<'a> = Displayed<'a, 'a, ty::T<'a>>;
@@ -106,6 +106,31 @@ define_msg! { pub CallToInexactType<'a> { func: T<'a> }:
 define_msg! { pub CallToAnyFunc<'a> { func: T<'a> }:
     "ko" => "`{func}` 타입은 다운캐스팅하지 않으면 호출할 수 없습니다",
     _    => "Cannot call `{func}` without downcasting",
+}
+
+define_msg! { pub TableLitWithUnknownKey<'a> { key: T<'a> }:
+    "ko" => "테이블 생성자는 항상 레코드여야 하므로 덜 추론되거나, 문자열이나 숫자가 아니거나, \
+             미리 알 수 없는 `{key}` 타입을 키로 쓸 수 없습니다",
+    _    => "The key type `{key}` is not known enough, not a string or integer, \
+             or not known ahead of time as the table constructor should always be a record",
+}
+
+define_msg! { pub TableLitWithUnboundSeq:
+    "ko" => "테이블 생성자는 항상 레코드여야 하므로 \
+             반환값 갯수가 정해지지 않은 수식을 마지막 수식으로 쓸 수 없습니다",
+    _    => "This expression has an unknown number of return values, \
+             so cannot be used as the last value in the table constructor \
+             which should always be a record",
+}
+
+define_msg! { pub TableLitWithDuplicateKey<'a> { key: &'a Key }:
+    "ko" => "테이블 생성자에서 `{key}` 키가 중복되었습니다",
+    _    => "The key `{key}` is duplicated in the table constructor",
+}
+
+define_msg! { pub PreviousKeyInTableLit:
+    "ko" => "같은 키가 여기에서 이미 할당되었습니다",
+    _    => "The key was previously assigned here",
 }
 
 define_msg! { pub IndexToNonTable<'a> { tab: Slot<'a> }:

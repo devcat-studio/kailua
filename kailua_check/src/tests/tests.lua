@@ -1573,7 +1573,7 @@ end
 
 --8<-- lua51-pairs-integer-array
 --# open lua51
---# assume p: {integer}
+--# assume p: vector<integer>
 for x, y in pairs(p) do
     local a = x * 3
     local b = y * 4
@@ -1582,7 +1582,7 @@ end
 
 --8<-- lua51-pairs-string-array-1
 --# open lua51
---# assume p: {string}
+--# assume p: vector<string>
 for x, y in pairs(p) do
     local a = x * 3
     local b = y .. 'a'
@@ -1591,7 +1591,7 @@ end
 
 --8<-- lua51-pairs-string-array-2
 --# open lua51
---# assume p: {string}
+--# assume p: vector<string>
 for x, y in pairs(p) do
     local b = y * 4 --@< Error: `string` is not a subtype of `number`
 end
@@ -2198,4 +2198,85 @@ local function g(a, b)
 end
 g(0, (f()))
 --! ok
+
+--8<-- table-lit-duplicate-key-1
+local a = {
+    what = 4,
+    what = 5, --@< Error: The key `what` is duplicated in the table constructor
+              --@^^ Note: The key was previously assigned here
+}
+--! error
+
+--8<-- table-lit-duplicate-key-2
+local a = {
+    1,
+    2,
+    3,
+    4,
+    [2] = 5, --@< Error: The key `2` is duplicated in the table constructor
+             --@^^^^ Note: The key was previously assigned here
+}
+--! error
+
+--8<-- table-lit-duplicate-key-3
+local a = {
+    [2] = 0,
+    1,
+    2, --@< Error: The key `2` is duplicated in the table constructor
+       --@^^^ Note: The key was previously assigned here
+    3,
+    4,
+}
+--! error
+
+--8<-- table-lit-arbitrary-key
+--# assume k: string
+local a = {[k] = 42} --@< Error: The key type `string` is not known enough, not a string or integer, or not known ahead of time as the table constructor should always be a record
+--! error
+
+--8<-- table-lit-non-stringy-key
+--# assume k: table
+local a = {[k] = 42} --@< Error: The key type `table` is not known enough, not a string or integer, or not known ahead of time as the table constructor should always be a record
+--! error
+
+--8<-- table-lit-bounded-seq
+function f() return 3, 4 end
+local a = {1, 2, f()} --: {integer, integer, integer, integer}
+--! ok
+
+--8<-- table-lit-unbounded-seq
+--v [no_check]
+--v function() --> (integer...)
+function f() end
+local a = {1, 2, f()} --@< Error: This expression has an unknown number of return values, so cannot be used as the last value in the table constructor which should always be a record
+--! error
+
+--8<-- table-lit-subtyping-1
+local a = {1, 2, 3} --: vector<integer>
+local b = {1, 2, 3, [4] = 4} --: vector<integer>
+local c = {1, 2, 3, [8] = 4} --: map<integer, integer>
+--! ok
+
+--8<-- table-lit-subtyping-2
+local d = {a = 3, b = 4} --: map<string, integer>
+local e = {1, 2, 3, string = 4} --: map<integer|string, integer>
+--! ok
+
+--8<-- table-lit-subtyping-3
+local x = {1, 2, 3, [5] = 4} --: vector<integer>
+--@^ Error: Cannot assign `{1, 2, 3, 5 = 4}` into `vector<integer>`
+--@^^ Note: The other type originates here
+--! error
+
+--8<-- table-lit-subtyping-4
+local y = {1, 2, 3, string = 4} --: vector<integer>
+--@^ Error: Cannot assign `{1, 2, 3, string = 4}` into `vector<integer>`
+--@^^ Note: The other type originates here
+--! error
+
+--8<-- table-lit-subtyping-5
+local z = {1, 2, 3, string = 4} --: map<integer, integer>
+--@^ Error: Cannot assign `{1, 2, 3, string = 4}` into `map<integer, integer>`
+--@^^ Note: The other type originates here
+--! error
 

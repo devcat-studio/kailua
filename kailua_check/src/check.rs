@@ -3,6 +3,7 @@ use std::cmp;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 use std::borrow::Cow;
+use std::collections::{BTreeMap, HashMap};
 use take_mut::take;
 
 use kailua_env::{Span, Spanned, WithLoc};
@@ -11,7 +12,7 @@ use kailua_syntax::{NameRef, Var, M, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
 use kailua_syntax::{SelfParam, Args, St, Stmt, Block, K};
 use diag::CheckResult;
 use ty::{Dyn, T, TySeq, SpannedTySeq, Lattice, Displayed, Display, TypeContext};
-use ty::{Tables, Function, Functions, TyWithNil};
+use ty::{Key, Tables, Function, Functions, TyWithNil};
 use ty::{F, Slot, SlotSeq, SpannedSlotSeq, SlotWithNil, Builtin, Class};
 use ty::flags::*;
 use env::{Env, Frame, Scope, Context};
@@ -307,23 +308,33 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 };
 
                 if !tab.is_tabular() { return; }
-                let map = match tab.get_tables() {
-                    Some(tab) => tab.clone().lift_to_map(self.context()),
-                    None => return,
+
+                let (k, v) = match tab.clone().into_base() {
+                    // map<k, v> -> (k, v)
+                    T::Tables(Cow::Owned(Tables::Map(k, v))) =>
+                        (k, v),
+                    T::Tables(Cow::Borrowed(&Tables::Map(ref k, ref v))) =>
+                        (k.clone(), v.clone()),
+
+                    // vector<v> -> (integer, v)
+                    T::Tables(Cow::Owned(Tables::Array(v))) =>
+                        (Box::new(T::integer()), v),
+                    T::Tables(Cow::Borrowed(&Tables::Array(ref v))) =>
+                        (Box::new(T::integer()), v.clone()),
+
+                    _ => return,
                 };
 
-                if let Tables::Map(k, v) = map {
-                    // fix `returns` in place
-                    let knil = (*k).clone() | T::Nil;
-                    let v = v.into_slot_without_nil();
-                    let v = v.unlift().clone().into_send();
-                    *returns.ensure_at_mut(0) = Box::new(T::func(Function {
-                        args: TySeq { head: vec![Box::new(tab.clone()), k.clone()], tail: None },
-                        returns: TySeq { head: vec![Box::new(knil), Box::new(v)], tail: None },
-                    }));
-                    *returns.ensure_at_mut(1) = Box::new(tab);
-                    *returns.ensure_at_mut(2) = k;
-                }
+                // fix `returns` in place
+                let knil = (*k).clone() | T::Nil;
+                let v = v.into_slot_without_nil();
+                let v = v.unlift().clone().into_send();
+                *returns.ensure_at_mut(0) = Box::new(T::func(Function {
+                    args: TySeq { head: vec![Box::new(tab.clone()), k.clone()], tail: None },
+                    returns: TySeq { head: vec![Box::new(knil), Box::new(v)], tail: None },
+                }));
+                *returns.ensure_at_mut(1) = Box::new(tab);
+                *returns.ensure_at_mut(2) = k;
             })();
         }
 
@@ -1358,42 +1369,78 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     }
 
     fn visit_table(&mut self, fields: &[(Option<Spanned<Exp>>, Spanned<Exp>)]) -> CheckResult<T> {
-        let mut tab = Tables::Empty;
+        let mut fieldset = BTreeMap::new();
+
+        let mut fieldspans = HashMap::new();
+        let mut add_field = |fieldset: &mut BTreeMap<Key, Slot>, env: &Env, k: Key, v: Slot,
+                             span: Span| -> CheckResult<()> {
+            use std::collections::btree_map::Entry;
+            if let Entry::Vacant(e) = fieldset.entry(k.clone()) {
+                e.insert(v);
+                fieldspans.insert(k, span);
+            } else {
+                let prevspan = fieldspans[&k];
+                env.error(span, m::TableLitWithDuplicateKey { key: &k })
+                   .note(prevspan, m::PreviousKeyInTableLit {})
+                   .done()?;
+            }
+            Ok(())
+        };
 
         let mut len = 0;
         for (idx, &(ref key, ref value)) in fields.iter().enumerate() {
+            let span = key.as_ref().map_or(Span::dummy(), |k| k.span) | value.span;
+
             // if this is the last entry and no explicit index is set, splice the values
             if idx == fields.len() - 1 && key.is_none() {
                 let vty = self.visit_exp(value)?;
-                for ty in &vty.head {
-                    let ty = ty.unlift().clone();
+                for ty in vty.head.into_iter() {
                     len += 1;
-                    tab = tab.insert(T::int(len), ty, self.context());
+                    add_field(&mut fieldset, &self.env, Key::Int(len), ty.base, span)?;
                 }
                 if let Some(ty) = vty.tail {
-                    // a simple array is no longer sufficient now
-                    let ty = ty.as_slot_without_nil().unlift().clone();
-                    tab = tab.insert(T::integer(), ty, self.context());
+                    // a record is no longer sufficient now, and as we don't want to infer
+                    // anything larger than a record, this is an error
+                    self.env.error(&ty, m::TableLitWithUnboundSeq {}).done()?;
+                    continue;
                 }
             } else {
-                let kty = if let Some(ref key) = *key {
+                let litkey = if let Some(ref key) = *key {
                     let key = self.visit_exp(key)?.into_first();
-                    let key = key.unlift();
-                    key.clone().into_send()
+                    let kty = key.unlift();
+                    let kty = if let Some(kty) = self.env.resolve_exact_type(&kty) {
+                        kty
+                    } else {
+                        self.env.error(&key, m::TableLitWithUnknownKey { key: self.display(&kty) })
+                                .done()?;
+                        continue;
+                    };
+
+                    // kty should be a known integer or string, otherwise invalid (for Kailua)
+                    if let Some(kty) = kty.as_integer() {
+                        Key::from(kty)
+                    } else if let Some(kty) = kty.as_string() {
+                        Key::from(kty)
+                    } else {
+                        self.env.error(&key, m::TableLitWithUnknownKey { key: self.display(&kty) })
+                                .done()?;
+                        continue;
+                    }
                 } else {
                     len += 1;
-                    T::int(len)
+                    Key::Int(len)
                 };
 
-                // update the table type according to new field
                 let vty = self.visit_exp(value)?.into_first();
-                let vty = vty.unlift().clone();
-                tab = tab.insert(kty, vty, self.context());
+                add_field(&mut fieldset, &self.env, litkey, vty.base, span)?;
             }
         }
 
-        // if the table remains intact, it is an empty table
-        Ok(T::Tables(Cow::Owned(tab)))
+        if fieldset.is_empty() {
+            Ok(T::Tables(Cow::Owned(Tables::Empty)))
+        } else {
+            Ok(T::Tables(Cow::Owned(Tables::Fields(fieldset))))
+        }
     }
 
     fn visit_exp(&mut self, exp: &Spanned<Exp>) -> CheckResult<SpannedSlotSeq> {
