@@ -286,13 +286,13 @@ impl Constraints {
     }
 
     // Some(bound) indicates that the bound already exists and is not consistent to rhs
-    fn add_bound<'a>(&'a mut self, lhs: TVar, rhs: &T) -> Option<&'a T> {
+    fn add_bound<'a>(&'a mut self, lhs: TVar, rhs: &Ty) -> Option<&'a T> {
         let lhs_ = self.bounds.find(lhs.0 as usize);
         let b = self.bounds.entry(lhs_).or_insert_with(|| Partition::create(lhs_, 0));
         if is_bound_trivial(&b.bound) {
-            b.bound = Some(Box::new(rhs.clone().into_send()));
+            b.bound = Some(rhs.clone());
         } else {
-            let lhsbound = &**b.bound.as_ref().unwrap();
+            let lhsbound = b.bound.as_ref().unwrap();
             if lhsbound != rhs { return Some(lhsbound); }
         }
         None
@@ -352,7 +352,7 @@ struct MarkDeps {
     precedes: Option<Mark>,
     // constraints over types for this mark to be true
     // the first type is considered the base type and should be associated to this mark forever
-    constraints: Option<(T<'static>, Vec<(Rel, T<'static>)>)>,
+    constraints: Option<(Ty, Vec<(Rel, Ty)>)>,
 }
 
 impl MarkDeps {
@@ -641,10 +641,10 @@ impl Context {
 
     // exactly resolves the type variable inside `ty` if possible
     // this is a requirement for table indexing and function calls
-    pub fn resolve_exact_type<'a>(&mut self, ty: &T<'a>) -> Option<T<'a>> {
+    pub fn resolve_exact_type<'a>(&mut self, ty: &Ty) -> Option<Ty> {
         match ty.split_tvar() {
             (None, None) => unreachable!(),
-            (None, Some(t)) => Some(t),
+            (None, Some(t)) => Some(t.clone()),
             (Some(tv), None) => self.get_tvar_exact_type(tv),
             (Some(tv), Some(t)) => {
                 if let Some(t_) = self.get_tvar_exact_type(tv) {
@@ -661,7 +661,7 @@ impl Context {
     }
 
     // used by assert_mark_require_{eq,sup}
-    fn assert_mark_require(&mut self, mark: Mark, base: &T, rel: Rel, ty: &T) -> CheckResult<()> {
+    fn assert_mark_require(&mut self, mark: Mark, base: &Ty, rel: Rel, ty: &Ty) -> CheckResult<()> {
         let mark_ = self.mark_infos.find(mark.0 as usize);
 
         let mut value = {
@@ -684,10 +684,9 @@ impl Context {
                     // XXX probably we can test if `base (rel) ty` this early with a wrapped context
                     if let Some(ref mut constraints) = deps.constraints {
                         base.assert_eq(&mut constraints.0, self)?;
-                        constraints.1.push((rel, ty.clone().into_send()));
+                        constraints.1.push((rel, ty.clone()));
                     } else {
-                        deps.constraints = Some((base.clone().into_send(),
-                                                 vec![(rel, ty.clone().into_send())]));
+                        deps.constraints = Some((base.clone(), vec![(rel, ty.clone())]));
                     }
                     Ok(())
                 }
@@ -717,7 +716,7 @@ impl TypeContext for Context {
         tvar
     }
 
-    fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
+    fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()> {
         debug!("adding a constraint {:?} <: {:?}", lhs, *rhs);
         if let Some(eb) = self.tvar_eq.get_bound(lhs).and_then(|b| b.bound.clone()) {
             (*eb).assert_sub(rhs, self)?;
@@ -737,7 +736,7 @@ impl TypeContext for Context {
         Ok(())
     }
 
-    fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
+    fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()> {
         debug!("adding a constraint {:?} :> {:?}", lhs, *rhs);
         if let Some(eb) = self.tvar_eq.get_bound(lhs).and_then(|b| b.bound.clone()) {
             rhs.assert_sub(&*eb, self)?;
@@ -757,7 +756,7 @@ impl TypeContext for Context {
         Ok(())
     }
 
-    fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
+    fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()> {
         debug!("adding a constraint {:?} = {:?}", lhs, *rhs);
         if let Some(eb) = self.tvar_eq.add_bound(lhs, rhs).map(|b| b.clone().into_send()) {
             // the original bound is not consistent, bound = rhs still has to hold
@@ -806,8 +805,8 @@ impl TypeContext for Context {
         }
     }
 
-    fn get_tvar_exact_type(&self, tvar: TVar) -> Option<T<'static>> {
-        self.tvar_eq.get_bound(tvar).and_then(|b| b.bound.as_ref()).map(|t| t.clone().into_send())
+    fn get_tvar_exact_type(&self, tvar: TVar) -> Option<Ty> {
+        self.tvar_eq.get_bound(tvar).and_then(|b| b.bound.as_ref()).cloned()
     }
 
     fn gen_mark(&mut self) -> Mark {
@@ -1033,13 +1032,13 @@ impl TypeContext for Context {
         Ok(())
     }
 
-    fn assert_mark_require_eq(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()> {
-        debug!("asserting {:?} requires {:?} = {:?}", mark, *base, *ty);
+    fn assert_mark_require_eq(&mut self, mark: Mark, base: &Ty, ty: &Ty) -> CheckResult<()> {
+        debug!("asserting {:?} requires {:?} = {:?}", mark, base, ty);
         self.assert_mark_require(mark, base, Rel::Eq, ty)
     }
 
-    fn assert_mark_require_sup(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()> {
-        debug!("asserting {:?} requires {:?} :> {:?}", mark, *base, *ty);
+    fn assert_mark_require_sup(&mut self, mark: Mark, base: &Ty, ty: &Ty) -> CheckResult<()> {
+        debug!("asserting {:?} requires {:?} :> {:?}", mark, base, ty);
         self.assert_mark_require(mark, base, Rel::Sup, ty)
     }
 
@@ -1161,7 +1160,7 @@ impl<'ctx> Env<'ctx> {
 
     // exactly resolves the type variable inside `ty` if possible
     // this is a requirement for table indexing and function calls
-    pub fn resolve_exact_type<'a>(&mut self, ty: &T<'a>) -> Option<T<'a>> {
+    pub fn resolve_exact_type<'a>(&mut self, ty: &Ty) -> Option<Ty> {
         self.context.resolve_exact_type(ty)
     }
 
@@ -1169,9 +1168,9 @@ impl<'ctx> Env<'ctx> {
         // note that this scope is distinct from the global scope
         let top_scope = self.scopes.drain(..).next().unwrap();
         let returns = if let Some(returns) = top_scope.frame.unwrap().returns {
-            *returns.into_first()
+            returns.into_first()
         } else {
-            T::Nil
+            Ty::new(T::Nil)
         };
 
         if let Some(ty) = self.resolve_exact_type(&returns) {
@@ -1185,13 +1184,13 @@ impl<'ctx> Env<'ctx> {
 
             // simulate `require` behavior, i.e. nil translates to true
             let ty = if flags.contains(T_NIL) {
-                ty.without_nil() | T::True
+                ty.without_nil() | Ty::new(T::True)
             } else {
                 ty
             };
 
             // this has to be Var since the module is shared across the entire program
-            let slot = Slot::new(F::Var, ty.into_send());
+            let slot = Slot::new(F::Var, ty);
             self.context.loaded.insert(modname.to_owned(), LoadStatus::Done(slot.clone()));
             Ok(slot)
         } else {
@@ -1274,7 +1273,7 @@ impl<'ctx> Env<'ctx> {
         };
 
         // ...and is a function...
-        let mut func = match ty {
+        let mut func = match *ty {
             T::Functions(ref func) => match **func {
                 Functions::Simple(ref f) => f.to_owned(),
                 _ => {
@@ -1294,7 +1293,7 @@ impl<'ctx> Env<'ctx> {
         if !func.args.head.is_empty() {
             let selfarg = func.args.head.remove(0);
             if let Some(selfarg) = self.resolve_exact_type(&selfarg) {
-                if let T::Builtin(Builtin::Constructible, ref t) = selfarg {
+                if let T::Builtin(Builtin::Constructible, ref t) = *selfarg {
                     if let T::Class(Class::Instance(cid_)) = **t {
                         cid = Some(cid_);
                     }
@@ -1306,7 +1305,7 @@ impl<'ctx> Env<'ctx> {
             // fix the return type to make a signature for the `new` method
             let returns = T::Class(Class::Instance(cid));
             let ctor = Function { args: func.args, returns: TySeq::from(returns) };
-            let ctor = Slot::new(F::Const, T::func(ctor));
+            let ctor = Slot::new(F::Const, Ty::new(T::func(ctor)));
 
             debug!("implicitly setting the `new` method of {:?} as {:?}", cid, ctor);
             let cdef = self.context.get_class_mut(cid).expect("invalid ClassId");
@@ -1378,7 +1377,7 @@ impl<'ctx> Env<'ctx> {
 
         // if the variable is not yet set, we may still try to assign nil
         // to allow `local x --: string|nil` (which is fine even when "uninitialized").
-        let nil = Slot::just(T::Nil).without_loc();
+        let nil = Slot::just(Ty::new(T::Nil)).without_loc();
         self.assign_special(&defslot, &nil)?;
         if defslot.accept(&nil, self.context, true).is_ok() { // this IS still initialization
             self.context.ids.get_mut(&id).unwrap().set = true;
@@ -1413,7 +1412,7 @@ impl<'ctx> Env<'ctx> {
                     Id::Local(..) => self.current_scope_mut(),
                     Id::Global(..) => self.global_scope_mut(),
                 };
-                let ret = scope.put_type(name, Box::new(T::Class(Class::Instance(cid))));
+                let ret = scope.put_type(name, Ty::new(T::Class(Class::Instance(cid))));
                 assert!(ret, "failed to insert the type");
             }
 
@@ -1450,7 +1449,9 @@ impl<'ctx> Env<'ctx> {
         }
 
         let assigned = initinfo.is_some();
-        let specinfo = specinfo.unwrap_or_else(|| Slot::var(T::Nil, self.context).without_loc());
+        let specinfo = specinfo.unwrap_or_else(|| {
+            Slot::var(Ty::new(T::Nil), self.context).without_loc()
+        });
         if let Some(initinfo) = initinfo {
             self.assign_(&specinfo, &initinfo, true)?;
 
@@ -1490,7 +1491,7 @@ impl<'ctx> Env<'ctx> {
             def.set = true;
             (def.slot.clone(), prevset)
         } else {
-            let slot = Slot::var(T::Nil, self.context);
+            let slot = Slot::var(Ty::new(T::Nil), self.context);
             self.context.ids.insert(id.base.clone(),
                                     NameDef { span: id.span, slot: slot.clone(), set: true });
             (slot, true)
@@ -1544,7 +1545,7 @@ impl<'ctx> Env<'ctx> {
         self.context.get_tvar_bounds(tvar)
     }
 
-    pub fn get_tvar_exact_type(&self, tvar: TVar) -> Option<T<'static>> {
+    pub fn get_tvar_exact_type(&self, tvar: TVar) -> Option<Ty> {
         self.context.get_tvar_exact_type(tvar)
     }
 
@@ -1577,12 +1578,12 @@ impl<'ctx> Report for Env<'ctx> {
 }
 
 impl<'ctx> TypeResolver for Env<'ctx> {
-    fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<T<'static>> {
+    fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<Ty> {
         if let Some(def) = self.get_named_type(name) {
-            Ok(def.ty.clone().into_send())
+            Ok(def.ty.clone())
         } else {
             self.error(name, m::NoType { name: &name.base }).done()?;
-            Ok(T::dummy())
+            Ok(Ty::dummy())
         }
     }
 }
@@ -1595,59 +1596,59 @@ fn test_context_tvar() {
 
     { // idempotency of bounds
         let v1 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub(v1, &T::integer()), Ok(()));
-        assert_eq!(ctx.assert_tvar_sub(v1, &T::integer()), Ok(()));
-        assert!(ctx.assert_tvar_sub(v1, &T::string()).is_err());
+        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::integer())), Ok(()));
+        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::integer())), Ok(()));
+        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::string())).is_err());
     }
 
     { // empty bounds (lb & ub = bottom)
         let v1 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub(v1, &T::integer()), Ok(()));
-        assert!(ctx.assert_tvar_sup(v1, &T::string()).is_err());
+        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::integer())), Ok(()));
+        assert!(ctx.assert_tvar_sup(v1, &Ty::new(T::string())).is_err());
 
         let v2 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sup(v2, &T::integer()), Ok(()));
-        assert!(ctx.assert_tvar_sub(v2, &T::string()).is_err());
+        assert_eq!(ctx.assert_tvar_sup(v2, &Ty::new(T::integer())), Ok(()));
+        assert!(ctx.assert_tvar_sub(v2, &Ty::new(T::string())).is_err());
     }
 
     { // empty bounds (lb & ub != bottom)
         let v1 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub(v1, &T::ints(vec![3, 4, 5])), Ok(()));
-        assert!(ctx.assert_tvar_sup(v1, &T::ints(vec![1, 2, 3])).is_err());
+        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::ints(vec![3, 4, 5]))), Ok(()));
+        assert!(ctx.assert_tvar_sup(v1, &Ty::new(T::ints(vec![1, 2, 3]))).is_err());
 
         let v2 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sup(v2, &T::ints(vec![3, 4, 5])), Ok(()));
-        assert!(ctx.assert_tvar_sub(v2, &T::ints(vec![1, 2, 3])).is_err());
+        assert_eq!(ctx.assert_tvar_sup(v2, &Ty::new(T::ints(vec![3, 4, 5]))), Ok(()));
+        assert!(ctx.assert_tvar_sub(v2, &Ty::new(T::ints(vec![1, 2, 3]))).is_err());
     }
 
     { // implicitly disjoint bounds
         let v1 = ctx.gen_tvar();
         let v2 = ctx.gen_tvar();
         assert_eq!(ctx.assert_tvar_sub_tvar(v1, v2), Ok(()));
-        assert_eq!(ctx.assert_tvar_sub(v2, &T::string()), Ok(()));
-        assert!(ctx.assert_tvar_sub(v1, &T::integer()).is_err());
+        assert_eq!(ctx.assert_tvar_sub(v2, &Ty::new(T::string())), Ok(()));
+        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::integer())).is_err());
 
         let v3 = ctx.gen_tvar();
         let v4 = ctx.gen_tvar();
         assert_eq!(ctx.assert_tvar_sub_tvar(v3, v4), Ok(()));
-        assert_eq!(ctx.assert_tvar_sup(v3, &T::string()), Ok(()));
-        assert!(ctx.assert_tvar_sup(v4, &T::integer()).is_err());
+        assert_eq!(ctx.assert_tvar_sup(v3, &Ty::new(T::string())), Ok(()));
+        assert!(ctx.assert_tvar_sup(v4, &Ty::new(T::integer())).is_err());
     }
 
     { // equality propagation
         let v1 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_eq(v1, &T::integer()), Ok(()));
-        assert_eq!(ctx.assert_tvar_sub(v1, &T::number()), Ok(()));
-        assert!(ctx.assert_tvar_sup(v1, &T::string()).is_err());
+        assert_eq!(ctx.assert_tvar_eq(v1, &Ty::new(T::integer())), Ok(()));
+        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::number())), Ok(()));
+        assert!(ctx.assert_tvar_sup(v1, &Ty::new(T::string())).is_err());
 
         let v2 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub(v2, &T::number()), Ok(()));
-        assert_eq!(ctx.assert_tvar_eq(v2, &T::integer()), Ok(()));
-        assert!(ctx.assert_tvar_sup(v2, &T::string()).is_err());
+        assert_eq!(ctx.assert_tvar_sub(v2, &Ty::new(T::number())), Ok(()));
+        assert_eq!(ctx.assert_tvar_eq(v2, &Ty::new(T::integer())), Ok(()));
+        assert!(ctx.assert_tvar_sup(v2, &Ty::new(T::string())).is_err());
 
         let v3 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub(v3, &T::number()), Ok(()));
-        assert!(ctx.assert_tvar_eq(v3, &T::string()).is_err());
+        assert_eq!(ctx.assert_tvar_sub(v3, &Ty::new(T::number())), Ok(()));
+        assert!(ctx.assert_tvar_eq(v3, &Ty::new(T::string())).is_err());
     }
 }
 

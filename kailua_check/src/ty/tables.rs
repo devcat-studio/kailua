@@ -89,7 +89,7 @@ fn lift_fields_to_map(fields: &BTreeMap<Key, Slot>, ctx: &mut TypeContext)
                     -> (T<'static>, SlotWithNil) {
     let mut hasint = false;
     let mut hasstr = false;
-    let mut value = Slot::just(T::None);
+    let mut value = Slot::just(Ty::new(T::None));
     for (key, ty) in fields {
         if key.is_int() { hasint = true; } else { hasstr = true; }
         value = value.union(ty, ctx);
@@ -175,31 +175,33 @@ impl Lattice for Tables {
                     if let Some(v1) = fields1.remove(&k) {
                         fields.insert(k, v1.union(v2, ctx));
                     } else {
-                        fields.insert(k, Slot::just(T::Nil).union(v2, ctx));
+                        fields.insert(k, Slot::just(Ty::new(T::Nil)).union(v2, ctx));
                     }
                 }
                 for (k, v1) in fields1 {
-                    fields.insert(k.clone(), Slot::just(T::Nil).union(&v1, ctx));
+                    fields.insert(k.clone(), Slot::just(Ty::new(T::Nil)).union(&v1, ctx));
                 }
                 Tables::Fields(fields)
             },
 
             (&Tables::Fields(ref fields), &Tables::Empty) |
             (&Tables::Empty, &Tables::Fields(ref fields)) => {
-                let add_nil = |(k,s): (&Key, &Slot)| (k.clone(), Slot::just(T::Nil).union(s, ctx));
+                let add_nil = |(k,s): (&Key, &Slot)| {
+                    (k.clone(), Slot::just(Ty::new(T::Nil)).union(s, ctx))
+                };
                 Tables::Fields(fields.iter().map(add_nil).collect())
             },
 
             (&Tables::Fields(ref fields), &Tables::Array(ref value)) |
             (&Tables::Array(ref value), &Tables::Fields(ref fields)) => {
                 let (fkey, fvalue) = lift_fields_to_map(fields, ctx);
-                Tables::Map(Box::new(fkey.union(&T::integer(), ctx)), fvalue.union(value, ctx))
+                Tables::Map(Ty::new(fkey.union(&T::integer(), ctx)), fvalue.union(value, ctx))
             },
 
             (&Tables::Fields(ref fields), &Tables::Map(ref key, ref value)) |
             (&Tables::Map(ref key, ref value), &Tables::Fields(ref fields)) => {
                 let (fkey, fvalue) = lift_fields_to_map(fields, ctx);
-                Tables::Map(Box::new(fkey.union(&**key, ctx)), fvalue.union(value, ctx))
+                Tables::Map(Ty::new(fkey.union(&**key, ctx)), fvalue.union(value, ctx))
             },
 
             (&Tables::Empty, tab) => tab.clone(),
@@ -209,13 +211,13 @@ impl Lattice for Tables {
                 Tables::Array(value1.union(value2, ctx)),
 
             (&Tables::Map(ref key1, ref value1), &Tables::Map(ref key2, ref value2)) =>
-                Tables::Map(Box::new(key1.union(key2, ctx)), value1.union(value2, ctx)),
+                Tables::Map(key1.union(key2, ctx), value1.union(value2, ctx)),
 
             (&Tables::Array(ref value1), &Tables::Map(ref key2, ref value2)) =>
-                Tables::Map(Box::new((**key2).union(&T::integer(), ctx)),
+                Tables::Map(Ty::new((**key2).union(&T::integer(), ctx)),
                             value1.union(value2, ctx)),
             (&Tables::Map(ref key1, ref value1), &Tables::Array(ref value2)) =>
-                Tables::Map(Box::new((**key1).union(&T::integer(), ctx)),
+                Tables::Map(Ty::new((**key1).union(&T::integer(), ctx)),
                             value1.union(value2, ctx)),
         }
     }

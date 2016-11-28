@@ -1,5 +1,6 @@
 use std::fmt;
 use std::ops;
+use std::mem;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
@@ -99,94 +100,7 @@ impl<'a> T<'a> {
         T::Tables(Cow::Owned(Tables::Array(SlotWithNil::from_slot(v))))
     }
     pub fn map(k: T, v: Slot) -> T<'a> {
-        T::Tables(Cow::Owned(Tables::Map(Box::new(k.into_send()), SlotWithNil::from_slot(v))))
-    }
-
-    pub fn from(kind: &K, resolv: &mut TypeResolver) -> CheckResult<T<'a>> {
-        let slot_from_slotkind = |slotkind: &SlotKind,
-                                  resolv: &mut TypeResolver| -> CheckResult<Slot> {
-            let ty = T::from(&slotkind.kind.base, resolv)?;
-            let flex = F::from(slotkind.modf);
-            Ok(Slot::new(flex, ty))
-        };
-
-        match *kind {
-            K::Oops              => Ok(T::Dynamic(Dyn::Oops)), // typically from a parser error
-            K::Dynamic           => Ok(T::Dynamic(Dyn::User)),
-            K::Any               => Ok(T::All),
-            K::Nil               => Ok(T::Nil),
-            K::Boolean           => Ok(T::Boolean),
-            K::BooleanLit(true)  => Ok(T::True),
-            K::BooleanLit(false) => Ok(T::False),
-            K::Number            => Ok(T::Numbers(Cow::Owned(Numbers::All))),
-            K::Integer           => Ok(T::Numbers(Cow::Owned(Numbers::Int))),
-            K::IntegerLit(v)     => Ok(T::Numbers(Cow::Owned(Numbers::One(v)))),
-            K::String            => Ok(T::Strings(Cow::Owned(Strings::All))),
-            K::StringLit(ref s)  => Ok(T::Strings(Cow::Owned(Strings::One(s.to_owned())))),
-            K::Table             => Ok(T::Tables(Cow::Owned(Tables::All))),
-            K::EmptyTable        => Ok(T::Tables(Cow::Owned(Tables::Empty))),
-            K::Function          => Ok(T::Functions(Cow::Owned(Functions::All))),
-            K::Thread            => Ok(T::Thread),
-            K::UserData          => Ok(T::UserData),
-            K::Named(ref name)   => resolv.ty_from_name(name),
-            K::WithNil(ref k)    => Ok(T::from(k, resolv)? | T::Nil), // XXX for now
-            K::WithoutNil(ref k) => Ok(T::from(k, resolv)?), // XXX for now
-            K::Error(..)         => Err(format!("error type not yet supported in checker")),
-
-            K::Record(ref fields) => {
-                let mut newfields = BTreeMap::new();
-                for &(ref name, ref slotkind) in fields {
-                    let slot = slot_from_slotkind(&slotkind.base, resolv)?;
-                    newfields.insert(name.base.clone().into(), slot);
-                }
-                Ok(T::Tables(Cow::Owned(Tables::Fields(newfields))))
-            }
-
-            K::Tuple(ref fields) => {
-                let mut newfields = BTreeMap::new();
-                for (i, slotkind) in fields.iter().enumerate() {
-                    let key = Key::Int(i as i32 + 1);
-                    let slot = slot_from_slotkind(slotkind, resolv)?;
-                    newfields.insert(key, slot);
-                }
-                Ok(T::Tables(Cow::Owned(Tables::Fields(newfields))))
-            },
-
-            K::Array(ref v) => {
-                let slot = SlotWithNil::from_slot(slot_from_slotkind(v, resolv)?);
-                Ok(T::Tables(Cow::Owned(Tables::Array(slot))))
-            },
-
-            K::Map(ref k, ref v) => {
-                let slot = SlotWithNil::from_slot(slot_from_slotkind(v, resolv)?);
-                Ok(T::Tables(Cow::Owned(Tables::Map(Box::new(T::from(k, resolv)?), slot))))
-            },
-
-            K::Func(ref func) => {
-                let func = Function {
-                    args: TySeq::from_kind_seq(&func.args, resolv)?,
-                    returns: TySeq::from_kind_seq(&func.returns, resolv)?,
-                };
-                Ok(T::Functions(Cow::Owned(Functions::Simple(func))))
-            }
-
-            K::Union(ref kinds) => {
-                assert!(!kinds.is_empty());
-                let mut ty = T::from(&kinds[0], resolv)?;
-                for kind in &kinds[1..] {
-                    ty = ty | T::from(kind, resolv)?;
-                }
-                Ok(ty)
-            }
-
-            K::Attr(ref kind, ref attr) => {
-                if let Some(builtin) = Builtin::from(attr, resolv)? {
-                    Ok(T::Builtin(builtin, Box::new(T::from(kind, resolv)?)))
-                } else {
-                    T::from(kind, resolv) // `Builtin::from` has already reported the error
-                }
-            }
-        }
+        T::Tables(Cow::Owned(Tables::Map(Ty::new(k.into_send()), SlotWithNil::from_slot(v))))
     }
 
     pub fn flags(&self) -> Flags {
@@ -497,7 +411,7 @@ impl<'a> T<'a> {
             // make a type variable i such that i <: ubound and i <: tvar
             let i = ctx.gen_tvar();
             ctx.assert_tvar_sub_tvar(i, tvar)?;
-            ctx.assert_tvar_sub(i, &ubound)?;
+            ctx.assert_tvar_sub(i, &Ty::new(ubound))?;
 
             Ok(i)
         }
@@ -600,7 +514,7 @@ impl<'a> Lattice<Unioned> for T<'a> {
                 if other.tvar.is_some() { // XXX cannot determine the type var relation
                     return error_not_sub(self, other);
                 } else {
-                    return ctx.assert_tvar_sub(lhs, &T::Union(Cow::Borrowed(other)));
+                    return ctx.assert_tvar_sub(lhs, &Ty::new(T::Union(Cow::Owned(other.clone()))));
                 }
             },
 
@@ -738,7 +652,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::Union(ref a), &T::Union(ref b)) => return a.assert_sub(b, ctx),
             (&T::Union(ref a), &T::TVar(b)) if a.tvar.is_none() => {
                 // do NOT try to split `T|U <: x` into `T <: x AND U <: x` if possible
-                return ctx.assert_tvar_sup(b, self);
+                return ctx.assert_tvar_sup(b, &Ty::new(self.clone().into_send()));
             },
             (&T::Union(ref a), b) => {
                 // a1 \/ a2 <: b === a1 <: b AND a2 <: b
@@ -748,8 +662,8 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (a, &T::Union(ref b)) => return a.assert_sub(&**b, ctx),
 
             (&T::TVar(a), &T::TVar(b)) => return a.assert_sub(&b, ctx),
-            (a, &T::TVar(b)) => return ctx.assert_tvar_sup(b, a),
-            (&T::TVar(a), b) => return ctx.assert_tvar_sub(a, b),
+            (a, &T::TVar(b)) => return ctx.assert_tvar_sup(b, &Ty::new(a.clone().into_send())),
+            (&T::TVar(a), b) => return ctx.assert_tvar_sub(a, &Ty::new(b.clone().into_send())),
 
             (_, _) => false,
         };
@@ -810,8 +724,8 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::Class(a),         &T::Class(b))         => a == b,
 
             (&T::TVar(a), &T::TVar(b)) => return a.assert_eq(&b, ctx),
-            (a, &T::TVar(b)) => return ctx.assert_tvar_eq(b, a),
-            (&T::TVar(a), b) => return ctx.assert_tvar_eq(a, b),
+            (a, &T::TVar(b)) => return ctx.assert_tvar_eq(b, &Ty::new(a.clone().into_send())),
+            (&T::TVar(a), b) => return ctx.assert_tvar_eq(a, &Ty::new(b.clone().into_send())),
 
             (a, &T::Union(ref b)) => return a.assert_eq(&**b, ctx),
             (&T::Union(ref _a), _b) => false, // XXX for now
@@ -924,7 +838,230 @@ impl<'a> From<T<'a>> for Unioned {
     fn from(x: T<'a>) -> Unioned { Unioned::from(&x) }
 }
 
-pub type Ty = Box<T<'static>>;
+// a "type pointer".
+#[derive(Clone, PartialEq)]
+pub struct Ty {
+    ty: Box<T<'static>>,
+}
+
+impl Ty {
+    pub fn dummy() -> Ty {
+        Ty { ty: Box::new(T::dummy()) }
+    }
+
+    pub fn new(ty: T<'static>) -> Ty {
+        Ty { ty: Box::new(ty) }
+    }
+
+    pub fn from_kind(kind: &K, resolv: &mut TypeResolver) -> CheckResult<Ty> {
+        let slot_from_slotkind = |slotkind: &SlotKind,
+                                  resolv: &mut TypeResolver| -> CheckResult<Slot> {
+            let ty = Ty::from_kind(&slotkind.kind.base, resolv)?;
+            let flex = F::from(slotkind.modf);
+            Ok(Slot::new(flex, ty))
+        };
+
+        let ty = match *kind {
+            K::Oops              => Ty::new(T::Dynamic(Dyn::Oops)), // typically from a parser error
+            K::Dynamic           => Ty::new(T::Dynamic(Dyn::User)),
+            K::Any               => Ty::new(T::All),
+            K::Nil               => Ty::new(T::Nil),
+            K::Boolean           => Ty::new(T::Boolean),
+            K::BooleanLit(true)  => Ty::new(T::True),
+            K::BooleanLit(false) => Ty::new(T::False),
+            K::Number            => Ty::new(T::Numbers(Cow::Owned(Numbers::All))),
+            K::Integer           => Ty::new(T::Numbers(Cow::Owned(Numbers::Int))),
+            K::IntegerLit(v)     => Ty::new(T::Numbers(Cow::Owned(Numbers::One(v)))),
+            K::String            => Ty::new(T::Strings(Cow::Owned(Strings::All))),
+            K::StringLit(ref s)  => Ty::new(T::Strings(Cow::Owned(Strings::One(s.to_owned())))),
+            K::Table             => Ty::new(T::Tables(Cow::Owned(Tables::All))),
+            K::EmptyTable        => Ty::new(T::Tables(Cow::Owned(Tables::Empty))),
+            K::Function          => Ty::new(T::Functions(Cow::Owned(Functions::All))),
+            K::Thread            => Ty::new(T::Thread),
+            K::UserData          => Ty::new(T::UserData),
+            K::Named(ref name)   => resolv.ty_from_name(name)?,
+            K::WithNil(ref k)    => Ty::from_kind(k, resolv)? | Ty::new(T::Nil), // XXX for now
+            K::WithoutNil(ref k) => Ty::from_kind(k, resolv)?, // XXX for now
+            K::Error(..)         => return Err(format!("error type not yet supported in checker")),
+            // XXX should issue a proper error or should work correctly
+
+            K::Record(ref fields) => {
+                let mut newfields = BTreeMap::new();
+                for &(ref name, ref slotkind) in fields {
+                    let slot = slot_from_slotkind(&slotkind.base, resolv)?;
+                    newfields.insert(name.base.clone().into(), slot);
+                }
+                Ty::new(T::Tables(Cow::Owned(Tables::Fields(newfields))))
+            }
+
+            K::Tuple(ref fields) => {
+                let mut newfields = BTreeMap::new();
+                for (i, slotkind) in fields.iter().enumerate() {
+                    let key = Key::Int(i as i32 + 1);
+                    let slot = slot_from_slotkind(slotkind, resolv)?;
+                    newfields.insert(key, slot);
+                }
+                Ty::new(T::Tables(Cow::Owned(Tables::Fields(newfields))))
+            },
+
+            K::Array(ref v) => {
+                let slot = SlotWithNil::from_slot(slot_from_slotkind(v, resolv)?);
+                Ty::new(T::Tables(Cow::Owned(Tables::Array(slot))))
+            },
+
+            K::Map(ref k, ref v) => {
+                let slot = SlotWithNil::from_slot(slot_from_slotkind(v, resolv)?);
+                Ty::new(T::Tables(Cow::Owned(Tables::Map(Ty::from_kind(k, resolv)?, slot))))
+            },
+
+            K::Func(ref func) => {
+                let func = Function {
+                    args: TySeq::from_kind_seq(&func.args, resolv)?,
+                    returns: TySeq::from_kind_seq(&func.returns, resolv)?,
+                };
+                Ty::new(T::Functions(Cow::Owned(Functions::Simple(func))))
+            }
+
+            K::Union(ref kinds) => {
+                assert!(!kinds.is_empty());
+                let mut ty = Ty::from_kind(&kinds[0], resolv)?;
+                for kind in &kinds[1..] {
+                    ty = ty | Ty::from_kind(kind, resolv)?;
+                }
+                ty
+            }
+
+            K::Attr(ref kind, ref attr) => {
+                if let Some(builtin) = Builtin::from(attr, resolv)? {
+                    Ty::from_kind(kind, resolv)?.map(|t| T::Builtin(builtin, Box::new(t)))
+                } else {
+                    Ty::from_kind(kind, resolv)? // `Builtin::from` has already reported the error
+                }
+            }
+        };
+
+        Ok(ty)
+    }
+
+    pub fn map<F: FnOnce(T<'static>) -> T<'static>>(mut self, f: F) -> Ty {
+        let ty = mem::replace(&mut *self.ty, T::None);
+        *self.ty = f(ty);
+        self
+    }
+
+    pub fn without_simple(self, filter: UnionedSimple) -> Ty {
+        self.map(|t| t.without_simple(filter))
+    }
+
+    pub fn without_nil(self) -> Ty { self.map(|t| t.without_nil()) }
+    pub fn truthy(self)      -> Ty { self.map(|t| t.truthy()) }
+    pub fn falsey(self)      -> Ty { self.map(|t| t.falsey()) }
+
+    pub fn split_tvar(&self) -> (Option<TVar>, Option<Ty>) {
+        let (tv, ty) = self.ty.split_tvar();
+        (tv, ty.map(Ty::new))
+    }
+
+    pub fn into_base(self) -> T<'static> { self.ty.into_base() }
+
+    pub fn filter_by_flags(mut self, flags: Flags, ctx: &mut TypeContext) -> CheckResult<Ty> {
+        let ty = mem::replace(&mut *self.ty, T::None);
+        *self.ty = ty.filter_by_flags(flags, ctx)?;
+        Ok(self)
+    }
+
+    pub fn unwrap(self) -> T<'static> {
+        *self.ty
+    }
+}
+
+impl<'a> From<T<'a>> for Ty {
+    fn from(ty: T<'a>) -> Ty {
+        Ty { ty: Box::new(ty.into_send()) }
+    }
+}
+
+impl From<Box<T<'static>>> for Ty {
+    fn from(ty: Box<T<'static>>) -> Ty {
+        Ty { ty: ty }
+    }
+}
+
+impl ops::Deref for Ty {
+    type Target = T<'static>;
+    fn deref(&self) -> &T<'static> { &self.ty }
+}
+
+impl ops::DerefMut for Ty {
+    fn deref_mut(&mut self) -> &mut T<'static> { &mut self.ty }
+}
+
+impl ops::BitOr<Ty> for Ty {
+    type Output = Ty;
+    fn bitor(self, rhs: Ty) -> Ty {
+        Ty::new(self.ty.union(&rhs.ty, &mut NoTypeContext))
+    }
+}
+
+impl<'a> Lattice<T<'a>> for Ty {
+    type Output = Ty;
+
+    fn union(&self, other: &T<'a>, ctx: &mut TypeContext) -> Ty {
+        Ty::new((*self.ty).union(other, ctx))
+    }
+
+    fn assert_sub(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
+        (*self.ty).assert_sub(other, ctx)
+    }
+
+    fn assert_eq(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
+        (*self.ty).assert_eq(other, ctx)
+    }
+}
+
+impl<'a> Lattice<Ty> for T<'a> {
+    type Output = Ty;
+
+    fn union(&self, other: &Ty, ctx: &mut TypeContext) -> Ty {
+        Ty::new(self.union(&*other.ty, ctx))
+    }
+
+    fn assert_sub(&self, other: &Ty, ctx: &mut TypeContext) -> CheckResult<()> {
+        self.assert_sub(&*other.ty, ctx)
+    }
+
+    fn assert_eq(&self, other: &Ty, ctx: &mut TypeContext) -> CheckResult<()> {
+        self.assert_eq(&*other.ty, ctx)
+    }
+}
+
+impl Lattice<Ty> for Ty {
+    type Output = Ty;
+
+    fn union(&self, other: &Ty, ctx: &mut TypeContext) -> Ty {
+        Ty::new((*self.ty).union(&*other.ty, ctx))
+    }
+
+    fn assert_sub(&self, other: &Ty, ctx: &mut TypeContext) -> CheckResult<()> {
+        (*self.ty).assert_sub(&*other.ty, ctx)
+    }
+
+    fn assert_eq(&self, other: &Ty, ctx: &mut TypeContext) -> CheckResult<()> {
+        (*self.ty).assert_eq(&*other.ty, ctx)
+    }
+}
+
+impl Display for Ty {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
+        self.ty.fmt_displayed(f, ctx)
+    }
+}
+
+impl fmt::Debug for Ty {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self.ty, f)
+    }
+}
 
 #[cfg(test)]
 #[allow(unused_variables, dead_code)]
@@ -941,12 +1078,12 @@ mod tests {
     }
 
     fn s(x: &str) -> Str { Str::from(x.as_bytes().to_owned()) }
-    fn just(t: T) -> Slot { Slot::new(F::Just, t.into_send()) }
-    fn var(t: T) -> Slot { Slot::new(F::Var, t.into_send()) }
-    fn cnst(t: T) -> Slot { Slot::new(F::Const, t.into_send()) }
-    fn curr(t: T) -> Slot { Slot::new(F::Currently, t.into_send()) }
-    fn varcnst(t: T) -> Slot { Slot::new(F::VarOrConst(Mark::any()), t.into_send()) }
-    fn varcurr(t: T) -> Slot { Slot::new(F::VarOrCurrently(Mark::any()), t.into_send()) }
+    fn just(t: T) -> Slot { Slot::new(F::Just, Ty::from(t)) }
+    fn var(t: T) -> Slot { Slot::new(F::Var, Ty::from(t)) }
+    fn cnst(t: T) -> Slot { Slot::new(F::Const, Ty::from(t)) }
+    fn curr(t: T) -> Slot { Slot::new(F::Currently, Ty::from(t)) }
+    fn varcnst(t: T) -> Slot { Slot::new(F::VarOrConst(Mark::any()), Ty::from(t)) }
+    fn varcurr(t: T) -> Slot { Slot::new(F::VarOrCurrently(Mark::any()), Ty::from(t)) }
 
     #[test]
     fn test_lattice() {

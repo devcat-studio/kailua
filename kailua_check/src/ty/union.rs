@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use diag::CheckResult;
-use super::{T, TypeContext, NoTypeContext, Lattice, Display};
+use super::{T, Ty, TypeContext, NoTypeContext, Lattice, Display};
 use super::{Numbers, Strings, Tables, Functions, Class, TVar};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
@@ -180,9 +180,9 @@ impl Lattice for Unioned {
             (Some(a), T_NONE, Some(b), T_NONE) =>
                 return ctx.assert_tvar_eq_tvar(a, b),
             (Some(a), T_NONE, _, _) =>
-                return ctx.assert_tvar_eq(a, &T::Union(Cow::Borrowed(other))),
+                return ctx.assert_tvar_eq(a, &Ty::new(T::Union(Cow::Owned(other.clone())))),
             (_, _, Some(b), T_NONE) =>
-                return ctx.assert_tvar_eq(b, &T::Union(Cow::Borrowed(self))),
+                return ctx.assert_tvar_eq(b, &Ty::new(T::Union(Cow::Owned(self.clone())))),
             (Some(_), _, _, _) | (_, _, Some(_), _) =>
                 // XXX if we have a type variable in the union,
                 // the type variable essentially eschews all differences between two input types
@@ -215,7 +215,7 @@ impl Display for Unioned {
             if let Some(t) = ctx.get_tvar_exact_type(tv) {
                 let mut u = self.clone();
                 u.tvar = None;
-                let resolved = T::Union(Cow::Owned(u)) | t;
+                let resolved = Ty::new(T::Union(Cow::Owned(u))) | t;
                 assert_eq!(resolved.get_tvar(), None);
                 return fmt::Display::fmt(&resolved.display(ctx), f);
             }

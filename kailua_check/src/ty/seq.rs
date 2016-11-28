@@ -64,7 +64,7 @@ macro_rules! define_tyseq {
             // so there should be a `nil` somewhere. since we don't know where it ends,
             // the tail is implicitly unioned with `nil` in all practical sense.
             //
-            // None is same to Some(Box::new(T::Nil)) but has a display hint
+            // None is same to Some(Ty::new(T::Nil)) but has a display hint
             // and has a different behavior for the arity calculation.
             // (we may need this because, well, C/C++ API *can* count the proper number of args.
             // TODO this is not yet enforced due to a number of concerns)
@@ -457,13 +457,13 @@ define_tyseq! {
         tynil = Box<TyWithNil>;
         unspanned_t = T;
 
-        make_nil_ty = || Box::new(T::Nil);
+        make_nil_ty = || Ty::new(T::Nil);
         dummy_tynil = Box::new(TyWithNil::dummy());
-        ty_union = |lhs: &Ty, rhs: &Ty, ctx| Box::new(lhs.union(rhs, ctx));
-        t_to_ty = |t: T| Box::new(t.into_send());
-        tynil_to_ty = |t: Box<TyWithNil>| Box::new(t.into_type());
-        ty_to_tynil = |t: Ty| Box::new(TyWithNil::from(*t));
-        spanned_kind_to_ty = |k: &Spanned<Kind>, resolv| T::from(k, resolv).map(Box::new);
+        ty_union = |lhs: &Ty, rhs: &Ty, ctx| lhs.union(rhs, ctx);
+        t_to_ty = |t: T| Ty::new(t.into_send());
+        tynil_to_ty = |t: Box<TyWithNil>| t.into_type();
+        ty_to_tynil = |t: Ty| Box::new(TyWithNil::from(t.unwrap()));
+        spanned_kind_to_ty = |k: &Spanned<Kind>, resolv| Ty::from_kind(k, resolv);
     }
 
     type SpannedTySeq {
@@ -472,15 +472,15 @@ define_tyseq! {
         tynil = Spanned<Box<TyWithNil>>;
         unspanned_t = T;
 
-        make_nil_ty = |span: Span| Box::new(T::Nil).with_loc(span.end());
+        make_nil_ty = |span: Span| Ty::new(T::Nil).with_loc(span.end());
         dummy_tynil = Box::new(TyWithNil::dummy()).without_loc();
         ty_union = |lhs: &Spanned<Ty>, rhs: &Spanned<Ty>, ctx|
-            Box::new(lhs.base.union(&rhs.base, ctx)).without_loc();
-        t_to_ty = |t: Spanned<T>| t.map(|t| Box::new(t.into_send()));
-        tynil_to_ty = |t: Spanned<Box<TyWithNil>>| t.map(|t| Box::new(t.into_type()));
-        ty_to_tynil = |t: Spanned<Ty>| t.map(|t| Box::new(TyWithNil::from(*t)));
+            lhs.base.union(&rhs.base, ctx).without_loc();
+        t_to_ty = |t: Spanned<T>| t.map(|t| Ty::new(t.into_send()));
+        tynil_to_ty = |t: Spanned<Box<TyWithNil>>| t.map(|t| t.into_type());
+        ty_to_tynil = |t: Spanned<Ty>| t.map(|t| Box::new(TyWithNil::from(t.unwrap())));
         spanned_kind_to_ty = |k: &Spanned<Kind>, resolv|
-            T::from(&k.base, resolv).map(|t| Box::new(t).with_loc(k));
+            Ty::from_kind(&k.base, resolv).map(|t| t.with_loc(k));
 
         span span: Span {
             dummy = Span::dummy();
@@ -499,15 +499,15 @@ define_slotseq! {
         tynil = Box<TyWithNil>;
         unspanned_slot = Slot;
 
-        make_nil_slot = || Slot::just(T::Nil);
+        make_nil_slot = || Slot::just(Ty::new(T::Nil));
         dummy_slotnil = SlotWithNil::dummy();
         slot_union = |lhs: &Slot, rhs: &Slot, ctx| lhs.union(rhs, ctx);
-        t_to_slot = |t: T| Slot::just(t);
-        ty_to_slot = |t: Ty| Slot::just(*t);
+        t_to_slot = |t: T| Slot::just(Ty::new(t.into_send()));
+        ty_to_slot = |t: Ty| Slot::just(t);
         tynil_to_slotnil = |t: Box<TyWithNil>| SlotWithNil::from_ty_with_nil(*t);
         slotnil_to_slot = |s: SlotWithNil| s.into_slot();
         slot_to_slotnil = |s: Slot| SlotWithNil::from_slot(s);
-        slot_to_ty = |s: Slot| Box::new(s.unlift().clone().into_send());
+        slot_to_ty = |s: Slot| s.unlift().clone();
         slotnil_to_tynil = |s: SlotWithNil|
             Box::new(TyWithNil::from(s.as_slot_without_nil().unlift().clone()));
     }
@@ -520,17 +520,17 @@ define_slotseq! {
         tynil = Spanned<Box<TyWithNil>>;
         unspanned_slot = Slot;
 
-        make_nil_slot = |span: Span| Slot::just(T::Nil).with_loc(span.end());
+        make_nil_slot = |span: Span| Slot::just(Ty::new(T::Nil)).with_loc(span.end());
         dummy_slotnil = SlotWithNil::dummy().without_loc();
         slot_union = |lhs: &Spanned<Slot>, rhs: &Spanned<Slot>, ctx|
             lhs.base.union(&rhs.base, ctx).without_loc();
-        t_to_slot = |t: Spanned<T>| t.map(|t| Slot::just(t));
-        ty_to_slot = |t: Spanned<Ty>| t.map(|t| Slot::just(*t));
+        t_to_slot = |t: Spanned<T>| t.map(|t| Slot::just(Ty::new(t.into_send())));
+        ty_to_slot = |t: Spanned<Ty>| t.map(|t| Slot::just(t));
         tynil_to_slotnil = |t: Spanned<Box<TyWithNil>>|
             t.map(|t| SlotWithNil::from_ty_with_nil(*t));
         slotnil_to_slot = |s: Spanned<SlotWithNil>| s.map(|s| s.into_slot());
         slot_to_slotnil = |s: Spanned<Slot>| s.map(|s| SlotWithNil::from_slot(s));
-        slot_to_ty = |s: Spanned<Slot>| s.map(|s| Box::new(s.unlift().clone().into_send()));
+        slot_to_ty = |s: Spanned<Slot>| s.map(|s| s.unlift().clone());
         slotnil_to_tynil = |s: Spanned<SlotWithNil>|
             s.map(|s| Box::new(TyWithNil::from(s.as_slot_without_nil().unlift().clone())));
 

@@ -1,4 +1,5 @@
 use std::fmt;
+use std::mem;
 use std::ops::Deref;
 use std::rc::Rc;
 use std::cell::{Ref, RefCell};
@@ -7,7 +8,7 @@ use kailua_env::Spanned;
 use kailua_diag::Reporter;
 use kailua_syntax::M;
 use diag::CheckResult;
-use super::{Dyn, T, TypeContext, Lattice, Display, Mark, TVar, Builtin};
+use super::{Dyn, T, Ty, TypeContext, Lattice, Display, Mark, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::Flags;
 use message as m;
@@ -142,37 +143,33 @@ impl<'a> fmt::Debug for F {
 
 // slot types
 #[derive(Clone, PartialEq)]
-pub struct S<'a> {
+pub struct S {
     flex: F,
-    ty: T<'a>,
+    ty: Ty,
 }
 
-impl<'a> S<'a> {
+impl S {
     pub fn flex(&self) -> F {
         self.flex
     }
 
-    pub fn unlift<'b>(&'b self) -> &'b T<'a> {
+    pub fn unlift(&self) -> &Ty {
         &self.ty
     }
 
-    pub fn weaken<'b: 'a>(&'b self, ctx: &mut TypeContext) -> CheckResult<S<'b>> {
-        Ok(S { flex: self.flex.weaken(ctx)?, ty: self.ty.to_ref() })
+    pub fn weaken(&self, ctx: &mut TypeContext) -> CheckResult<S> {
+        Ok(S { flex: self.flex.weaken(ctx)?, ty: self.ty.clone() })
     }
 
     // used for value slots in array and mapping types
-    pub fn without_nil(self) -> S<'a> {
+    pub fn without_nil(self) -> S {
         S { flex: self.flex, ty: self.ty.without_nil() }
-    }
-
-    pub fn into_send(self) -> S<'static> {
-        S { flex: self.flex, ty: self.ty.into_send() }
     }
 
     // self and other may be possibly different slots and being merged by union
     // (thus Currently cannot be merged, even if the type is identical)
     // mainly used by `and`/`or` operators and table lifting
-    pub fn union<'b>(&mut self, other: &mut S<'b>, ctx: &mut TypeContext) -> S<'static> {
+    pub fn union(&mut self, other: &mut S, ctx: &mut TypeContext) -> S {
         // Currently is first *changed* to Var, since it will be going to be shared anyway
         if self.flex.is_linear() { self.flex = F::Var; }
         if other.flex.is_linear() { other.flex = F::Var; }
@@ -180,11 +177,11 @@ impl<'a> S<'a> {
         let (flex, ty) = match (self.flex, other.flex) {
             (F::Dynamic(dyn1), F::Dynamic(dyn2)) => {
                 let dyn = dyn1 | dyn2;
-                (F::Dynamic(dyn), T::Dynamic(dyn))
+                (F::Dynamic(dyn), Ty::new(T::Dynamic(dyn)))
             },
             (F::Dynamic(dyn), _) | (_, F::Dynamic(dyn)) =>
-                (F::Dynamic(dyn), T::Dynamic(dyn)),
-            (F::Any, _) | (_, F::Any) => (F::Any, T::None),
+                (F::Dynamic(dyn), Ty::new(T::Dynamic(dyn))),
+            (F::Any, _) | (_, F::Any) => (F::Any, Ty::new(T::None)),
 
             // it's fine to merge r-values
             (F::Just, F::Just) => (F::Just, self.ty.union(&other.ty, ctx)),
@@ -222,7 +219,7 @@ impl<'a> S<'a> {
         S { flex: flex, ty: ty }
     }
 
-    pub fn assert_sub<'b>(&self, other: &S<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
+    pub fn assert_sub(&self, other: &S, ctx: &mut TypeContext) -> CheckResult<()> {
         debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
         macro_rules! m {
@@ -282,7 +279,7 @@ impl<'a> S<'a> {
         Ok(())
     }
 
-    pub fn assert_eq<'b>(&self, other: &S<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
+    pub fn assert_eq(&self, other: &S, ctx: &mut TypeContext) -> CheckResult<()> {
         debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
         macro_rules! m {
@@ -331,37 +328,37 @@ impl<'a> S<'a> {
     }
 }
 
-impl<'a> fmt::Debug for S<'a> {
+impl fmt::Debug for S {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?} {:?}", self.flex, self.ty)
     }
 }
 
 #[derive(Clone, PartialEq)]
-pub struct Slot(Rc<RefCell<S<'static>>>);
+pub struct Slot(Rc<RefCell<S>>);
 
 impl Slot {
-    pub fn new<'a>(flex: F, ty: T<'a>) -> Slot {
-        Slot(Rc::new(RefCell::new(S { flex: flex, ty: ty.into_send() })))
+    pub fn new<'a>(flex: F, ty: Ty) -> Slot {
+        Slot(Rc::new(RefCell::new(S { flex: flex, ty: ty })))
     }
 
-    pub fn from<'a>(s: S<'a>) -> Slot {
-        Slot(Rc::new(RefCell::new(s.into_send())))
+    pub fn from(s: S) -> Slot {
+        Slot(Rc::new(RefCell::new(s)))
     }
 
-    pub fn just<'a>(t: T<'a>) -> Slot {
+    pub fn just(t: Ty) -> Slot {
         Slot::new(F::Just, t)
     }
 
-    pub fn var<'a>(t: T<'a>, ctx: &mut TypeContext) -> Slot {
+    pub fn var(t: Ty, ctx: &mut TypeContext) -> Slot {
         Slot::new(F::VarOrCurrently(ctx.gen_mark()), t)
     }
 
     pub fn dummy() -> Slot {
-        Slot::new(F::Dynamic(Dyn::Oops), T::dummy())
+        Slot::new(F::Dynamic(Dyn::Oops), Ty::dummy())
     }
 
-    pub fn unlift<'a>(&'a self) -> Ref<'a, T<'static>> {
+    pub fn unlift<'a>(&'a self) -> Ref<'a, Ty> {
         Ref::map(self.0.borrow(), |s| s.unlift())
     }
 
@@ -408,7 +405,7 @@ impl Slot {
             // dynamic rhs *may* change the flex of lhs as well, if the initial flex permits
             (F::Currently, F::Dynamic(dyn), _) | (F::VarOrCurrently(_), F::Dynamic(dyn), _) => {
                 lhs.flex = F::Dynamic(dyn);
-                lhs.ty = T::Dynamic(dyn);
+                lhs.ty = Ty::new(T::Dynamic(dyn));
             }
 
             (_, F::Dynamic(_), _) => {}
@@ -493,8 +490,10 @@ impl Slot {
     }
 
     pub fn filter_by_flags(&self, flags: Flags, ctx: &mut TypeContext) -> CheckResult<()> {
+        // when filter_by_flags fails, the slot itself has no valid type
         let mut s = self.0.borrow_mut();
-        s.ty = s.ty.clone().into_send().filter_by_flags(flags, ctx)?;
+        let t = mem::replace(&mut *s.ty, T::None);
+        *s.ty = t.filter_by_flags(flags, ctx)?;
         Ok(())
     }
 
@@ -517,7 +516,7 @@ impl Slot {
 
     pub fn without_nil(&self) -> Slot {
         let s = self.0.borrow();
-        Slot::from(s.clone().into_send().without_nil())
+        Slot::from(s.clone().without_nil())
     }
 
     pub fn weaken(&self, ctx: &mut TypeContext) -> CheckResult<Slot> {
@@ -619,7 +618,7 @@ impl fmt::Debug for Slot {
 mod tests {
     use kailua_diag::NoReport;
     use std::rc::Rc;
-    use ty::{T, Lattice, TypeContext, NoTypeContext};
+    use ty::{T, Ty, Lattice, TypeContext, NoTypeContext};
     use super::*;
 
     #[test]
@@ -628,12 +627,14 @@ mod tests {
 
         let mut ctx = Context::new(Rc::new(NoReport));
 
-        let just = |t| Slot::new(F::Just, t);
-        let cnst = |t| Slot::new(F::Const, t);
-        let var = |t| Slot::new(F::Var, t);
-        let curr = |t| Slot::new(F::Currently, t);
-        let varcnst = |ctx: &mut TypeContext, t| Slot::new(F::VarOrConst(ctx.gen_mark()), t);
-        let varcurr = |ctx: &mut TypeContext, t| Slot::new(F::VarOrCurrently(ctx.gen_mark()), t);
+        let just = |t| Slot::new(F::Just, Ty::new(t));
+        let cnst = |t| Slot::new(F::Const, Ty::new(t));
+        let var = |t| Slot::new(F::Var, Ty::new(t));
+        let curr = |t| Slot::new(F::Currently, Ty::new(t));
+        let varcnst =
+            |ctx: &mut TypeContext, t| Slot::new(F::VarOrConst(ctx.gen_mark()), Ty::new(t));
+        let varcurr =
+            |ctx: &mut TypeContext, t| Slot::new(F::VarOrCurrently(ctx.gen_mark()), Ty::new(t));
 
         assert_eq!(just(T::integer()).assert_sub(&just(T::integer()), &mut NoTypeContext), Ok(()));
         assert_eq!(just(T::integer()).assert_sub(&just(T::number()), &mut NoTypeContext), Ok(()));

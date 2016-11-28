@@ -66,10 +66,10 @@ impl Mark {
     pub fn assert_imply(&self, other: Mark, ctx: &mut TypeContext) -> CheckResult<()> {
         ctx.assert_mark_imply(*self, other)
     }
-    pub fn assert_require_eq(&self, base: &T, ty: &T, ctx: &mut TypeContext) -> CheckResult<()> {
+    pub fn assert_require_eq(&self, base: &Ty, ty: &Ty, ctx: &mut TypeContext) -> CheckResult<()> {
         ctx.assert_mark_require_eq(*self, base, ty)
     }
-    pub fn assert_require_sup(&self, base: &T, ty: &T, ctx: &mut TypeContext) -> CheckResult<()> {
+    pub fn assert_require_sup(&self, base: &Ty, ty: &Ty, ctx: &mut TypeContext) -> CheckResult<()> {
         ctx.assert_mark_require_sup(*self, base, ty)
     }
 }
@@ -111,17 +111,17 @@ impl fmt::Debug for Class {
 }
 
 pub trait TypeResolver: Report {
-    fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<T<'static>>;
+    fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<Ty>;
 }
 
 impl<'a, R: TypeResolver> TypeResolver for &'a R {
-    fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<T<'static>> {
+    fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<Ty> {
         (**self).ty_from_name(name)
     }
 }
 
 impl<'a, R: TypeResolver> TypeResolver for &'a mut R {
-    fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<T<'static>> {
+    fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<Ty> {
         (**self).ty_from_name(name)
     }
 }
@@ -136,13 +136,13 @@ pub trait TypeContext: Report {
     // type variable management
     fn last_tvar(&self) -> Option<TVar>;
     fn gen_tvar(&mut self) -> TVar;
-    fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()>;
-    fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()>;
-    fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()>;
+    fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()>;
+    fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()>;
+    fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()>;
     fn assert_tvar_sub_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()>;
     fn assert_tvar_eq_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()>;
     fn get_tvar_bounds(&self, tvar: TVar) -> (flags::Flags /*lb*/, flags::Flags /*ub*/);
-    fn get_tvar_exact_type(&self, tvar: TVar) -> Option<T<'static>>;
+    fn get_tvar_exact_type(&self, tvar: TVar) -> Option<Ty>;
 
     // flexibility mark management
     fn gen_mark(&mut self) -> Mark;
@@ -151,8 +151,8 @@ pub trait TypeContext: Report {
     fn assert_mark_eq(&mut self, lhs: Mark, rhs: Mark) -> CheckResult<()>;
     fn assert_mark_imply(&mut self, lhs: Mark, rhs: Mark) -> CheckResult<()>;
     // base should be identical over the subsequent method calls for same mark
-    fn assert_mark_require_eq(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()>;
-    fn assert_mark_require_sup(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()>;
+    fn assert_mark_require_eq(&mut self, mark: Mark, base: &Ty, ty: &Ty) -> CheckResult<()>;
+    fn assert_mark_require_sup(&mut self, mark: Mark, base: &Ty, ty: &Ty) -> CheckResult<()>;
     fn get_mark_exact(&self, mark: Mark) -> Option<bool>;
 
     // nominal type management
@@ -269,14 +269,14 @@ impl TypeContext for NoTypeContext {
     fn gen_tvar(&mut self) -> TVar {
         panic!("gen_tvar is not supposed to be called here");
     }
-    fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
-        panic!("assert_tvar_sub({:?}, {:?}) is not supposed to be called here", lhs, *rhs);
+    fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()> {
+        panic!("assert_tvar_sub({:?}, {:?}) is not supposed to be called here", lhs, rhs);
     }
-    fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
-        panic!("assert_tvar_sup({:?}, {:?}) is not supposed to be called here", lhs, *rhs);
+    fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()> {
+        panic!("assert_tvar_sup({:?}, {:?}) is not supposed to be called here", lhs, rhs);
     }
-    fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &T) -> CheckResult<()> {
-        panic!("assert_tvar_eq({:?}, {:?}) is not supposed to be called here", lhs, *rhs);
+    fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()> {
+        panic!("assert_tvar_eq({:?}, {:?}) is not supposed to be called here", lhs, rhs);
     }
     fn assert_tvar_sub_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()> {
         panic!("assert_tvar_sub_tvar({:?}, {:?}) is not supposed to be called here", lhs, rhs);
@@ -287,7 +287,7 @@ impl TypeContext for NoTypeContext {
     fn get_tvar_bounds(&self, tvar: TVar) -> (flags::Flags /*lb*/, flags::Flags /*ub*/) {
         panic!("get_tvar_bounds({:?}) is not supposed to be called here", tvar);
     }
-    fn get_tvar_exact_type(&self, tvar: TVar) -> Option<T<'static>> {
+    fn get_tvar_exact_type(&self, tvar: TVar) -> Option<Ty> {
         panic!("get_tvar_exact_type({:?}) is not supposed to be called here", tvar);
     }
 
@@ -306,13 +306,13 @@ impl TypeContext for NoTypeContext {
     fn assert_mark_imply(&mut self, lhs: Mark, rhs: Mark) -> CheckResult<()> {
         panic!("assert_mark_imply({:?}, {:?}) is not supposed to be called here", lhs, rhs);
     }
-    fn assert_mark_require_eq(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()> {
+    fn assert_mark_require_eq(&mut self, mark: Mark, base: &Ty, ty: &Ty) -> CheckResult<()> {
         panic!("assert_mark_require_eq({:?}, {:?}, {:?}) is not supposed to be called here",
-               mark, *base, *ty);
+               mark, base, ty);
     }
-    fn assert_mark_require_sup(&mut self, mark: Mark, base: &T, ty: &T) -> CheckResult<()> {
+    fn assert_mark_require_sup(&mut self, mark: Mark, base: &Ty, ty: &Ty) -> CheckResult<()> {
         panic!("assert_mark_require_sup({:?}, {:?}, {:?}) is not supposed to be called here",
-               mark, *base, *ty);
+               mark, base, ty);
     }
     fn get_mark_exact(&self, mark: Mark) -> Option<bool> {
         panic!("get_mark_exact({:?}) is not supposed to be called here", mark);

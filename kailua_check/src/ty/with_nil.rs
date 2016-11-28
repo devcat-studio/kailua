@@ -1,6 +1,6 @@
 use std::fmt;
 use diag::CheckResult;
-use super::{T, S, Slot, Lattice, TypeContext};
+use super::{T, Ty, S, Slot, Lattice, TypeContext};
 
 // Array and Map values should NOT contain nil,
 // since there are always keys that do not map to the value of that type
@@ -10,27 +10,35 @@ use super::{T, S, Slot, Lattice, TypeContext};
 // internally the slot itself does not have nils.
 
 #[derive(Clone, PartialEq)]
-pub struct TyWithNil { ty: T<'static> }
+pub struct TyWithNil { ty: Ty }
+
+impl<'a> From<T<'a>> for TyWithNil {
+    fn from(t: T<'a>) -> TyWithNil {
+        TyWithNil { ty: Ty::new(t.into_send().without_nil()) }
+    }
+}
+
+impl From<Ty> for TyWithNil {
+    fn from(t: Ty) -> TyWithNil {
+        TyWithNil { ty: t.without_nil() }
+    }
+}
 
 impl TyWithNil {
-    pub fn from<'a>(t: T<'a>) -> TyWithNil {
-        TyWithNil { ty: t.into_send().without_nil() }
-    }
-
     pub fn dummy() -> TyWithNil {
         TyWithNil::from(T::dummy())
     }
 
-    pub fn as_type_without_nil(&self) -> &T<'static> {
+    pub fn as_type_without_nil(&self) -> &Ty {
         &self.ty
     }
 
-    pub fn into_type_without_nil(self) -> T<'static> {
+    pub fn into_type_without_nil(self) -> Ty {
         self.ty
     }
 
-    pub fn into_type(self) -> T<'static> {
-        self.ty | T::Nil
+    pub fn into_type(self) -> Ty {
+        self.ty | Ty::new(T::Nil)
     }
 }
 
@@ -62,12 +70,12 @@ impl SlotWithNil {
         SlotWithNil { slot: s.without_nil() }
     }
 
-    pub fn new<'a>(s: S<'a>) -> SlotWithNil {
-        SlotWithNil { slot: Slot::from(s.into_send().without_nil()) }
+    pub fn new(s: S) -> SlotWithNil {
+        SlotWithNil { slot: Slot::from(s.without_nil()) }
     }
 
-    pub fn from<'a>(t: T<'a>) -> SlotWithNil {
-        SlotWithNil { slot: Slot::just(t.into_send().without_nil()) }
+    pub fn from(t: Ty) -> SlotWithNil {
+        SlotWithNil { slot: Slot::just(t.without_nil()) }
     }
 
     pub fn from_ty_with_nil(t: TyWithNil) -> SlotWithNil {
@@ -87,7 +95,7 @@ impl SlotWithNil {
     }
 
     pub fn into_slot(self) -> Slot {
-        Slot::new(self.slot.flex(), self.slot.unlift().clone().into_send() | T::Nil)
+        Slot::new(self.slot.flex(), self.slot.unlift().clone() | Ty::new(T::Nil))
     }
 }
 
