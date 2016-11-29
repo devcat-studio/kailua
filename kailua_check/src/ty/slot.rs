@@ -636,32 +636,32 @@ mod tests {
         let varcurr =
             |ctx: &mut TypeContext, t| Slot::new(F::VarOrCurrently(ctx.gen_mark()), Ty::new(t));
 
-        assert_eq!(just(T::integer()).assert_sub(&just(T::integer()), &mut NoTypeContext), Ok(()));
-        assert_eq!(just(T::integer()).assert_sub(&just(T::number()), &mut NoTypeContext), Ok(()));
-        assert!(just(T::number()).assert_sub(&just(T::integer()), &mut NoTypeContext).is_err());
+        assert_eq!(just(T::Integer).assert_sub(&just(T::Integer), &mut NoTypeContext), Ok(()));
+        assert_eq!(just(T::Integer).assert_sub(&just(T::Number), &mut NoTypeContext), Ok(()));
+        assert!(just(T::Number).assert_sub(&just(T::Integer), &mut NoTypeContext).is_err());
 
-        assert_eq!(var(T::integer()).assert_sub(&var(T::integer()), &mut NoTypeContext), Ok(()));
-        assert!(var(T::integer()).assert_sub(&var(T::number()), &mut NoTypeContext).is_err());
-        assert!(var(T::number()).assert_sub(&var(T::integer()), &mut NoTypeContext).is_err());
+        assert_eq!(var(T::Integer).assert_sub(&var(T::Integer), &mut NoTypeContext), Ok(()));
+        assert!(var(T::Integer).assert_sub(&var(T::Number), &mut NoTypeContext).is_err());
+        assert!(var(T::Number).assert_sub(&var(T::Integer), &mut NoTypeContext).is_err());
 
-        assert_eq!(cnst(T::integer()).assert_sub(&cnst(T::integer()), &mut NoTypeContext), Ok(()));
-        assert_eq!(cnst(T::integer()).assert_sub(&cnst(T::number()), &mut NoTypeContext), Ok(()));
-        assert!(cnst(T::number()).assert_sub(&cnst(T::integer()), &mut NoTypeContext).is_err());
+        assert_eq!(cnst(T::Integer).assert_sub(&cnst(T::Integer), &mut NoTypeContext), Ok(()));
+        assert_eq!(cnst(T::Integer).assert_sub(&cnst(T::Number), &mut NoTypeContext), Ok(()));
+        assert!(cnst(T::Number).assert_sub(&cnst(T::Integer), &mut NoTypeContext).is_err());
 
-        assert_eq!(curr(T::integer()).assert_sub(&curr(T::integer()), &mut NoTypeContext), Ok(()));
-        assert!(curr(T::integer()).assert_sub(&curr(T::number()), &mut NoTypeContext).is_err());
-        assert!(curr(T::number()).assert_sub(&curr(T::integer()), &mut NoTypeContext).is_err());
+        assert_eq!(curr(T::Integer).assert_sub(&curr(T::Integer), &mut NoTypeContext), Ok(()));
+        assert!(curr(T::Integer).assert_sub(&curr(T::Number), &mut NoTypeContext).is_err());
+        assert!(curr(T::Number).assert_sub(&curr(T::Integer), &mut NoTypeContext).is_err());
 
         {
             let v1 = ctx.gen_tvar();
-            let s1 = varcurr(&mut ctx, T::integer());
+            let s1 = varcurr(&mut ctx, T::Integer);
             let s2 = varcurr(&mut ctx, T::TVar(v1));
             // marks are linked and v1 = integer
             assert_eq!(s1.assert_sub(&s2, &mut ctx), Ok(()));
             // force the mark to be true, i.e. both s1 and s2 are Var
-            assert_eq!(s1.assert_sub(&var(T::integer()), &mut ctx), Ok(()));
-            assert_eq!(s2.assert_sub(&cnst(T::integer()), &mut ctx), Ok(()));
-            assert!(cnst(T::integer()).assert_sub(&s2, &mut ctx).is_err());
+            assert_eq!(s1.assert_sub(&var(T::Integer), &mut ctx), Ok(()));
+            assert_eq!(s2.assert_sub(&cnst(T::Integer), &mut ctx), Ok(()));
+            assert!(cnst(T::Integer).assert_sub(&s2, &mut ctx).is_err());
         }
     }
 }

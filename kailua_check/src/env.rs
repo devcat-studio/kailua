@@ -1596,19 +1596,19 @@ fn test_context_tvar() {
 
     { // idempotency of bounds
         let v1 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::integer())), Ok(()));
-        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::integer())), Ok(()));
-        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::string())).is_err());
+        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::Integer)), Ok(()));
+        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::Integer)), Ok(()));
+        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::String)).is_err());
     }
 
     { // empty bounds (lb & ub = bottom)
         let v1 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::integer())), Ok(()));
-        assert!(ctx.assert_tvar_sup(v1, &Ty::new(T::string())).is_err());
+        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::Integer)), Ok(()));
+        assert!(ctx.assert_tvar_sup(v1, &Ty::new(T::String)).is_err());
 
         let v2 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sup(v2, &Ty::new(T::integer())), Ok(()));
-        assert!(ctx.assert_tvar_sub(v2, &Ty::new(T::string())).is_err());
+        assert_eq!(ctx.assert_tvar_sup(v2, &Ty::new(T::Integer)), Ok(()));
+        assert!(ctx.assert_tvar_sub(v2, &Ty::new(T::String)).is_err());
     }
 
     { // empty bounds (lb & ub != bottom)
@@ -1625,30 +1625,30 @@ fn test_context_tvar() {
         let v1 = ctx.gen_tvar();
         let v2 = ctx.gen_tvar();
         assert_eq!(ctx.assert_tvar_sub_tvar(v1, v2), Ok(()));
-        assert_eq!(ctx.assert_tvar_sub(v2, &Ty::new(T::string())), Ok(()));
-        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::integer())).is_err());
+        assert_eq!(ctx.assert_tvar_sub(v2, &Ty::new(T::String)), Ok(()));
+        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::Integer)).is_err());
 
         let v3 = ctx.gen_tvar();
         let v4 = ctx.gen_tvar();
         assert_eq!(ctx.assert_tvar_sub_tvar(v3, v4), Ok(()));
-        assert_eq!(ctx.assert_tvar_sup(v3, &Ty::new(T::string())), Ok(()));
-        assert!(ctx.assert_tvar_sup(v4, &Ty::new(T::integer())).is_err());
+        assert_eq!(ctx.assert_tvar_sup(v3, &Ty::new(T::String)), Ok(()));
+        assert!(ctx.assert_tvar_sup(v4, &Ty::new(T::Integer)).is_err());
     }
 
     { // equality propagation
         let v1 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_eq(v1, &Ty::new(T::integer())), Ok(()));
-        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::number())), Ok(()));
-        assert!(ctx.assert_tvar_sup(v1, &Ty::new(T::string())).is_err());
+        assert_eq!(ctx.assert_tvar_eq(v1, &Ty::new(T::Integer)), Ok(()));
+        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::Number)), Ok(()));
+        assert!(ctx.assert_tvar_sup(v1, &Ty::new(T::String)).is_err());
 
         let v2 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub(v2, &Ty::new(T::number())), Ok(()));
-        assert_eq!(ctx.assert_tvar_eq(v2, &Ty::new(T::integer())), Ok(()));
-        assert!(ctx.assert_tvar_sup(v2, &Ty::new(T::string())).is_err());
+        assert_eq!(ctx.assert_tvar_sub(v2, &Ty::new(T::Number)), Ok(()));
+        assert_eq!(ctx.assert_tvar_eq(v2, &Ty::new(T::Integer)), Ok(()));
+        assert!(ctx.assert_tvar_sup(v2, &Ty::new(T::String)).is_err());
 
         let v3 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub(v3, &Ty::new(T::number())), Ok(()));
-        assert!(ctx.assert_tvar_eq(v3, &Ty::new(T::string())).is_err());
+        assert_eq!(ctx.assert_tvar_sub(v3, &Ty::new(T::Number)), Ok(()));
+        assert!(ctx.assert_tvar_eq(v3, &Ty::new(T::String)).is_err());
     }
 }
 

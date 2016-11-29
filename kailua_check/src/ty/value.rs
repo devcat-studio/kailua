@@ -45,20 +45,23 @@ impl Lattice<Dyn> for Dyn {
     fn assert_eq(&self, _other: &Dyn, _ctx: &mut TypeContext) -> CheckResult<()> { Ok(()) }
 }
 
-// basic value types, also used for enumeration and construction
+// a value type excluding nil (which is specially treated).
 #[derive(Clone)]
 pub enum T<'a> {
     Dynamic(Dyn),                       // dynamic type
     All,                                // any (top)
     None,                               // (bottom)
-    Nil,                                // nil
+    Nil,                                // nil (XXX to be removed)
     Boolean,                            // boolean
     True,                               // true
     False,                              // false
+    Integer,                            // integer
+    Number,                             // number
+    String,                             // string
     Thread,                             // thread
     UserData,                           // userdata
-    Numbers(Cow<'a, Numbers>),          // number, ...
-    Strings(Cow<'a, Strings>),          // string, ...
+    Int(i32),                           // an integer literal
+    Str(Cow<'a, Str>),                  // a string literal
     Tables(Cow<'a, Tables>),            // table, ...
     Functions(Cow<'a, Functions>),      // function, ...
     Class(Class),                       // nominal type
@@ -70,21 +73,20 @@ pub enum T<'a> {
 impl<'a> T<'a> {
     pub fn dummy() -> T<'a> { T::Dynamic(Dyn::Oops) }
 
-    pub fn number()          -> T<'a> { T::Numbers(Cow::Owned(Numbers::All)) }
-    pub fn integer()         -> T<'a> { T::Numbers(Cow::Owned(Numbers::Int)) }
-    pub fn int(v: i32)       -> T<'a> { T::Numbers(Cow::Owned(Numbers::One(v))) }
-    pub fn string()          -> T<'a> { T::Strings(Cow::Owned(Strings::All)) }
-    pub fn str(s: Str)       -> T<'a> { T::Strings(Cow::Owned(Strings::One(s))) }
     pub fn table()           -> T<'a> { T::Tables(Cow::Owned(Tables::All)) }
     pub fn empty_table()     -> T<'a> { T::Tables(Cow::Owned(Tables::Empty)) }
     pub fn function()        -> T<'a> { T::Functions(Cow::Owned(Functions::All)) }
     pub fn func(f: Function) -> T<'a> { T::Functions(Cow::Owned(Functions::Simple(f))) }
 
     pub fn ints<I: IntoIterator<Item=i32>>(i: I) -> T<'a> {
-        T::Numbers(Cow::Owned(Numbers::Some(i.into_iter().collect())))
+        let mut u = Unioned::empty();
+        u.numbers = Some(Numbers::Some(i.into_iter().collect()));
+        T::Union(Cow::Owned(u))
     }
     pub fn strs<I: IntoIterator<Item=Str>>(i: I) -> T<'a> {
-        T::Strings(Cow::Owned(Strings::Some(i.into_iter().collect())))
+        let mut u = Unioned::empty();
+        u.strings = Some(Strings::Some(i.into_iter().collect()));
+        T::Union(Cow::Owned(u))
     }
     pub fn tuple<'b, I: IntoIterator<Item=Slot>>(i: I) -> T<'a> {
         let i = i.into_iter().enumerate();
@@ -117,11 +119,12 @@ impl<'a> T<'a> {
             T::Thread   => T_THREAD,
             T::UserData => T_USERDATA,
 
-            T::Numbers(ref num) => match &**num {
-                &Numbers::One(..) | &Numbers::Some(..) | &Numbers::Int => T_INTEGER,
-                &Numbers::All => T_NUMBER,
-            },
-            T::Strings(..) => T_STRING,
+            T::Number   => T_NUMBER,
+            T::Integer  => T_INTEGER,
+            T::Int(_)   => T_INTEGER,
+            T::String   => T_STRING,
+            T::Str(_)   => T_STRING,
+
             T::Tables(..) => T_TABLE,
             T::Functions(..) => T_FUNCTION,
             T::Class(..) => T_TABLE,
@@ -145,8 +148,12 @@ impl<'a> T<'a> {
             T::Thread   => T::Thread,
             T::UserData => T::UserData,
 
-            T::Numbers(ref num) => T::Numbers(Cow::Borrowed(&**num)),
-            T::Strings(ref str) => T::Strings(Cow::Borrowed(&**str)),
+            T::Number     => T::Number,
+            T::Integer    => T::Integer,
+            T::Int(v)     => T::Int(v),
+            T::String     => T::String,
+            T::Str(ref s) => T::Str(Cow::Borrowed(&**s)),
+
             T::Tables(ref tab) => T::Tables(Cow::Borrowed(&**tab)),
             T::Functions(ref func) => T::Functions(Cow::Borrowed(&**func)),
             T::Class(c) => T::Class(c),
@@ -247,24 +254,6 @@ impl<'a> T<'a> {
         }
     }
 
-    pub fn get_numbers(&self) -> Option<&Numbers> {
-        match *self {
-            T::Numbers(ref num) => Some(num),
-            T::Builtin(_, ref t) => t.get_numbers(),
-            T::Union(ref u) => u.numbers.as_ref(),
-            _ => None,
-        }
-    }
-
-    pub fn get_strings(&self) -> Option<&Strings> {
-        match *self {
-            T::Strings(ref str) => Some(str),
-            T::Builtin(_, ref t) => t.get_strings(),
-            T::Union(ref u) => u.strings.as_ref(),
-            _ => None,
-        }
-    }
-
     pub fn get_tables(&self) -> Option<&Tables> {
         match *self {
             T::Tables(ref tab) => Some(tab),
@@ -322,32 +311,32 @@ impl<'a> T<'a> {
 
     pub fn as_string(&self) -> Option<&Str> {
         // unlike flags, type variable should not be present
-        let strings = match *self {
-            T::Strings(ref str) => str.as_ref(),
-            T::Builtin(_, ref t) => return t.as_string(),
-            T::Union(ref u) if u.flags() == T_STRING && u.tvar.is_none() =>
-                u.strings.as_ref().unwrap(),
-            _ => return None,
-        };
-        match *strings {
-            Strings::One(ref s) => Some(s),
-            Strings::Some(ref set) if set.len() == 1 => Some(set.iter().next().unwrap()),
+        match *self {
+            T::Str(ref s) => Some(s.as_ref()),
+            T::Builtin(_, ref t) => t.as_string(),
+            T::Union(ref u) if u.flags() == T_STRING && u.tvar.is_none() => {
+                match *u.strings.as_ref().unwrap() {
+                    Strings::One(ref s) => Some(s),
+                    Strings::Some(ref set) if set.len() == 1 => Some(set.iter().next().unwrap()),
+                    _ => None,
+                }
+            },
             _ => None,
         }
     }
 
     pub fn as_integer(&self) -> Option<i32> {
         // unlike flags, type variable should not be present
-        let numbers = match *self {
-            T::Numbers(ref num) => num.as_ref(),
-            T::Builtin(_, ref t) => return t.as_integer(),
-            T::Union(ref u) if u.flags() == T_INTEGER && u.tvar.is_none() =>
-                u.numbers.as_ref().unwrap(),
-            _ => return None,
-        };
-        match *numbers {
-            Numbers::One(v) => Some(v),
-            Numbers::Some(ref set) if set.len() == 1 => Some(*set.iter().next().unwrap()),
+        match *self {
+            T::Int(v) => Some(v),
+            T::Builtin(_, ref t) => t.as_integer(),
+            T::Union(ref u) if u.flags() == T_INTEGER && u.tvar.is_none() => {
+                match *u.numbers.as_ref().unwrap() {
+                    Numbers::One(v) => Some(v),
+                    Numbers::Some(ref set) if set.len() == 1 => Some(*set.iter().next().unwrap()),
+                    _ => None,
+                }
+            },
             _ => None,
         }
     }
@@ -365,8 +354,12 @@ impl<'a> T<'a> {
             T::Thread     => T::Thread,
             T::UserData   => T::UserData,
 
-            T::Numbers(num)    => T::Numbers(Cow::Owned(num.into_owned())),
-            T::Strings(str)    => T::Strings(Cow::Owned(str.into_owned())),
+            T::Number     => T::Number,
+            T::Integer    => T::Integer,
+            T::Int(v)     => T::Int(v),
+            T::String     => T::String,
+            T::Str(s)     => T::Str(Cow::Owned(s.into_owned())),
+
             T::Tables(tab)     => T::Tables(Cow::Owned(tab.into_owned())),
             T::Functions(func) => T::Functions(Cow::Owned(func.into_owned())),
             T::Class(c)        => T::Class(c),
@@ -385,9 +378,9 @@ impl<'a> T<'a> {
             if flags.contains(T_NIL)        { t = t | T::Nil; }
             if flags.contains(T_TRUE)       { t = t | T::True; }
             if flags.contains(T_FALSE)      { t = t | T::False; }
-            if flags.contains(T_NONINTEGER) { t = t | T::number(); }
-            if flags.contains(T_INTEGER)    { t = t | T::integer(); }
-            if flags.contains(T_STRING)     { t = t | T::string(); }
+            if flags.contains(T_NONINTEGER) { t = t | T::Number; }
+            if flags.contains(T_INTEGER)    { t = t | T::Integer; }
+            if flags.contains(T_STRING)     { t = t | T::String; }
             if flags.contains(T_TABLE)      { t = t | T::table(); }
             if flags.contains(T_FUNCTION)   { t = t | T::function(); }
             if flags.contains(T_THREAD)     { t = t | T::Thread; }
@@ -428,20 +421,20 @@ impl<'a> T<'a> {
                 T_FALSE => Ok(T::False),
                 _ => Ok(T::None),
             },
-            T::Numbers(num) => {
-                if let Some(num) = narrow_numbers(num, flags) {
-                    Ok(T::Numbers(num))
-                } else {
-                    Ok(T::None)
-                }
+            T::Number => match flags & T_NUMBER {
+                T_NUMBER | T_NONINTEGER => Ok(T::Number),
+                T_INTEGER => Ok(T::Integer),
+                _ => Ok(T::None),
             },
-
+            T::Integer         => Ok(flags_or_none(T_INTEGER,  T::Integer)),
+            T::Int(v)          => Ok(flags_or_none(T_INTEGER,  T::Int(v))),
             T::Nil             => Ok(flags_or_none(T_NIL,      T::Nil)),
             T::True            => Ok(flags_or_none(T_TRUE,     T::True)),
             T::False           => Ok(flags_or_none(T_FALSE,    T::False)),
             T::Thread          => Ok(flags_or_none(T_THREAD,   T::Thread)),
             T::UserData        => Ok(flags_or_none(T_USERDATA, T::UserData)),
-            T::Strings(str)    => Ok(flags_or_none(T_STRING,   T::Strings(str))),
+            T::String          => Ok(flags_or_none(T_STRING,   T::String)),
+            T::Str(s)          => Ok(flags_or_none(T_STRING,   T::Str(s))),
             T::Tables(tab)     => Ok(flags_or_none(T_TABLE,    T::Tables(tab))),
             T::Functions(func) => Ok(flags_or_none(T_FUNCTION, T::Functions(func))),
             T::Class(c)        => Ok(flags_or_none(T_TABLE,    T::Class(c))),
@@ -500,10 +493,32 @@ impl<'a> Lattice<Unioned> for T<'a> {
             T::Thread   => if other.simple.contains(U_THREAD)   { return Ok(()); },
             T::UserData => if other.simple.contains(U_USERDATA) { return Ok(()); },
 
-            T::Numbers(ref lhs) =>
-                if let Some(ref rhs) = other.numbers { return lhs.assert_sub(rhs, ctx); },
-            T::Strings(ref lhs) =>
-                if let Some(ref num) = other.strings { return lhs.assert_sub(num, ctx); },
+            T::Number => match other.numbers {
+                Some(Numbers::All) => { return Ok(()); }
+                _ => {}
+            },
+            T::Integer => match other.numbers {
+                Some(Numbers::All) | Some(Numbers::Int) => { return Ok(()); }
+                _ => {}
+            },
+            T::Int(lhs) => match other.numbers {
+                Some(Numbers::All) | Some(Numbers::Int) => { return Ok(()); }
+                Some(Numbers::Some(ref rhs)) if rhs.contains(&lhs) => { return Ok(()); }
+                Some(Numbers::One(rhs)) if lhs == rhs => { return Ok(()); }
+                _ => {}
+            },
+
+            T::String => match other.strings {
+                Some(Strings::All) => { return Ok(()); }
+                _ => {}
+            },
+            T::Str(ref lhs) => match other.strings {
+                Some(Strings::All) => { return Ok(()); }
+                Some(Strings::Some(ref rhs)) if rhs.contains(lhs) => { return Ok(()); }
+                Some(Strings::One(ref rhs)) if **lhs == *rhs => { return Ok(()); }
+                _ => {}
+            },
+
             T::Tables(ref lhs) =>
                 if let Some(ref num) = other.tables { return lhs.assert_sub(num, ctx); },
             T::Functions(ref lhs) =>
@@ -578,10 +593,21 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::Thread,   &T::Thread)   => T::Thread,
             (&T::UserData, &T::UserData) => T::UserData,
 
-            (&T::Numbers(ref a), &T::Numbers(ref b)) =>
-                T::Numbers(Cow::Owned(a.union(b, ctx))),
-            (&T::Strings(ref a), &T::Strings(ref b)) =>
-                T::Strings(Cow::Owned(a.union(b, ctx))),
+            (&T::Number,     &T::Number)     => T::Number,
+            (&T::Integer,    &T::Number)     => T::Number,
+            (&T::Int(_),     &T::Number)     => T::Number,
+            (&T::Number,     &T::Integer)    => T::Number,
+            (&T::Number,     &T::Int(_))     => T::Number,
+            (&T::Integer,    &T::Integer)    => T::Integer,
+            (&T::Int(_),     &T::Integer)    => T::Integer,
+            (&T::Integer,    &T::Int(_))     => T::Integer,
+            (&T::String,     &T::String)     => T::String,
+            (&T::Str(_),     &T::String)     => T::String,
+            (&T::String,     &T::Str(_))     => T::String,
+
+            (&T::Int(a), &T::Int(b)) if a == b => T::Int(a),
+            (&T::Str(ref a), &T::Str(ref b)) if *a == *b => T::Str(Cow::Owned((**a).to_owned())),
+
             (&T::Tables(ref a), &T::Tables(ref b)) =>
                 T::Tables(Cow::Owned(a.union(b, ctx))),
             (&T::Functions(ref a), &T::Functions(ref b)) =>
@@ -639,8 +665,16 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::Thread,   &T::Thread)   => true,
             (&T::UserData, &T::UserData) => true,
 
-            (&T::Numbers(ref a),   &T::Numbers(ref b))   => return a.assert_sub(b, ctx),
-            (&T::Strings(ref a),   &T::Strings(ref b))   => return a.assert_sub(b, ctx),
+            (&T::Number,     &T::Number)     => true,
+            (&T::Integer,    &T::Number)     => true,
+            (&T::Int(_),     &T::Number)     => true,
+            (&T::Integer,    &T::Integer)    => true,
+            (&T::Int(_),     &T::Integer)    => true,
+            (&T::Int(a),     &T::Int(b))     => a == b,
+            (&T::String,     &T::String)     => true,
+            (&T::Str(_),     &T::String)     => true,
+            (&T::Str(ref a), &T::Str(ref b)) => *a == *b,
+
             (&T::Tables(ref a),    &T::Tables(ref b))    => return a.assert_sub(b, ctx),
             (&T::Functions(ref a), &T::Functions(ref b)) => return a.assert_sub(b, ctx),
 
@@ -717,8 +751,12 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::Thread,   &T::Thread)   => true,
             (&T::UserData, &T::UserData) => true,
 
-            (&T::Numbers(ref a),   &T::Numbers(ref b))   => return a.assert_eq(b, ctx),
-            (&T::Strings(ref a),   &T::Strings(ref b))   => return a.assert_eq(b, ctx),
+            (&T::Number,     &T::Number)     => true,
+            (&T::Integer,    &T::Integer)    => true,
+            (&T::Int(a),     &T::Int(b))     => a == b,
+            (&T::String,     &T::String)     => true,
+            (&T::Str(ref a), &T::Str(ref b)) => *a == *b,
+
             (&T::Tables(ref a),    &T::Tables(ref b))    => return a.assert_eq(b, ctx),
             (&T::Functions(ref a), &T::Functions(ref b)) => return a.assert_eq(b, ctx),
             (&T::Class(a),         &T::Class(b))         => a == b,
@@ -759,8 +797,12 @@ impl<'a, 'b> PartialEq<T<'b>> for T<'a> {
             (&T::Thread,   &T::Thread)   => true,
             (&T::UserData, &T::UserData) => true,
 
-            (&T::Numbers(ref a),   &T::Numbers(ref b))   => *a == *b,
-            (&T::Strings(ref a),   &T::Strings(ref b))   => *a == *b,
+            (&T::Number,     &T::Number)     => true,
+            (&T::Integer,    &T::Integer)    => true,
+            (&T::Int(a),     &T::Int(b))     => a == b,
+            (&T::String,     &T::String)     => true,
+            (&T::Str(ref a), &T::Str(ref b)) => *a == *b,
+
             (&T::Tables(ref a),    &T::Tables(ref b))    => *a == *b,
             (&T::Functions(ref a), &T::Functions(ref b)) => *a == *b,
             (&T::Class(a),         &T::Class(b))         => a == b,
@@ -788,6 +830,12 @@ impl<'a> Display for T<'a> {
             T::Thread   => write!(f, "thread"),
             T::UserData => write!(f, "userdata"),
 
+            T::Number     => write!(f, "number"),
+            T::Integer    => write!(f, "integer"),
+            T::Int(v)     => write!(f, "{}", v),
+            T::String     => write!(f, "string"),
+            T::Str(ref s) => write!(f, "{:?}", s),
+
             T::TVar(tv) => {
                 if let Some(t) = ctx.get_tvar_exact_type(tv) {
                     fmt::Display::fmt(&t.display(ctx), f)
@@ -796,8 +844,6 @@ impl<'a> Display for T<'a> {
                 }
             },
 
-            T::Numbers(ref num)    => fmt::Display::fmt(num, f),
-            T::Strings(ref str)    => fmt::Display::fmt(str, f),
             T::Tables(ref tab)     => fmt::Display::fmt(&tab.display(ctx), f),
             T::Functions(ref func) => fmt::Display::fmt(&func.display(ctx), f),
             T::Class(c)            => ctx.fmt_class(c, f),
@@ -822,8 +868,12 @@ impl<'a> fmt::Debug for T<'a> {
             T::Thread   => write!(f, "thread"),
             T::UserData => write!(f, "userdata"),
 
-            T::Numbers(ref num)    => fmt::Debug::fmt(num, f),
-            T::Strings(ref str)    => fmt::Debug::fmt(str, f),
+            T::Number     => write!(f, "number"),
+            T::Integer    => write!(f, "integer"),
+            T::Int(v)     => write!(f, "{}", v),
+            T::String     => write!(f, "string"),
+            T::Str(ref s) => write!(f, "{:?}", s),
+
             T::Tables(ref tab)     => fmt::Debug::fmt(tab, f),
             T::Functions(ref func) => fmt::Debug::fmt(func, f),
             T::Class(ref c)        => fmt::Debug::fmt(c, f),
@@ -869,11 +919,11 @@ impl Ty {
             K::Boolean           => Ty::new(T::Boolean),
             K::BooleanLit(true)  => Ty::new(T::True),
             K::BooleanLit(false) => Ty::new(T::False),
-            K::Number            => Ty::new(T::Numbers(Cow::Owned(Numbers::All))),
-            K::Integer           => Ty::new(T::Numbers(Cow::Owned(Numbers::Int))),
-            K::IntegerLit(v)     => Ty::new(T::Numbers(Cow::Owned(Numbers::One(v)))),
-            K::String            => Ty::new(T::Strings(Cow::Owned(Strings::All))),
-            K::StringLit(ref s)  => Ty::new(T::Strings(Cow::Owned(Strings::One(s.to_owned())))),
+            K::Number            => Ty::new(T::Number),
+            K::Integer           => Ty::new(T::Integer),
+            K::IntegerLit(v)     => Ty::new(T::Int(v)),
+            K::String            => Ty::new(T::String),
+            K::StringLit(ref s)  => Ty::new(T::Str(Cow::Owned(s.to_owned()))),
             K::Table             => Ty::new(T::Tables(Cow::Owned(Tables::All))),
             K::EmptyTable        => Ty::new(T::Tables(Cow::Owned(Tables::Empty))),
             K::Function          => Ty::new(T::Functions(Cow::Owned(Functions::All))),
@@ -1069,6 +1119,7 @@ mod tests {
     use kailua_diag::NoReport;
     use kailua_syntax::Str;
     use std::rc::Rc;
+    use std::borrow::Cow;
     use ty::{Lattice, TypeContext, NoTypeContext, F, Slot, Mark, Builtin};
     use env::Context;
     use super::*;
@@ -1078,6 +1129,7 @@ mod tests {
     }
 
     fn s(x: &str) -> Str { Str::from(x.as_bytes().to_owned()) }
+    fn os(x: &str) -> Cow<'static, Str> { Cow::Owned(Str::from(x.as_bytes().to_owned())) }
     fn just(t: T) -> Slot { Slot::new(F::Just, Ty::from(t)) }
     fn var(t: T) -> Slot { Slot::new(F::Var, Ty::from(t)) }
     fn cnst(t: T) -> Slot { Slot::new(F::Const, Ty::from(t)) }
@@ -1107,36 +1159,36 @@ mod tests {
         check!(T::Dynamic(Dyn::Oops), T::Dynamic(Dyn::User); T::Dynamic(Dyn::Oops));
         check!(T::Dynamic(Dyn::User), T::Dynamic(Dyn::Oops); T::Dynamic(Dyn::Oops));
         check!(T::Dynamic(Dyn::User), T::Dynamic(Dyn::User); T::Dynamic(Dyn::User));
-        check!(T::Dynamic(Dyn::User), T::integer(); T::Dynamic(Dyn::User));
-        check!(T::tuple(vec![var(T::integer()), curr(T::Boolean)]), T::Dynamic(Dyn::User);
+        check!(T::Dynamic(Dyn::User), T::Integer; T::Dynamic(Dyn::User));
+        check!(T::tuple(vec![var(T::Integer), curr(T::Boolean)]), T::Dynamic(Dyn::User);
                T::Dynamic(Dyn::User));
         check!(T::All, T::Boolean; T::All);
         check!(T::Dynamic(Dyn::User), T::All; T::Dynamic(Dyn::User));
         check!(T::All, T::All; T::All);
 
         // integer literals
-        check!(T::integer(), T::number(); T::number());
-        check!(T::number(), T::integer(); T::number());
-        check!(T::number(), T::number(); T::number());
-        check!(T::integer(), T::integer(); T::integer());
-        check!(T::int(3), T::int(3); T::int(3));
-        check!(T::int(3), T::number(); T::number());
-        check!(T::integer(), T::int(3); T::integer());
-        check!(T::int(3), T::int(4); T::ints(vec![3, 4]));
-        check!(T::ints(vec![3, 4]), T::int(3); T::ints(vec![3, 4]));
-        check!(T::int(5), T::ints(vec![3, 4]); T::ints(vec![3, 4, 5]));
+        check!(T::Integer, T::Number; T::Number);
+        check!(T::Number, T::Integer; T::Number);
+        check!(T::Number, T::Number; T::Number);
+        check!(T::Integer, T::Integer; T::Integer);
+        check!(T::Int(3), T::Int(3); T::Int(3));
+        check!(T::Int(3), T::Number; T::Number);
+        check!(T::Integer, T::Int(3); T::Integer);
+        check!(T::Int(3), T::Int(4); T::ints(vec![3, 4]));
+        check!(T::ints(vec![3, 4]), T::Int(3); T::ints(vec![3, 4]));
+        check!(T::Int(5), T::ints(vec![3, 4]); T::ints(vec![3, 4, 5]));
         check!(T::ints(vec![3, 4]), T::ints(vec![5, 4, 7]); T::ints(vec![3, 4, 5, 7]));
         check!(T::ints(vec![3, 4, 5]), T::ints(vec![2, 3, 4]); T::ints(vec![2, 3, 4, 5]));
 
         // string literals
-        check!(T::string(), T::str(s("hello")); T::string());
-        check!(T::str(s("hello")), T::string(); T::string());
-        check!(T::str(s("hello")), T::str(s("hello")); T::str(s("hello")));
-        check!(T::str(s("hello")), T::str(s("goodbye"));
+        check!(T::String, T::Str(os("hello")); T::String);
+        check!(T::Str(os("hello")), T::String; T::String);
+        check!(T::Str(os("hello")), T::Str(os("hello")); T::Str(os("hello")));
+        check!(T::Str(os("hello")), T::Str(os("goodbye"));
                T::strs(vec![s("hello"), s("goodbye")]));
-        check!(T::str(s("hello")), T::strs(vec![s("goodbye")]);
+        check!(T::Str(os("hello")), T::strs(vec![s("goodbye")]);
                T::strs(vec![s("hello"), s("goodbye")]));
-        check!(T::strs(vec![s("hello"), s("goodbye")]), T::str(s("goodbye"));
+        check!(T::strs(vec![s("hello"), s("goodbye")]), T::Str(os("goodbye"));
                T::strs(vec![s("hello"), s("goodbye")]));
         check!(T::strs(vec![s("hello"), s("goodbye")]),
                T::strs(vec![s("what"), s("goodbye")]);
@@ -1146,80 +1198,80 @@ mod tests {
                T::strs(vec![s("a"), s("b"), s("c"), s("d")]));
 
         // tables
-        check!(T::table(), T::array(just(T::integer())); T::table());
-        check!(T::table(), T::array(var(T::integer())); T::table());
-        check!(T::table(), T::array(curr(T::integer())); T::table());
-        check!(T::array(just(T::integer())), T::array(just(T::integer()));
-               T::array(just(T::integer())));
-        check!(T::array(var(T::integer())), T::array(var(T::integer()));
-               T::array(varcnst(T::integer())));
-        check!(T::array(cnst(T::integer())), T::array(cnst(T::integer()));
-               T::array(cnst(T::integer())));
-        check!(T::array(just(T::int(3))), T::array(just(T::int(4)));
+        check!(T::table(), T::array(just(T::Integer)); T::table());
+        check!(T::table(), T::array(var(T::Integer)); T::table());
+        check!(T::table(), T::array(curr(T::Integer)); T::table());
+        check!(T::array(just(T::Integer)), T::array(just(T::Integer));
+               T::array(just(T::Integer)));
+        check!(T::array(var(T::Integer)), T::array(var(T::Integer));
+               T::array(varcnst(T::Integer)));
+        check!(T::array(cnst(T::Integer)), T::array(cnst(T::Integer));
+               T::array(cnst(T::Integer)));
+        check!(T::array(just(T::Int(3))), T::array(just(T::Int(4)));
                T::array(just(T::ints(vec![3, 4]))));
-        check!(T::array(cnst(T::int(3))), T::array(cnst(T::int(4)));
+        check!(T::array(cnst(T::Int(3))), T::array(cnst(T::Int(4)));
                T::array(cnst(T::ints(vec![3, 4]))));
-        check!(T::array(var(T::int(3))), T::array(var(T::int(4)));
+        check!(T::array(var(T::Int(3))), T::array(var(T::Int(4)));
                T::array(varcnst(T::ints(vec![3, 4]))));
-        check!(T::array(var(T::int(3))), T::array(just(T::int(4)));
+        check!(T::array(var(T::Int(3))), T::array(just(T::Int(4)));
                T::array(varcnst(T::ints(vec![3, 4]))));
-        check!(T::tuple(vec![just(T::integer()), just(T::string())]),
-               T::tuple(vec![just(T::number()), just(T::Dynamic(Dyn::User)), just(T::Boolean)]);
-               T::tuple(vec![just(T::number()), just(T::Dynamic(Dyn::User)),
+        check!(T::tuple(vec![just(T::Integer), just(T::String)]),
+               T::tuple(vec![just(T::Number), just(T::Dynamic(Dyn::User)), just(T::Boolean)]);
+               T::tuple(vec![just(T::Number), just(T::Dynamic(Dyn::User)),
                              just(T::Boolean | T::Nil)]));
-        check!(T::tuple(vec![just(T::integer()), just(T::string())]),
-               T::tuple(vec![just(T::number()), just(T::Boolean), just(T::Dynamic(Dyn::User))]);
-               T::tuple(vec![just(T::number()), just(T::string() | T::Boolean),
+        check!(T::tuple(vec![just(T::Integer), just(T::String)]),
+               T::tuple(vec![just(T::Number), just(T::Boolean), just(T::Dynamic(Dyn::User))]);
+               T::tuple(vec![just(T::Number), just(T::String | T::Boolean),
                              just(T::Dynamic(Dyn::User))]));
         { // self-modifying unions
             let (lhs, rhs, _) = check!(
-                T::tuple(vec![var(T::integer()), curr(T::string())]),
-                T::tuple(vec![cnst(T::string()), just(T::number()), var(T::Boolean)]);
-                T::tuple(vec![cnst(T::integer() | T::string()),
-                              varcnst(T::string() | T::number()),
+                T::tuple(vec![var(T::Integer), curr(T::String)]),
+                T::tuple(vec![cnst(T::String), just(T::Number), var(T::Boolean)]);
+                T::tuple(vec![cnst(T::Integer | T::String),
+                              varcnst(T::String | T::Number),
                               varcnst(T::Boolean | T::Nil)]));
-            assert_eq!(lhs, T::tuple(vec![var(T::integer()), var(T::string())]));
-            assert_eq!(rhs, T::tuple(vec![cnst(T::string()), just(T::number()), var(T::Boolean)]));
+            assert_eq!(lhs, T::tuple(vec![var(T::Integer), var(T::String)]));
+            assert_eq!(rhs, T::tuple(vec![cnst(T::String), just(T::Number), var(T::Boolean)]));
 
             let (lhs, rhs, _) = check!(
-                T::tuple(vec![cnst(T::integer())]),
-                T::tuple(vec![cnst(T::number()), curr(T::string())]);
-                T::tuple(vec![cnst(T::number()), varcnst(T::string() | T::Nil)]));
-            assert_eq!(lhs, T::tuple(vec![cnst(T::integer())]));
-            assert_eq!(rhs, T::tuple(vec![cnst(T::number()), var(T::string())]));
+                T::tuple(vec![cnst(T::Integer)]),
+                T::tuple(vec![cnst(T::Number), curr(T::String)]);
+                T::tuple(vec![cnst(T::Number), varcnst(T::String | T::Nil)]));
+            assert_eq!(lhs, T::tuple(vec![cnst(T::Integer)]));
+            assert_eq!(rhs, T::tuple(vec![cnst(T::Number), var(T::String)]));
 
             let (lhs, _, _) = check!(
-                T::tuple(vec![just(T::integer()), var(T::string()), curr(T::Boolean)]),
+                T::tuple(vec![just(T::Integer), var(T::String), curr(T::Boolean)]),
                 T::empty_table();
-                T::tuple(vec![just(T::integer() | T::Nil), varcnst(T::string() | T::Nil),
+                T::tuple(vec![just(T::Integer | T::Nil), varcnst(T::String | T::Nil),
                               varcnst(T::Boolean | T::Nil)]));
-            assert_eq!(lhs, T::tuple(vec![just(T::integer()), var(T::string()), var(T::Boolean)]));
+            assert_eq!(lhs, T::tuple(vec![just(T::Integer), var(T::String), var(T::Boolean)]));
         }
-        check!(T::record(hash![foo=just(T::integer()), bar=just(T::string())]),
+        check!(T::record(hash![foo=just(T::Integer), bar=just(T::String)]),
                T::record(hash![quux=just(T::Boolean)]);
-               T::record(hash![foo=just(T::integer() | T::Nil), bar=just(T::string() | T::Nil),
+               T::record(hash![foo=just(T::Integer | T::Nil), bar=just(T::String | T::Nil),
                                quux=just(T::Boolean | T::Nil)]));
-        check!(T::record(hash![foo=just(T::int(3)), bar=just(T::string())]),
-               T::record(hash![foo=just(T::int(4))]);
-               T::record(hash![foo=just(T::ints(vec![3, 4])), bar=just(T::string() | T::Nil)]));
-        check!(T::record(hash![foo=just(T::integer()), bar=just(T::number()),
+        check!(T::record(hash![foo=just(T::Int(3)), bar=just(T::String)]),
+               T::record(hash![foo=just(T::Int(4))]);
+               T::record(hash![foo=just(T::ints(vec![3, 4])), bar=just(T::String | T::Nil)]));
+        check!(T::record(hash![foo=just(T::Integer), bar=just(T::Number),
                                     quux=just(T::array(just(T::Dynamic(Dyn::User))))]),
-               T::record(hash![foo=just(T::number()), bar=just(T::string()),
+               T::record(hash![foo=just(T::Number), bar=just(T::String),
                                     quux=just(T::array(just(T::Boolean)))]);
-               T::record(hash![foo=just(T::number()), bar=just(T::number() | T::string()),
+               T::record(hash![foo=just(T::Number), bar=just(T::Number | T::String),
                                     quux=just(T::array(just(T::Dynamic(Dyn::User))))]));
-        check!(T::record(hash![foo=just(T::int(3)), bar=just(T::number())]),
-               T::map(T::string(), just(T::integer()));
-               T::map(T::string(), just(T::number())));
-        check!(T::array(just(T::integer())), T::tuple(vec![just(T::string())]);
-               T::map(T::integer(), just(T::integer() | T::string())));
-        check!(T::map(T::str(s("wat")), just(T::integer())),
-               T::map(T::string(), just(T::int(42)));
-               T::map(T::string(), just(T::integer())));
-        check!(T::array(just(T::number())), T::map(T::Dynamic(Dyn::User), just(T::integer()));
-               T::map(T::Dynamic(Dyn::User), just(T::number())));
-        check!(T::empty_table(), T::array(just(T::integer()));
-               T::array(just(T::integer())));
+        check!(T::record(hash![foo=just(T::Int(3)), bar=just(T::Number)]),
+               T::map(T::String, just(T::Integer));
+               T::map(T::String, just(T::Number)));
+        check!(T::array(just(T::Integer)), T::tuple(vec![just(T::String)]);
+               T::map(T::Integer, just(T::Integer | T::String)));
+        check!(T::map(T::Str(os("wat")), just(T::Integer)),
+               T::map(T::String, just(T::Int(42)));
+               T::map(T::String, just(T::Integer)));
+        check!(T::array(just(T::Number)), T::map(T::Dynamic(Dyn::User), just(T::Integer));
+               T::map(T::Dynamic(Dyn::User), just(T::Number)));
+        check!(T::empty_table(), T::array(just(T::Integer));
+               T::array(just(T::Integer)));
 
         // others
         check!(T::Thread, T::Thread; T::Thread);
@@ -1229,22 +1281,22 @@ mod tests {
 
         // general unions
         check!(T::True, T::False; T::Boolean);
-        check!(T::int(3) | T::Nil, T::int(4) | T::Nil;
+        check!(T::Int(3) | T::Nil, T::Int(4) | T::Nil;
                T::ints(vec![3, 4]) | T::Nil);
-        check!(T::int(3) | T::UserData | T::Nil, T::Nil | T::Thread | T::int(4);
+        check!(T::Int(3) | T::UserData | T::Nil, T::Nil | T::Thread | T::Int(4);
                T::Thread | T::ints(vec![3, 4]) | T::UserData | T::Nil);
-        check!(T::ints(vec![3, 5]) | T::Nil, T::int(4) | T::string();
-               T::string() | T::ints(vec![3, 4, 5]) | T::Nil);
-        check!(T::int(3) | T::string(), T::str(s("wat")) | T::int(4);
-               T::ints(vec![3, 4]) | T::string());
-        assert_eq!(T::map(T::string(), just(T::integer())),
-                   T::map(T::string(), just(T::integer() | T::Nil)));
+        check!(T::ints(vec![3, 5]) | T::Nil, T::Int(4) | T::String;
+               T::String | T::ints(vec![3, 4, 5]) | T::Nil);
+        check!(T::Int(3) | T::String, T::Str(os("wat")) | T::Int(4);
+               T::ints(vec![3, 4]) | T::String);
+        assert_eq!(T::map(T::String, just(T::Integer)),
+                   T::map(T::String, just(T::Integer | T::Nil)));
     }
 
     #[test]
     fn test_sub() {
-        assert_eq!(T::record(hash![foo=just(T::int(3)), bar=just(T::integer())]).assert_sub(
-                       &T::map(T::str(s("foo")) | T::str(s("bar")), just(T::number())),
+        assert_eq!(T::record(hash![foo=just(T::Int(3)), bar=just(T::Integer)]).assert_sub(
+                       &T::map(T::Str(os("foo")) | T::Str(os("bar")), just(T::Number)),
                        &mut NoTypeContext),
                    Ok(()));
 
@@ -1275,11 +1327,11 @@ mod tests {
         {
             let v1 = ctx.gen_tvar();
             // v1 <: integer
-            assert_eq!(T::TVar(v1).assert_sub(&T::integer(), &mut ctx), Ok(()));
+            assert_eq!(T::TVar(v1).assert_sub(&T::Integer, &mut ctx), Ok(()));
             // v1 <: integer
-            assert_eq!(T::TVar(v1).assert_sub(&T::integer(), &mut ctx), Ok(()));
+            assert_eq!(T::TVar(v1).assert_sub(&T::Integer, &mut ctx), Ok(()));
             // v1 <: integer AND v1 <: string (!)
-            assert!(T::TVar(v1).assert_sub(&T::string(), &mut ctx).is_err());
+            assert!(T::TVar(v1).assert_sub(&T::String, &mut ctx).is_err());
         }
 
         {
@@ -1288,22 +1340,22 @@ mod tests {
             // v1 <: v2
             assert_eq!(T::TVar(v1).assert_sub(&T::TVar(v2), &mut ctx), Ok(()));
             // v1 <: v2 <: string
-            assert_eq!(T::TVar(v2).assert_sub(&T::string(), &mut ctx), Ok(()));
+            assert_eq!(T::TVar(v2).assert_sub(&T::String, &mut ctx), Ok(()));
             // v1 <: v2 <: string AND v1 <: integer (!)
-            assert!(T::TVar(v1).assert_sub(&T::integer(), &mut ctx).is_err());
+            assert!(T::TVar(v1).assert_sub(&T::Integer, &mut ctx).is_err());
         }
 
         {
             let v1 = ctx.gen_tvar();
             let v2 = ctx.gen_tvar();
-            let t1 = T::record(hash![a=just(T::integer()), b=just(T::TVar(v1))]);
-            let t2 = T::record(hash![a=just(T::TVar(v2)), b=just(T::string()), c=just(T::Boolean)]);
+            let t1 = T::record(hash![a=just(T::Integer), b=just(T::TVar(v1))]);
+            let t2 = T::record(hash![a=just(T::TVar(v2)), b=just(T::String), c=just(T::Boolean)]);
             // {a=just integer, b=just v1} <: {a=just v2, b=just string, c=just boolean}
             assert_eq!(t1.assert_sub(&t2, &mut ctx), Ok(()));
             // ... AND v1 <: string
-            assert_eq!(T::TVar(v1).assert_sub(&T::string(), &mut ctx), Ok(()));
+            assert_eq!(T::TVar(v1).assert_sub(&T::String, &mut ctx), Ok(()));
             // ... AND v1 <: string AND v2 :> integer
-            assert_eq!(T::integer().assert_sub(&T::TVar(v2), &mut ctx), Ok(()));
+            assert_eq!(T::Integer.assert_sub(&T::TVar(v2), &mut ctx), Ok(()));
             // {a=just integer, b=just v1} = {a=just v2, b=just string, c=just boolean} (!)
             assert!(t1.assert_eq(&t2, &mut ctx).is_err());
         }
@@ -1312,12 +1364,12 @@ mod tests {
         {
             let v1 = ctx.gen_tvar();
             // nil|v1 <: nil|integer
-            assert_eq!((T::TVar(v1) | T::Nil).assert_sub(&(T::integer() | T::Nil), &mut ctx),
+            assert_eq!((T::TVar(v1) | T::Nil).assert_sub(&(T::Integer | T::Nil), &mut ctx),
                        Ok(()));
             // v1 <: nil|integer
-            assert_eq!(T::TVar(v1).assert_sub(&(T::integer() | T::Nil), &mut ctx), Ok(()));
+            assert_eq!(T::TVar(v1).assert_sub(&(T::Integer | T::Nil), &mut ctx), Ok(()));
             // v1 :> nil|integer
-            assert_eq!((T::integer() | T::Nil).assert_sub(&T::TVar(v1), &mut ctx), Ok(()));
+            assert_eq!((T::Integer | T::Nil).assert_sub(&T::TVar(v1), &mut ctx), Ok(()));
         }
         */
     }

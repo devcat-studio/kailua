@@ -8,7 +8,7 @@ use take_mut::take;
 
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag::Reporter;
-use kailua_syntax::{NameRef, Var, M, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
+use kailua_syntax::{Str, NameRef, Var, M, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
 use kailua_syntax::{SelfParam, Args, St, Stmt, Block, K};
 use diag::CheckResult;
 use ty::{Dyn, T, Ty, TySeq, SpannedTySeq, Lattice, Displayed, Display, TypeContext};
@@ -90,16 +90,16 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
         match op {
             UnOp::Neg => {
-                check_op!(info.assert_sub(&T::number(), self.context()));
+                check_op!(info.assert_sub(&T::Number, self.context()));
 
                 // it is possible to be more accurate here.
                 // e.g. if ty = `v1 \/ integer` and it is known that `v1 <: integer`,
                 // then `ty <: integer` and we can safely return an integer.
                 // we don't do that though, since probing for <: risks the instantiation.
                 if info.get_tvar().is_none() && info.flags() == T_INTEGER {
-                    Ok(Slot::just(Ty::new(T::integer())))
+                    Ok(Slot::just(Ty::new(T::Integer)))
                 } else {
-                    Ok(Slot::just(Ty::new(T::number())))
+                    Ok(Slot::just(Ty::new(T::Number)))
                 }
             }
 
@@ -108,8 +108,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             UnOp::Len => {
-                check_op!(info.assert_sub(&(T::table() | T::string()), self.context()));
-                Ok(Slot::just(Ty::new(T::integer())))
+                check_op!(info.assert_sub(&(T::table() | T::String), self.context()));
+                Ok(Slot::just(Ty::new(T::Integer)))
             }
         }
     }
@@ -134,26 +134,26 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if lflags.is_integral() && rflags.is_integral() &&
                    !(lflags.is_dynamic() && rflags.is_dynamic()) {
                     // we are definitely sure that it will be an integer
-                    check_op!(lhs.assert_sub(&T::integer(), self.context()));
-                    check_op!(rhs.assert_sub(&T::integer(), self.context()));
-                    Ok(Slot::just(Ty::new(T::integer())))
+                    check_op!(lhs.assert_sub(&T::Integer, self.context()));
+                    check_op!(rhs.assert_sub(&T::Integer, self.context()));
+                    Ok(Slot::just(Ty::new(T::Integer)))
                 } else {
                     // technically speaking they coerce strings to numbers,
                     // but that's probably not what you want
-                    check_op!(lhs.assert_sub(&T::number(), self.context()));
-                    check_op!(rhs.assert_sub(&T::number(), self.context()));
-                    Ok(Slot::just(Ty::new(T::number())))
+                    check_op!(lhs.assert_sub(&T::Number, self.context()));
+                    check_op!(rhs.assert_sub(&T::Number, self.context()));
+                    Ok(Slot::just(Ty::new(T::Number)))
                 }
             }
 
             BinOp::Div | BinOp::Pow => {
-                check_op!(lhs.assert_sub(&T::number(), self.context()));
-                check_op!(rhs.assert_sub(&T::number(), self.context()));
-                Ok(Slot::just(Ty::new(T::number())))
+                check_op!(lhs.assert_sub(&T::Number, self.context()));
+                check_op!(rhs.assert_sub(&T::Number, self.context()));
+                Ok(Slot::just(Ty::new(T::Number)))
             }
 
             BinOp::Cat => {
-                let stringy = T::number() | T::string();
+                let stringy = T::Number | T::String;
                 check_op!(lhs.assert_sub(&stringy, self.context()));
                 check_op!(rhs.assert_sub(&stringy, self.context()));
 
@@ -165,11 +165,11 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                                .and_then(|t| t.as_string().map(|s| s.to_owned())) {
                         let mut s = lhs.into_bytes().into_vec();
                         s.append(&mut rhs.into_bytes().into_vec());
-                        return Ok(Slot::just(Ty::new(T::str(s.into()))));
+                        return Ok(Slot::just(Ty::new(T::Str(Cow::Owned(Str::from(s))))));
                     }
                 }
 
-                Ok(Slot::just(Ty::new(T::string())))
+                Ok(Slot::just(Ty::new(T::String)))
             }
 
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
@@ -217,11 +217,11 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                                                    rhs: self.display(rhs) })
                             .done()?;
                 } else if lnum || rnum { // operands are definitely numbers
-                    check_op!(lhs.assert_sub(&T::number(), self.context()));
-                    check_op!(rhs.assert_sub(&T::number(), self.context()));
+                    check_op!(lhs.assert_sub(&T::Number, self.context()));
+                    check_op!(rhs.assert_sub(&T::Number, self.context()));
                 } else if lstr || rstr { // operands are definitely strings
-                    check_op!(lhs.assert_sub(&T::string(), self.context()));
-                    check_op!(rhs.assert_sub(&T::string(), self.context()));
+                    check_op!(lhs.assert_sub(&T::String, self.context()));
+                    check_op!(rhs.assert_sub(&T::String, self.context()));
                 } else { // XXX
                     self.env.error(expspan,
                                    m::CannotDeduceBothNumOrStr { op: op.symbol(),
@@ -320,9 +320,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                     // vector<v> -> (integer, v)
                     T::Tables(Cow::Owned(Tables::Array(v))) =>
-                        (Ty::new(T::integer()), v),
+                        (Ty::new(T::Integer), v),
                     T::Tables(Cow::Borrowed(&Tables::Array(ref v))) =>
-                        (Ty::new(T::integer()), v.clone()),
+                        (Ty::new(T::Integer), v.clone()),
 
                     _ => return,
                 };
@@ -748,8 +748,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                             }
 
                             let ty = self.visit_exp(e)?.into_first();
-                            let kty =
-                                Slot::just(Ty::new(T::str(key.base.clone().into()))).with_loc(key);
+                            let keystr = Str::from(key.base[..].to_owned());
+                            let kty = Slot::just(Ty::new(T::Str(Cow::Owned(keystr)))).with_loc(key);
                             let slot = self.check_index(&ty, &kty, varspec.base.span, true)?;
                             // since we've requested a lvalue it would never return None
                             Ok(VarRef::Slot(slot.unwrap().with_loc(&varspec.base)))
@@ -890,7 +890,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let step = if let &Some(ref step) = step {
                     self.visit_exp(step)?.into_first()
                 } else {
-                    Slot::just(Ty::new(T::integer())).without_loc() // to simplify the matter
+                    Slot::just(Ty::new(T::Integer)).without_loc() // to simplify the matter
                 };
 
                 // the similar logic is also present in check_bin_op
@@ -900,15 +900,15 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let indty;
                 if startflags.is_integral() && endflags.is_integral() && stepflags.is_integral() &&
                    !(startflags.is_dynamic() && endflags.is_dynamic() && stepflags.is_dynamic()) {
-                    start.assert_sub(&T::integer(), self.context())?;
-                    end.assert_sub(&T::integer(), self.context())?;
-                    step.assert_sub(&T::integer(), self.context())?;
-                    indty = T::integer();
+                    start.assert_sub(&T::Integer, self.context())?;
+                    end.assert_sub(&T::Integer, self.context())?;
+                    step.assert_sub(&T::Integer, self.context())?;
+                    indty = T::Integer;
                 } else {
-                    start.assert_sub(&T::number(), self.context())?;
-                    end.assert_sub(&T::number(), self.context())?;
-                    step.assert_sub(&T::number(), self.context())?;
-                    indty = T::number();
+                    start.assert_sub(&T::Number, self.context())?;
+                    end.assert_sub(&T::Number, self.context())?;
+                    step.assert_sub(&T::Number, self.context())?;
+                    indty = T::Number;
                 }
 
                 let mut scope = self.scoped(Scope::new());
@@ -1009,8 +1009,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 // reduce the expr a.b.c...y.z into (a["b"]["c"]...["y"]).z
                 let mut info = info.with_loc(name);
                 for subname in &meths[..meths.len()-1] {
-                    let kty =
-                        Slot::just(Ty::new(T::str(subname.base.clone().into()))).with_loc(subname);
+                    let keystr = Str::from(subname.base[..].to_owned());
+                    let kty = Slot::just(Ty::new(T::Str(Cow::Owned(keystr)))).with_loc(subname);
                     let subspan = info.span | subname.span; // a subexpr for this indexing
                     if let Some(subinfo) = self.check_index(&info, &kty, subspan, false)? {
                         info = subinfo.with_loc(subspan);
@@ -1089,7 +1089,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 // finally, go through the ordinary table update
                 let subspan = info.span | method.span;
-                let kty = Slot::just(Ty::new(T::str(method.base.clone().into()))).with_loc(method);
+                let keystr = Str::from(method.base[..].to_owned());
+                let kty = Slot::just(Ty::new(T::Str(Cow::Owned(keystr)))).with_loc(method);
                 let slot = self.check_index(&info, &kty, subspan, true)?;
                 // since we've requested a lvalue it would never return None
                 self.env.assign(&slot.unwrap().with_loc(subspan), &methinfo.with_loc(stmt))?;
@@ -1250,8 +1251,10 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         let (nargs, mut argtys) = match args.base {
             Args::List(ref ee) =>
                 (ee.len(), self.visit_explist_with_span(ee, args.span)?),
-            Args::Str(ref s) =>
-                (1, SpannedSlotSeq::from(T::str(s.to_owned()).with_loc(args))),
+            Args::Str(ref s) => {
+                let argstr = Str::from(s[..].to_owned());
+                (1, SpannedSlotSeq::from(T::Str(Cow::Owned(argstr)).with_loc(args)))
+            },
             Args::Table(ref fields) =>
                 (1, SpannedSlotSeq::from(self.visit_table(fields)?.with_loc(args))),
         };
@@ -1475,12 +1478,15 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Ex::True => Ok(SlotSeq::from(T::True)),
             Ex::Num(v) if v.floor() == v =>
                 if i32::MIN as f64 <= v && v <= i32::MAX as f64 {
-                    Ok(SlotSeq::from(T::int(v as i32)))
+                    Ok(SlotSeq::from(T::Int(v as i32)))
                 } else {
-                    Ok(SlotSeq::from(T::integer()))
+                    Ok(SlotSeq::from(T::Integer))
                 },
-            Ex::Num(_) => Ok(SlotSeq::from(T::number())),
-            Ex::Str(ref s) => Ok(SlotSeq::from(T::str(s.to_owned()))),
+            Ex::Num(_) => Ok(SlotSeq::from(T::Number)),
+            Ex::Str(ref s) => {
+                let str = Str::from(s[..].to_owned());
+                Ok(SlotSeq::from(T::Str(Cow::Owned(str))))
+            },
 
             Ex::Varargs => {
                 if let Some(vararg) = self.env.get_vararg() {
@@ -1514,9 +1520,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             },
 
             Ex::MethodCall(Spanned { base: (ref e, ref method), span }, ref args) => {
+                let keystr = Str::from(method.base[..].to_owned());
                 let ty = self.visit_exp(e)?.into_first();
-                let kty =
-                    Slot::just(Ty::new(T::str(method.base.clone().into()))).with_loc(method.span);
+                let kty = Slot::just(Ty::new(T::Str(Cow::Owned(keystr)))).with_loc(method.span);
                 if let Some(methinfo) = self.check_index(&ty, &kty, exp.span, false)? {
                     self.context().spanned_slots_mut().insert(methinfo.clone().with_loc(span));
                     let methinfo = methinfo.unlift().clone().with_loc(span);
@@ -1542,8 +1548,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 }
             },
             Ex::IndexName(ref e, ref key) => {
+                let keystr = Str::from(key.base[..].to_owned());
                 let ty = self.visit_exp(e)?.into_first();
-                let kty = Slot::just(Ty::new(T::str(key.base.clone().into()))).with_loc(key);
+                let kty = Slot::just(Ty::new(T::Str(Cow::Owned(keystr)))).with_loc(key);
                 if let Some(vinfo) = self.check_index(&ty, &kty, exp.span, false)? {
                     Ok(SlotSeq::from_slot(vinfo))
                 } else {
@@ -1617,7 +1624,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         None
                     },
                     Args::Str(ref s) => {
-                        Some(Slot::just(Ty::new(T::str(s.to_owned()))).with_loc(args))
+                        let argstr = Str::from(s[..].to_owned());
+                        Some(Slot::just(Ty::new(T::Str(Cow::Owned(argstr)))).with_loc(args))
                     },
                     Args::Table(ref fields) => {
                         Some(Slot::just(Ty::new(self.visit_table(fields)?)).with_loc(args))

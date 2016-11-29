@@ -21,11 +21,15 @@ pub struct Unioned {
 }
 
 impl Unioned {
-    pub fn from<'a>(ty: &T<'a>) -> Unioned {
-        let mut u = Unioned {
+    pub fn empty() -> Unioned {
+        Unioned {
             simple: U_NONE, numbers: None, strings: None, tables: None,
             functions: None, classes: BTreeSet::new(), tvar: None,
-        };
+        }
+    }
+
+    pub fn from<'a>(ty: &T<'a>) -> Unioned {
+        let mut u = Unioned::empty();
 
         match ty.as_base() {
             &T::Dynamic(_) | &T::All => panic!("Unioned::from called with T::Dynamic or T::All"),
@@ -38,8 +42,12 @@ impl Unioned {
             &T::Thread   => { u.simple = U_THREAD; }
             &T::UserData => { u.simple = U_USERDATA; }
 
-            &T::Numbers(ref num)    => { u.numbers = Some(num.clone().into_owned()); }
-            &T::Strings(ref str)    => { u.strings = Some(str.clone().into_owned()); }
+            &T::Number     => { u.numbers = Some(Numbers::All); }
+            &T::Integer    => { u.numbers = Some(Numbers::Int); }
+            &T::Int(v)     => { u.numbers = Some(Numbers::One(v)); }
+            &T::String     => { u.strings = Some(Strings::All); }
+            &T::Str(ref s) => { u.strings = Some(Strings::One(s.clone().into_owned())); }
+
             &T::Tables(ref tab)     => { u.tables = Some(tab.clone().into_owned()); }
             &T::Functions(ref func) => { u.functions = Some(func.clone().into_owned()); }
             &T::Class(c)            => { u.classes.insert(c); }
@@ -76,8 +84,23 @@ impl Unioned {
         }
         if self.simple.contains(U_THREAD) { f(T::Thread)?; }
         if self.simple.contains(U_USERDATA) { f(T::UserData)?; }
-        if let Some(ref num) = self.numbers { f(T::Numbers(Cow::Borrowed(num)))? }
-        if let Some(ref str) = self.strings { f(T::Strings(Cow::Borrowed(str)))? }
+        match self.numbers {
+            Some(Numbers::All) => { f(T::Number)?; }
+            Some(Numbers::Int) => { f(T::Integer)?; }
+            Some(Numbers::Some(ref vv)) => {
+                for &v in vv { f(T::Int(v))?; }
+            }
+            Some(Numbers::One(v)) => { f(T::Int(v))?; }
+            None => {}
+        }
+        match self.strings {
+            Some(Strings::All) => { f(T::String)?; }
+            Some(Strings::Some(ref ss)) => {
+                for s in ss { f(T::Str(Cow::Borrowed(s)))?; }
+            }
+            Some(Strings::One(ref s)) => { f(T::Str(Cow::Borrowed(s)))?; }
+            None => {}
+        }
         if let Some(ref tab) = self.tables { f(T::Tables(Cow::Borrowed(tab)))? }
         if let Some(ref func) = self.functions { f(T::Functions(Cow::Borrowed(func)))? }
         for &c in &self.classes { f(T::Class(c))? }

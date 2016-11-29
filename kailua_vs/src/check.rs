@@ -12,6 +12,7 @@ use kailua_env::{Pos, Span, Spanned};
 use kailua_diag::Report;
 use kailua_syntax::Chunk;
 use kailua_check::{self, FsSource, FsOptions, Id, Context, Slot, Tables, Key};
+use kailua_check::flags::T_STRING;
 
 pub type VSFsSourceCallback =
     extern "system" fn(*const u16, i32, usize, *mut *const VSParseTree) -> i32;
@@ -114,7 +115,7 @@ impl VSCheckerOutput {
     pub fn fields_after_pos(&mut self, pos: Pos) -> Option<VSNameEntries> {
         if let Some(slot) = self.slot_before_pos(pos).map(|s| s.map(|s| s.clone())) {
             if let Some(mut ty) = self.context.resolve_exact_type(&slot.unlift()) {
-                if ty.get_strings().is_some() {
+                if ty.flags() == T_STRING {
                     if let Some(metaslot) = self.context.get_string_meta() {
                         // use the string meta table for strings
                         if let Some(metaty) = self.context.resolve_exact_type(&metaslot.unlift()) {

@@ -1,5 +1,5 @@
 use std::fmt;
-use std::borrow::ToOwned;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use kailua_syntax::Str;
@@ -19,8 +19,8 @@ impl Key {
 
     pub fn into_type(self) -> T<'static> {
         match self {
-            Key::Int(v) => T::int(v),
-            Key::Str(s) => T::str(s),
+            Key::Int(v) => T::Int(v),
+            Key::Str(s) => T::Str(Cow::Owned(s)),
         }
     }
 }
@@ -97,9 +97,9 @@ fn lift_fields_to_map(fields: &BTreeMap<Key, Slot>, ctx: &mut TypeContext)
     assert!(!value.flex().is_linear(), "Slot::union should have destroyed Currently slots");
     let key = match (hasint, hasstr) {
         (false, false) => T::None,
-        (false, true) => T::string(),
-        (true, false) => T::integer(),
-        (true, true) => T::integer() | T::string(),
+        (false, true) => T::String,
+        (true, false) => T::Integer,
+        (true, true) => T::Integer | T::String,
     };
     (key, SlotWithNil::from_slot(value))
 }
@@ -195,7 +195,7 @@ impl Lattice for Tables {
             (&Tables::Fields(ref fields), &Tables::Array(ref value)) |
             (&Tables::Array(ref value), &Tables::Fields(ref fields)) => {
                 let (fkey, fvalue) = lift_fields_to_map(fields, ctx);
-                Tables::Map(Ty::new(fkey.union(&T::integer(), ctx)), fvalue.union(value, ctx))
+                Tables::Map(Ty::new(fkey.union(&T::Integer, ctx)), fvalue.union(value, ctx))
             },
 
             (&Tables::Fields(ref fields), &Tables::Map(ref key, ref value)) |
@@ -214,10 +214,10 @@ impl Lattice for Tables {
                 Tables::Map(key1.union(key2, ctx), value1.union(value2, ctx)),
 
             (&Tables::Array(ref value1), &Tables::Map(ref key2, ref value2)) =>
-                Tables::Map(Ty::new((**key2).union(&T::integer(), ctx)),
+                Tables::Map(Ty::new((**key2).union(&T::Integer, ctx)),
                             value1.union(value2, ctx)),
             (&Tables::Map(ref key1, ref value1), &Tables::Array(ref value2)) =>
-                Tables::Map(Ty::new((**key1).union(&T::integer(), ctx)),
+                Tables::Map(Ty::new((**key1).union(&T::Integer, ctx)),
                             value1.union(value2, ctx)),
         }
     }
@@ -252,7 +252,7 @@ impl Lattice for Tables {
             (&Tables::Fields(ref fields), &Tables::Array(ref value)) => {
                 // the fields should have consecutive integer keys
                 for (idx, (k, v)) in fields.iter().enumerate() {
-                    k.clone().into_type().assert_sub(&T::int(idx as i32 + 1), ctx)?;
+                    k.clone().into_type().assert_sub(&T::Int(idx as i32 + 1), ctx)?;
                     v.assert_sub(value.as_slot_without_nil(), ctx)?;
                 }
                 true
@@ -272,7 +272,7 @@ impl Lattice for Tables {
             },
 
             (&Tables::Array(ref value1), &Tables::Map(ref key2, ref value2)) => {
-                T::integer().assert_sub(&**key2, ctx)?;
+                T::Integer.assert_sub(&**key2, ctx)?;
                 value1.assert_sub(value2, ctx)?;
                 true
             },
