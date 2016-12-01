@@ -9,9 +9,8 @@ pub use self::literals::{Numbers, Strings};
 pub use self::tables::{Key, Tables};
 pub use self::functions::{Function, Functions};
 pub use self::union::Unioned;
-pub use self::value::{Dyn, T, Ty};
+pub use self::value::{Dyn, Nil, T, Ty};
 pub use self::slot::{F, S, Slot};
-pub use self::with_nil::{TyWithNil, SlotWithNil};
 pub use self::seq::{SeqIter, TySeq, SpannedTySeq, SlotSeq, SpannedSlotSeq};
 pub use self::builtin::Builtin;
 
@@ -21,7 +20,6 @@ mod functions;
 mod union;
 mod value;
 mod slot;
-mod with_nil;
 mod seq;
 mod builtin;
 
@@ -170,7 +168,11 @@ pub trait Lattice<Other = Self> {
     type Output;
 
     fn union(&self, other: &Other, ctx: &mut TypeContext) -> Self::Output;
+
+    /// Asserts that `self` is a consistent subtype of `other` under the type context.
     fn assert_sub(&self, other: &Other, ctx: &mut TypeContext) -> CheckResult<()>;
+
+    /// Asserts that `self` is a consistent type equal to `other` under the type context.
     fn assert_eq(&self, other: &Other, ctx: &mut TypeContext) -> CheckResult<()>;
 }
 
@@ -392,7 +394,7 @@ pub mod flags {
             const T_NONE       = 0b0000_0000_0000,
             const T_WHATEVER   = 0b0000_0000_0001,
             const T_DYNAMIC    = 0b0000_0000_0011,
-            const T_NIL        = 0b0000_0000_0100,
+            const T_NOISY_NIL  = 0b0000_0000_0100, // silent nil is ignored
             const T_TRUE       = 0b0000_0000_1000,
             const T_FALSE      = 0b0000_0001_0000,
             const T_BOOLEAN    = 0b0000_0001_1000,
@@ -414,7 +416,7 @@ pub mod flags {
             // "default" types that metatables are set or can be set
             // XXX shouldn't this be customizable?
             const T_CALLABLE   = T_DYNAMIC.bits | T_FUNCTION.bits,
-            const T_FALSY      = T_NIL.bits | T_FALSE.bits,
+            const T_FALSY      = T_NOISY_NIL.bits | T_FALSE.bits,
             const T_TRUTHY     = T_ALL.bits ^ T_FALSY.bits,
         }
     }
@@ -464,7 +466,6 @@ pub mod flags {
     bitflags! {
         pub flags UnionedSimple: u16 {
             const U_NONE     = T_NONE.bits,
-            const U_NIL      = T_NIL.bits,
             const U_TRUE     = T_TRUE.bits,
             const U_FALSE    = T_FALSE.bits,
             const U_BOOLEAN  = T_BOOLEAN.bits,

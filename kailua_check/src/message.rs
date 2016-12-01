@@ -1,7 +1,7 @@
 use ty::{self, Key, Display, Displayed};
 use kailua_syntax::Name;
 
-pub type T<'a> = Displayed<'a, 'a, ty::T<'a>>;
+pub type Ty<'a> = Displayed<'a, 'a, ty::Ty>;
 pub type Slot<'a> = Displayed<'a, 'a, ty::Slot>;
 
 define_msg! { pub NoVar<'a> { name: &'a Name }:
@@ -93,22 +93,22 @@ define_msg! { pub CannotDeduceBothNumOrStr<'a> { op: &'static str, lhs: Slot<'a>
              to {op} operator are either numbers or strings",
 }
 
-define_msg! { pub CallToNonFunc<'a> { func: T<'a> }:
+define_msg! { pub CallToNonFunc<'a> { func: Ty<'a> }:
     "ko" => "함수가 아닌 타입 `{func}`을(를) 호출하려고 했습니다",
     _    => "Tried to call a non-function `{func}`",
 }
 
-define_msg! { pub CallToInexactType<'a> { func: T<'a> }:
+define_msg! { pub CallToInexactType<'a> { func: Ty<'a> }:
     "ko" => "`{func}` 타입은 호출 가능하지만 아직 덜 추론되었습니다",
     _    => "The type `{func}` is callable but not known enough to call",
 }
 
-define_msg! { pub CallToAnyFunc<'a> { func: T<'a> }:
+define_msg! { pub CallToAnyFunc<'a> { func: Ty<'a> }:
     "ko" => "`{func}` 타입은 다운캐스팅하지 않으면 호출할 수 없습니다",
     _    => "Cannot call `{func}` without downcasting",
 }
 
-define_msg! { pub TableLitWithUnknownKey<'a> { key: T<'a> }:
+define_msg! { pub TableLitWithUnknownKey<'a> { key: Ty<'a> }:
     "ko" => "테이블 생성자는 항상 레코드여야 하므로 덜 추론되거나, 문자열이나 숫자가 아니거나, \
              미리 알 수 없는 `{key}` 타입을 키로 쓸 수 없습니다",
     _    => "The key type `{key}` is not known enough, not a string or integer, \
@@ -148,17 +148,17 @@ define_msg! { pub IndexToUnknownClass<'a> { cls: Slot<'a> }:
     _    => "Cannot index `{cls}` that cannot be inferred to a single class",
 }
 
-define_msg! { pub IndexToRecWithUnknownStr<'a> { tab: Slot<'a>, key: T<'a> }:
+define_msg! { pub IndexToRecWithUnknownStr<'a> { tab: Slot<'a>, key: Ty<'a> }:
     "ko" => "실행하기 전에 알 수 없는 `{key}` 타입으로 `{tab}`을(를) 인덱싱할 수 없습니다",
     _    => "Cannot index `{tab}` with index `{key}` that cannot be resolved ahead of time",
 }
 
-define_msg! { pub IndexToClassWithUnknown<'a> { cls: Slot<'a>, key: T<'a> }:
+define_msg! { pub IndexToClassWithUnknown<'a> { cls: Slot<'a>, key: Ty<'a> }:
     "ko" => "실행하기 전에 알 수 없는 `{key}` 타입으로 `{cls}`을(를) 인덱싱할 수 없습니다",
     _    => "Cannot index `{cls}` with index `{key}` that cannot be resolved ahead of time",
 }
 
-define_msg! { pub IndexToArrayWithNonInt<'a> { tab: Slot<'a>, key: T<'a> }:
+define_msg! { pub IndexToArrayWithNonInt<'a> { tab: Slot<'a>, key: Ty<'a> }:
     "ko" => "정수가 아닌 `{key}` 타입으로 `{tab}`을(를) 인덱싱할 수 없습니다",
     _    => "Cannot index an array `{tab}` with a non-integral index `{key}`",
 }
@@ -173,7 +173,7 @@ define_msg! { pub CannotIndex<'a> { tab: Slot<'a>, key: Slot<'a> }:
     _    => "Cannot index `{tab}` with `{key}`",
 }
 
-define_msg! { pub CannotAdaptTable<'a> { tab: Slot<'a>, adapted: T<'a> }:
+define_msg! { pub CannotAdaptTable<'a> { tab: Slot<'a>, adapted: Ty<'a> }:
     "ko" => "`{tab}` 테이블 타입이 `{adapted}`(으)로 확장되어야 하는데 그럴 수 없습니다",
     _    => "Cannot adapt the table type `{tab}` into `{adapted}`",
 }
@@ -193,7 +193,7 @@ define_msg! { pub CannotAssign<'a> { lhs: Slot<'a>, rhs: Slot<'a> }:
     _    => "Cannot assign `{rhs}` into `{lhs}`",
 }
 
-define_msg! { pub NonFuncIterator<'a> { iter: T<'a> }:
+define_msg! { pub NonFuncIterator<'a> { iter: Ty<'a> }:
     "ko" => "`for`-`in` 문에 주어진 반복자가 함수가 아닌 `{iter}` 타입을 반환했습니다",
     _    => "The iterator given to `for`-`in` statement returned a non-function `{iter}`",
 }
@@ -225,7 +225,7 @@ define_msg! { pub ModCannotReturnFalse:
              against recursive `require` calls and is heavily discouraged",
 }
 
-define_msg! { pub ModCannotReturnInexactType<'a> { returns: T<'a> }:
+define_msg! { pub ModCannotReturnInexactType<'a> { returns: Ty<'a> }:
     "ko" => "모듈이 아직 덜 추론된 타입 `{returns}`을(를) 반환하려고 합니다",
     _    => "The module has returned a type `{returns}` that is not yet fully resolved",
 }
@@ -285,9 +285,9 @@ define_msg! { pub IfCaseWithTruthyCond:
     _    => "This condition always evaluates to a truthy value",
 }
 
-define_msg! { pub IfCaseWithFalseyCond:
+define_msg! { pub IfCaseWithFalsyCond:
     "ko" => "이 조건이 항상 거짓인 값으로 평가됩니다",
-    _    => "This condition always evaluates to a falsey value",
+    _    => "This condition always evaluates to a falsy value",
 }
 
 define_msg! { pub RedefinedClassName:

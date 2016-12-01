@@ -8,7 +8,7 @@ use kailua_env::Spanned;
 use kailua_diag::Reporter;
 use kailua_syntax::M;
 use diag::CheckResult;
-use super::{Dyn, T, Ty, TypeContext, Lattice, Display, Mark, TVar, Builtin};
+use super::{Dyn, Nil, T, Ty, TypeContext, Lattice, Display, Mark, TVar, Builtin};
 use super::{error_not_sub, error_not_eq};
 use super::flags::Flags;
 use message as m;
@@ -161,7 +161,10 @@ impl S {
         Ok(S { flex: self.flex.weaken(ctx)?, ty: self.ty.clone() })
     }
 
-    // used for value slots in array and mapping types
+    pub fn with_nil(self) -> S {
+        S { flex: self.flex, ty: self.ty.with_nil() }
+    }
+
     pub fn without_nil(self) -> S {
         S { flex: self.flex, ty: self.ty.without_nil() }
     }
@@ -492,8 +495,8 @@ impl Slot {
     pub fn filter_by_flags(&self, flags: Flags, ctx: &mut TypeContext) -> CheckResult<()> {
         // when filter_by_flags fails, the slot itself has no valid type
         let mut s = self.0.borrow_mut();
-        let t = mem::replace(&mut *s.ty, T::None);
-        *s.ty = t.filter_by_flags(flags, ctx)?;
+        let t = mem::replace(&mut s.ty, Ty::new(T::None).or_nil(Nil::Absent));
+        s.ty = t.filter_by_flags(flags, ctx)?;
         Ok(())
     }
 
@@ -512,7 +515,12 @@ impl Slot {
 
     pub fn get_dynamic(&self) -> Option<Dyn> { self.flags().get_dynamic() }
     pub fn get_tvar(&self) -> Option<TVar> { self.unlift().get_tvar() }
-    pub fn builtin(&self) -> Option<Builtin> { self.unlift().builtin() }
+    pub fn builtin(&self) -> Option<Builtin> { self.unlift().tag() }
+
+    pub fn with_nil(&self) -> Slot {
+        let s = self.0.borrow();
+        Slot::from(s.clone().with_nil())
+    }
 
     pub fn without_nil(&self) -> Slot {
         let s = self.0.borrow();
@@ -569,6 +577,38 @@ impl<'a> Lattice<T<'a>> for Spanned<Slot> {
     }
 
     fn assert_eq(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
+        let unlifted = self.unlift();
+        if let Err(e) = unlifted.assert_eq(other, ctx) {
+            ctx.error(self.span, m::NotEqual { lhs: unlifted.display(ctx),
+                                               rhs: other.display(ctx) })
+               .done()?;
+            Err(e) // XXX not sure if we can recover here
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl<'a> Lattice<Ty> for Spanned<Slot> {
+    type Output = Slot;
+
+    fn union(&self, _other: &Ty, _ctx: &mut TypeContext) -> Slot {
+        panic!("Lattice::union(Spanned<Slot>, Ty) is not supported")
+    }
+
+    fn assert_sub(&self, other: &Ty, ctx: &mut TypeContext) -> CheckResult<()> {
+        let unlifted = self.unlift();
+        if let Err(e) = unlifted.assert_sub(other, ctx) {
+            ctx.error(self.span, m::NotSubtype { sub: unlifted.display(ctx),
+                                                 sup: other.display(ctx) })
+               .done()?;
+            Err(e) // XXX not sure if we can recover here
+        } else {
+            Ok(())
+        }
+    }
+
+    fn assert_eq(&self, other: &Ty, ctx: &mut TypeContext) -> CheckResult<()> {
         let unlifted = self.unlift();
         if let Err(e) = unlifted.assert_eq(other, ctx) {
             ctx.error(self.span, m::NotEqual { lhs: unlifted.display(ctx),

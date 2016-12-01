@@ -15,17 +15,38 @@ local function p() end
 p(3) --@< Error: `3` is not a subtype of `nil`
 --! error
 
---8<-- funccall-func-too-less-args
+--8<-- funccall-func-too-less-args-1
 local function p(x)
     x = x + 1
 end
-p() --@< Error: `nil` is not a subtype of `<unknown type>`
+p()
+--! ok
+
+--8<-- funccall-func-too-less-args-2
+local function p(x) --: integer
+    x = x + 1
+end
+p()
+--! ok
+
+--8<-- funccall-func-too-less-args-3
+local function p(x) --: integer?
+    x = x + 1 --@< Error: `integer?` is not a subtype of `number`
+end
+p()
+--! error
+
+--8<-- funccall-func-too-less-args-4
+local function p(x) --: integer!
+    x = x + 1
+end
+p() --@< Error: `nil` is not a subtype of `integer!`
 --! error
 
 --8<-- funccall-var-outside-of-scope-1
 local c
 --@v-vvv Warning: These `if` case(s) are never executed
-if c then --@< Note: This condition always evaluates to a falsey value
+if c then --@< Note: This condition always evaluates to a falsy value
     local p
 end
 p() --@< Error: Global or local variable `p` is not defined
@@ -42,7 +63,7 @@ p() --@< Error: Global or local variable `p` is not defined
 --8<-- funccall-var-outside-of-scope-3
 local c = false
 --@v-vvv Warning: These `if` case(s) are never executed
-if c then --@< Note: This condition always evaluates to a falsey value
+if c then --@< Note: This condition always evaluates to a falsy value
     local p
 end
 p() --@< Error: Global or local variable `p` is not defined
@@ -94,6 +115,21 @@ local x = p + 'foo' --@< Error: `function() --> ()` is not a subtype of `number`
 --8<-- arith-integer
 --# assume p: integer
 p = 2 + 3 * (4 + 5 - 6) % 7
+--! ok
+
+--8<-- arith-integer-implicit-nil
+--# assume p: integer
+local q = p + p --: integer!
+--! ok
+
+--8<-- arith-integer-explicit-nil
+--# assume p: integer?
+local p = p + p --: integer! --@< Error: `integer?` is not a subtype of `number`
+--! error
+
+--8<-- arith-integer-no-nil
+--# assume p: integer!
+local p = p + p --: integer!
 --! ok
 
 --8<-- lt-number-integer-1
@@ -177,8 +213,8 @@ local p = t[3]
 --! ok
 
 --8<-- index-map-with-integer-type
-local t = {[3] = 4, [8] = 5} --: map<integer, integer>
-local p = t[3] + 3 --@< Error: `(nil|integer)` is not a subtype of `number`
+local t = {[3] = 'four', [8] = 'five'} --: map<integer, string>
+local p = t[3] + 3 --@< Error: `string` is not a subtype of `number`
 --! error
 
 --8<-- index-map-with-integer-no-key
@@ -241,21 +277,21 @@ local p = x:hello()
 --! ok
 
 --8<-- methodcall-rec-2
-local x = {hello = --v function(a: table, b: integer)
+local x = {hello = --v function(a: table!, b: integer!)
                    function(a, b) end}
-local p = x:hello() --@< Error: `nil` is not a subtype of `integer`
+local p = x:hello() --@< Error: `nil` is not a subtype of `integer!`
 --! error
 
 --8<-- methodcall-rec-3
-local x = {hello = --v function(a: table, b: integer)
+local x = {hello = --v function(a: table!, b: integer!)
                    function(a, b) end}
 local p = x:hello(4)
 --! ok
 
 --8<-- methodcall-rec-4
-local x = {hello = --v function(a: table, b: integer)
+local x = {hello = --v function(a: table!, b: integer!)
                    function(a, b) end}
-local p = x:hello('string') --@< Error: `"string"` is not a subtype of `integer`
+local p = x:hello('string') --@< Error: `"string"` is not a subtype of `integer!`
 --! error
 
 --8<-- methodcall-rec-5
@@ -308,11 +344,11 @@ local a = (53 and 'string') + 42 --@< Error: `"string"` is not a subtype of `num
 --! error
 
 --8<-- conjunctive-rhs-1
-local a = (nil and 'string') + 42 --@< Error: `nil` is not a subtype of `number`
+local a = (false and 'string') + 42 --@< Error: `false` is not a subtype of `number`
 --! error
 
 --8<-- conjunctive-rhs-2
-local a = (nil and 53) + 42 --@< Error: `nil` is not a subtype of `number`
+local a = (false and 53) + 42 --@< Error: `false` is not a subtype of `number`
 --! error
 
 --8<-- conjunctive-type-erasure
@@ -361,6 +397,16 @@ local a = (p or 'foo') + 54
 --8<-- disjunctive-rhs-dynamic
 --# assume p: WHATEVER
 local a = ('foo' or p) + 54
+--! ok
+
+--8<-- ad-hoc-conditional-1
+--# assume x: boolean
+local a = x and 54 or 42 --: integer
+--! ok
+
+--8<-- ad-hoc-conditional-2
+--# assume x: integer|string|boolean|table
+local a = x and 54 or 42 --: integer
 --! ok
 
 --8<-- cat-string-or-number
@@ -716,8 +762,8 @@ local a = {} --: map<number, number>
 a[1] = 42
 a[3] = 54
 a[1] = nil
-local z = a[3] --: integer?
---@^ Error: Cannot assign `(nil|number)` into `(nil|integer)`
+local z = a[3] --: integer
+--@^ Error: Cannot assign `number` into `integer`
 --@^^ Note: The other type originates here
 --! error
 
@@ -735,7 +781,7 @@ a[1] = 42
 a[3] = 54
 a[1] = nil
 local z = a[3] --: integer
---@^ Error: Cannot assign `(nil|number)` into `integer`
+--@^ Error: Cannot assign `number` into `integer`
 --@^^ Note: The other type originates here
 --! error
 
@@ -914,7 +960,7 @@ end
 --! ok
 
 --8<-- func-returns-seq-union
---v function(n: boolean) --> (string|nil, string|nil)
+--v function(n: boolean) --> (string, string)
 local function p(n)
     if n then return 'string' else return nil, 'error' end
 end
@@ -967,28 +1013,22 @@ local a, b = p() --: integer, integer
 --! ok
 
 --8<-- assign-from-seq-union-1
-local function p(n)
+local function p(n) --: boolean
     if n then return 'string' else return nil, 'error' end
 end
-local a, b = p(false) --: string|nil, string|nil
+local a, b = p(false) --: string, string
+local a, b = p(true) --: string, string
 --! ok
 
 --8<-- assign-from-seq-union-2
-local function p(n)
+local function p(n) --: boolean
     if n then return 'string' else return nil, 'error' end
 end
-local a, b = p(false) --: string, string|nil
---@^ Error: Cannot assign `(nil|"string")` into `string`
+local a, b = p(false) --: number, number
+--@^ Error: Cannot assign `"string"` into `number`
 --@^^ Note: The other type originates here
---! error
-
---8<-- assign-from-seq-union-3
-local function p(n)
-    if n then return 'string' else return nil, 'error' end
-end
-local a, b = p(false) --: string|nil, string
---@^ Error: Cannot assign `(nil|"error")` into `string`
---@^^ Note: The other type originates here
+--@^^^ Error: Cannot assign `"error"?` into `number`
+--@^^^^ Note: The other type originates here
 --! error
 
 --8<-- table-from-seq
@@ -1018,7 +1058,7 @@ p(1, 2, 3)
 --8<-- func-varargs-type-2
 --v function(...: integer)
 local function p(...) end
-p(1, false, 3) --@< Error: `false` is not a subtype of `(nil|integer)`
+p(1, false, 3) --@< Error: `false` is not a subtype of `integer`
 --! error
 
 --8<-- func-varargs-type-with-nil
@@ -1087,39 +1127,39 @@ print('hello')
 
 --8<-- assert-truthy
 --# open lua51
---# assume p: integer|nil
+--# assume p: integer?
 assert(p)
 print(p + 5)
 --! ok
 
 --8<-- assert-disjunctive
 --# open lua51
---# assume p: integer|nil
---# assume q: integer|nil
+--# assume p: integer?
+--# assume q: integer?
 assert(p or q)
-print(p + 5) --@< Error: `(nil|integer)` is not a subtype of `number`
+print(p + 5) --@< Error: `integer?` is not a subtype of `number`
 --! error
 
 --8<-- assert-conjunctive
 --# open lua51
---# assume p: integer|nil
---# assume q: integer|nil
+--# assume p: integer?
+--# assume q: integer?
 assert(p and q)
 print(p + q)
 --! ok
 
 --8<-- assert-conjunctive-partial-1
 --# open lua51
---# assume p: integer|nil
---# assume q: integer|nil
+--# assume p: integer?
+--# assume q: integer?
 assert(p and not q)
 print(p + 5)
 --! ok
 
 --8<-- assert-conjunctive-partial-2
 --# open lua51
---# assume p: integer|nil
---# assume q: integer|nil
+--# assume p: integer?
+--# assume q: integer?
 assert(p and not q)
 print(q + 5) --@< Error: `nil` is not a subtype of `number`
 --! error
@@ -1162,8 +1202,8 @@ assert(type(13) == type('string')) -- no-op
 --8<-- assert-not-1
 --# open lua51
 --# assume assert_not: const [assert_not] function(any)
---# assume p: integer|nil
---# assume q: integer|nil
+--# assume p: integer?
+--# assume q: integer?
 assert_not(p or not q) -- i.e. assert(not p and q)
 print(q + 5)
 --! ok
@@ -1171,8 +1211,8 @@ print(q + 5)
 --8<-- assert-not-2
 --# open lua51
 --# assume assert_not: const [assert_not] function(any)
---# assume p: integer|nil
---# assume q: integer|nil
+--# assume p: integer?
+--# assume q: integer?
 assert_not(p or not q) -- i.e. assert(not p and q)
 print(p + 5) --@< Error: `nil` is not a subtype of `number`
 --! error
@@ -1267,22 +1307,56 @@ p = q
 
 --8<-- assign-var-map-eqtype
 --# assume p: map<string, number>
---# assume q: number
-p.x = q
+--# assume q: map<string, number?>
+--# assume r: map<string, number!>
+--# assume x: number
+p.x = x
+q.x = x
+r.x = x
 --! ok
 
 --8<-- assign-var-map-subtype
 --# assume p: map<string, number>
---# assume q: integer
-p.x = q
+--# assume q: map<string, number?>
+--# assume r: map<string, number!>
+--# assume x: integer
+p.x = x
+q.x = x
+r.x = x
 --! ok
 
---8<-- assign-var-map-suptype
+--8<-- assign-var-map-nil
+--# assume p: map<string, number>
+--# assume q: map<string, number?>
+--# assume r: map<string, number!>
+p.x = nil
+q.x = nil
+r.x = nil
+--! ok
+
+--8<-- assign-var-map-suptype-1
 --# assume p: map<string, integer>
 --# assume q: number
 p.x = q
---@^ Error: Cannot assign `number` into `(nil|integer)`
+--@^ Error: Cannot assign `number` into `integer`
 --@^^ Note: The other type originates here
+--! error
+
+--8<-- assign-var-map-suptype-2
+--# assume p: map<string, integer?>
+--# assume q: number
+p.x = q
+--@^ Error: Cannot assign `number` into `integer?`
+--@^^ Note: The other type originates here
+--! error
+
+--8<-- assign-var-map-suptype-3
+--# assume p: map<string, integer!>
+--# assume q: number
+p.x = q
+--@^ Error: Cannot assign `number` into `integer`
+--@^^ Note: The other type originates here
+-- the error message should not mention `integer!`
 --! error
 
 --8<-- require-unknown
@@ -1364,7 +1438,7 @@ return p
 --8<-- require-returns-not-fully-resolved
 --# open lua51
 require 'a'
---@^ Error: The module has returned a type `(nil|<unknown type>)` that is not yet fully resolved
+--@^ Error: The module has returned a type `<unknown type>` that is not yet fully resolved
 -- XXX the span should be ideally at `return`
 
 --& a
@@ -1483,26 +1557,15 @@ for x in func, state, first do
 end
 --! ok
 
---8<-- for-in-multi-1
+--8<-- for-in-multi
 --# assume func: const function({const integer}, integer|string?) --> (integer?, string)
 --# assume state: const {const integer}
 --# assume first: const integer?
 for x, y in func, state, first do
-    local a = x * 3
-    local b = y .. 'a'
+    local a = x --: integer
+    local b = y --: string
 end
 --! ok
-
---8<-- for-in-multi-2
---# assume func: const function({const integer}, integer|string?) --> (integer?, string?)
---# assume state: const {const integer}
---# assume first: const integer?
-for x, y in func, state, first do
-    local a = x * 3
-    local b = y .. 'a'    -- y can be nil
-    --@^ Error: `(nil|string)` is not a subtype of `(number|string)`
-end
---! error
 
 --8<-- for-in-non-func
 --@v Error: The iterator given to `for`-`in` statement returned a non-function `"hello"`
@@ -1780,7 +1843,7 @@ p, q = x, x --: [package_path] string, [package_cpath] string
 
 --8<-- if-false-warning-1
 --@v-vvvvv Warning: These `if` case(s) are never executed
-if false then --@< Note: This condition always evaluates to a falsey value
+if false then --@< Note: This condition always evaluates to a falsy value
     local a
     local b
     local c
@@ -1789,7 +1852,7 @@ end
 
 --8<-- if-false-warning-2
 --@v-vv Warning: These `if` case(s) are never executed
-if false then --@< Note: This condition always evaluates to a falsey value
+if false then --@< Note: This condition always evaluates to a falsy value
     local a
 else
     local b
@@ -1802,10 +1865,10 @@ end
 if x then
     local a
 --@v-vv Warning: These `if` case(s) are never executed
-elseif false then --@< Note: This condition always evaluates to a falsey value
+elseif false then --@< Note: This condition always evaluates to a falsy value
     local b
 --@v-vv Warning: These `if` case(s) are never executed
-elseif false then --@< Note: This condition always evaluates to a falsey value
+elseif false then --@< Note: This condition always evaluates to a falsy value
     local c
 else
     local d
@@ -1856,28 +1919,28 @@ end
 --! ok
 
 --8<-- unassigned-local-var-1
-local p --: string
+local p --: string!
 --! ok
 
 --8<-- unassigned-local-var-2
-local p --: string
+local p --: string!
 local function f(x) end
 f(p)
 --@^ Error: The variable is not yet initialized
---@1 Note: The variable was not implicitly initialized to `nil` as its type is `string`
+--@1 Note: The variable was not implicitly initialized to `nil` as its type is `string!`
 f(p)
 --@^ Error: The variable is not yet initialized
---@1 Note: The variable was not implicitly initialized to `nil` as its type is `string`
+--@1 Note: The variable was not implicitly initialized to `nil` as its type is `string!`
 p = 'string'
 f(p) -- no longer an error
 --! error
 
 --8<-- unassigned-local-var-nil-1
-local p --: string?
+local p --: string
 --! ok
 
 --8<-- unassigned-local-var-nil-2
-local p --: string?
+local p --: string
 local function f(x) end
 f(p)
 p = 'string'
@@ -1887,8 +1950,8 @@ f(p)
 --! ok
 
 --8<-- unassigned-global-var
-q, p = 42 --: integer, string
---@^ Error: Cannot assign `nil` into `string`
+q, p = 42 --: integer, string!
+--@^ Error: Cannot assign `nil` into `string!`
 --@^^ Note: The other type originates here
 --! error
 
@@ -1992,12 +2055,12 @@ local x = ('f'):byte() --: integer
 --@^ Error: A metatable for `string` type cannot be defined more than once and in general should only be set via `--# open` directive
 --! error
 
---8<-- lua51-string-meta-1
+--8<-- lua51-string-meta
 --# open lua51
-local x = ('f'):byte() --: integer?
-local x, y, z = ('XY'):byte() --: integer?, integer?, integer?
-local x, y, z = ('XY'):byte(10, 15) --: integer?, integer?, integer?
-local x = ('foo'):find('o') --: integer?
+local x = ('f'):byte() --: integer
+local x, y, z = ('XY'):byte() --: integer, integer, integer
+local x, y, z = ('XY'):byte(10, 15) --: integer, integer, integer
+local x = ('foo'):find('o') --: integer
 local x = ('%s%s'):format('x', 'y') --: string
 local x = ('xyzzy'):len() --: integer
 local x = ('xyZzy'):lower() --: string
@@ -2008,24 +2071,6 @@ local x = ('notice'):sub(4) --: string
 local x = ('notice'):sub(1, 3) --: string
 local x = ('notice'):sub(10, 10) --: string
 --! ok
-
---8<-- lua51-string-meta-2
---# open lua51
-
-local x = ('f'):byte() --: integer
---@^ Error: Cannot assign `(nil|integer)` into `integer`
---@^^ Note: The other type originates here
-
-local x, y = ('XY'):byte() --: integer, integer
---@^ Error: Cannot assign `(nil|integer)` into `integer`
---@^^ Note: The other type originates here
---@^^^ Error: Cannot assign `(nil|integer)` into `integer`
---@^^^^ Note: The other type originates here
-
-local x = ('%d+%d'):format('str', 'ing') --: string
--- TODO formatting error not handled (possible builtin?)
-
---! error
 
 --8<-- lua51-assert-string-type-and-meta
 --# open lua51

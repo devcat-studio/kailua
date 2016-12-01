@@ -11,7 +11,7 @@ use kailua_env::{self, Span, Spanned, WithLoc, ScopedId, ScopeMap, SpanMap};
 use kailua_diag::{self, Kind, Report, Reporter, Localize};
 use kailua_syntax::{Name, NameRef};
 use diag::{CheckResult, unquotable_name};
-use ty::{Ty, TySeq, T, Slot, F, TVar, Mark, Lattice, Builtin, Displayed, Display};
+use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, Mark, Lattice, Builtin, Displayed, Display};
 use ty::{TypeContext, TypeResolver, ClassId, Class, Functions, Function, Key};
 use ty::flags::*;
 use defs::get_defs;
@@ -286,7 +286,7 @@ impl Constraints {
     }
 
     // Some(bound) indicates that the bound already exists and is not consistent to rhs
-    fn add_bound<'a>(&'a mut self, lhs: TVar, rhs: &Ty) -> Option<&'a T> {
+    fn add_bound<'a>(&'a mut self, lhs: TVar, rhs: &Ty) -> Option<&'a Ty> {
         let lhs_ = self.bounds.find(lhs.0 as usize);
         let b = self.bounds.entry(lhs_).or_insert_with(|| Partition::create(lhs_, 0));
         if is_bound_trivial(&b.bound) {
@@ -633,7 +633,7 @@ impl Context {
     // returns a pair of type flags that is an exact lower and upper bound for that type
     // used as an approximate type bound testing like arithmetics;
     // better be replaced with a non-instantiating assertion though.
-    pub fn get_type_bounds(&self, ty: &T) -> (/*lb*/ Flags, /*ub*/ Flags) {
+    pub fn get_type_bounds(&self, ty: &Ty) -> (/*lb*/ Flags, /*ub*/ Flags) {
         let flags = ty.flags();
         let (lb, ub) = ty.get_tvar().map_or((T_NONE, T_NONE), |v| self.get_tvar_bounds(v));
         (flags | lb, flags | ub)
@@ -719,9 +719,9 @@ impl TypeContext for Context {
     fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()> {
         debug!("adding a constraint {:?} <: {:?}", lhs, *rhs);
         if let Some(eb) = self.tvar_eq.get_bound(lhs).and_then(|b| b.bound.clone()) {
-            (*eb).assert_sub(rhs, self)?;
+            eb.assert_sub(rhs, self)?;
         } else {
-            if let Some(ub) = self.tvar_sub.add_bound(lhs, rhs).map(|b| b.clone().into_send()) {
+            if let Some(ub) = self.tvar_sub.add_bound(lhs, rhs).map(|b| b.clone()) {
                 // the original bound is not consistent, bound <: rhs still has to hold
                 if let Err(e) = ub.assert_sub(rhs, self) {
                     info!("variable {:?} cannot have multiple possibly disjoint \
@@ -730,7 +730,7 @@ impl TypeContext for Context {
                 }
             }
             if let Some(lb) = self.tvar_sup.get_bound(lhs).and_then(|b| b.bound.clone()) {
-                (*lb).assert_sub(rhs, self)?;
+                lb.assert_sub(rhs, self)?;
             }
         }
         Ok(())
@@ -739,9 +739,9 @@ impl TypeContext for Context {
     fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()> {
         debug!("adding a constraint {:?} :> {:?}", lhs, *rhs);
         if let Some(eb) = self.tvar_eq.get_bound(lhs).and_then(|b| b.bound.clone()) {
-            rhs.assert_sub(&*eb, self)?;
+            rhs.assert_sub(&eb, self)?;
         } else {
-            if let Some(lb) = self.tvar_sup.add_bound(lhs, rhs).map(|b| b.clone().into_send()) {
+            if let Some(lb) = self.tvar_sup.add_bound(lhs, rhs).map(|b| b.clone()) {
                 // the original bound is not consistent, bound :> rhs still has to hold
                 if let Err(e) = rhs.assert_sub(&lb, self) {
                     info!("variable {:?} cannot have multiple possibly disjoint \
@@ -750,7 +750,7 @@ impl TypeContext for Context {
                 }
             }
             if let Some(ub) = self.tvar_sub.get_bound(lhs).and_then(|b| b.bound.clone()) {
-                rhs.assert_sub(&*ub, self)?;
+                rhs.assert_sub(&ub, self)?;
             }
         }
         Ok(())
@@ -758,7 +758,7 @@ impl TypeContext for Context {
 
     fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()> {
         debug!("adding a constraint {:?} = {:?}", lhs, *rhs);
-        if let Some(eb) = self.tvar_eq.add_bound(lhs, rhs).map(|b| b.clone().into_send()) {
+        if let Some(eb) = self.tvar_eq.add_bound(lhs, rhs).map(|b| b.clone()) {
             // the original bound is not consistent, bound = rhs still has to hold
             if let Err(e) = eb.assert_eq(rhs, self) {
                 info!("variable {:?} cannot have multiple possibly disjoint \
@@ -767,10 +767,10 @@ impl TypeContext for Context {
             }
         } else {
             if let Some(ub) = self.tvar_sub.get_bound(lhs).and_then(|b| b.bound.clone()) {
-                rhs.assert_sub(&*ub, self)?;
+                rhs.assert_sub(&ub, self)?;
             }
             if let Some(lb) = self.tvar_sup.get_bound(lhs).and_then(|b| b.bound.clone()) {
-                (*lb).assert_sub(rhs, self)?;
+                lb.assert_sub(rhs, self)?;
             }
         }
         Ok(())
@@ -1154,7 +1154,7 @@ impl<'ctx> Env<'ctx> {
     // returns a pair of type flags that is an exact lower and upper bound for that type
     // used as an approximate type bound testing like arithmetics;
     // better be replaced with a non-instantiating assertion though.
-    pub fn get_type_bounds(&self, ty: &T) -> (/*lb*/ Flags, /*ub*/ Flags) {
+    pub fn get_type_bounds(&self, ty: &Ty) -> (/*lb*/ Flags, /*ub*/ Flags) {
         self.context.get_type_bounds(ty)
     }
 
@@ -1170,7 +1170,7 @@ impl<'ctx> Env<'ctx> {
         let returns = if let Some(returns) = top_scope.frame.unwrap().returns {
             returns.into_first()
         } else {
-            Ty::new(T::Nil)
+            Ty::noisy_nil()
         };
 
         if let Some(ty) = self.resolve_exact_type(&returns) {
@@ -1183,8 +1183,8 @@ impl<'ctx> Env<'ctx> {
             }
 
             // simulate `require` behavior, i.e. nil translates to true
-            let ty = if flags.contains(T_NIL) {
-                ty.without_nil() | Ty::new(T::True)
+            let ty = if ty.nil() == Nil::Noisy {
+                ty.without_nil() | T::True
             } else {
                 ty
             };
@@ -1293,8 +1293,8 @@ impl<'ctx> Env<'ctx> {
         if !func.args.head.is_empty() {
             let selfarg = func.args.head.remove(0);
             if let Some(selfarg) = self.resolve_exact_type(&selfarg) {
-                if let T::Builtin(Builtin::Constructible, ref t) = *selfarg {
-                    if let T::Class(Class::Instance(cid_)) = **t {
+                if selfarg.tag() == Some(Builtin::Constructible) {
+                    if let T::Class(Class::Instance(cid_)) = *selfarg {
                         cid = Some(cid_);
                     }
                 }
@@ -1376,8 +1376,8 @@ impl<'ctx> Env<'ctx> {
         };
 
         // if the variable is not yet set, we may still try to assign nil
-        // to allow `local x --: string|nil` (which is fine even when "uninitialized").
-        let nil = Slot::just(Ty::new(T::Nil)).without_loc();
+        // to allow `local x --: string?` (which is fine even when "uninitialized").
+        let nil = Slot::just(Ty::noisy_nil()).without_loc();
         self.assign_special(&defslot, &nil)?;
         if defslot.accept(&nil, self.context, true).is_ok() { // this IS still initialization
             self.context.ids.get_mut(&id).unwrap().set = true;
@@ -1392,7 +1392,7 @@ impl<'ctx> Env<'ctx> {
     }
 
     fn name_class_if_any(&mut self, id: &Spanned<Id>, info: &Spanned<Slot>) -> CheckResult<()> {
-        match *info.unlift().as_base() {
+        match **info.unlift() {
             T::Class(Class::Prototype(cid)) => {
                 let name = id.name(&self.context).clone().with_loc(id);
 
@@ -1450,7 +1450,7 @@ impl<'ctx> Env<'ctx> {
 
         let assigned = initinfo.is_some();
         let specinfo = specinfo.unwrap_or_else(|| {
-            Slot::var(Ty::new(T::Nil), self.context).without_loc()
+            Slot::var(Ty::noisy_nil(), self.context).without_loc()
         });
         if let Some(initinfo) = initinfo {
             self.assign_(&specinfo, &initinfo, true)?;
@@ -1491,7 +1491,7 @@ impl<'ctx> Env<'ctx> {
             def.set = true;
             (def.slot.clone(), prevset)
         } else {
-            let slot = Slot::var(Ty::new(T::Nil), self.context);
+            let slot = Slot::var(Ty::noisy_nil(), self.context);
             self.context.ids.insert(id.base.clone(),
                                     NameDef { span: id.span, slot: slot.clone(), set: true });
             (slot, true)

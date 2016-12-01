@@ -11,9 +11,9 @@ use kailua_diag::Reporter;
 use kailua_syntax::{Str, NameRef, Var, M, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
 use kailua_syntax::{SelfParam, Args, St, Stmt, Block, K};
 use diag::CheckResult;
-use ty::{Dyn, T, Ty, TySeq, SpannedTySeq, Lattice, Displayed, Display, TypeContext};
-use ty::{Key, Tables, Function, Functions, TyWithNil};
-use ty::{F, Slot, SlotSeq, SpannedSlotSeq, SlotWithNil, Builtin, Class};
+use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Displayed, Display, TypeContext};
+use ty::{Key, Tables, Function, Functions};
+use ty::{F, Slot, SlotSeq, SpannedSlotSeq, Builtin, Class};
 use ty::flags::*;
 use env::{Env, Frame, Scope, Context};
 use message as m;
@@ -54,6 +54,13 @@ enum Cond {
     Not(Box<Cond>),
 }
 
+#[derive(Copy, Clone, Debug)]
+enum Bool {
+    Unknown,
+    Truthy,
+    Falsy,
+}
+
 pub struct Checker<'envr, 'env: 'envr> {
     env: &'envr mut Env<'env>,
 }
@@ -75,6 +82,20 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     fn scoped<'chk>(&'chk mut self, scope: Scope) -> ScopedChecker<'chk, 'envr, 'env> {
         self.env.enter(scope);
         ScopedChecker(self)
+    }
+
+    // XXX in general reachability checking should continue when the type variable get resolved
+    fn check_bool(&self, ty: &Ty) -> Bool {
+        let (lb, ub) = self.env.get_type_bounds(ty);
+        if lb.is_truthy() {
+            Bool::Truthy
+        } else if ub == T_NONE || ub.is_falsy() {
+            // this is tricky because a resolved implicit nil should also be caught.
+            // however we don't want the unresolved type variable to be considered falsy.
+            Bool::Falsy
+        } else {
+            Bool::Unknown
+        }
     }
 
     fn check_un_op(&mut self, op: UnOp, info: &Spanned<Slot>,
@@ -241,15 +262,17 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     return Ok(Slot::just(Ty::new(T::Dynamic(dyn))));
                 }
 
-                if lhs.get_tvar().is_none() {
+                match self.check_bool(&lhs.unlift()) {
                     // True and T => T
-                    if lhs.is_truthy() { return Ok(Slot::just(rhs.unlift().clone())); }
+                    Bool::Truthy => Ok(Slot::just(rhs.unlift().clone())),
                     // False and T => False
-                    if lhs.is_falsy() { return Ok(Slot::just(lhs.unlift().clone())); }
+                    Bool::Falsy => Ok(Slot::just(lhs.unlift().clone())),
+                    // unsure, both can be possible (but truthy types in lhs are not kept)
+                    Bool::Unknown => {
+                        let falsy_lhs = lhs.unlift().clone().falsy();
+                        Ok(Slot::just(falsy_lhs.union(&*rhs.unlift(), self.context())))
+                    }
                 }
-                // unsure, both can be possible (but truthy types in lhs are not kept)
-                let falsey_lhs = lhs.unlift().clone().falsey();
-                Ok(Slot::just(falsey_lhs.union(&*rhs.unlift(), self.context())))
             }
 
             BinOp::Or => {
@@ -257,15 +280,17 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     return Ok(Slot::just(Ty::new(T::Dynamic(dyn))));
                 }
 
-                if lhs.get_tvar().is_none() {
+                match self.check_bool(&lhs.unlift()) {
                     // True or T => True
-                    if lhs.is_truthy() { return Ok(Slot::just(lhs.unlift().clone())); }
+                    Bool::Truthy => Ok(Slot::just(lhs.unlift().clone())),
                     // False or T => T
-                    if lhs.is_falsy() { return Ok(Slot::just(rhs.unlift().clone())); }
+                    Bool::Falsy => Ok(Slot::just(rhs.unlift().clone())),
+                    // unsure, both can be possible (but falsy types in lhs are not kept)
+                    Bool::Unknown => {
+                        let truthy_lhs = lhs.unlift().clone().truthy();
+                        Ok(Slot::just(truthy_lhs.union(&*rhs.unlift(), self.context())))
+                    }
                 }
-                // unsure, both can be possible (but falsey types in lhs are not kept)
-                let truthy_lhs = lhs.unlift().clone().truthy();
-                Ok(Slot::just(truthy_lhs.union(&*rhs.unlift(), self.context())))
             }
         }
     }
@@ -273,17 +298,19 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     fn check_callable(&mut self, func: &Spanned<Ty>, args: &SpannedTySeq) -> CheckResult<TySeq> {
         debug!("checking if {:?} can be called with {:?}", func, args);
 
+        // check for `[internal constructor] <#x>`
+        // (should be done before the resolution, as it is likely to fail!)
+        if func.tag() == Some(Builtin::Constructor) {
+            self.env.error(func, m::CannotCallCtor {}).done()?;
+            return Ok(TySeq::dummy());
+        }
+
         let functy = if let Some(func) = self.env.resolve_exact_type(&func) {
             func
         } else {
             self.env.error(func, m::CallToInexactType { func: self.display(func) }).done()?;
             return Ok(TySeq::dummy());
         };
-
-        if functy.builtin() == Some(Builtin::Constructor) {
-            self.env.error(func, m::CannotCallCtor {}).done()?;
-            return Ok(TySeq::dummy());
-        }
 
         // check if func.args :> args
         let mut returns = match *functy.get_functions().unwrap() {
@@ -301,7 +328,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         };
 
         // XXX hack to allow generics for some significant functions
-        if functy.builtin() == Some(Builtin::GenericPairs) {
+        if functy.tag() == Some(Builtin::GenericPairs) {
             (|| {
                 let mut args = args.to_owned();
                 let tab = match self.env.resolve_exact_type(args.ensure_at(0)) {
@@ -311,7 +338,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
                 if !tab.is_tabular() { return; }
 
-                let (k, v) = match tab.clone().into_base() {
+                let (k, v) = match tab.clone().unwrap() {
                     // map<k, v> -> (k, v)
                     T::Tables(Cow::Owned(Tables::Map(k, v))) =>
                         (k, v),
@@ -328,11 +355,11 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 };
 
                 // fix `returns` in place
-                let knil = k.clone() | Ty::new(T::Nil);
-                let v = v.into_slot_without_nil();
+                let knil = k.clone().with_nil();
+                let v = v.unlift().clone().without_nil();
                 *returns.ensure_at_mut(0) = Ty::new(T::func(Function {
                     args: TySeq { head: vec![tab.clone(), k.clone()], tail: None },
-                    returns: TySeq { head: vec![knil, v.unlift().clone()], tail: None },
+                    returns: TySeq { head: vec![knil, v], tail: None },
                 }));
                 *returns.ensure_at_mut(1) = tab;
                 *returns.ensure_at_mut(2) = k;
@@ -368,7 +395,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Slot::new(flex, Ty::new(tvar))
         };
 
-        let clsinfo = match *ety.as_base() {
+        let clsinfo = match *ety {
             T::Class(Class::Prototype(cid)) => Some((cid, true)),
             T::Class(Class::Instance(cid)) => Some((cid, false)),
             T::Union(ref u) if !u.classes.is_empty() => {
@@ -422,9 +449,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         }
 
                         // should have a [constructor] built-in tag to create a `new` method
-                        let ty = T::Builtin(Builtin::Constructor,
-                                            Box::new(T::TVar(self.context().gen_tvar())));
-                        let slot = Slot::new(F::Var, Ty::new(ty));
+                        let ty = T::TVar(self.context().gen_tvar());
+                        let slot = Slot::new(F::Var, Ty::new(ty).with_tag(Builtin::Constructor));
                         fields!(class_ty).insert(litkey, slot.clone());
                         (slot, true)
                     } else if litkey == &b"new"[..] {
@@ -454,7 +480,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     if let Some(v) = fields!(instance_ty).get(&litkey).cloned() {
                         // existing fields can be used as is
                         (v, false)
-                    } else if ety.builtin() != Some(Builtin::Constructible) {
+                    } else if ety.tag() != Some(Builtin::Constructible) {
                         // otherwise, only the constructor can add new fields
                         self.env.error(expspan, m::CannotAddFieldsToInstance {}).done()?;
                         return Ok(Some(Slot::dummy()));
@@ -569,9 +595,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 // being directly constructed from the table constructor.
                 ety0.adapt(F::Currently, self.context());
 
-                let adapted = T::Tables(Cow::Owned($adapted));
-                if ety0.accept(&Slot::just(Ty::new(adapted.clone())), self.context(),
-                               false).is_err() {
+                let adapted = Ty::new(T::Tables(Cow::Owned($adapted)));
+                if ety0.accept(&Slot::just(adapted.clone()), self.context(), false).is_err() {
                     self.env.error(&*ety0,
                                    m::CannotAdaptTable { tab: self.display(&*ety0),
                                                          adapted: self.display(&adapted) })
@@ -644,9 +669,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             (Some(&Tables::Empty), true) => {
                 let vslot = new_slot(self.context(), false);
                 let tab = if intkey {
-                    Tables::Array(SlotWithNil::from_slot(vslot.clone()))
+                    Tables::Array(vslot.clone())
                 } else {
-                    Tables::Map(kty.clone(), SlotWithNil::from_slot(vslot.clone()))
+                    Tables::Map(kty.clone(), vslot.clone())
                 };
                 adapt_table!(tab);
                 Ok(Some(vslot))
@@ -655,10 +680,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             (Some(&Tables::Empty), false) => Ok(None),
 
             (Some(&Tables::Array(ref value)), _) if intkey => {
-                if lval {
-                    value.as_slot_without_nil().adapt(ety0.flex(), self.context());
-                }
-                Ok(Some((*value).clone().into_slot()))
+                if lval { value.adapt(ety0.flex(), self.context()); }
+                Ok(Some((*value).clone().with_nil()))
             },
 
             (Some(&Tables::Array(..)), _) => {
@@ -671,14 +694,14 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             (Some(&Tables::Map(ref key, ref value)), false) => {
                 check!(kty.assert_sub(&**key, self.context()));
-                Ok(Some((*value).clone().into_slot()))
+                Ok(Some((*value).clone().with_nil()))
             },
 
             (Some(&Tables::Map(ref key, ref value)), true) => {
                 let key = (**key).union(&kty, self.context());
-                value.as_slot_without_nil().adapt(ety0.flex(), self.context());
+                value.adapt(ety0.flex(), self.context());
                 adapt_table!(Tables::Map(key, value.clone()));
-                Ok(Some(value.clone().into_slot()))
+                Ok(Some(value.clone().with_nil()))
             },
 
             (Some(&Tables::All), _) => {
@@ -808,16 +831,20 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
             St::While(ref cond, ref block) => {
                 let ty = self.visit_exp(cond)?.into_first();
-                if ty.is_truthy() {
-                    // infinite loop
-                    let exit = self.visit_block(block)?;
-                    if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::Stop) }
-                } else if ty.is_falsy() {
-                    // TODO warning
-                    Ok(Exit::None)
-                } else {
-                    self.visit_block(block)?; // TODO scope merger
-                    Ok(Exit::None)
+                let boolean = self.check_bool(&ty.unlift());
+                match boolean {
+                    Bool::Truthy => { // infinite loop
+                        let exit = self.visit_block(block)?;
+                        if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::Stop) }
+                    },
+                    Bool::Falsy => {
+                        // TODO warning
+                        Ok(Exit::None)
+                    },
+                    Bool::Unknown => {
+                        self.visit_block(block)?; // TODO scope merger
+                        Ok(Exit::None)
+                    },
                 }
             }
 
@@ -825,12 +852,10 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let exit = self.visit_block(block)?; // TODO scope merger
                 let ty = self.visit_exp(cond)?.into_first();
                 if exit == Exit::None {
-                    if ty.is_truthy() {
-                        Ok(Exit::Stop)
-                    } else if ty.is_falsy() {
-                        Ok(exit)
-                    } else {
-                        Ok(Exit::None)
+                    match self.check_bool(&ty.unlift()) {
+                        Bool::Truthy => Ok(Exit::Stop),
+                        Bool::Falsy => Ok(exit),
+                        Bool::Unknown => Ok(Exit::None),
                     }
                 } else {
                     // TODO warning?
@@ -846,16 +871,22 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         *blocks_span |= span;
                         continue;
                     }
+
                     let ty = self.visit_exp(cond)?.into_first();
-                    if ty.is_truthy() {
-                        ignored_blocks = Some((cond.span, Span::dummy()));
-                        exit = exit.or(self.visit_block(block)?);
-                    } else if ty.is_falsy() {
-                        self.env.warn(span, m::IgnoredIfCase {})
-                                .note(cond, m::IfCaseWithFalseyCond {})
-                                .done()?;
-                    } else {
-                        exit = exit.or(self.visit_block(block)?); // TODO scope merger
+                    let boolean = self.check_bool(&ty.unlift());
+                    match boolean {
+                        Bool::Truthy => {
+                            ignored_blocks = Some((cond.span, Span::dummy()));
+                            exit = exit.or(self.visit_block(block)?);
+                        }
+                        Bool::Falsy => {
+                            self.env.warn(span, m::IgnoredIfCase {})
+                                    .note(cond, m::IfCaseWithFalsyCond {})
+                                    .done()?;
+                        }
+                        Bool::Unknown => {
+                            exit = exit.or(self.visit_block(block)?); // TODO scope merger
+                        }
                     }
                 }
 
@@ -937,7 +968,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 } else if let Some(dyn) = func.get_dynamic() {
                     // can't determine what func will return
                     indtys = TySeq { head: vec![],
-                                     tail: Some(Box::new(TyWithNil::from(T::Dynamic(dyn)))) };
+                                     tail: Some(Ty::new(T::Dynamic(dyn))) };
                 } else {
                     // last can be updated, so one should assume that its type can be much wider.
                     let indvar = T::TVar(self.context().gen_tvar());
@@ -949,9 +980,11 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     // in any order, our current half-baked solver requires them to be ordered
                     // in the decreasing order of size. since the initial `last` type is likely
                     // to be a subtype of function's own bounds, we assert function types first.
+                    //
+                    // note: `indvar` is set to Nil::Absent to avoid an unexpected subtyping error
                     let state = state.map(|t| t.unlift().clone());
-                    let args = SpannedTySeq { head: vec![state,
-                                                         Ty::new(indvar.clone()).without_loc()],
+                    let indvarty = Ty::new(indvar.clone()).or_nil(Nil::Absent);
+                    let args = SpannedTySeq { head: vec![state, indvarty.without_loc()],
                                               tail: None,
                                               span: Span::dummy() };
                     let mut returns = self.check_callable(&func.with_loc(expspan), &args)?;
@@ -1034,15 +1067,19 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     };
 
                     // if `info` is a class prototype we know the exact type for `self`
-                    let inferred = if let T::Class(Class::Prototype(cid)) = **info.unlift() {
-                        let inst = T::Class(Class::Instance(cid));
-                        if *method.base == *b"init" {
-                            // currently [constructible] <class instance #cid>
-                            Some((F::Currently,
-                                  Ty::new(T::Builtin(Builtin::Constructible, Box::new(inst)))))
+                    let inferred = if info.unlift().nil() != Nil::Noisy {
+                        // (except when it is unioned with nil)
+                        if let T::Class(Class::Prototype(cid)) = **info.unlift() {
+                            let inst = T::Class(Class::Instance(cid));
+                            if *method.base == *b"init" {
+                                // currently [constructible] <class instance #cid>
+                                Some((F::Currently, Ty::new(inst).with_tag(Builtin::Constructible)))
+                            } else {
+                                // var <class instance #cid>
+                                Some((F::Var, Ty::new(inst)))
+                            }
                         } else {
-                            // var <class instance #cid>
-                            Some((F::Var, Ty::new(inst)))
+                            None
                         }
                     } else {
                         None
@@ -1181,9 +1218,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     self.env.error(declspan, m::NoCheckRequiresTypedVarargs {}).done()?;
                     return Ok(Slot::dummy());
                 }
-                Some(Box::new(TyWithNil::from(T::TVar(self.context().gen_tvar()))))
+                Some(Ty::new(T::TVar(self.context().gen_tvar())))
             },
-            Some(Some(ref k)) => Some(Box::new(TyWithNil::from(Ty::from_kind(k, &mut self.env)?))),
+            Some(Some(ref k)) => Some(Ty::from_kind(k, &mut self.env)?),
         };
         let vainfo = vatype.clone().map(|t| TySeq { head: Vec::new(), tail: Some(t) });
 
@@ -1268,7 +1305,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         }
 
         // handle builtins, which may return different things from the function signature
-        match funcinfo.builtin() {
+        match funcinfo.tag() {
             // require("foo")
             Some(Builtin::Require) => {
                 if nargs < 1 {
@@ -1281,7 +1318,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                                                .and_then(|t| t.as_string().map(|s| s.to_owned())) {
                     if let Some(slot) = self.context().get_loaded_module(&modname, expspan)? {
                         info!("requiring {:?} (cached)", modname);
-                        return Ok(SlotSeq::from_slot(slot));
+                        return Ok(SlotSeq::from(slot));
                     }
                     self.context().mark_module_as_loading(&modname, expspan);
 
@@ -1299,7 +1336,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                         let mut sub = Checker::new(&mut env);
                         sub.visit_block(&chunk.block)?;
                     }
-                    return Ok(SlotSeq::from_slot(env.return_from_module(&modname, expspan)?));
+                    return Ok(SlotSeq::from(env.return_from_module(&modname, expspan)?));
                 } else {
                     return Ok(SlotSeq::from(T::All));
                 }
@@ -1457,9 +1494,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         let slot = if let Some(slot) = slotseq.head.first() {
             slot.clone()
         } else if let Some(ref slot) = slotseq.tail {
-            slot.clone().into_slot()
+            slot.clone().with_nil()
         } else {
-            Slot::just(Ty::new(T::Nil))
+            Slot::just(Ty::silent_nil())
         };
         self.context().spanned_slots_mut().insert(slot.with_loc(exp));
 
@@ -1469,11 +1506,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
     fn visit_exp_(&mut self, exp: &Spanned<Exp>) -> CheckResult<SlotSeq> {
         debug!("visiting exp {:?}", *exp);
 
-        match *exp.base {
+        let ret = match *exp.base {
             // it should not happen, but for the purpose of checker, the error nodes are dummies
             Ex::Oops => Ok(SlotSeq::dummy()),
 
-            Ex::Nil => Ok(SlotSeq::from(T::Nil)),
+            // the explicit type `nil` is different from `nil` from an implicit expression
+            Ex::Nil => Ok(SlotSeq::from(Ty::silent_nil())),
             Ex::False => Ok(SlotSeq::from(T::False)),
             Ex::True => Ok(SlotSeq::from(T::True)),
             Ex::Num(v) if v.floor() == v =>
@@ -1499,17 +1537,17 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Ex::Var(ref name) => {
                 if let Some(def) = self.env.get_var(name).cloned() {
                     self.env.ensure_var(name)?;
-                    Ok(SlotSeq::from_slot(def.slot))
+                    Ok(SlotSeq::from(def.slot))
                 } else {
                     self.env.error(exp, m::NoVar { name: self.env.get_name(name) }).done()?;
                     Ok(SlotSeq::dummy())
                 }
             },
 
-            Ex::Exp(ref e) => Ok(SlotSeq::from_slot(self.visit_exp(e)?.into_first().base)),
+            Ex::Exp(ref e) => Ok(SlotSeq::from(self.visit_exp(e)?.into_first().base)),
             Ex::Func(ref sig, _scope, ref block) => {
                 let returns = self.visit_func_body(None, sig, block, exp.span)?;
-                Ok(SlotSeq::from_slot(returns))
+                Ok(SlotSeq::from(returns))
             },
             Ex::Table(ref fields) => Ok(SlotSeq::from(self.visit_table(fields)?)),
 
@@ -1539,7 +1577,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let ty = self.visit_exp(e)?.into_first();
                 let kty = self.visit_exp(key)?.into_first();
                 if let Some(vinfo) = self.check_index(&ty, &kty, exp.span, false)? {
-                    Ok(SlotSeq::from_slot(vinfo))
+                    Ok(SlotSeq::from(vinfo))
                 } else {
                     self.env.error(exp, m::CannotIndex { tab: self.display(&ty),
                                                          key: self.display(&kty) })
@@ -1552,7 +1590,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let ty = self.visit_exp(e)?.into_first();
                 let kty = Slot::just(Ty::new(T::Str(Cow::Owned(keystr)))).with_loc(key);
                 if let Some(vinfo) = self.check_index(&ty, &kty, exp.span, false)? {
-                    Ok(SlotSeq::from_slot(vinfo))
+                    Ok(SlotSeq::from(vinfo))
                 } else {
                     self.env.error(exp, m::CannotIndex { tab: self.display(&ty),
                                                          key: self.display(&kty) })
@@ -1564,16 +1602,21 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             Ex::Un(op, ref e) => {
                 let info = self.visit_exp(e)?.into_first();
                 let info = self.check_un_op(op.base, &info, exp.span)?;
-                Ok(SlotSeq::from_slot(info))
+                Ok(SlotSeq::from(info))
             },
 
             Ex::Bin(ref l, op, ref r) => {
                 let lhs = self.visit_exp(l)?.into_first();
                 let rhs = self.visit_exp(r)?.into_first();
                 let info = self.check_bin_op(&lhs, op.base, &rhs, exp.span)?;
-                Ok(SlotSeq::from_slot(info))
+                Ok(SlotSeq::from(info))
             },
+        };
+
+        if let Ok(ref ret) = ret {
+            trace!("typed exp {:?} as {:?}", exp, ret);
         }
+        ret
     }
 
     fn visit_explist(&mut self, exps: &Spanned<Vec<Spanned<Exp>>>) -> CheckResult<SpannedSlotSeq> {
@@ -1612,7 +1655,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             let funcspan = funcseq.all_span();
             let funcinfo = funcseq.into_first();
             let funcinfo = funcinfo.unlift();
-            let typeofexp = if funcinfo.builtin() == Some(Builtin::Type) {
+            let typeofexp = if funcinfo.tag() == Some(Builtin::Type) {
                 // there should be a single argument there
                 match args.base {
                     Args::List(ref args) if args.len() >= 1 => {
@@ -1662,7 +1705,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 };
                 let info = seq.into_first();
                 let info = self.check_un_op(UnOp::Not, &info, exp.span)?;
-                Ok((cond, SpannedSlotSeq::from_slot(info.with_loc(exp))))
+                Ok((cond, SpannedSlotSeq::from(info.with_loc(exp))))
             }
 
             Ex::Bin(ref l, Spanned { base: BinOp::Eq, .. }, ref r) => {
@@ -1722,7 +1765,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let linfo = lseq.into_first();
                 let rinfo = rseq.into_first();
                 let info = self.check_bin_op(&linfo, BinOp::And, &rinfo, exp.span)?;
-                Ok((cond, SpannedSlotSeq::from_slot(info.with_loc(exp))))
+                Ok((cond, SpannedSlotSeq::from(info.with_loc(exp))))
             }
 
             Ex::Bin(ref l, Spanned { base: BinOp::Or, .. }, ref r) => {
@@ -1748,7 +1791,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let linfo = lseq.into_first();
                 let rinfo = rseq.into_first();
                 let info = self.check_bin_op(&linfo, BinOp::Or, &rinfo, exp.span)?;
-                Ok((cond, SpannedSlotSeq::from_slot(info.with_loc(exp))))
+                Ok((cond, SpannedSlotSeq::from(info.with_loc(exp))))
             }
 
             _ => {
@@ -1756,7 +1799,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 let info = seq.into_first();
                 // XXX should detect non-local slots and reject them!
                 // probably we can do that via proper weakening, but who knows.
-                Ok((Some(Cond::Flags(info.clone(), T_TRUTHY)), SpannedSlotSeq::from_slot(info)))
+                Ok((Some(Cond::Flags(info.clone(), T_TRUTHY)), SpannedSlotSeq::from(info)))
             }
         }
     }
@@ -1797,7 +1840,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         if let Some(s) = info.unlift().as_string() {
             let tyname = &s[..];
             let flags = match tyname {
-                b"nil" => T_NIL,
+                b"nil" => T_NOISY_NIL,
                 b"number" => T_NUMBER,
                 b"string" => T_STRING,
                 b"boolean" => T_BOOLEAN,
@@ -1821,12 +1864,12 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         if let Some(s) = info.unlift().as_string() {
             let tyname = &s[..];
             let (tyname, nilflags) = if tyname.ends_with(b"?") {
-                (&tyname[..tyname.len()-1], T_NIL)
+                (&tyname[..tyname.len()-1], T_NOISY_NIL)
             } else {
                 (tyname, T_NONE)
             };
             let flags = match tyname {
-                b"nil" => T_NIL,
+                b"nil" => T_NOISY_NIL,
                 b"int" | b"integer" => T_INTEGER, // XXX the real impl should follow
                 b"number" => T_NUMBER,
                 b"string" => T_STRING,

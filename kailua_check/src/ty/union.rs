@@ -31,11 +31,10 @@ impl Unioned {
     pub fn from<'a>(ty: &T<'a>) -> Unioned {
         let mut u = Unioned::empty();
 
-        match ty.as_base() {
+        match ty {
             &T::Dynamic(_) | &T::All => panic!("Unioned::from called with T::Dynamic or T::All"),
 
             &T::None     => {}
-            &T::Nil      => { u.simple = U_NIL; }
             &T::Boolean  => { u.simple = U_BOOLEAN; }
             &T::True     => { u.simple = U_TRUE; }
             &T::False    => { u.simple = U_FALSE; }
@@ -53,7 +52,6 @@ impl Unioned {
             &T::Class(c)            => { u.classes.insert(c); }
             &T::TVar(tv)            => { u.tvar = Some(tv); }
 
-            &T::Builtin(..) => unreachable!(),
             &T::Union(ref u) => return u.clone().into_owned(), // ignore `u` above
         }
 
@@ -76,7 +74,6 @@ impl Unioned {
 
     pub fn visit<'a, E, F>(&'a self, mut f: F) -> Result<(), E>
             where F: FnMut(T<'a>) -> Result<(), E> {
-        if self.simple.contains(U_NIL) { f(T::Nil)?; }
         if self.simple.contains(U_TRUE) {
             if self.simple.contains(U_FALSE) { f(T::Boolean)?; } else { f(T::True)?; }
         } else if self.simple.contains(U_FALSE) {

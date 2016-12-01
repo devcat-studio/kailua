@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use kailua_syntax::Str;
 use diag::{CheckResult, unquotable_name};
-use super::{T, Ty, Slot, SlotWithNil, TypeContext, Lattice, Display};
+use super::{T, Ty, Slot, TypeContext, Lattice, Display};
 use super::{error_not_sub, error_not_eq};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -17,10 +17,10 @@ impl Key {
     pub fn is_int(&self) -> bool { if let Key::Int(_) = *self { true } else { false } }
     pub fn is_str(&self) -> bool { if let Key::Str(_) = *self { true } else { false } }
 
-    pub fn into_type(self) -> T<'static> {
-        match self {
+    pub fn to_type<'a>(&'a self) -> T<'a> {
+        match *self {
             Key::Int(v) => T::Int(v),
-            Key::Str(s) => T::Str(Cow::Owned(s)),
+            Key::Str(ref s) => T::Str(Cow::Borrowed(s)),
         }
     }
 }
@@ -75,18 +75,17 @@ pub enum Tables {
 
     // does not appear naturally (indistinguishable from Map from integers)
     // determined only from the function usages, e.g. table.insert
-    Array(SlotWithNil), // shared (non-linear) slots only
+    Array(Slot), // shared (non-linear) slots only, value implicitly unioned with nil
 
-    Map(Ty, SlotWithNil), // shared (non-linear) slots only
+    Map(Ty, Slot), // shared (non-linear) slots only, value implicitly unioned with nil
 
     // ---
 
     All,
 }
 
-// note: implicitly removes nil as well
 fn lift_fields_to_map(fields: &BTreeMap<Key, Slot>, ctx: &mut TypeContext)
-                    -> (T<'static>, SlotWithNil) {
+                    -> (T<'static>, Slot) {
     let mut hasint = false;
     let mut hasstr = false;
     let mut value = Slot::just(Ty::new(T::None));
@@ -101,7 +100,7 @@ fn lift_fields_to_map(fields: &BTreeMap<Key, Slot>, ctx: &mut TypeContext)
         (true, false) => T::Integer,
         (true, true) => T::Integer | T::String,
     };
-    (key, SlotWithNil::from_slot(value))
+    (key, value)
 }
 
 impl Tables {
@@ -109,7 +108,7 @@ impl Tables {
                                        mut write_ty: WriteTy,
                                        mut write_slot: WriteSlot) -> fmt::Result
             where WriteTy: FnMut(&T, &mut fmt::Formatter) -> fmt::Result,
-                  WriteSlot: FnMut(&Slot, &mut fmt::Formatter) -> fmt::Result {
+                  WriteSlot: FnMut(&Slot, &mut fmt::Formatter, bool) -> fmt::Result {
         match *self {
             Tables::All => write!(f, "table"),
 
@@ -122,7 +121,7 @@ impl Tables {
                 let mut nextlen = 1;
                 while let Some(t) = fields.get(&Key::Int(nextlen)) {
                     if first { first = false; } else { write!(f, ", ")?; }
-                    write_slot(t, f)?;
+                    write_slot(t, f, false)?;
                     if nextlen >= 0x10000 { break; } // too much
                     nextlen += 1;
                 }
@@ -134,7 +133,7 @@ impl Tables {
                     }
                     if first { first = false; } else { write!(f, ", ")?; }
                     write!(f, "{} = ", name)?;
-                    write_slot(t, f)?;
+                    write_slot(t, f, false)?;
                 }
                 write!(f, "}}")?;
                 Ok(())
@@ -142,7 +141,7 @@ impl Tables {
 
             Tables::Array(ref t) => {
                 write!(f, "vector<")?;
-                write_slot(t.as_slot_without_nil(), f)?;
+                write_slot(t, f, true)?;
                 write!(f, ">")?;
                 Ok(())
             }
@@ -151,7 +150,7 @@ impl Tables {
                 write!(f, "map<")?;
                 write_ty(k, f)?;
                 write!(f, ", ")?;
-                write_slot(v.as_slot_without_nil(), f)?;
+                write_slot(v, f, true)?;
                 write!(f, ">")?;
                 Ok(())
             }
@@ -175,21 +174,19 @@ impl Lattice for Tables {
                     if let Some(v1) = fields1.remove(&k) {
                         fields.insert(k, v1.union(v2, ctx));
                     } else {
-                        fields.insert(k, Slot::just(Ty::new(T::Nil)).union(v2, ctx));
+                        fields.insert(k, Slot::just(Ty::silent_nil()).union(v2, ctx));
                     }
                 }
                 for (k, v1) in fields1 {
-                    fields.insert(k.clone(), Slot::just(Ty::new(T::Nil)).union(&v1, ctx));
+                    fields.insert(k.clone(), v1.union(&Slot::just(Ty::silent_nil()), ctx));
                 }
                 Tables::Fields(fields)
             },
 
             (&Tables::Fields(ref fields), &Tables::Empty) |
             (&Tables::Empty, &Tables::Fields(ref fields)) => {
-                let add_nil = |(k,s): (&Key, &Slot)| {
-                    (k.clone(), Slot::just(Ty::new(T::Nil)).union(s, ctx))
-                };
-                Tables::Fields(fields.iter().map(add_nil).collect())
+                let nil = Slot::just(Ty::silent_nil());
+                Tables::Fields(fields.iter().map(|(k,s)| (k.clone(), s.union(&nil, ctx))).collect())
             },
 
             (&Tables::Fields(ref fields), &Tables::Array(ref value)) |
@@ -243,8 +240,8 @@ impl Lattice for Tables {
 
             (&Tables::Fields(ref fields), &Tables::Map(ref key, ref value)) => {
                 for (k, v) in fields {
-                    k.clone().into_type().assert_sub(&**key, ctx)?;
-                    v.assert_sub(value.as_slot_without_nil(), ctx)?;
+                    k.to_type().assert_sub(&**key, ctx)?;
+                    v.assert_sub(&value.clone().with_nil(), ctx)?;
                 }
                 true
             },
@@ -252,8 +249,8 @@ impl Lattice for Tables {
             (&Tables::Fields(ref fields), &Tables::Array(ref value)) => {
                 // the fields should have consecutive integer keys
                 for (idx, (k, v)) in fields.iter().enumerate() {
-                    k.clone().into_type().assert_sub(&T::Int(idx as i32 + 1), ctx)?;
-                    v.assert_sub(value.as_slot_without_nil(), ctx)?;
+                    k.to_type().assert_sub(&T::Int(idx as i32 + 1), ctx)?;
+                    v.assert_sub(&value.clone().with_nil(), ctx)?;
                 }
                 true
             },
@@ -333,14 +330,26 @@ impl PartialEq for Tables {
 
 impl Display for Tables {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
-        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(ctx), f),
-                            |s, f| fmt::Display::fmt(&s.display(ctx), f))
+        self.fmt_generic(
+            f,
+            |t, f| fmt::Display::fmt(&t.display(ctx), f),
+            |s, f, without_nil| {
+                let s = s.display(ctx);
+                if without_nil { write!(f, "{:#}", s) } else { write!(f, "{}", s) }
+            }
+        )
     }
 }
 
 impl fmt::Debug for Tables {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.fmt_generic(f, |t, f| fmt::Debug::fmt(t, f), fmt::Debug::fmt)
+        self.fmt_generic(
+            f,
+            |t, f| fmt::Debug::fmt(t, f),
+            |s, f, without_nil| {
+                if without_nil { write!(f, "{:#?}", s) } else { write!(f, "{:?}", s) }
+            }
+        )
     }
 }
 
