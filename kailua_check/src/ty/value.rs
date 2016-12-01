@@ -8,7 +8,7 @@ use kailua_syntax::{K, SlotKind, Str};
 use diag::CheckResult;
 use super::{F, Slot};
 use super::{TypeContext, NoTypeContext, TypeResolver, Lattice, TySeq, Display};
-use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, Builtin, Class};
+use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, Tag, Class};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 
@@ -799,11 +799,11 @@ impl Nil {
 struct TyInner {
     ty: T<'static>,
     nil: Nil,
-    tag: Option<Builtin>,
+    tag: Option<Tag>,
 }
 
 impl TyInner {
-    fn new(ty: T<'static>, nil: Nil, tag: Option<Builtin>) -> TyInner {
+    fn new(ty: T<'static>, nil: Nil, tag: Option<Tag>) -> TyInner {
         TyInner { ty: ty, nil: nil, tag: tag }
     }
 
@@ -825,8 +825,8 @@ impl TyInner {
         Ok(())
     }
 
-    fn tag(&self) -> Option<Builtin> { self.tag }
-    fn set_tag(&mut self, tag: Builtin) { self.tag = Some(tag); }
+    fn tag(&self) -> Option<Tag> { self.tag }
+    fn set_tag(&mut self, tag: Tag) { self.tag = Some(tag); }
     fn reset_tag(&mut self) { self.tag = None; }
 
     fn unwrap_ty(self) -> T<'static> { self.ty }
@@ -936,8 +936,8 @@ impl Ty {
 
             K::Attr(ref kind, ref attr) => {
                 let mut ty = Ty::from_kind(kind, resolv)?;
-                // None is simply ignored, `Builtin::from` has already reported the error
-                if let Some(tag) = Builtin::from(attr, resolv)? {
+                // None is simply ignored, `Tag::from` has already reported the error
+                if let Some(tag) = Tag::from(attr, resolv)? {
                     // XXX check for the duplicate tag
                     ty.inner.set_tag(tag);
                 }
@@ -969,11 +969,11 @@ impl Ty {
         self
     }
 
-    pub fn tag(&self) -> Option<Builtin> {
+    pub fn tag(&self) -> Option<Tag> {
         self.inner.tag()
     }
 
-    pub fn with_tag(mut self, tag: Builtin) -> Ty {
+    pub fn with_tag(mut self, tag: Tag) -> Ty {
         self.inner.set_tag(tag);
         self
     }
@@ -1067,7 +1067,7 @@ macro_rules! impl_bitor {
 // A | B is equivalent to A.union(&B, &mut NoTypeContext)
 impl_bitor! { [] Ty, Ty; ['a] T<'a>, Ty; ['b] Ty, T<'b> }
 
-fn tag_is_sub(lhs: Option<Builtin>, rhs: Option<Builtin>) -> bool {
+fn tag_is_sub(lhs: Option<Tag>, rhs: Option<Tag>) -> bool {
     match (lhs, rhs) {
         // some tag requires the subtyping, so if any operand has such tag
         // and the tag doesn't match bail out
@@ -1081,7 +1081,7 @@ fn tag_is_sub(lhs: Option<Builtin>, rhs: Option<Builtin>) -> bool {
     }
 }
 
-fn tag_is_eq(lhs: Option<Builtin>, rhs: Option<Builtin>) -> bool {
+fn tag_is_eq(lhs: Option<Tag>, rhs: Option<Tag>) -> bool {
     match (lhs, rhs) {
         // some tag requires the subtyping, so if any operand has such tag
         // and the tag doesn't match bail out
@@ -1359,7 +1359,7 @@ mod tests {
     use kailua_syntax::Str;
     use std::rc::Rc;
     use std::borrow::Cow;
-    use ty::{Lattice, TypeContext, NoTypeContext, F, Slot, Mark, Builtin};
+    use ty::{Lattice, TypeContext, NoTypeContext, F, Slot, Mark, Tag};
     use env::Context;
     use super::*;
 
@@ -1538,13 +1538,13 @@ mod tests {
                        &mut NoTypeContext),
                    Ok(()));
 
-        // built-in subtyping
+        // tag subtyping
         let str = Ty::new(T::String);
-        let substr = Ty::new(T::String).with_tag(Builtin::_Subtype);
-        let nosubstr = Ty::new(T::String).with_tag(Builtin::_NoSubtype);
-        let nosubtrue = Ty::new(T::True).with_tag(Builtin::_NoSubtype);
-        let nosubtrueorstr = Ty::new(T::True | T::String).with_tag(Builtin::_NoSubtype);
-        let nosubboolorstr = Ty::new(T::Boolean | T::String).with_tag(Builtin::_NoSubtype);
+        let substr = Ty::new(T::String).with_tag(Tag::_Subtype);
+        let nosubstr = Ty::new(T::String).with_tag(Tag::_NoSubtype);
+        let nosubtrue = Ty::new(T::True).with_tag(Tag::_NoSubtype);
+        let nosubtrueorstr = Ty::new(T::True | T::String).with_tag(Tag::_NoSubtype);
+        let nosubboolorstr = Ty::new(T::Boolean | T::String).with_tag(Tag::_NoSubtype);
         assert!(substr.assert_sub(&substr, &mut NoTypeContext).is_ok());
         assert!(substr.assert_sub(&str, &mut NoTypeContext).is_ok());
         assert!(str.assert_sub(&substr, &mut NoTypeContext).is_err());
@@ -1615,13 +1615,13 @@ mod tests {
 
     #[test]
     fn test_eq() {
-        // built-in subtyping
+        // tag subtyping
         let str = Ty::new(T::String);
-        let substr = Ty::new(T::String).with_tag(Builtin::_Subtype);
-        let nosubnil = Ty::new(T::String).with_tag(Builtin::_NoSubtype);
-        let nosubtrue = Ty::new(T::True).with_tag(Builtin::_NoSubtype);
-        let nosubtrueorstr = Ty::new(T::True | T::String).with_tag(Builtin::_NoSubtype);
-        let nosubboolorstr = Ty::new(T::Boolean | T::String).with_tag(Builtin::_NoSubtype);
+        let substr = Ty::new(T::String).with_tag(Tag::_Subtype);
+        let nosubnil = Ty::new(T::String).with_tag(Tag::_NoSubtype);
+        let nosubtrue = Ty::new(T::True).with_tag(Tag::_NoSubtype);
+        let nosubtrueorstr = Ty::new(T::True | T::String).with_tag(Tag::_NoSubtype);
+        let nosubboolorstr = Ty::new(T::Boolean | T::String).with_tag(Tag::_NoSubtype);
         assert!(substr.assert_eq(&substr, &mut NoTypeContext).is_ok());
         assert!(substr.assert_eq(&str, &mut NoTypeContext).is_err());
         assert!(str.assert_eq(&substr, &mut NoTypeContext).is_err());

@@ -4,10 +4,9 @@ use diag::CheckResult;
 use super::TypeResolver;
 use message as m;
 
-// TODO will be renamed to "tag", the "builtin" is very confusing name
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Builtin {
-    // only used to test built-ins requiring subtypes and those not.
+pub enum Tag {
+    // only used to test tags requiring subtypes and those not.
     _Subtype,
     _NoSubtype,
 
@@ -26,7 +25,7 @@ pub enum Builtin {
     // also recognizes the following kinds of expressions:
     // - `<expr>` asserts that the corresponding type is truthy
     // - `not <expr>` asserts that the corresponding type is falsy
-    // - `<type>(<expr>) == <string>`, where <type> is a value with Type built-in tag
+    // - `<type>(<expr>) == <string>`, where <type> is a value with Type tag
     //
     // expressions can be chained by `and` or `or`, subject to De Morgan's law.
     // any unrecognized expression or non-definitive conditions are ignored.
@@ -71,7 +70,7 @@ pub enum Builtin {
     // calling this function will enable the "module" mode in Lua 5.1.
     //
     // XXX not yet implemented
-    // XXX probably requires ModuleEnv built-in
+    // XXX probably requires ModuleEnv tag
     BecomeModule,
 
     // var string
@@ -122,25 +121,25 @@ pub enum Builtin {
     Constructor,
 }
 
-impl Builtin {
-    pub fn from(attr: &Attr, resolv: &mut TypeResolver) -> CheckResult<Option<Builtin>> {
+impl Tag {
+    pub fn from(attr: &Attr, resolv: &mut TypeResolver) -> CheckResult<Option<Tag>> {
         match &attr.name.base[..] {
-            b"internal subtype"    => Ok(Some(Builtin::_Subtype)),
-            b"internal no_subtype" => Ok(Some(Builtin::_NoSubtype)),
+            b"internal subtype"    => Ok(Some(Tag::_Subtype)),
+            b"internal no_subtype" => Ok(Some(Tag::_NoSubtype)),
 
-            b"require"       => Ok(Some(Builtin::Require)),
-            b"type"          => Ok(Some(Builtin::Type)),
-            b"assert"        => Ok(Some(Builtin::Assert)),
-            b"assert_not"    => Ok(Some(Builtin::AssertNot)),
-            b"assert_type"   => Ok(Some(Builtin::AssertType)),
-            b"generic_pairs" => Ok(Some(Builtin::GenericPairs)),
-            b"genv"          => Ok(Some(Builtin::GlobalEnv)),
-            b"geval"         => Ok(Some(Builtin::GlobalEval)),
-            b"become_module" => Ok(Some(Builtin::BecomeModule)),
-            b"package_path"  => Ok(Some(Builtin::PackagePath)),
-            b"package_cpath" => Ok(Some(Builtin::PackageCpath)),
-            b"string_meta"   => Ok(Some(Builtin::StringMeta)),
-            b"make_class"    => Ok(Some(Builtin::MakeClass)),
+            b"require"       => Ok(Some(Tag::Require)),
+            b"type"          => Ok(Some(Tag::Type)),
+            b"assert"        => Ok(Some(Tag::Assert)),
+            b"assert_not"    => Ok(Some(Tag::AssertNot)),
+            b"assert_type"   => Ok(Some(Tag::AssertType)),
+            b"generic_pairs" => Ok(Some(Tag::GenericPairs)),
+            b"genv"          => Ok(Some(Tag::GlobalEnv)),
+            b"geval"         => Ok(Some(Tag::GlobalEval)),
+            b"become_module" => Ok(Some(Tag::BecomeModule)),
+            b"package_path"  => Ok(Some(Tag::PackagePath)),
+            b"package_cpath" => Ok(Some(Tag::PackageCpath)),
+            b"string_meta"   => Ok(Some(Tag::StringMeta)),
+            b"make_class"    => Ok(Some(Tag::MakeClass)),
 
             _ => {
                 resolv.warn(&attr.name, m::UnknownAttrName { name: &attr.name.base }).done()?;
@@ -151,59 +150,59 @@ impl Builtin {
 
     pub fn name(&self) -> &'static str {
         match *self {
-            Builtin::Require      => "require",
-            Builtin::Type         => "type",
-            Builtin::Assert       => "assert",
-            Builtin::AssertNot    => "assert_not",
-            Builtin::AssertType   => "assert_type",
-            Builtin::GenericPairs => "generic_pairs",
-            Builtin::GlobalEnv    => "genv",
-            Builtin::GlobalEval   => "geval",
-            Builtin::BecomeModule => "become_module",
-            Builtin::PackagePath  => "package_path",
-            Builtin::PackageCpath => "package_cpath",
-            Builtin::StringMeta   => "string_meta",
-            Builtin::MakeClass    => "make_class",
+            Tag::Require      => "require",
+            Tag::Type         => "type",
+            Tag::Assert       => "assert",
+            Tag::AssertNot    => "assert_not",
+            Tag::AssertType   => "assert_type",
+            Tag::GenericPairs => "generic_pairs",
+            Tag::GlobalEnv    => "genv",
+            Tag::GlobalEval   => "geval",
+            Tag::BecomeModule => "become_module",
+            Tag::PackagePath  => "package_path",
+            Tag::PackageCpath => "package_cpath",
+            Tag::StringMeta   => "string_meta",
+            Tag::MakeClass    => "make_class",
 
-            Builtin::_Subtype      => "internal subtype",
-            Builtin::_NoSubtype    => "internal no_subtype",
-            Builtin::Constructible => "internal constructible",
-            Builtin::Constructor   => "internal constructor",
+            Tag::_Subtype      => "internal subtype",
+            Tag::_NoSubtype    => "internal no_subtype",
+            Tag::Constructible => "internal constructible",
+            Tag::Constructor   => "internal constructor",
         }
     }
 
-    // is the effect of this built-in local to the current scope?
-    // non-scope-local built-ins have a limited ability inside non-global scopes.
+    // is the effect of this tag local to the current scope?
+    // non-scope-local tags have a limited ability inside non-global scopes.
     // (exception: the once function called from the global scope counts as global.)
     // XXX seems that it needs more accurate definition
     pub fn scope_local(&self) -> bool {
         match *self {
-            Builtin::Type |
-            Builtin::Assert |
-            Builtin::AssertNot |
-            Builtin::AssertType |
-            Builtin::GenericPairs |
-            Builtin::MakeClass |
-            Builtin::Constructible |
-            Builtin::Constructor => true,
+            Tag::Type |
+            Tag::Assert |
+            Tag::AssertNot |
+            Tag::AssertType |
+            Tag::GenericPairs |
+            Tag::MakeClass |
+            Tag::Constructible |
+            Tag::Constructor => true,
             _ => false,
         }
     }
 
-    // does this built-in need the strict subtyping rule?
+    // does this tag need the strict subtyping rule?
     // for example, it is NOT possible to update `var [type] function(any) -> string` with
     // a plain `function(any) -> string`, it has to be `[type] function(any) -> string`.
-    // generally the built-in working via assignment should have this false.
+    // generally the tag working via assignment should have this false.
     pub fn needs_subtype(&self) -> bool {
         match *self {
             // only used for testing
-            Builtin::_Subtype => true,
-            Builtin::_NoSubtype => false,
+            Tag::_Subtype => true,
+            Tag::_NoSubtype => false,
 
-            Builtin::PackagePath |
-            Builtin::PackageCpath |
-            Builtin::Constructible |
-            Builtin::Constructor => false,
+            Tag::PackagePath |
+            Tag::PackageCpath |
+            Tag::Constructible |
+            Tag::Constructor => false,
             _ => true,
         }
     }

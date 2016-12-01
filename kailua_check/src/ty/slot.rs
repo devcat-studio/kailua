@@ -8,7 +8,7 @@ use kailua_env::Spanned;
 use kailua_diag::Reporter;
 use kailua_syntax::M;
 use diag::CheckResult;
-use super::{Dyn, Nil, T, Ty, TypeContext, Lattice, Display, Mark, TVar, Builtin};
+use super::{Dyn, Nil, T, Ty, TypeContext, Lattice, Display, Mark, TVar, Tag};
 use super::{error_not_sub, error_not_eq};
 use super::flags::Flags;
 use message as m;
@@ -515,7 +515,7 @@ impl Slot {
 
     pub fn get_dynamic(&self) -> Option<Dyn> { self.flags().get_dynamic() }
     pub fn get_tvar(&self) -> Option<TVar> { self.unlift().get_tvar() }
-    pub fn builtin(&self) -> Option<Builtin> { self.unlift().tag() }
+    pub fn tag(&self) -> Option<Tag> { self.unlift().tag() }
 
     pub fn with_nil(&self) -> Slot {
         let s = self.0.borrow();

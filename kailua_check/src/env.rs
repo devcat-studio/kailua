@@ -11,7 +11,7 @@ use kailua_env::{self, Span, Spanned, WithLoc, ScopedId, ScopeMap, SpanMap};
 use kailua_diag::{self, Kind, Report, Reporter, Localize};
 use kailua_syntax::{Name, NameRef};
 use diag::{CheckResult, unquotable_name};
-use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, Mark, Lattice, Builtin, Displayed, Display};
+use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, Mark, Lattice, Tag, Displayed, Display};
 use ty::{TypeContext, TypeResolver, ClassId, Class, Functions, Function, Key};
 use ty::flags::*;
 use defs::get_defs;
@@ -1293,7 +1293,7 @@ impl<'ctx> Env<'ctx> {
         if !func.args.head.is_empty() {
             let selfarg = func.args.head.remove(0);
             if let Some(selfarg) = self.resolve_exact_type(&selfarg) {
-                if selfarg.tag() == Some(Builtin::Constructible) {
+                if selfarg.tag() == Some(Tag::Constructible) {
                     if let T::Class(Class::Instance(cid_)) = *selfarg {
                         cid = Some(cid_);
                     }
@@ -1321,12 +1321,12 @@ impl<'ctx> Env<'ctx> {
     }
 
     fn assign_special(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> CheckResult<()> {
-        match lhs.builtin() {
-            Some(b @ Builtin::PackagePath) |
-            Some(b @ Builtin::PackageCpath) => {
+        match lhs.tag() {
+            Some(b @ Tag::PackagePath) |
+            Some(b @ Tag::PackageCpath) => {
                 if let Some(s) = self.resolve_exact_type(&rhs.unlift())
                                      .and_then(|t| t.as_string().map(|s| s.to_owned())) {
-                    if b == Builtin::PackagePath {
+                    if b == Tag::PackagePath {
                         self.opts.borrow_mut().set_package_path(&s)?;
                     } else {
                         self.opts.borrow_mut().set_package_cpath(&s)?;
@@ -1336,11 +1336,11 @@ impl<'ctx> Env<'ctx> {
                 }
             }
 
-            Some(Builtin::Constructible) => {
+            Some(Tag::Constructible) => {
                 self.error(lhs, m::SelfCannotBeAssignedInCtor {}).done()?;
             }
 
-            Some(Builtin::Constructor) => {
+            Some(Tag::Constructor) => {
                 self.create_new_method_from_init(rhs)?;
             }
 
@@ -1505,8 +1505,8 @@ impl<'ctx> Env<'ctx> {
     }
 
     fn assume_special(&mut self, info: &Spanned<Slot>) -> CheckResult<()> {
-        match info.builtin() {
-            Some(Builtin::StringMeta) => {
+        match info.tag() {
+            Some(Tag::StringMeta) => {
                 if let Some(ref prevmeta) = self.context.string_meta {
                     // while it is possible to alter the string metatable from C,
                     // we don't think that it is useful after the initialization.

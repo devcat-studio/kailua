@@ -12,7 +12,7 @@ pub use self::union::Unioned;
 pub use self::value::{Dyn, Nil, T, Ty};
 pub use self::slot::{F, S, Slot};
 pub use self::seq::{SeqIter, TySeq, SpannedTySeq, SlotSeq, SpannedSlotSeq};
-pub use self::builtin::Builtin;
+pub use self::tag::Tag;
 
 mod literals;
 mod tables;
@@ -21,7 +21,7 @@ mod union;
 mod value;
 mod slot;
 mod seq;
-mod builtin;
+mod tag;
 
 fn error_not_bottom<T: fmt::Debug>(t: T) -> CheckResult<()> {
     Err(format!("impossible constraint requested: {:?} is bottom", t))

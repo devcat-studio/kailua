@@ -13,7 +13,7 @@ use kailua_syntax::{SelfParam, Args, St, Stmt, Block, K};
 use diag::CheckResult;
 use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Displayed, Display, TypeContext};
 use ty::{Key, Tables, Function, Functions};
-use ty::{F, Slot, SlotSeq, SpannedSlotSeq, Builtin, Class};
+use ty::{F, Slot, SlotSeq, SpannedSlotSeq, Tag, Class};
 use ty::flags::*;
 use env::{Env, Frame, Scope, Context};
 use message as m;
@@ -300,7 +300,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
         // check for `[internal constructor] <#x>`
         // (should be done before the resolution, as it is likely to fail!)
-        if func.tag() == Some(Builtin::Constructor) {
+        if func.tag() == Some(Tag::Constructor) {
             self.env.error(func, m::CannotCallCtor {}).done()?;
             return Ok(TySeq::dummy());
         }
@@ -328,7 +328,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         };
 
         // XXX hack to allow generics for some significant functions
-        if functy.tag() == Some(Builtin::GenericPairs) {
+        if functy.tag() == Some(Tag::GenericPairs) {
             (|| {
                 let mut args = args.to_owned();
                 let tab = match self.env.resolve_exact_type(args.ensure_at(0)) {
@@ -448,9 +448,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                             return Ok(Some(Slot::dummy()));
                         }
 
-                        // should have a [constructor] built-in tag to create a `new` method
+                        // should have a [constructor] tag to create a `new` method
                         let ty = T::TVar(self.context().gen_tvar());
-                        let slot = Slot::new(F::Var, Ty::new(ty).with_tag(Builtin::Constructor));
+                        let slot = Slot::new(F::Var, Ty::new(ty).with_tag(Tag::Constructor));
                         fields!(class_ty).insert(litkey, slot.clone());
                         (slot, true)
                     } else if litkey == &b"new"[..] {
@@ -480,7 +480,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     if let Some(v) = fields!(instance_ty).get(&litkey).cloned() {
                         // existing fields can be used as is
                         (v, false)
-                    } else if ety.tag() != Some(Builtin::Constructible) {
+                    } else if ety.tag() != Some(Tag::Constructible) {
                         // otherwise, only the constructor can add new fields
                         self.env.error(expspan, m::CannotAddFieldsToInstance {}).done()?;
                         return Ok(Some(Slot::dummy()));
@@ -1073,7 +1073,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                             let inst = T::Class(Class::Instance(cid));
                             if *method.base == *b"init" {
                                 // currently [constructible] <class instance #cid>
-                                Some((F::Currently, Ty::new(inst).with_tag(Builtin::Constructible)))
+                                Some((F::Currently, Ty::new(inst).with_tag(Tag::Constructible)))
                             } else {
                                 // var <class instance #cid>
                                 Some((F::Var, Ty::new(inst)))
@@ -1304,10 +1304,10 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             return Ok(SlotSeq::from(T::Dynamic(dyn)));
         }
 
-        // handle builtins, which may return different things from the function signature
+        // handle tags, which may return different things from the function signature
         match funcinfo.tag() {
             // require("foo")
-            Some(Builtin::Require) => {
+            Some(Tag::Require) => {
                 if nargs < 1 {
                     self.env.error(expspan, m::BuiltinGivenLessArgs { name: "require", nargs: 1 })
                             .done()?;
@@ -1343,7 +1343,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             // assert(expr)
-            Some(Builtin::Assert) => {
+            Some(Tag::Assert) => {
                 if nargs < 1 {
                     // TODO should display the true name
                     self.env.error(expspan, m::BuiltinGivenLessArgs { name: "assert", nargs: 1 })
@@ -1360,7 +1360,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             // assert_not(expr)
-            Some(Builtin::AssertNot) => {
+            Some(Tag::AssertNot) => {
                 if nargs < 1 {
                     // TODO should display the true name
                     self.env.error(expspan,
@@ -1377,7 +1377,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             // assert_type(expr)
-            Some(Builtin::AssertType) => {
+            Some(Tag::AssertType) => {
                 if nargs < 2 {
                     // TODO should display the true name
                     self.env.error(expspan,
@@ -1396,7 +1396,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             }
 
             // class()
-            Some(Builtin::MakeClass) => {
+            Some(Tag::MakeClass) => {
                 let cid = self.context().make_class(None, expspan); // TODO parent
                 return Ok(SlotSeq::from(T::Class(Class::Prototype(cid))));
             }
@@ -1655,7 +1655,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             let funcspan = funcseq.all_span();
             let funcinfo = funcseq.into_first();
             let funcinfo = funcinfo.unlift();
-            let typeofexp = if funcinfo.tag() == Some(Builtin::Type) {
+            let typeofexp = if funcinfo.tag() == Some(Tag::Type) {
                 // there should be a single argument there
                 match args.base {
                     Args::List(ref args) if args.len() >= 1 => {
@@ -1859,7 +1859,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         }
     }
 
-    // AssertType built-in accepts more strings than Type
+    // AssertType tag accepts more strings than Type
     fn ext_literal_ty_to_flags(&self, info: &Spanned<Slot>) -> CheckResult<Option<Flags>> {
         if let Some(s) = info.unlift().as_string() {
             let tyname = &s[..];
