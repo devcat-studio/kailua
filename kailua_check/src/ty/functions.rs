@@ -1,7 +1,7 @@
 use std::fmt;
 
 use diag::CheckResult;
-use super::{T, TySeq, TypeContext, Lattice, Display};
+use super::{T, TySeq, TypeContext, Lattice, Union, Display};
 use super::{error_not_sub, error_not_eq};
 
 #[derive(Clone, PartialEq)]
@@ -74,7 +74,7 @@ impl Functions {
     }
 }
 
-impl Lattice for Functions {
+impl Union for Functions {
     type Output = Functions;
 
     fn union(&self, other: &Functions, _: &mut TypeContext) -> Functions {
@@ -86,7 +86,9 @@ impl Lattice for Functions {
                 if a == b { Functions::Simple(a.clone()) } else { Functions::All },
         }
     }
+}
 
+impl Lattice for Functions {
     fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (_, &Functions::All) => true,

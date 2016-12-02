@@ -11,7 +11,7 @@ use kailua_diag::Reporter;
 use kailua_syntax::{Str, NameRef, Var, M, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
 use kailua_syntax::{SelfParam, Args, St, Stmt, Block, K};
 use diag::CheckResult;
-use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Displayed, Display, TypeContext};
+use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, Displayed, Display, TypeContext};
 use ty::{Key, Tables, Function, Functions};
 use ty::{F, Slot, SlotSeq, SpannedSlotSeq, Tag, Class};
 use ty::flags::*;

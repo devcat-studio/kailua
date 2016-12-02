@@ -164,11 +164,13 @@ impl<'a> Report for &'a mut TypeContext {
     }
 }
 
-pub trait Lattice<Other = Self> {
+pub trait Union<Other = Self> {
     type Output;
 
     fn union(&self, other: &Other, ctx: &mut TypeContext) -> Self::Output;
+}
 
+pub trait Lattice<Other = Self> {
     /// Asserts that `self` is a consistent subtype of `other` under the type context.
     fn assert_sub(&self, other: &Other, ctx: &mut TypeContext) -> CheckResult<()>;
 
@@ -176,13 +178,15 @@ pub trait Lattice<Other = Self> {
     fn assert_eq(&self, other: &Other, ctx: &mut TypeContext) -> CheckResult<()>;
 }
 
-impl<A: Lattice<B>, B> Lattice<Box<B>> for Box<A> {
-    type Output = <A as Lattice<B>>::Output;
+impl<A: Union<B>, B> Union<Box<B>> for Box<A> {
+    type Output = <A as Union<B>>::Output;
 
     fn union(&self, other: &Box<B>, ctx: &mut TypeContext) -> Self::Output {
         (**self).union(other, ctx)
     }
+}
 
+impl<A: Lattice<B>, B> Lattice<Box<B>> for Box<A> {
     fn assert_sub(&self, other: &Box<B>, ctx: &mut TypeContext) -> CheckResult<()> {
         (**self).assert_sub(other, ctx)
     }
@@ -192,7 +196,7 @@ impl<A: Lattice<B>, B> Lattice<Box<B>> for Box<A> {
     }
 }
 
-impl<T: Lattice<Output=T> + fmt::Debug + Clone> Lattice for Option<T> {
+impl<T: Union<Output=T> + Clone> Union for Option<T> {
     type Output = Option<T>;
 
     fn union(&self, other: &Option<T>, ctx: &mut TypeContext) -> Option<T> {
@@ -203,7 +207,9 @@ impl<T: Lattice<Output=T> + fmt::Debug + Clone> Lattice for Option<T> {
             (&None, &None) => None,
         }
     }
+}
 
+impl<T: Lattice + fmt::Debug> Lattice for Option<T> {
     fn assert_sub(&self, other: &Option<T>, ctx: &mut TypeContext) -> CheckResult<()> {
         match (self, other) {
             (&Some(ref a), &Some(ref b)) => a.assert_sub(b, ctx),
@@ -222,14 +228,15 @@ impl<T: Lattice<Output=T> + fmt::Debug + Clone> Lattice for Option<T> {
     }
 }
 
-impl<A: Display, B: Display> Lattice<Spanned<B>> for Spanned<A>
-        where A: Lattice<B> {
-    type Output = <A as Lattice<B>>::Output;
+impl<A, B> Union<Spanned<B>> for Spanned<A> where A: Union<B> {
+    type Output = <A as Union<B>>::Output;
 
     fn union(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> Self::Output {
         self.base.union(&other.base, ctx)
     }
+}
 
+impl<A: Display, B: Display> Lattice<Spanned<B>> for Spanned<A> where A: Lattice<B> {
     fn assert_sub(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> CheckResult<()> {
         if let Err(e) = self.base.assert_sub(&other.base, ctx) {
             ctx.error(self.span, m::NotSubtype { sub: self.display(ctx),
@@ -328,7 +335,7 @@ impl TypeContext for NoTypeContext {
     }
 }
 
-impl Lattice for TVar {
+impl Union for TVar {
     type Output = TVar;
 
     fn union(&self, other: &Self, ctx: &mut TypeContext) -> Self {
@@ -337,7 +344,9 @@ impl Lattice for TVar {
         assert_eq!(ctx.assert_tvar_sub_tvar(*other, u), Ok(()));
         u
     }
+}
 
+impl Lattice for TVar {
     fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         ctx.assert_tvar_sub_tvar(*self, *other)
     }

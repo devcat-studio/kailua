@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 
 use kailua_syntax::Str;
 use diag::CheckResult;
-use super::{TypeContext, Lattice};
+use super::{TypeContext, Lattice, Union};
 use super::{error_not_sub, error_not_eq};
 
 #[derive(Clone)]
@@ -14,7 +14,7 @@ pub enum Numbers {
     All,
 }
 
-impl Lattice for Numbers {
+impl Union for Numbers {
     type Output = Numbers;
 
     fn union(&self, other: &Numbers, _: &mut TypeContext) -> Numbers {
@@ -52,7 +52,9 @@ impl Lattice for Numbers {
             }
         }
     }
+}
 
+impl Lattice for Numbers {
     fn assert_sub(&self, other: &Self, _: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Numbers::One(a), &Numbers::One(b)) => a == b,
@@ -126,7 +128,7 @@ pub enum Strings {
     All,
 }
 
-impl Lattice for Strings {
+impl Union for Strings {
     type Output = Strings;
 
     fn union(&self, other: &Strings, _: &mut TypeContext) -> Strings {
@@ -161,7 +163,9 @@ impl Lattice for Strings {
             }
         }
     }
+}
 
+impl Lattice for Strings {
     fn assert_sub(&self, other: &Self, _: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Strings::One(ref a), &Strings::One(ref b)) => *a == *b,

@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use diag::CheckResult;
-use super::{T, Ty, TypeContext, NoTypeContext, Lattice, Display};
+use super::{T, Ty, TypeContext, NoTypeContext, Lattice, Union, Display};
 use super::{Numbers, Strings, Tables, Functions, Class, TVar};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
@@ -138,7 +138,7 @@ impl Unioned {
     }
 }
 
-impl Lattice for Unioned {
+impl Union for Unioned {
     type Output = Unioned;
 
     fn union(&self, other: &Unioned, ctx: &mut TypeContext) -> Unioned {
@@ -161,7 +161,9 @@ impl Lattice for Unioned {
             functions: functions, classes: classes, tvar: tvar,
         }
     }
+}
 
+impl Lattice for Unioned {
     fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         if self.simple.intersects(!other.simple) {
             return error_not_sub(self, other);

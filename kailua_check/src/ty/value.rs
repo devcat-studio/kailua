@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use kailua_syntax::{K, SlotKind, Str};
 use diag::CheckResult;
 use super::{F, Slot};
-use super::{TypeContext, NoTypeContext, TypeResolver, Lattice, TySeq, Display};
+use super::{TypeContext, NoTypeContext, TypeResolver, Lattice, Union, TySeq, Display};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, Tag, Class};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
@@ -38,9 +38,12 @@ impl ops::BitOr<Dyn> for Dyn {
     }
 }
 
-impl Lattice<Dyn> for Dyn {
+impl Union<Dyn> for Dyn {
     type Output = Dyn;
     fn union(&self, other: &Dyn, _ctx: &mut TypeContext) -> Dyn { *self | *other }
+}
+
+impl Lattice<Dyn> for Dyn {
     fn assert_sub(&self, _other: &Dyn, _ctx: &mut TypeContext) -> CheckResult<()> { Ok(()) }
     fn assert_eq(&self, _other: &Dyn, _ctx: &mut TypeContext) -> CheckResult<()> { Ok(()) }
 }
@@ -398,13 +401,15 @@ impl<'a> T<'a> {
     }
 }
 
-impl<'a> Lattice<Unioned> for T<'a> {
+impl<'a> Union<Unioned> for T<'a> {
     type Output = Unioned;
 
     fn union(&self, other: &Unioned, ctx: &mut TypeContext) -> Unioned {
         Unioned::from(self).union(other, ctx)
     }
+}
 
+impl<'a> Lattice<Unioned> for T<'a> {
     // assumes that the Unioned itself has been simplified.
     fn assert_sub(&self, other: &Unioned, ctx: &mut TypeContext) -> CheckResult<()> {
         // try to match each component
@@ -480,7 +485,7 @@ impl<'a> Lattice<Unioned> for T<'a> {
     }
 }
 
-impl<'a, 'b> Lattice<T<'b>> for T<'a> {
+impl<'a, 'b> Union<T<'b>> for T<'a> {
     type Output = T<'static>;
 
     fn union(&self, other: &T<'b>, ctx: &mut TypeContext) -> T<'static> {
@@ -536,7 +541,9 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (a, b) => Unioned::from(&a).union(&Unioned::from(&b), ctx).simplify(),
         }
     }
+}
 
+impl<'a, 'b> Lattice<T<'b>> for T<'a> {
     fn assert_sub(&self, other: &T<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
         debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
@@ -1095,8 +1102,8 @@ fn tag_is_eq(lhs: Option<Tag>, rhs: Option<Tag>) -> bool {
     }
 }
 
-macro_rules! define_ty_lattices {
-    ($(lattice[$($param:tt)*] $l:ident: $lhs:ty, $r:ident: $rhs:ty {
+macro_rules! define_ty_impls {
+    ($(impl[$($param:tt)*] $l:ident: $lhs:ty, $r:ident: $rhs:ty {
         text = $ltext:expr, $rtext:expr;
         ty = $lty:expr, $rty:expr;
         tag = $ltag:expr, $rtag:expr;
@@ -1106,7 +1113,7 @@ macro_rules! define_ty_lattices {
         union_tag = $union_tag:expr;
         union_nil = $union_nil:expr;
     })*) => ($(
-        impl<$($param)*> Lattice<$rhs> for $lhs {
+        impl<$($param)*> Union<$rhs> for $lhs {
             type Output = Ty;
 
             fn union(&self, other: &$rhs, ctx: &mut TypeContext) -> Ty {
@@ -1117,7 +1124,9 @@ macro_rules! define_ty_lattices {
                 let tag = $union_tag;
                 Ty { inner: Box::new(TyInner::new(ty, nil, tag)) }
             }
+        }
 
+        impl<$($param)*> Lattice<$rhs> for $lhs {
             fn assert_sub(&self, other: &$rhs, ctx: &mut TypeContext) -> CheckResult<()> {
                 debug!(concat!("asserting a constraint {:?} (", $ltext, ") <: {:?} (", $rtext, ")"),
                        self, other);
@@ -1262,8 +1271,8 @@ macro_rules! define_ty_lattices {
     )*)
 }
 
-define_ty_lattices! {
-    lattice['a] lhs: T<'a>, rhs: Ty {
+define_ty_impls! {
+    impl['a] lhs: T<'a>, rhs: Ty {
         text = "T w/o nil", "Ty";
         ty  = lhs,         rhs.inner.ty();
         tag = None,        rhs.inner.tag();
@@ -1274,7 +1283,7 @@ define_ty_lattices! {
         union_nil = rhs.inner.nil();
     }
 
-    lattice['a] lhs: Ty, rhs: T<'a> {
+    impl['a] lhs: Ty, rhs: T<'a> {
         text = "Ty", "T w/o nil";
         ty  = lhs.inner.ty(),  rhs;
         tag = lhs.inner.tag(), None;
@@ -1285,7 +1294,7 @@ define_ty_lattices! {
         union_nil = lhs.inner.nil();
     }
 
-    lattice[] lhs: Ty, rhs: Ty {
+    impl[] lhs: Ty, rhs: Ty {
         text = "Ty", "Ty";
         ty  = lhs.inner.ty(),  rhs.inner.ty();
         tag = lhs.inner.tag(), rhs.inner.tag();
@@ -1359,7 +1368,7 @@ mod tests {
     use kailua_syntax::Str;
     use std::rc::Rc;
     use std::borrow::Cow;
-    use ty::{Lattice, TypeContext, NoTypeContext, F, Slot, Mark, Tag};
+    use ty::{Lattice, Union, TypeContext, NoTypeContext, F, Slot, Mark, Tag};
     use env::Context;
     use super::*;
 
@@ -1378,7 +1387,7 @@ mod tests {
     fn nil(t: T) -> Ty { Ty::from(t).or_nil(Nil::Noisy) }
 
     #[test]
-    fn test_lattice() {
+    fn test_union() {
         macro_rules! check {
             ($l:expr, $r:expr; $u:expr) => ({
                 let left = $l;

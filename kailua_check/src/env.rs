@@ -11,7 +11,7 @@ use kailua_env::{self, Span, Spanned, WithLoc, ScopedId, ScopeMap, SpanMap};
 use kailua_diag::{self, Kind, Report, Reporter, Localize};
 use kailua_syntax::{Name, NameRef};
 use diag::{CheckResult, unquotable_name};
-use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, Mark, Lattice, Tag, Displayed, Display};
+use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, Mark, Lattice, Union, Tag, Displayed, Display};
 use ty::{TypeContext, TypeResolver, ClassId, Class, Functions, Function, Key};
 use ty::flags::*;
 use defs::get_defs;

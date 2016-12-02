@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use kailua_syntax::Str;
 use diag::{CheckResult, unquotable_name};
-use super::{T, Ty, Slot, TypeContext, Lattice, Display};
+use super::{T, Ty, Slot, TypeContext, Lattice, Union, Display};
 use super::{error_not_sub, error_not_eq};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -158,7 +158,7 @@ impl Tables {
     }
 }
 
-impl Lattice for Tables {
+impl Union for Tables {
     type Output = Tables;
 
     fn union(&self, other: &Tables, ctx: &mut TypeContext) -> Tables {
@@ -218,7 +218,9 @@ impl Lattice for Tables {
                             value1.union(value2, ctx)),
         }
     }
+}
 
+impl Lattice for Tables {
     fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Tables::Empty, _) => true,

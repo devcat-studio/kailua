@@ -8,7 +8,7 @@ use kailua_env::Spanned;
 use kailua_diag::Reporter;
 use kailua_syntax::M;
 use diag::CheckResult;
-use super::{Dyn, Nil, T, Ty, TypeContext, Lattice, Display, Mark, TVar, Tag};
+use super::{Dyn, Nil, T, Ty, TypeContext, Lattice, Union, Display, Mark, TVar, Tag};
 use super::{error_not_sub, error_not_eq};
 use super::flags::Flags;
 use message as m;
@@ -533,7 +533,7 @@ impl Slot {
     }
 }
 
-impl Lattice for Slot {
+impl Union for Slot {
     type Output = Slot;
 
     fn union(&self, other: &Slot, ctx: &mut TypeContext) -> Slot {
@@ -543,7 +543,9 @@ impl Lattice for Slot {
         // now it is safe to borrow mutably
         Slot::from(self.0.borrow_mut().union(&mut other.0.borrow_mut(), ctx))
     }
+}
 
+impl Lattice for Slot {
     fn assert_sub(&self, other: &Slot, ctx: &mut TypeContext) -> CheckResult<()> {
         self.0.borrow().assert_sub(&other.0.borrow(), ctx)
     }
@@ -558,12 +560,6 @@ impl Lattice for Slot {
 // also, for the convenience, this does NOT print the LHS with the flexibility
 // (which doesn't matter here).
 impl<'a> Lattice<T<'a>> for Spanned<Slot> {
-    type Output = Slot;
-
-    fn union(&self, _other: &T<'a>, _ctx: &mut TypeContext) -> Slot {
-        panic!("Lattice::union(Spanned<Slot>, T) is not supported")
-    }
-
     fn assert_sub(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
         let unlifted = self.unlift();
         if let Err(e) = unlifted.assert_sub(other, ctx) {
@@ -590,12 +586,6 @@ impl<'a> Lattice<T<'a>> for Spanned<Slot> {
 }
 
 impl<'a> Lattice<Ty> for Spanned<Slot> {
-    type Output = Slot;
-
-    fn union(&self, _other: &Ty, _ctx: &mut TypeContext) -> Slot {
-        panic!("Lattice::union(Spanned<Slot>, Ty) is not supported")
-    }
-
     fn assert_sub(&self, other: &Ty, ctx: &mut TypeContext) -> CheckResult<()> {
         let unlifted = self.unlift();
         if let Err(e) = unlifted.assert_sub(other, ctx) {

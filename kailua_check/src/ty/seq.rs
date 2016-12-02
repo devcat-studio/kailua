@@ -7,7 +7,7 @@ use std::iter;
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_syntax::{Seq, Kind};
 use diag::CheckResult;
-use super::{T, Ty, Slot, Lattice, Display};
+use super::{T, Ty, Slot, Lattice, Union, Display};
 use super::{TypeContext, TypeResolver};
 
 pub struct SeqIter<Item: Clone> {
@@ -174,7 +174,7 @@ macro_rules! define_tyseq {
             }
         }
 
-        impl Lattice for $tyseq {
+        impl Union for $tyseq {
             type Output = $tyseq;
 
             fn union(&self, other: &$tyseq, ctx: &mut TypeContext) -> $tyseq {
@@ -201,7 +201,9 @@ macro_rules! define_tyseq {
 
                 $tyseq { head: head, tail: tail, $($span: $span_union(self.$span, other.$span),)* }
             }
+        }
 
+        impl Lattice for $tyseq {
             fn assert_sub(&self, other: &$tyseq, ctx: &mut TypeContext) -> CheckResult<()> {
                 debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
@@ -389,7 +391,7 @@ macro_rules! define_slotseq {
             }
         }
 
-        impl Lattice for $slotseq {
+        impl Union for $slotseq {
             type Output = $slotseq;
 
             fn union(&self, other: &$slotseq, ctx: &mut TypeContext) -> $slotseq {
@@ -417,7 +419,9 @@ macro_rules! define_slotseq {
                 $slotseq { head: head, tail: tail,
                            $($span: $span_union(self.$span, other.$span),)* }
             }
+        }
 
+        impl Lattice for $slotseq {
             fn assert_sub(&self, other: &$slotseq, ctx: &mut TypeContext) -> CheckResult<()> {
                 debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
