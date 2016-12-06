@@ -177,29 +177,32 @@ macro_rules! define_tyseq {
         impl Union for $tyseq {
             type Output = $tyseq;
 
-            fn union(&self, other: &$tyseq, ctx: &mut TypeContext) -> $tyseq {
+            fn union(&self, other: &$tyseq, ctx: &mut TypeContext) -> CheckResult<$tyseq> {
                 let selftail = self.tail_to_type();
                 let othertail = other.tail_to_type();
 
                 let mut head = Vec::new();
                 let n = cmp::min(self.head.len(), other.head.len());
                 for (l, r) in self.head[..n].iter().zip(other.head[..n].iter()) {
-                    head.push($ty_union(l, r, ctx));
+                    head.push($ty_union(l, r, ctx)?);
                 }
                 for l in &self.head[n..] {
-                    head.push($ty_union(l, &othertail, ctx));
+                    head.push($ty_union(l, &othertail, ctx)?);
                 }
                 for r in &other.head[n..] {
-                    head.push($ty_union(&selftail, r, ctx));
+                    head.push($ty_union(&selftail, r, ctx)?);
                 }
 
                 let tail = if self.tail.is_some() || other.tail.is_some() {
-                    Some($ty_union(&selftail, &othertail, ctx))
+                    Some($ty_union(&selftail, &othertail, ctx)?)
                 } else {
                     None
                 };
 
-                $tyseq { head: head, tail: tail, $($span: $span_union(self.$span, other.$span),)* }
+                Ok($tyseq {
+                    head: head, tail: tail,
+                    $($span: $span_union(self.$span, other.$span),)*
+                })
             }
         }
 
@@ -394,30 +397,32 @@ macro_rules! define_slotseq {
         impl Union for $slotseq {
             type Output = $slotseq;
 
-            fn union(&self, other: &$slotseq, ctx: &mut TypeContext) -> $slotseq {
+            fn union(&self, other: &$slotseq, ctx: &mut TypeContext) -> CheckResult<$slotseq> {
                 let selftail = self.tail_to_slot();
                 let othertail = other.tail_to_slot();
 
                 let mut head = Vec::new();
                 let n = cmp::min(self.head.len(), other.head.len());
                 for (l, r) in self.head[..n].iter().zip(other.head[..n].iter()) {
-                    head.push($slot_union(l, r, ctx));
+                    head.push($slot_union(l, r, ctx)?);
                 }
                 for l in &self.head[n..] {
-                    head.push($slot_union(l, &othertail, ctx));
+                    head.push($slot_union(l, &othertail, ctx)?);
                 }
                 for r in &other.head[n..] {
-                    head.push($slot_union(&selftail, r, ctx));
+                    head.push($slot_union(&selftail, r, ctx)?);
                 }
 
                 let tail = if self.tail.is_some() || other.tail.is_some() {
-                    Some($slot_union(&selftail, &othertail, ctx))
+                    Some($slot_union(&selftail, &othertail, ctx)?)
                 } else {
                     None
                 };
 
-                $slotseq { head: head, tail: tail,
-                           $($span: $span_union(self.$span, other.$span),)* }
+                Ok($slotseq {
+                    head: head, tail: tail,
+                    $($span: $span_union(self.$span, other.$span),)*
+                })
             }
         }
 
@@ -495,11 +500,12 @@ define_tyseq! {
 
         make_nil_ty = |span: Span| Ty::noisy_nil().with_loc(span.end());
         dummy_ty = Ty::dummy().without_loc();
-        ty_union = |lhs: &Spanned<Ty>, rhs: &Spanned<Ty>, ctx|
-            lhs.base.union(&rhs.base, ctx).without_loc();
+        ty_union = |lhs: &Spanned<Ty>, rhs: &Spanned<Ty>, ctx| -> CheckResult<Spanned<Ty>> {
+            Ok(lhs.base.union(&rhs.base, ctx)?.without_loc())
+        };
         t_to_ty = |t: Spanned<T>| t.map(|t| Ty::new(t.into_send()));
         spanned_kind_to_ty = |k: &Spanned<Kind>, resolv|
-            Ty::from_kind(&k.base, resolv).map(|t| t.with_loc(k));
+            Ty::from_kind(k, resolv).map(|t| t.with_loc(k));
         ty_with_nil = |t: Spanned<Ty>| t.map(|t| t.with_nil());
 
         span span: Span {
@@ -533,8 +539,9 @@ define_slotseq! {
 
         make_nil_slot = |span: Span| Slot::just(Ty::noisy_nil()).with_loc(span.end());
         dummy_slot = Slot::dummy().without_loc();
-        slot_union = |lhs: &Spanned<Slot>, rhs: &Spanned<Slot>, ctx|
-            lhs.base.union(&rhs.base, ctx).without_loc();
+        slot_union = |lhs: &Spanned<Slot>, rhs: &Spanned<Slot>, ctx| -> CheckResult<Spanned<Slot>> {
+            Ok(lhs.base.union(&rhs.base, ctx)?.without_loc())
+        };
         t_to_slot = |t: Spanned<T>| t.map(|t| Slot::just(Ty::new(t.into_send())));
         ty_to_slot = |t: Spanned<Ty>| t.map(|t| Slot::just(t));
         slot_to_ty = |s: Spanned<Slot>| s.map(|s| s.unlift().clone());

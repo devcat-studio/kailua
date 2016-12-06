@@ -33,6 +33,13 @@ define_msg! { pub NotEqual<'a, Lhs: 'a + Display,
     _    => "`{lhs}` does not equal to `{rhs}`",
 }
 
+define_msg! { pub InexactUnionType<'a, Lhs: 'a + Display,
+                                       Rhs: 'a + Display> { lhs: Displayed<'a, 'a, Lhs>,
+                                                            rhs: Displayed<'a, 'a, Rhs> }:
+    "ko" => "덜 추론된 타입이 있어서 `{lhs}`와(과) `{rhs}`의 합 타입을 만들 수 없습니다",
+    _    => "Cannot create a union type of `{lhs}` and `{rhs}` that cannot be fully resolved",
+}
+
 define_msg! { pub OtherTypeOrigin:
     "ko" => "다른 타입은 여기에서 만들어졌습니다",
     _    => "The other type originates here",
@@ -383,5 +390,10 @@ define_msg! { pub NoCheckRequiresTypedVarargs:
 define_msg! { pub NoCheckRequiresTypedReturns:
     "ko" => "[no_check] 속성이 주어졌을 경우 함수의 반환 타입이 주어져야 합니다",
     _    => "[no_check] attribute requires the return type to be present",
+}
+
+define_msg! { pub UnsupportedErrorType:
+    "ko" => "`error \"메시지\"` 타입은 아직 지원되지 않습니다",
+    _    => "`error \"message\"` type is not yet supported",
 }
 

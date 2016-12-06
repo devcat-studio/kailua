@@ -2325,3 +2325,25 @@ local z = {1, 2, 3, string = 4} --: map<integer, integer>
 --@^^ Note: The other type originates here
 --! error
 
+--8<-- union-requires-resolution-1
+function x(a, b)
+    -- the types for a and b are yet unknown, so type is {T1, T2}
+    local t = {a, b}
+    local s = {} --: boolean|map<integer, const string>
+    -- the type of `s or t` is the union of the truthy part of `s` and the type of `t`:
+    -- `true|map<integer, const string>|{T1, T2}`, which is not allowed
+    return s or t
+    --@^ Error: Cannot create a union type of `(true|map<integer, const string>)` and `{<unknown type>, <unknown type>}` that cannot be fully resolved
+    --@^^ Note: The other type originates here
+end
+--! error
+
+--8<-- union-requires-resolution-2
+--v function(a: 'a'|'b', b: 'c'|'d'|'e') --> WHATEVER
+function x(a, b)
+    local t = {a, b}
+    local s = {} --: boolean|map<integer, const string>
+    return s or t
+end
+--! ok
+

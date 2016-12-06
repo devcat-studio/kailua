@@ -77,6 +77,7 @@ pub enum Tables {
     // determined only from the function usages, e.g. table.insert
     Array(Slot), // shared (non-linear) slots only, value implicitly unioned with nil
 
+    // key should not contain nil (will be discarded)
     Map(Ty, Slot), // shared (non-linear) slots only, value implicitly unioned with nil
 
     // ---
@@ -85,13 +86,13 @@ pub enum Tables {
 }
 
 fn lift_fields_to_map(fields: &BTreeMap<Key, Slot>, ctx: &mut TypeContext)
-                    -> (T<'static>, Slot) {
+                    -> CheckResult<(T<'static>, Slot)> {
     let mut hasint = false;
     let mut hasstr = false;
     let mut value = Slot::just(Ty::new(T::None));
     for (key, ty) in fields {
         if key.is_int() { hasint = true; } else { hasstr = true; }
-        value = value.union(ty, ctx);
+        value = value.union(ty, ctx)?;
     }
     assert!(!value.flex().is_linear(), "Slot::union should have destroyed Currently slots");
     let key = match (hasint, hasstr) {
@@ -100,14 +101,14 @@ fn lift_fields_to_map(fields: &BTreeMap<Key, Slot>, ctx: &mut TypeContext)
         (true, false) => T::Integer,
         (true, true) => T::Integer | T::String,
     };
-    (key, value)
+    Ok((key, value))
 }
 
 impl Tables {
     fn fmt_generic<WriteTy, WriteSlot>(&self, f: &mut fmt::Formatter,
                                        mut write_ty: WriteTy,
                                        mut write_slot: WriteSlot) -> fmt::Result
-            where WriteTy: FnMut(&T, &mut fmt::Formatter) -> fmt::Result,
+            where WriteTy: FnMut(&Ty, &mut fmt::Formatter) -> fmt::Result,
                   WriteSlot: FnMut(&Slot, &mut fmt::Formatter, bool) -> fmt::Result {
         match *self {
             Tables::All => write!(f, "table"),
@@ -161,10 +162,12 @@ impl Tables {
 impl Union for Tables {
     type Output = Tables;
 
-    fn union(&self, other: &Tables, ctx: &mut TypeContext) -> Tables {
+    fn union(&self, other: &Tables, ctx: &mut TypeContext) -> CheckResult<Tables> {
+        let intkey = || Ty::new(T::Integer);
+
         match (self, other) {
-            (&Tables::All, _) => Tables::All,
-            (_, &Tables::All) => Tables::All,
+            (&Tables::All, _) => Ok(Tables::All),
+            (_, &Tables::All) => Ok(Tables::All),
 
             (&Tables::Fields(ref fields1), &Tables::Fields(ref fields2)) => {
                 let mut fields1 = fields1.clone();
@@ -172,50 +175,51 @@ impl Union for Tables {
                 for (k, v2) in fields2 {
                     let k = k.clone();
                     if let Some(v1) = fields1.remove(&k) {
-                        fields.insert(k, v1.union(v2, ctx));
+                        fields.insert(k, v1.union(v2, ctx)?);
                     } else {
-                        fields.insert(k, Slot::just(Ty::silent_nil()).union(v2, ctx));
+                        fields.insert(k, Slot::just(Ty::silent_nil()).union(v2, ctx)?);
                     }
                 }
                 for (k, v1) in fields1 {
-                    fields.insert(k.clone(), v1.union(&Slot::just(Ty::silent_nil()), ctx));
+                    fields.insert(k.clone(), v1.union(&Slot::just(Ty::silent_nil()), ctx)?);
                 }
-                Tables::Fields(fields)
+                Ok(Tables::Fields(fields))
             },
 
             (&Tables::Fields(ref fields), &Tables::Empty) |
             (&Tables::Empty, &Tables::Fields(ref fields)) => {
                 let nil = Slot::just(Ty::silent_nil());
-                Tables::Fields(fields.iter().map(|(k,s)| (k.clone(), s.union(&nil, ctx))).collect())
+                let fields = fields.iter().map(|(k,s)| {
+                    Ok((k.clone(), s.union(&nil, ctx)?))
+                }).collect::<CheckResult<_>>()?;
+                Ok(Tables::Fields(fields))
             },
 
             (&Tables::Fields(ref fields), &Tables::Array(ref value)) |
             (&Tables::Array(ref value), &Tables::Fields(ref fields)) => {
-                let (fkey, fvalue) = lift_fields_to_map(fields, ctx);
-                Tables::Map(Ty::new(fkey.union(&T::Integer, ctx)), fvalue.union(value, ctx))
+                let (fkey, fvalue) = lift_fields_to_map(fields, ctx)?;
+                Ok(Tables::Map(fkey.union(&intkey(), ctx)?, fvalue.union(value, ctx)?))
             },
 
             (&Tables::Fields(ref fields), &Tables::Map(ref key, ref value)) |
             (&Tables::Map(ref key, ref value), &Tables::Fields(ref fields)) => {
-                let (fkey, fvalue) = lift_fields_to_map(fields, ctx);
-                Tables::Map(Ty::new(fkey.union(&**key, ctx)), fvalue.union(value, ctx))
+                let (fkey, fvalue) = lift_fields_to_map(fields, ctx)?;
+                Ok(Tables::Map(fkey.union(key, ctx)?, fvalue.union(value, ctx)?))
             },
 
-            (&Tables::Empty, tab) => tab.clone(),
-            (tab, &Tables::Empty) => tab.clone(),
+            (&Tables::Empty, tab) => Ok(tab.clone()),
+            (tab, &Tables::Empty) => Ok(tab.clone()),
 
             (&Tables::Array(ref value1), &Tables::Array(ref value2)) =>
-                Tables::Array(value1.union(value2, ctx)),
+                Ok(Tables::Array(value1.union(value2, ctx)?)),
 
             (&Tables::Map(ref key1, ref value1), &Tables::Map(ref key2, ref value2)) =>
-                Tables::Map(key1.union(key2, ctx), value1.union(value2, ctx)),
+                Ok(Tables::Map(key1.union(key2, ctx)?, value1.union(value2, ctx)?)),
 
             (&Tables::Array(ref value1), &Tables::Map(ref key2, ref value2)) =>
-                Tables::Map(Ty::new((**key2).union(&T::Integer, ctx)),
-                            value1.union(value2, ctx)),
+                Ok(Tables::Map(key2.union(&intkey(), ctx)?, value1.union(value2, ctx)?)),
             (&Tables::Map(ref key1, ref value1), &Tables::Array(ref value2)) =>
-                Tables::Map(Ty::new((**key1).union(&T::Integer, ctx)),
-                            value1.union(value2, ctx)),
+                Ok(Tables::Map(key1.union(&intkey(), ctx)?, value1.union(value2, ctx)?)),
         }
     }
 }
@@ -345,13 +349,7 @@ impl Display for Tables {
 
 impl fmt::Debug for Tables {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.fmt_generic(
-            f,
-            |t, f| fmt::Debug::fmt(t, f),
-            |s, f, without_nil| {
-                if without_nil { write!(f, "{:#?}", s) } else { write!(f, "{:?}", s) }
-            }
-        )
+        self.fmt_generic(f, |t, f| fmt::Debug::fmt(t, f), |s, f, _| fmt::Debug::fmt(s, f))
     }
 }
 

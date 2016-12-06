@@ -77,13 +77,13 @@ impl Functions {
 impl Union for Functions {
     type Output = Functions;
 
-    fn union(&self, other: &Functions, _: &mut TypeContext) -> Functions {
+    fn union(&self, other: &Functions, _: &mut TypeContext) -> CheckResult<Functions> {
         match (self, other) {
-            (&Functions::All, _) => Functions::All,
-            (_, &Functions::All) => Functions::All,
+            (&Functions::All, _) => Ok(Functions::All),
+            (_, &Functions::All) => Ok(Functions::All),
 
             (&Functions::Simple(ref a), &Functions::Simple(ref b)) =>
-                if a == b { Functions::Simple(a.clone()) } else { Functions::All },
+                if a == b { Ok(Functions::Simple(a.clone())) } else { Ok(Functions::All) },
         }
     }
 }

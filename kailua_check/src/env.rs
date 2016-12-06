@@ -642,17 +642,14 @@ impl Context {
     // exactly resolves the type variable inside `ty` if possible
     // this is a requirement for table indexing and function calls
     pub fn resolve_exact_type<'a>(&mut self, ty: &Ty) -> Option<Ty> {
-        match ty.split_tvar() {
-            (None, None) => unreachable!(),
-            (None, Some(t)) => Some(t.clone()),
-            (Some(tv), None) => self.get_tvar_exact_type(tv),
-            (Some(tv), Some(t)) => {
-                if let Some(t_) = self.get_tvar_exact_type(tv) {
-                    Some(t.union(&t_, self))
-                } else {
-                    None
-                }
+        if let T::TVar(tv) = **ty {
+            if let Some(ty2) = self.get_tvar_exact_type(tv) {
+                Some(ty2.union_nil(ty.nil()).with_tag(ty.tag()))
+            } else {
+                None
             }
+        } else {
+            Some(ty.clone())
         }
     }
 
@@ -1184,7 +1181,7 @@ impl<'ctx> Env<'ctx> {
 
             // simulate `require` behavior, i.e. nil translates to true
             let ty = if ty.nil() == Nil::Noisy {
-                ty.without_nil() | T::True
+                ty.without_nil().with_loc(span).union(&T::True.without_loc(), self.context)?
             } else {
                 ty
             };

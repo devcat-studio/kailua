@@ -269,8 +269,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     Bool::Falsy => Ok(Slot::just(lhs.unlift().clone())),
                     // unsure, both can be possible (but truthy types in lhs are not kept)
                     Bool::Unknown => {
-                        let falsy_lhs = lhs.unlift().clone().falsy();
-                        Ok(Slot::just(falsy_lhs.union(&*rhs.unlift(), self.context())))
+                        let falsy_lhs = lhs.as_ref().map(|t| t.unlift().clone().falsy());
+                        let rhs = rhs.as_ref().map(|t| t.unlift().clone());
+                        Ok(Slot::just(falsy_lhs.union(&rhs, self.context())?))
                     }
                 }
             }
@@ -287,8 +288,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     Bool::Falsy => Ok(Slot::just(rhs.unlift().clone())),
                     // unsure, both can be possible (but falsy types in lhs are not kept)
                     Bool::Unknown => {
-                        let truthy_lhs = lhs.unlift().clone().truthy();
-                        Ok(Slot::just(truthy_lhs.union(&*rhs.unlift(), self.context())))
+                        let truthy_lhs = lhs.as_ref().map(|t| t.unlift().clone().truthy());
+                        let rhs = rhs.as_ref().map(|t| t.unlift().clone());
+                        Ok(Slot::just(truthy_lhs.union(&rhs, self.context())?))
                     }
                 }
             }
@@ -577,11 +579,14 @@ impl<'envr, 'env> Checker<'envr, 'env> {
 
         macro_rules! check {
             ($sub:expr) => {
-                if $sub.is_err() {
-                    self.env.error(expspan, m::CannotIndex { tab: self.display(&*ety0),
-                                                             key: self.display(kty0) })
-                            .done()?;
-                    return Ok(Some(Slot::dummy()));
+                match $sub {
+                    Ok(v) => v,
+                    Err(_) => {
+                        self.env.error(expspan, m::CannotIndex { tab: self.display(&*ety0),
+                                                                 key: self.display(kty0) })
+                                .done()?;
+                        return Ok(Some(Slot::dummy()));
+                    }
                 }
             }
         }
@@ -698,7 +703,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             },
 
             (Some(&Tables::Map(ref key, ref value)), true) => {
-                let key = (**key).union(&kty, self.context());
+                let key = check!((**key).union(&kty, self.context()));
                 value.adapt(ety0.flex(), self.context());
                 adapt_table!(Tables::Map(key, value.clone()));
                 Ok(Some(value.clone().with_nil()))
@@ -1162,7 +1167,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     Some(seq).assert_sub(&returns, self.context())?;
                 } else {
                     // need to infer the return type
-                    let returns = Some(seq).union(&returns, self.context());
+                    let returns = Some(seq).union(&returns, self.context())?;
                     self.env.get_frame_mut().returns = returns.map(|seq| seq.unspan());
                 }
                 Ok(Exit::Return)

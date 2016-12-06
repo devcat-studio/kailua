@@ -3,8 +3,8 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use diag::CheckResult;
-use super::{T, Ty, TypeContext, NoTypeContext, Lattice, Union, Display};
-use super::{Numbers, Strings, Tables, Functions, Class, TVar};
+use super::{T, TypeContext, NoTypeContext, Lattice, Union, Display};
+use super::{Numbers, Strings, Tables, Functions, Class};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 
@@ -17,22 +17,22 @@ pub struct Unioned {
     pub tables: Option<Tables>,
     pub functions: Option<Functions>,
     pub classes: BTreeSet<Class>,
-    pub tvar: Option<TVar>,
 }
 
 impl Unioned {
     pub fn empty() -> Unioned {
         Unioned {
             simple: U_NONE, numbers: None, strings: None, tables: None,
-            functions: None, classes: BTreeSet::new(), tvar: None,
+            functions: None, classes: BTreeSet::new(),
         }
     }
 
-    pub fn from<'a>(ty: &T<'a>) -> Unioned {
+    pub fn from<'a>(ty: &T<'a>) -> CheckResult<Unioned> {
         let mut u = Unioned::empty();
 
         match ty {
             &T::Dynamic(_) | &T::All => panic!("Unioned::from called with T::Dynamic or T::All"),
+            &T::TVar(_) => return Err("a type not yet fully resolved cannot be unioned".into()),
 
             &T::None     => {}
             &T::Boolean  => { u.simple = U_BOOLEAN; }
@@ -50,12 +50,11 @@ impl Unioned {
             &T::Tables(ref tab)     => { u.tables = Some(tab.clone().into_owned()); }
             &T::Functions(ref func) => { u.functions = Some(func.clone().into_owned()); }
             &T::Class(c)            => { u.classes.insert(c); }
-            &T::TVar(tv)            => { u.tvar = Some(tv); }
 
-            &T::Union(ref u) => return u.clone().into_owned(), // ignore `u` above
+            &T::Union(ref u) => return Ok(u.clone().into_owned()), // ignore `u` above
         }
 
-        u
+        Ok(u)
     }
 
     pub fn flags(&self) -> Flags {
@@ -101,7 +100,6 @@ impl Unioned {
         if let Some(ref tab) = self.tables { f(T::Tables(Cow::Borrowed(tab)))? }
         if let Some(ref func) = self.functions { f(T::Functions(Cow::Borrowed(func)))? }
         for &c in &self.classes { f(T::Class(c))? }
-        if let Some(tvar) = self.tvar { f(T::TVar(tvar))? }
         Ok(())
     }
 
@@ -141,25 +139,20 @@ impl Unioned {
 impl Union for Unioned {
     type Output = Unioned;
 
-    fn union(&self, other: &Unioned, ctx: &mut TypeContext) -> Unioned {
+    fn union(&self, other: &Unioned, ctx: &mut TypeContext) -> CheckResult<Unioned> {
         let simple    = self.simple | other.simple;
-        let numbers   = self.numbers.union(&other.numbers, ctx);
-        let strings   = self.strings.union(&other.strings, ctx);
-        let tables    = self.tables.union(&other.tables, ctx);
-        let functions = self.functions.union(&other.functions, ctx);
+        let numbers   = self.numbers.union(&other.numbers, ctx)?;
+        let strings   = self.strings.union(&other.strings, ctx)?;
+        let tables    = self.tables.union(&other.tables, ctx)?;
+        let functions = self.functions.union(&other.functions, ctx)?;
 
         let mut classes = self.classes.clone();
         classes.extend(other.classes.iter().cloned());
 
-        let tvar = match (self.tvar, other.tvar) {
-            (Some(a), Some(b)) => Some(a.union(&b, ctx)),
-            (a, b) => a.or(b),
-        };
-
-        Unioned {
+        Ok(Unioned {
             simple: simple, numbers: numbers, strings: strings, tables: tables,
-            functions: functions, classes: classes, tvar: tvar,
-        }
+            functions: functions, classes: classes,
+        })
     }
 }
 
@@ -173,15 +166,12 @@ impl Lattice for Unioned {
         self.strings.assert_sub(&other.strings, &mut NoTypeContext)?;
 
         // XXX err on unions with possible overlapping instantiation for now
-        let count = if self.tables.is_some() { 1 } else { 0 } +
-                    if self.functions.is_some() { 1 } else { 0 } +
-                    if self.tvar.is_some() { 1 } else { 0 };
-        if count > 1 { return error_not_sub(self, other); }
-
-        let count = if other.tables.is_some() { 1 } else { 0 } +
-                    if other.functions.is_some() { 1 } else { 0 } +
-                    if other.tvar.is_some() { 1 } else { 0 };
-        if count > 1 { return error_not_sub(self, other); }
+        if self.tables.is_some() && self.functions.is_some() {
+            return error_not_sub(self, other);
+        }
+        if other.tables.is_some() && other.functions.is_some() {
+            return error_not_sub(self, other);
+        }
 
         self.tables.assert_sub(&other.tables, ctx)?;
         self.functions.assert_sub(&other.functions, ctx)?;
@@ -190,29 +180,10 @@ impl Lattice for Unioned {
             return error_not_sub(self, other);
         }
 
-        match (self.tvar, other.tvar) {
-            (Some(a), Some(b)) => a.assert_sub(&b, ctx),
-            (Some(_), None) => error_not_sub(self, other),
-            (None, _) => Ok(()),
-        }
+        Ok(())
     }
 
     fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
-        match (self.tvar, self.flags(), other.tvar, other.flags()) {
-            (Some(a), T_NONE, Some(b), T_NONE) =>
-                return ctx.assert_tvar_eq_tvar(a, b),
-            (Some(a), T_NONE, _, _) =>
-                return ctx.assert_tvar_eq(a, &Ty::new(T::Union(Cow::Owned(other.clone())))),
-            (_, _, Some(b), T_NONE) =>
-                return ctx.assert_tvar_eq(b, &Ty::new(T::Union(Cow::Owned(self.clone())))),
-            (Some(_), _, _, _) | (_, _, Some(_), _) =>
-                // XXX if we have a type variable in the union,
-                // the type variable essentially eschews all differences between two input types
-                // and there is no error condition except for conflicting instantiation.
-                return error_not_eq(self, other),
-            (None, _, None, _) => {}
-        }
-
         if self.simple != other.simple {
             return error_not_eq(self, other);
         }
@@ -232,17 +203,6 @@ impl Lattice for Unioned {
 
 impl Display for Unioned {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
-        // if the type variable can be completely resolved, try that first
-        if let Some(tv) = self.tvar {
-            if let Some(t) = ctx.get_tvar_exact_type(tv) {
-                let mut u = self.clone();
-                u.tvar = None;
-                let resolved = Ty::new(T::Union(Cow::Owned(u))) | t;
-                assert_eq!(resolved.get_tvar(), None);
-                return fmt::Display::fmt(&resolved.display(ctx), f);
-            }
-        }
-
         self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(ctx), f))
     }
 }

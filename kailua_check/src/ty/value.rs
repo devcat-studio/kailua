@@ -4,13 +4,16 @@ use std::mem;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use kailua_syntax::{K, SlotKind, Str};
+use kailua_env::Spanned;
+use kailua_syntax::{K, Kind, SlotKind, Str};
+use kailua_diag::Reporter;
 use diag::CheckResult;
 use super::{F, Slot};
 use super::{TypeContext, NoTypeContext, TypeResolver, Lattice, Union, TySeq, Display};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, Tag, Class};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
+use message as m;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Dyn {
@@ -26,26 +29,13 @@ impl Dyn {
             (None, None) => None,
         }
     }
-}
 
-impl ops::BitOr<Dyn> for Dyn {
-    type Output = Dyn;
-    fn bitor(self, rhs: Dyn) -> Dyn {
-        match (self, rhs) {
+    pub fn union(&self, rhs: Dyn) -> Dyn {
+        match (*self, rhs) {
             (Dyn::Oops, _) | (_, Dyn::Oops) => Dyn::Oops,
             (Dyn::User, Dyn::User) => Dyn::User,
         }
     }
-}
-
-impl Union<Dyn> for Dyn {
-    type Output = Dyn;
-    fn union(&self, other: &Dyn, _ctx: &mut TypeContext) -> Dyn { *self | *other }
-}
-
-impl Lattice<Dyn> for Dyn {
-    fn assert_sub(&self, _other: &Dyn, _ctx: &mut TypeContext) -> CheckResult<()> { Ok(()) }
-    fn assert_eq(&self, _other: &Dyn, _ctx: &mut TypeContext) -> CheckResult<()> { Ok(()) }
 }
 
 // a value type excluding nil (which is specially treated).
@@ -102,8 +92,8 @@ impl<'a> T<'a> {
     pub fn array(v: Slot) -> T<'a> {
         T::Tables(Cow::Owned(Tables::Array(v)))
     }
-    pub fn map(k: T, v: Slot) -> T<'a> {
-        T::Tables(Cow::Owned(Tables::Map(Ty::new(k.into_send()), v)))
+    pub fn map<X: Into<Ty>>(k: X, v: Slot) -> T<'a> {
+        T::Tables(Cow::Owned(Tables::Map(k.into(), v)))
     }
 
     pub fn flags(&self) -> Flags {
@@ -225,7 +215,6 @@ impl<'a> T<'a> {
     pub fn get_tvar(&self) -> Option<TVar> {
         match *self {
             T::TVar(tv) => Some(tv),
-            T::Union(ref u) => u.tvar,
             _ => None,
         }
     }
@@ -233,15 +222,6 @@ impl<'a> T<'a> {
     pub fn split_tvar(&self) -> (Option<TVar>, Option<T<'a>>) {
         match *self {
             T::TVar(tv) => (Some(tv), None),
-            T::Union(ref u) => {
-                if let Some(tv) = u.tvar {
-                    let mut u = u.clone().into_owned();
-                    u.tvar = None;
-                    (Some(tv), Some(u.simplify()))
-                } else {
-                    (None, Some(T::Union(u.clone())))
-                }
-            },
             _ => (None, Some(self.clone())),
         }
     }
@@ -250,7 +230,7 @@ impl<'a> T<'a> {
         // unlike flags, type variable should not be present
         match *self {
             T::Str(ref s) => Some(s.as_ref()),
-            T::Union(ref u) if u.flags() == T_STRING && u.tvar.is_none() => {
+            T::Union(ref u) if u.flags() == T_STRING => {
                 match *u.strings.as_ref().unwrap() {
                     Strings::One(ref s) => Some(s),
                     Strings::Some(ref set) if set.len() == 1 => Some(set.iter().next().unwrap()),
@@ -265,7 +245,7 @@ impl<'a> T<'a> {
         // unlike flags, type variable should not be present
         match *self {
             T::Int(v) => Some(v),
-            T::Union(ref u) if u.flags() == T_INTEGER && u.tvar.is_none() => {
+            T::Union(ref u) if u.flags() == T_INTEGER => {
                 match *u.numbers.as_ref().unwrap() {
                     Numbers::One(v) => Some(v),
                     Numbers::Some(ref set) if set.len() == 1 => Some(*set.iter().next().unwrap()),
@@ -373,14 +353,7 @@ impl<'a> T<'a> {
             T::TVar(tv) => {
                 Ok(T::TVar(narrow_tvar(tv, flags, ctx)?))
             },
-            T::Union(mut u) => {
-                // if the union contains a type variable, that type variable should be
-                // also narrowed (and consequently `u` has to be copied).
-                if let Some(tv) = u.tvar {
-                    let tv = narrow_tvar(tv, flags, ctx)?;
-                    u.to_mut().tvar = Some(tv);
-                }
-
+            T::Union(u) => {
                 // compile a list of flags to remove, and only alter if there is any removal
                 let removed = !flags & u.flags();
                 if removed.is_empty() { return Ok(T::Union(u)); }
@@ -404,8 +377,8 @@ impl<'a> T<'a> {
 impl<'a> Union<Unioned> for T<'a> {
     type Output = Unioned;
 
-    fn union(&self, other: &Unioned, ctx: &mut TypeContext) -> Unioned {
-        Unioned::from(self).union(other, ctx)
+    fn union(&self, other: &Unioned, ctx: &mut TypeContext) -> CheckResult<Unioned> {
+        Unioned::from(self)?.union(other, ctx)
     }
 }
 
@@ -455,11 +428,7 @@ impl<'a> Lattice<Unioned> for T<'a> {
             T::Class(c) => if other.classes.contains(&c) { return Ok(()); },
 
             T::TVar(lhs) => {
-                if other.tvar.is_some() { // XXX cannot determine the type var relation
-                    return error_not_sub(self, other);
-                } else {
-                    return ctx.assert_tvar_sub(lhs, &Ty::new(T::Union(Cow::Owned(other.clone()))));
-                }
+                return ctx.assert_tvar_sub(lhs, &Ty::new(T::Union(Cow::Owned(other.clone()))));
             },
 
             T::Union(ref lhs) => return lhs.assert_sub(other, ctx),
@@ -485,13 +454,29 @@ impl<'a> Lattice<Unioned> for T<'a> {
     }
 }
 
-impl<'a, 'b> Union<T<'b>> for T<'a> {
-    type Output = T<'static>;
+impl<'a> T<'a> {
+    // not intended to be used in public, because it can result in either T or Ty
+    fn union<'b>(&self, other: &T<'b>, ctx: &mut TypeContext)
+            -> CheckResult<Result<T<'static>, Ty>> {
+        fn resolve<'t, 'u>(t: &'t T<'u>,
+                           ctx: &mut TypeContext) -> (Cow<'t, T<'u>>, Option<(Nil, Option<Tag>)>) {
+            if let &T::TVar(tv) = t {
+                if let Some(ty) = ctx.get_tvar_exact_type(tv) {
+                    let nil = ty.nil();
+                    let tag = ty.tag();
+                    return (Cow::Owned(ty.unwrap()), Some((nil, tag)));
+                }
+            }
+            (Cow::Borrowed(t), None)
+        }
 
-    fn union(&self, other: &T<'b>, ctx: &mut TypeContext) -> T<'static> {
-        match (self, other) {
+        // resolve type variables, which may result in Ty
+        let (t1, niltag1) = resolve(self, ctx);
+        let (t2, niltag2) = resolve(other, ctx);
+
+        let t = match (&*t1, &*t2) {
             // dynamic eclipses everything else
-            (&T::Dynamic(dyn1), &T::Dynamic(dyn2)) => T::Dynamic(dyn1.union(&dyn2, ctx)),
+            (&T::Dynamic(dyn1), &T::Dynamic(dyn2)) => T::Dynamic(dyn1.union(dyn2)),
             (&T::Dynamic(dyn), _) => T::Dynamic(dyn),
             (_, &T::Dynamic(dyn)) => T::Dynamic(dyn),
 
@@ -527,18 +512,29 @@ impl<'a, 'b> Union<T<'b>> for T<'a> {
             (&T::String,     &T::Str(_))     => T::String,
 
             (&T::Int(a), &T::Int(b)) if a == b => T::Int(a),
-            (&T::Str(ref a), &T::Str(ref b)) if *a == *b => T::Str(Cow::Owned((**a).to_owned())),
+            (&T::Str(ref a), &T::Str(ref b)) if *a == *b =>
+                T::Str(Cow::Owned((**a).to_owned())),
 
             (&T::Tables(ref a), &T::Tables(ref b)) =>
-                T::Tables(Cow::Owned(a.union(b, ctx))),
+                T::Tables(Cow::Owned(a.union(b, ctx)?)),
             (&T::Functions(ref a), &T::Functions(ref b)) =>
-                T::Functions(Cow::Owned(a.union(b, ctx))),
+                T::Functions(Cow::Owned(a.union(b, ctx)?)),
             (&T::Class(a), &T::Class(b)) if a == b =>
                 T::Class(a),
-            (&T::TVar(ref a), &T::TVar(ref b)) =>
-                T::TVar(a.union(b, ctx)),
 
-            (a, b) => Unioned::from(&a).union(&Unioned::from(&b), ctx).simplify(),
+            (a, b) => Unioned::from(&a)?.union(&Unioned::from(&b)?, ctx)?.simplify(),
+        };
+
+        match (niltag1, niltag2) {
+            (Some((nil1, tag1)), Some((nil2, tag2))) => {
+                let nil = nil1.union(nil2);
+                let tag = if tag1 == tag2 { tag1 } else { None };
+                Ok(Err(Ty { inner: Box::new(TyInner::new(t, nil, tag)) }))
+            },
+            (Some((nil, tag)), None) | (None, Some((nil, tag))) => {
+                Ok(Err(Ty { inner: Box::new(TyInner::new(t, nil, tag)) }))
+            },
+            (None, None) => Ok(Ok(t)),
         }
     }
 }
@@ -548,9 +544,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
         debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
         let ok = match (self, other) {
-            (&T::Dynamic(dyn1), &T::Dynamic(dyn2)) => return dyn1.assert_sub(&dyn2, ctx),
-            (&T::Dynamic(_), _) => true,
-            (_, &T::Dynamic(_)) => true,
+            (&T::Dynamic(_), _) | (_, &T::Dynamic(_)) => true,
 
             (_, &T::All) => true,
 
@@ -584,7 +578,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             },
 
             (&T::Union(ref a), &T::Union(ref b)) => return a.assert_sub(b, ctx),
-            (&T::Union(ref a), &T::TVar(b)) if a.tvar.is_none() => {
+            (&T::Union(_), &T::TVar(b)) => {
                 // do NOT try to split `T|U <: x` into `T <: x AND U <: x` if possible
                 return ctx.assert_tvar_sup(b, &Ty::new(self.clone().into_send()));
             },
@@ -609,9 +603,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
         debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
         let ok = match (self, other) {
-            (&T::Dynamic(dyn1), &T::Dynamic(dyn2)) => return dyn1.assert_eq(&dyn2, ctx),
-            (&T::Dynamic(_), _) => true,
-            (_, &T::Dynamic(_)) => true,
+            (&T::Dynamic(_), _) | (_, &T::Dynamic(_)) => true,
 
             (&T::All,  &T::All)  => true,
             (&T::None, &T::None) => true,
@@ -649,7 +641,9 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
 impl<'a, 'b> ops::BitOr<T<'b>> for T<'a> {
     type Output = T<'static>;
     fn bitor(self, rhs: T<'b>) -> T<'static> {
-        self.union(&rhs, &mut NoTypeContext)
+        let ty: CheckResult<_> = self.union(&rhs, &mut NoTypeContext);
+        let ty: Result<T<'static>, Ty> = ty.expect("T | T failed");
+        ty.expect("type variable should not exist in T | T")
     }
 }
 
@@ -749,10 +743,6 @@ impl<'a> fmt::Debug for T<'a> {
     }
 }
 
-impl<'a> From<T<'a>> for Unioned {
-    fn from(x: T<'a>) -> Unioned { Unioned::from(&x) }
-}
-
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Nil {
     Silent, // nil can be present but not checked; risks runtime errors
@@ -833,8 +823,14 @@ impl TyInner {
     }
 
     fn tag(&self) -> Option<Tag> { self.tag }
-    fn set_tag(&mut self, tag: Tag) { self.tag = Some(tag); }
-    fn reset_tag(&mut self) { self.tag = None; }
+    fn set_tag(&mut self, tag: Option<Tag>) { self.tag = tag; }
+
+    fn union_nil(&mut self, nil: Nil) {
+        self.nil = self.nil.union(nil);
+    }
+    fn union_tag(&mut self, tag: Option<Tag>) {
+        self.tag = if self.tag == tag { tag } else { None };
+    }
 
     fn unwrap_ty(self) -> T<'static> { self.ty }
 }
@@ -862,15 +858,15 @@ impl Ty {
         Ty { inner: Box::new(TyInner::new(ty, Nil::Silent, None)) }
     }
 
-    pub fn from_kind(kind: &K, resolv: &mut TypeResolver) -> CheckResult<Ty> {
+    pub fn from_kind(kind: &Spanned<Kind>, resolv: &mut TypeResolver) -> CheckResult<Ty> {
         let slot_from_slotkind = |slotkind: &SlotKind,
                                   resolv: &mut TypeResolver| -> CheckResult<Slot> {
-            let ty = Ty::from_kind(&slotkind.kind.base, resolv)?;
+            let ty = Ty::from_kind(&slotkind.kind, resolv)?;
             let flex = F::from(slotkind.modf);
             Ok(Slot::new(flex, ty))
         };
 
-        let ty = match *kind {
+        let ty = match *kind.base {
             K::Oops              => Ty::new(T::Dynamic(Dyn::Oops)), // typically from a parser error
             K::Dynamic           => Ty::new(T::Dynamic(Dyn::User)),
             K::Any               => Ty::new(T::All),
@@ -891,9 +887,12 @@ impl Ty {
             K::Named(ref name)   => resolv.ty_from_name(name)?,
             K::WithNil(ref k)    => Ty::from_kind(k, resolv)?.or_nil(Nil::Noisy),
             K::WithoutNil(ref k) => Ty::from_kind(k, resolv)?.or_nil(Nil::Absent),
-            K::Error(..)         => return Err(format!("error type not yet supported in checker")),
-            // XXX should issue a proper error or should work correctly
             // XXX think about the possibility of nil? and nil! more
+
+            K::Error(..) => {
+                resolv.error(kind, m::UnsupportedErrorType {}).done()?;
+                Ty::new(T::Dynamic(Dyn::Oops))
+            },
 
             K::Record(ref fields) => {
                 let mut newfields = BTreeMap::new();
@@ -920,8 +919,9 @@ impl Ty {
             },
 
             K::Map(ref k, ref v) => {
+                let key = Ty::from_kind(k, resolv)?.without_nil();
                 let slot = slot_from_slotkind(v, resolv)?;
-                Ty::new(T::Tables(Cow::Owned(Tables::Map(Ty::from_kind(k, resolv)?, slot))))
+                Ty::new(T::Tables(Cow::Owned(Tables::Map(key, slot))))
             },
 
             K::Func(ref func) => {
@@ -936,7 +936,7 @@ impl Ty {
                 assert!(!kinds.is_empty());
                 let mut ty = Ty::from_kind(&kinds[0], resolv)?;
                 for kind in &kinds[1..] {
-                    ty = ty | Ty::from_kind(kind, resolv)?;
+                    ty = ty.union(&Ty::from_kind(kind, resolv)?, &mut NoTypeContext)?;
                 }
                 ty
             }
@@ -946,7 +946,7 @@ impl Ty {
                 // None is simply ignored, `Tag::from` has already reported the error
                 if let Some(tag) = Tag::from(attr, resolv)? {
                     // XXX check for the duplicate tag
-                    ty.inner.set_tag(tag);
+                    ty.inner.set_tag(Some(tag));
                 }
                 ty
             }
@@ -976,17 +976,17 @@ impl Ty {
         self
     }
 
+    pub fn union_nil(mut self, nil: Nil) -> Ty {
+        self.inner.union_nil(nil);
+        self
+    }
+
     pub fn tag(&self) -> Option<Tag> {
         self.inner.tag()
     }
 
-    pub fn with_tag(mut self, tag: Tag) -> Ty {
-        self.inner.set_tag(tag);
-        self
-    }
-
-    pub fn without_tag(mut self) -> Ty {
-        self.inner.reset_tag();
+    pub fn with_tag<T: Into<Option<Tag>>>(mut self, tag: T) -> Ty {
+        self.inner.set_tag(tag.into());
         self
     }
 
@@ -1047,33 +1047,6 @@ impl ops::DerefMut for Ty {
     fn deref_mut(&mut self) -> &mut T<'static> { self.inner.ty_mut() }
 }
 
-macro_rules! impl_bitor {
-    ($([$($t:tt)*] $a:ty, $b:ty);*) => ($(
-        impl<$($t)*> ops::BitOr<$b> for $a {
-            type Output = Ty;
-            fn bitor(self, rhs: $b) -> Ty { self.union(&rhs, &mut NoTypeContext) }
-        }
-
-        impl<'x, $($t)*> ops::BitOr<$b> for &'x $a {
-            type Output = Ty;
-            fn bitor(self, rhs: $b) -> Ty { self.union(&rhs, &mut NoTypeContext) }
-        }
-
-        impl<'y, $($t)*> ops::BitOr<&'y $b> for $a {
-            type Output = Ty;
-            fn bitor(self, rhs: &'y $b) -> Ty { self.union(rhs, &mut NoTypeContext) }
-        }
-
-        impl<'x, 'y, $($t)*> ops::BitOr<&'y $b> for &'x $a {
-            type Output = Ty;
-            fn bitor(self, rhs: &'y $b) -> Ty { self.union(rhs, &mut NoTypeContext) }
-        }
-    )*)
-}
-
-// A | B is equivalent to A.union(&B, &mut NoTypeContext)
-impl_bitor! { [] Ty, Ty; ['a] T<'a>, Ty; ['b] Ty, T<'b> }
-
 fn tag_is_sub(lhs: Option<Tag>, rhs: Option<Tag>) -> bool {
     match (lhs, rhs) {
         // some tag requires the subtyping, so if any operand has such tag
@@ -1116,13 +1089,16 @@ macro_rules! define_ty_impls {
         impl<$($param)*> Union<$rhs> for $lhs {
             type Output = Ty;
 
-            fn union(&self, other: &$rhs, ctx: &mut TypeContext) -> Ty {
+            fn union(&self, other: &$rhs, ctx: &mut TypeContext) -> CheckResult<Ty> {
                 let $l = self;
                 let $r = other;
-                let ty = $lty.union($rty, ctx);
-                let nil = $union_nil;
-                let tag = $union_tag;
-                Ty { inner: Box::new(TyInner::new(ty, nil, tag)) }
+                let mut ty = match $lty.union($rty, ctx)? {
+                    Ok(t) => Ty { inner: Box::new(TyInner::new(t, Nil::Absent, None)) },
+                    Err(ty) => ty,
+                };
+                ty.inner.union_nil($union_nil);
+                ty.inner.union_tag($union_tag);
+                Ok(ty)
             }
         }
 
@@ -1140,7 +1116,6 @@ macro_rules! define_ty_impls {
 
                 match ($lty, $rty) {
                     // Dynamic and All always contain nil, so handled separately here
-                    (&T::Dynamic(dyn1), &T::Dynamic(dyn2)) => dyn1.assert_sub(&dyn2, ctx),
                     (&T::Dynamic(_), _) | (_, &T::Dynamic(_)) | (_, &T::All) => Ok(()),
 
                     // for remaining cases handle nils as follows:
@@ -1225,7 +1200,6 @@ macro_rules! define_ty_impls {
 
                 match ($lty, $rty) {
                     // Dynamic and All always contain nil, so handled separately here
-                    (&T::Dynamic(dyn1), &T::Dynamic(dyn2)) => dyn1.assert_eq(&dyn2, ctx),
                     (&T::Dynamic(_), _) | (_, &T::Dynamic(_)) | (&T::All, &T::All) => Ok(()),
 
                     // conditions here are derived from the conditions of assert_sub,
@@ -1387,20 +1361,20 @@ mod tests {
     fn nil(t: T) -> Ty { Ty::from(t).or_nil(Nil::Noisy) }
 
     #[test]
-    fn test_union() {
+    fn test_union_t() {
         macro_rules! check {
             ($l:expr, $r:expr; $u:expr) => ({
                 let left = $l;
                 let right = $r;
-                let union = $u;
+                let union = Ok(Ok($u));
                 let mut ctx = Context::new(Rc::new(NoReport));
                 let actualunion = left.union(&right, &mut ctx);
                 if actualunion != union {
                     panic!("{:?} | {:?} = expected {:?}, actual {:?}",
                            left, right, union, actualunion);
                 }
-                (left, right, actualunion)
-            })
+                (left, right, actualunion.unwrap())
+            });
         }
 
         // dynamic & top vs. everything else
@@ -1527,17 +1501,36 @@ mod tests {
 
         // general unions
         check!(T::True, T::False; T::Boolean);
+        check!(T::Int(3) | T::String, T::Str(os("wat")) | T::Int(4);
+               T::ints(vec![3, 4]) | T::String);
+        let m1 = T::map(T::String, Slot::new(F::Just, Ty::from(T::Integer)));
+        let m2 = T::map(T::String, Slot::new(F::Just, Ty::from(T::Integer).or_nil(Nil::Noisy)));
+        m1.assert_eq(&m2, &mut NoTypeContext).unwrap();
+    }
+
+    #[test]
+    fn test_union_ty() {
+        macro_rules! check {
+            ($l:expr, $r:expr; $u:expr) => ({
+                let left = $l;
+                let right = $r;
+                let union = Ok($u);
+                let mut ctx = Context::new(Rc::new(NoReport));
+                let actualunion = left.union(&right, &mut ctx);
+                if actualunion != union {
+                    panic!("{:?} | {:?} = expected {:?}, actual {:?}",
+                           left, right, union, actualunion);
+                }
+                (left, right, actualunion.unwrap())
+            });
+        }
+
         check!(nil(T::Int(3)), nil(T::Int(4));
                nil(T::ints(vec![3, 4])));
         check!(nil(T::Int(3) | T::UserData), nil(T::Thread | T::Int(4));
                nil(T::Thread | T::ints(vec![3, 4]) | T::UserData));
         check!(nil(T::ints(vec![3, 5])), T::Int(4) | T::String;
                nil(T::String | T::ints(vec![3, 4, 5])));
-        check!(T::Int(3) | T::String, T::Str(os("wat")) | T::Int(4);
-               T::ints(vec![3, 4]) | T::String);
-        let m1 = T::map(T::String, Slot::new(F::Just, Ty::from(T::Integer)));
-        let m2 = T::map(T::String, Slot::new(F::Just, Ty::from(T::Integer).or_nil(Nil::Noisy)));
-        m1.assert_eq(&m2, &mut NoTypeContext).unwrap();
     }
 
     #[test]

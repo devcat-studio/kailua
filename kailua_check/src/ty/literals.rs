@@ -17,37 +17,37 @@ pub enum Numbers {
 impl Union for Numbers {
     type Output = Numbers;
 
-    fn union(&self, other: &Numbers, _: &mut TypeContext) -> Numbers {
+    fn union(&self, other: &Numbers, _: &mut TypeContext) -> CheckResult<Numbers> {
         match (self, other) {
-            (&Numbers::All, _) => Numbers::All,
-            (_, &Numbers::All) => Numbers::All,
+            (&Numbers::All, _) => Ok(Numbers::All),
+            (_, &Numbers::All) => Ok(Numbers::All),
 
-            (&Numbers::Int, _) => Numbers::Int,
-            (_, &Numbers::Int) => Numbers::Int,
+            (&Numbers::Int, _) => Ok(Numbers::Int),
+            (_, &Numbers::Int) => Ok(Numbers::Int),
 
             (&Numbers::Some(ref a), &Numbers::Some(ref b)) => {
                 let mut ab = a.clone();
                 ab.extend(b.iter().cloned());
-                Numbers::Some(ab)
+                Ok(Numbers::Some(ab))
             }
             (&Numbers::Some(ref a), &Numbers::One(b)) => {
                 let mut ab = a.clone();
                 ab.insert(b);
-                Numbers::Some(ab)
+                Ok(Numbers::Some(ab))
             }
             (&Numbers::One(a), &Numbers::Some(ref b)) => {
                 let mut ab = b.clone();
                 ab.insert(a);
-                Numbers::Some(ab)
+                Ok(Numbers::Some(ab))
             }
             (&Numbers::One(a), &Numbers::One(b)) => {
                 if a == b {
-                    Numbers::One(a)
+                    Ok(Numbers::One(a))
                 } else {
                     let mut ab = BTreeSet::new();
                     ab.insert(a);
                     ab.insert(b);
-                    Numbers::Some(ab)
+                    Ok(Numbers::Some(ab))
                 }
             }
         }
@@ -131,34 +131,34 @@ pub enum Strings {
 impl Union for Strings {
     type Output = Strings;
 
-    fn union(&self, other: &Strings, _: &mut TypeContext) -> Strings {
+    fn union(&self, other: &Strings, _: &mut TypeContext) -> CheckResult<Strings> {
         match (self, other) {
-            (&Strings::All, _) => Strings::All,
-            (_, &Strings::All) => Strings::All,
+            (&Strings::All, _) => Ok(Strings::All),
+            (_, &Strings::All) => Ok(Strings::All),
 
             (&Strings::Some(ref a), &Strings::Some(ref b)) => {
                 let mut ab = a.clone();
                 ab.extend(b.iter().cloned());
-                Strings::Some(ab)
+                Ok(Strings::Some(ab))
             }
             (&Strings::Some(ref a), &Strings::One(ref b)) => {
                 let mut ab = a.clone();
                 ab.insert(b.clone());
-                Strings::Some(ab)
+                Ok(Strings::Some(ab))
             }
             (&Strings::One(ref a), &Strings::Some(ref b)) => {
                 let mut ab = b.clone();
                 ab.insert(a.clone());
-                Strings::Some(ab)
+                Ok(Strings::Some(ab))
             }
             (&Strings::One(ref a), &Strings::One(ref b)) => {
                 if a == b {
-                    Strings::One(a.clone())
+                    Ok(Strings::One(a.clone()))
                 } else {
                     let mut ab = BTreeSet::new();
                     ab.insert(a.clone());
                     ab.insert(b.clone());
-                    Strings::Some(ab)
+                    Ok(Strings::Some(ab))
                 }
             }
         }
