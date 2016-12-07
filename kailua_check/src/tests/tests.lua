@@ -2325,25 +2325,57 @@ local z = {1, 2, 3, string = 4} --: map<integer, integer>
 --@^^ Note: The other type originates here
 --! error
 
---8<-- union-requires-resolution-1
-function x(a, b)
-    -- the types for a and b are yet unknown, so type is {T1, T2}
-    local t = {a, b}
-    local s = {} --: boolean|map<integer, const string>
-    -- the type of `s or t` is the union of the truthy part of `s` and the type of `t`:
-    -- `true|map<integer, const string>|{T1, T2}`, which is not allowed
-    return s or t
-    --@^ Error: Cannot create a union type of `(true|map<integer, const string>)` and `{<unknown type>, <unknown type>}` that cannot be fully resolved
-    --@^^ Note: The other type originates here
-end
+--8<-- no-table-union
+local a --: {string} | {integer}
+--@^ Error: Cannot create a union type of `{string}` and `{integer}`
+--@^^ Note: The other type originates here
 --! error
 
---8<-- union-requires-resolution-2
---v function(a: 'a'|'b', b: 'c'|'d'|'e') --> WHATEVER
-function x(a, b)
-    local t = {a, b}
-    local s = {} --: boolean|map<integer, const string>
-    return s or t
+--8<-- no-function-union
+local a --: (function(string)) | (function(integer))
+--@^ Error: Cannot create a union type of `function(string) --> ()` and `function(integer) --> ()`
+--@^^ Note: The other type originates here
+--! error
+
+--8<-- maximally-disjoint-union
+local a --: true | 42 | 'foobar' | thread | userdata | (function()) | {string}
+--! ok
+
+--8<-- union-assert-or-1
+function x(a)
+    -- a is unresolved
+    local s = '' --: boolean|string
+    -- `s or a` forces an unresolved a to have the same type to the truthy part of s
+    local u = s or a --: true|string
+    -- so that a's type is now known
+    local b = a --: true|string
+    a = b
 end
 --! ok
+
+--8<-- union-assert-or-2
+function x(a)
+    -- a is unresolved
+    local t = {a}
+    local s = {''} --: {boolean|string}
+    -- `s or t` forces an unresolved t to have the same type to the truthy part of s
+    local u = s or t --: {boolean|string}
+    -- so that a's type is now known
+    local b = a --: {true|string}
+    a = b
+end
+--! ok
+
+--8<-- union-assert-return
+function x(q, a)
+    if q then
+        return true
+    else
+        -- a is forced to have the same type to the previous return type `true`
+        return a
+    end
+end
+local y = x(true, false)
+--@^ Error: `false` is not a subtype of `true`
+--! error
 

@@ -1,7 +1,7 @@
 use std::fmt;
 
 use diag::CheckResult;
-use super::{T, TySeq, TypeContext, Lattice, Union, Display};
+use super::{T, TySeq, TypeContext, Lattice, Display};
 use super::{error_not_sub, error_not_eq};
 
 #[derive(Clone, PartialEq)]
@@ -70,20 +70,6 @@ impl Functions {
         match *self {
             Functions::All => write!(f, "function"),
             Functions::Simple(ref fty) => write_func(fty, f),
-        }
-    }
-}
-
-impl Union for Functions {
-    type Output = Functions;
-
-    fn union(&self, other: &Functions, _: &mut TypeContext) -> CheckResult<Functions> {
-        match (self, other) {
-            (&Functions::All, _) => Ok(Functions::All),
-            (_, &Functions::All) => Ok(Functions::All),
-
-            (&Functions::Simple(ref a), &Functions::Simple(ref b)) =>
-                if a == b { Ok(Functions::Simple(a.clone())) } else { Ok(Functions::All) },
         }
     }
 }

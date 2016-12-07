@@ -33,11 +33,11 @@ define_msg! { pub NotEqual<'a, Lhs: 'a + Display,
     _    => "`{lhs}` does not equal to `{rhs}`",
 }
 
-define_msg! { pub InexactUnionType<'a, Lhs: 'a + Display,
+define_msg! { pub InvalidUnionType<'a, Lhs: 'a + Display,
                                        Rhs: 'a + Display> { lhs: Displayed<'a, 'a, Lhs>,
                                                             rhs: Displayed<'a, 'a, Rhs> }:
-    "ko" => "덜 추론된 타입이 있어서 `{lhs}`와(과) `{rhs}`의 합 타입을 만들 수 없습니다",
-    _    => "Cannot create a union type of `{lhs}` and `{rhs}` that cannot be fully resolved",
+    "ko" => "`{lhs}`와(과) `{rhs}`의 합 타입을 만들 수 없습니다",
+    _    => "Cannot create a union type of `{lhs}` and `{rhs}`",
 }
 
 define_msg! { pub OtherTypeOrigin:

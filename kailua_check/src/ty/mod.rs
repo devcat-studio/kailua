@@ -109,16 +109,14 @@ impl fmt::Debug for Class {
 }
 
 pub trait TypeResolver: Report {
+    fn context(&mut self) -> &mut TypeContext;
     fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<Ty>;
 }
 
-impl<'a, R: TypeResolver> TypeResolver for &'a R {
-    fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<Ty> {
-        (**self).ty_from_name(name)
-    }
-}
-
 impl<'a, R: TypeResolver> TypeResolver for &'a mut R {
+    fn context(&mut self) -> &mut TypeContext {
+        (**self).context()
+    }
     fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<Ty> {
         (**self).ty_from_name(name)
     }
@@ -167,7 +165,8 @@ impl<'a> Report for &'a mut TypeContext {
 pub trait Union<Other = Self> {
     type Output;
 
-    fn union(&self, other: &Other, ctx: &mut TypeContext) -> CheckResult<Self::Output>;
+    fn union(&self, other: &Other, explicit: bool,
+             ctx: &mut TypeContext) -> CheckResult<Self::Output>;
 }
 
 pub trait Lattice<Other = Self> {
@@ -181,8 +180,9 @@ pub trait Lattice<Other = Self> {
 impl<A: Union<B>, B> Union<Box<B>> for Box<A> {
     type Output = <A as Union<B>>::Output;
 
-    fn union(&self, other: &Box<B>, ctx: &mut TypeContext) -> CheckResult<Self::Output> {
-        (**self).union(other, ctx)
+    fn union(&self, other: &Box<B>, explicit: bool,
+             ctx: &mut TypeContext) -> CheckResult<Self::Output> {
+        (**self).union(other, explicit, ctx)
     }
 }
 
@@ -199,9 +199,10 @@ impl<A: Lattice<B>, B> Lattice<Box<B>> for Box<A> {
 impl<T: Union<Output=T> + Clone> Union for Option<T> {
     type Output = Option<T>;
 
-    fn union(&self, other: &Option<T>, ctx: &mut TypeContext) -> CheckResult<Option<T>> {
+    fn union(&self, other: &Option<T>, explicit: bool,
+             ctx: &mut TypeContext) -> CheckResult<Option<T>> {
         match (self, other) {
-            (&Some(ref a), &Some(ref b)) => Ok(Some(a.union(b, ctx)?)),
+            (&Some(ref a), &Some(ref b)) => Ok(Some(a.union(b, explicit, ctx)?)),
             (&Some(ref a), &None) => Ok(Some(a.clone())),
             (&None, &Some(ref b)) => Ok(Some(b.clone())),
             (&None, &None) => Ok(None),
@@ -231,10 +232,11 @@ impl<T: Lattice + fmt::Debug> Lattice for Option<T> {
 impl<A: Display, B: Display> Union<Spanned<B>> for Spanned<A> where A: Union<B> {
     type Output = <A as Union<B>>::Output;
 
-    fn union(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> CheckResult<Self::Output> {
-        let ret = self.base.union(&other.base, ctx);
+    fn union(&self, other: &Spanned<B>, explicit: bool,
+             ctx: &mut TypeContext) -> CheckResult<Self::Output> {
+        let ret = self.base.union(&other.base, explicit, ctx);
         if let Err(_) = ret {
-            ctx.error(self.span, m::InexactUnionType { lhs: self.display(ctx),
+            ctx.error(self.span, m::InvalidUnionType { lhs: self.display(ctx),
                                                        rhs: other.display(ctx) })
                .note_if(other.span, m::OtherTypeOrigin {})
                .done()?;
@@ -340,17 +342,6 @@ impl TypeContext for NoTypeContext {
     }
     fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool {
         panic!("is_subclass_of({:?}, {:?}) is not supposed to be called here", lhs, rhs);
-    }
-}
-
-impl Union for TVar {
-    type Output = TVar;
-
-    fn union(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<Self> {
-        let u = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub_tvar(*self, u), Ok(()));
-        assert_eq!(ctx.assert_tvar_sub_tvar(*other, u), Ok(()));
-        Ok(u)
     }
 }
 

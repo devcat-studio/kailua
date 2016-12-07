@@ -17,7 +17,8 @@ pub enum Numbers {
 impl Union for Numbers {
     type Output = Numbers;
 
-    fn union(&self, other: &Numbers, _: &mut TypeContext) -> CheckResult<Numbers> {
+    fn union(&self, other: &Numbers, explicit: bool,
+             _ctx: &mut TypeContext) -> CheckResult<Numbers> {
         match (self, other) {
             (&Numbers::All, _) => Ok(Numbers::All),
             (_, &Numbers::All) => Ok(Numbers::All),
@@ -26,30 +27,53 @@ impl Union for Numbers {
             (_, &Numbers::Int) => Ok(Numbers::Int),
 
             (&Numbers::Some(ref a), &Numbers::Some(ref b)) => {
-                let mut ab = a.clone();
-                ab.extend(b.iter().cloned());
-                Ok(Numbers::Some(ab))
-            }
+                if explicit {
+                    let mut ab = a.clone();
+                    ab.extend(b.iter().cloned());
+                    Ok(Numbers::Some(ab))
+                } else if a == b {
+                    Ok(Numbers::Some(a.clone()))
+                } else {
+                    Ok(Numbers::Int)
+                }
+            },
+
             (&Numbers::Some(ref a), &Numbers::One(b)) => {
-                let mut ab = a.clone();
-                ab.insert(b);
-                Ok(Numbers::Some(ab))
-            }
+                if explicit {
+                    let mut ab = a.clone();
+                    ab.insert(b);
+                    Ok(Numbers::Some(ab))
+                } else if a.contains(&b) {
+                    Ok(Numbers::Some(a.clone()))
+                } else {
+                    Ok(Numbers::Int)
+                }
+            },
+
             (&Numbers::One(a), &Numbers::Some(ref b)) => {
-                let mut ab = b.clone();
-                ab.insert(a);
-                Ok(Numbers::Some(ab))
-            }
+                if explicit {
+                    let mut ab = b.clone();
+                    ab.insert(a);
+                    Ok(Numbers::Some(ab))
+                } else if b.contains(&a) {
+                    Ok(Numbers::Some(b.clone()))
+                } else {
+                    Ok(Numbers::Int)
+                }
+            },
+
             (&Numbers::One(a), &Numbers::One(b)) => {
                 if a == b {
                     Ok(Numbers::One(a))
-                } else {
+                } else if explicit {
                     let mut ab = BTreeSet::new();
                     ab.insert(a);
                     ab.insert(b);
                     Ok(Numbers::Some(ab))
+                } else {
+                    Ok(Numbers::Int)
                 }
-            }
+            },
         }
     }
 }
@@ -131,36 +155,60 @@ pub enum Strings {
 impl Union for Strings {
     type Output = Strings;
 
-    fn union(&self, other: &Strings, _: &mut TypeContext) -> CheckResult<Strings> {
+    fn union(&self, other: &Strings, explicit: bool,
+             _ctx: &mut TypeContext) -> CheckResult<Strings> {
         match (self, other) {
             (&Strings::All, _) => Ok(Strings::All),
             (_, &Strings::All) => Ok(Strings::All),
 
             (&Strings::Some(ref a), &Strings::Some(ref b)) => {
-                let mut ab = a.clone();
-                ab.extend(b.iter().cloned());
-                Ok(Strings::Some(ab))
-            }
+                if explicit {
+                    let mut ab = a.clone();
+                    ab.extend(b.iter().cloned());
+                    Ok(Strings::Some(ab))
+                } else if a == b {
+                    Ok(Strings::Some(a.clone()))
+                } else {
+                    Ok(Strings::All)
+                }
+            },
+
             (&Strings::Some(ref a), &Strings::One(ref b)) => {
-                let mut ab = a.clone();
-                ab.insert(b.clone());
-                Ok(Strings::Some(ab))
-            }
+                if explicit {
+                    let mut ab = a.clone();
+                    ab.insert(b.clone());
+                    Ok(Strings::Some(ab))
+                } else if a.contains(b) {
+                    Ok(Strings::Some(a.clone()))
+                } else {
+                    Ok(Strings::All)
+                }
+            },
+
             (&Strings::One(ref a), &Strings::Some(ref b)) => {
-                let mut ab = b.clone();
-                ab.insert(a.clone());
-                Ok(Strings::Some(ab))
-            }
+                if explicit {
+                    let mut ab = b.clone();
+                    ab.insert(a.clone());
+                    Ok(Strings::Some(ab))
+                } else if b.contains(a) {
+                    Ok(Strings::Some(b.clone()))
+                } else {
+                    Ok(Strings::All)
+                }
+            },
+
             (&Strings::One(ref a), &Strings::One(ref b)) => {
                 if a == b {
                     Ok(Strings::One(a.clone()))
-                } else {
+                } else if explicit {
                     let mut ab = BTreeSet::new();
                     ab.insert(a.clone());
                     ab.insert(b.clone());
                     Ok(Strings::Some(ab))
+                } else {
+                    Ok(Strings::All)
                 }
-            }
+            },
         }
     }
 }

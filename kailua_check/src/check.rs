@@ -271,7 +271,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     Bool::Unknown => {
                         let falsy_lhs = lhs.as_ref().map(|t| t.unlift().clone().falsy());
                         let rhs = rhs.as_ref().map(|t| t.unlift().clone());
-                        Ok(Slot::just(falsy_lhs.union(&rhs, self.context())?))
+                        Ok(Slot::just(falsy_lhs.union(&rhs, false, self.context())?))
                     }
                 }
             }
@@ -290,7 +290,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                     Bool::Unknown => {
                         let truthy_lhs = lhs.as_ref().map(|t| t.unlift().clone().truthy());
                         let rhs = rhs.as_ref().map(|t| t.unlift().clone());
-                        Ok(Slot::just(truthy_lhs.union(&rhs, self.context())?))
+                        Ok(Slot::just(truthy_lhs.union(&rhs, false, self.context())?))
                     }
                 }
             }
@@ -703,7 +703,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             },
 
             (Some(&Tables::Map(ref key, ref value)), true) => {
-                let key = check!((**key).union(&kty, self.context()));
+                let key = check!((**key).union(&kty, false, self.context()));
                 value.adapt(ety0.flex(), self.context());
                 adapt_table!(Tables::Map(key, value.clone()));
                 Ok(Some(value.clone().with_nil()))
@@ -1166,8 +1166,8 @@ impl<'envr, 'env> Checker<'envr, 'env> {
                 if returns_exact {
                     Some(seq).assert_sub(&returns, self.context())?;
                 } else {
-                    // need to infer the return type
-                    let returns = Some(seq).union(&returns, self.context())?;
+                    // need to infer the return type, but not _that_ much
+                    let returns = Some(seq).union(&returns, false, self.context())?;
                     self.env.get_frame_mut().returns = returns.map(|seq| seq.unspan());
                 }
                 Ok(Exit::Return)

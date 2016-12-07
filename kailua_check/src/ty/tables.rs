@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use kailua_syntax::Str;
 use diag::{CheckResult, unquotable_name};
-use super::{T, Ty, Slot, TypeContext, Lattice, Union, Display};
+use super::{T, Ty, Slot, TypeContext, Lattice, Display};
 use super::{error_not_sub, error_not_eq};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -85,25 +85,6 @@ pub enum Tables {
     All,
 }
 
-fn lift_fields_to_map(fields: &BTreeMap<Key, Slot>, ctx: &mut TypeContext)
-                    -> CheckResult<(T<'static>, Slot)> {
-    let mut hasint = false;
-    let mut hasstr = false;
-    let mut value = Slot::just(Ty::new(T::None));
-    for (key, ty) in fields {
-        if key.is_int() { hasint = true; } else { hasstr = true; }
-        value = value.union(ty, ctx)?;
-    }
-    assert!(!value.flex().is_linear(), "Slot::union should have destroyed Currently slots");
-    let key = match (hasint, hasstr) {
-        (false, false) => T::None,
-        (false, true) => T::String,
-        (true, false) => T::Integer,
-        (true, true) => T::Integer | T::String,
-    };
-    Ok((key, value))
-}
-
 impl Tables {
     fn fmt_generic<WriteTy, WriteSlot>(&self, f: &mut fmt::Formatter,
                                        mut write_ty: WriteTy,
@@ -155,71 +136,6 @@ impl Tables {
                 write!(f, ">")?;
                 Ok(())
             }
-        }
-    }
-}
-
-impl Union for Tables {
-    type Output = Tables;
-
-    fn union(&self, other: &Tables, ctx: &mut TypeContext) -> CheckResult<Tables> {
-        let intkey = || Ty::new(T::Integer);
-
-        match (self, other) {
-            (&Tables::All, _) => Ok(Tables::All),
-            (_, &Tables::All) => Ok(Tables::All),
-
-            (&Tables::Fields(ref fields1), &Tables::Fields(ref fields2)) => {
-                let mut fields1 = fields1.clone();
-                let mut fields = BTreeMap::new();
-                for (k, v2) in fields2 {
-                    let k = k.clone();
-                    if let Some(v1) = fields1.remove(&k) {
-                        fields.insert(k, v1.union(v2, ctx)?);
-                    } else {
-                        fields.insert(k, Slot::just(Ty::silent_nil()).union(v2, ctx)?);
-                    }
-                }
-                for (k, v1) in fields1 {
-                    fields.insert(k.clone(), v1.union(&Slot::just(Ty::silent_nil()), ctx)?);
-                }
-                Ok(Tables::Fields(fields))
-            },
-
-            (&Tables::Fields(ref fields), &Tables::Empty) |
-            (&Tables::Empty, &Tables::Fields(ref fields)) => {
-                let nil = Slot::just(Ty::silent_nil());
-                let fields = fields.iter().map(|(k,s)| {
-                    Ok((k.clone(), s.union(&nil, ctx)?))
-                }).collect::<CheckResult<_>>()?;
-                Ok(Tables::Fields(fields))
-            },
-
-            (&Tables::Fields(ref fields), &Tables::Array(ref value)) |
-            (&Tables::Array(ref value), &Tables::Fields(ref fields)) => {
-                let (fkey, fvalue) = lift_fields_to_map(fields, ctx)?;
-                Ok(Tables::Map(fkey.union(&intkey(), ctx)?, fvalue.union(value, ctx)?))
-            },
-
-            (&Tables::Fields(ref fields), &Tables::Map(ref key, ref value)) |
-            (&Tables::Map(ref key, ref value), &Tables::Fields(ref fields)) => {
-                let (fkey, fvalue) = lift_fields_to_map(fields, ctx)?;
-                Ok(Tables::Map(fkey.union(key, ctx)?, fvalue.union(value, ctx)?))
-            },
-
-            (&Tables::Empty, tab) => Ok(tab.clone()),
-            (tab, &Tables::Empty) => Ok(tab.clone()),
-
-            (&Tables::Array(ref value1), &Tables::Array(ref value2)) =>
-                Ok(Tables::Array(value1.union(value2, ctx)?)),
-
-            (&Tables::Map(ref key1, ref value1), &Tables::Map(ref key2, ref value2)) =>
-                Ok(Tables::Map(key1.union(key2, ctx)?, value1.union(value2, ctx)?)),
-
-            (&Tables::Array(ref value1), &Tables::Map(ref key2, ref value2)) =>
-                Ok(Tables::Map(key2.union(&intkey(), ctx)?, value1.union(value2, ctx)?)),
-            (&Tables::Map(ref key1, ref value1), &Tables::Array(ref value2)) =>
-                Ok(Tables::Map(key1.union(&intkey(), ctx)?, value1.union(value2, ctx)?)),
         }
     }
 }

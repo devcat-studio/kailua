@@ -1181,7 +1181,7 @@ impl<'ctx> Env<'ctx> {
 
             // simulate `require` behavior, i.e. nil translates to true
             let ty = if ty.nil() == Nil::Noisy {
-                ty.without_nil().with_loc(span).union(&T::True.without_loc(), self.context)?
+                ty.without_nil().with_loc(span).union(&T::True.without_loc(), false, self.context)?
             } else {
                 ty
             };
@@ -1575,6 +1575,10 @@ impl<'ctx> Report for Env<'ctx> {
 }
 
 impl<'ctx> TypeResolver for Env<'ctx> {
+    fn context(&mut self) -> &mut TypeContext {
+        self.context
+    }
+
     fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<Ty> {
         if let Some(def) = self.get_named_type(name) {
             Ok(def.ty.clone())

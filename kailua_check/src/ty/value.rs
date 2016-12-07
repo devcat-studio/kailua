@@ -4,7 +4,7 @@ use std::mem;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use kailua_env::Spanned;
+use kailua_env::{Spanned, WithLoc};
 use kailua_syntax::{K, Kind, SlotKind, Str};
 use kailua_diag::Reporter;
 use diag::CheckResult;
@@ -377,8 +377,9 @@ impl<'a> T<'a> {
 impl<'a> Union<Unioned> for T<'a> {
     type Output = Unioned;
 
-    fn union(&self, other: &Unioned, ctx: &mut TypeContext) -> CheckResult<Unioned> {
-        Unioned::from(self)?.union(other, ctx)
+    fn union(&self, other: &Unioned, explicit: bool,
+             ctx: &mut TypeContext) -> CheckResult<Unioned> {
+        Unioned::from(self)?.union(other, explicit, ctx)
     }
 }
 
@@ -456,8 +457,8 @@ impl<'a> Lattice<Unioned> for T<'a> {
 
 impl<'a> T<'a> {
     // not intended to be used in public, because it can result in either T or Ty
-    fn union<'b>(&self, other: &T<'b>, ctx: &mut TypeContext)
-            -> CheckResult<Result<T<'static>, Ty>> {
+    fn union<'b>(&self, other: &T<'b>, explicit: bool,
+                 ctx: &mut TypeContext) -> CheckResult<Result<T<'static>, Ty>> {
         fn resolve<'t, 'u>(t: &'t T<'u>,
                            ctx: &mut TypeContext) -> (Cow<'t, T<'u>>, Option<(Nil, Option<Tag>)>) {
             if let &T::TVar(tv) = t {
@@ -512,17 +513,42 @@ impl<'a> T<'a> {
             (&T::String,     &T::Str(_))     => T::String,
 
             (&T::Int(a), &T::Int(b)) if a == b => T::Int(a),
-            (&T::Str(ref a), &T::Str(ref b)) if *a == *b =>
-                T::Str(Cow::Owned((**a).to_owned())),
+            (&T::Int(_), &T::Int(_)) if !explicit => T::Integer,
 
-            (&T::Tables(ref a), &T::Tables(ref b)) =>
-                T::Tables(Cow::Owned(a.union(b, ctx)?)),
-            (&T::Functions(ref a), &T::Functions(ref b)) =>
-                T::Functions(Cow::Owned(a.union(b, ctx)?)),
-            (&T::Class(a), &T::Class(b)) if a == b =>
-                T::Class(a),
+            (&T::Str(ref a), &T::Str(ref b)) if a == b => T::Str(Cow::Owned((**a).to_owned())),
+            (&T::Str(_),     &T::Str(_))     if !explicit => T::String,
 
-            (a, b) => Unioned::from(&a)?.union(&Unioned::from(&b)?, ctx)?.simplify(),
+            (&T::Class(a), &T::Class(b)) if a == b => T::Class(a),
+            (&T::Class(_), &T::Class(_)) if !explicit => {
+                return Err("invalid implicit union".into());
+            },
+
+            // tables and functions cannot be `union`ed in any way and
+            // any attempt to union different types of those kinds is an error
+            (&T::Tables(ref a), &T::Tables(ref b)) => {
+                a.assert_eq(b, ctx)?;
+                T::Tables(Cow::Owned(a.clone().into_owned()))
+            },
+            (&T::Functions(ref a), &T::Functions(ref b)) => {
+                a.assert_eq(b, ctx)?;
+                T::Functions(Cow::Owned(a.clone().into_owned()))
+            },
+
+            // unresolved type variables should be equal to each other to be unioned
+            (&T::TVar(a), &T::TVar(b)) => {
+                ctx.assert_tvar_eq_tvar(a, b)?;
+                T::TVar(a)
+            },
+            (&T::TVar(a), b) => {
+                ctx.assert_tvar_eq(a, &Ty::new(b.clone().into_send()))?;
+                T::TVar(a)
+            },
+            (a, &T::TVar(b)) => {
+                ctx.assert_tvar_eq(b, &Ty::new(a.clone().into_send()))?;
+                T::TVar(b)
+            },
+
+            (a, b) => Unioned::from(&a)?.union(&Unioned::from(&b)?, explicit, ctx)?.simplify(),
         };
 
         match (niltag1, niltag2) {
@@ -641,7 +667,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
 impl<'a, 'b> ops::BitOr<T<'b>> for T<'a> {
     type Output = T<'static>;
     fn bitor(self, rhs: T<'b>) -> T<'static> {
-        let ty: CheckResult<_> = self.union(&rhs, &mut NoTypeContext);
+        let ty: CheckResult<_> = self.union(&rhs, false, &mut NoTypeContext);
         let ty: Result<T<'static>, Ty> = ty.expect("T | T failed");
         ty.expect("type variable should not exist in T | T")
     }
@@ -934,11 +960,13 @@ impl Ty {
 
             K::Union(ref kinds) => {
                 assert!(!kinds.is_empty());
-                let mut ty = Ty::from_kind(&kinds[0], resolv)?;
-                for kind in &kinds[1..] {
-                    ty = ty.union(&Ty::from_kind(kind, resolv)?, &mut NoTypeContext)?;
+                // put (inaccurate) spans to report correctly
+                let mut ty = Ty::from_kind(&kinds[0], resolv)?.with_loc(kind);
+                for k in &kinds[1..] {
+                    let t = Ty::from_kind(k, resolv)?.with_loc(k);
+                    ty = ty.union(&t, true, resolv.context())?.with_loc(kind);
                 }
-                ty
+                ty.base
             }
 
             K::Attr(ref kind, ref attr) => {
@@ -1089,10 +1117,11 @@ macro_rules! define_ty_impls {
         impl<$($param)*> Union<$rhs> for $lhs {
             type Output = Ty;
 
-            fn union(&self, other: &$rhs, ctx: &mut TypeContext) -> CheckResult<Ty> {
+            fn union(&self, other: &$rhs, explicit: bool,
+                     ctx: &mut TypeContext) -> CheckResult<Ty> {
                 let $l = self;
                 let $r = other;
-                let mut ty = match $lty.union($rty, ctx)? {
+                let mut ty = match $lty.union($rty, explicit, ctx)? {
                     Ok(t) => Ty { inner: Box::new(TyInner::new(t, Nil::Absent, None)) },
                     Err(ty) => ty,
                 };
@@ -1360,21 +1389,83 @@ mod tests {
     fn varcurr(t: T) -> Slot { Slot::new(F::VarOrCurrently(Mark::any()), Ty::from(t)) }
     fn nil(t: T) -> Ty { Ty::from(t).or_nil(Nil::Noisy) }
 
+    macro_rules! check_base {
+        (@explicitness explicit) => (true);
+        (@explicitness implicit) => (false);
+
+        ($l:expr, $r:expr; [$e:tt]=_) => ({
+            let mut ctx = Context::new(Rc::new(NoReport));
+            let actualunion = $l.union(&$r, check_base!(@explicitness $e), &mut ctx);
+            if actualunion.is_ok() {
+                panic!("{:?} | {:?} ({}) = expected Err(_), actual {:?}",
+                       $l, $r, stringify!($e), actualunion);
+            }
+        });
+
+        ($l:expr, $r:expr; [$e:tt]=$u:expr) => ({
+            let union = Ok($u);
+            let mut ctx = Context::new(Rc::new(NoReport));
+            let actualunion = $l.union(&$r, check_base!(@explicitness $e), &mut ctx);
+            if actualunion != union {
+                panic!("{:?} | {:?} ({}) = expected {:?}, actual {:?}",
+                       $l, $r, stringify!($e), union, actualunion);
+            }
+            actualunion.unwrap()
+        });
+
+        ($l:expr, $r:expr; explicit=_, implicit=$ui:expr) => ({
+            let left = $l;
+            let right = $r;
+            let eunion = check_base!(left, right; [explicit]=_);
+            let iunion = check_base!(left, right; [implicit]=$ui);
+            (left, right, eunion, iunion)
+        });
+
+        ($l:expr, $r:expr; explicit=$ue:expr, implicit=_) => ({
+            let left = $l;
+            let right = $r;
+            let eunion = check_base!(left, right; [explicit]=$ue);
+            let iunion = check_base!(left, right; [implicit]=_);
+            (left, right, eunion, iunion)
+        });
+
+        ($l:expr, $r:expr; explicit=$ue:expr, implicit=$ui:expr) => ({
+            let left = $l;
+            let right = $r;
+            let eunion = check_base!(left, right; [explicit]=$ue);
+            let iunion = check_base!(left, right; [implicit]=$ui);
+            (left, right, eunion, iunion)
+        });
+
+        ($l:expr, $r:expr; _) => ({
+            let left = $l;
+            let right = $r;
+            check_base!(&left, &right; [explicit]=_);
+            check_base!(&left, &right; [implicit]=_);
+            (left, right, ())
+        });
+
+        ($l:expr, $r:expr; $u:expr) => ({
+            let (left, right, eunion, iunion) = check_base!($l, $r; explicit=$u, implicit=$u);
+            if eunion != iunion {
+                panic!("{:?} | {:?} = explicit {:?}, implicit {:?}",
+                       left, right, eunion, iunion);
+            }
+            (left, right, eunion)
+        });
+    }
+
     #[test]
     fn test_union_t() {
         macro_rules! check {
-            ($l:expr, $r:expr; $u:expr) => ({
-                let left = $l;
-                let right = $r;
-                let union = Ok(Ok($u));
-                let mut ctx = Context::new(Rc::new(NoReport));
-                let actualunion = left.union(&right, &mut ctx);
-                if actualunion != union {
-                    panic!("{:?} | {:?} = expected {:?}, actual {:?}",
-                           left, right, union, actualunion);
-                }
-                (left, right, actualunion.unwrap())
-            });
+            ($l:expr, $r:expr; explicit=_, implicit=$ui:expr) =>
+                (check_base!($l, $r; explicit=_, implicit=Ok($ui)));
+            ($l:expr, $r:expr; explicit=$ue:expr, implicit=_) =>
+                (check_base!($l, $r; explicit=Ok($ue), implicit=_));
+            ($l:expr, $r:expr; explicit=$ue:expr, implicit=$ui:expr) =>
+                (check_base!($l, $r; explicit=Ok($ue), implicit=Ok($ui)));
+            ($l:expr, $r:expr; _) => (check_base!($l, $r; _));
+            ($l:expr, $r:expr; $u:expr) => (check_base!($l, $r; Ok($u)));
         }
 
         // dynamic & top vs. everything else
@@ -1397,100 +1488,110 @@ mod tests {
         check!(T::Int(3), T::Int(3); T::Int(3));
         check!(T::Int(3), T::Number; T::Number);
         check!(T::Integer, T::Int(3); T::Integer);
-        check!(T::Int(3), T::Int(4); T::ints(vec![3, 4]));
+        check!(T::Int(3), T::Int(4);
+               explicit=T::ints(vec![3, 4]), implicit=T::Integer);
         check!(T::ints(vec![3, 4]), T::Int(3); T::ints(vec![3, 4]));
-        check!(T::Int(5), T::ints(vec![3, 4]); T::ints(vec![3, 4, 5]));
-        check!(T::ints(vec![3, 4]), T::ints(vec![5, 4, 7]); T::ints(vec![3, 4, 5, 7]));
-        check!(T::ints(vec![3, 4, 5]), T::ints(vec![2, 3, 4]); T::ints(vec![2, 3, 4, 5]));
+        check!(T::Int(5), T::ints(vec![3, 4]);
+               explicit=T::ints(vec![3, 4, 5]), implicit=T::Integer);
+        check!(T::ints(vec![3, 4]), T::ints(vec![5, 4, 7]);
+               explicit=T::ints(vec![3, 4, 5, 7]), implicit=T::Integer);
+        check!(T::ints(vec![3, 4, 5]), T::ints(vec![2, 3, 4]);
+               explicit=T::ints(vec![2, 3, 4, 5]), implicit=T::Integer);
+        check!(T::ints(vec![3, 4, 5]), T::ints(vec![3, 4, 5]); T::ints(vec![3, 4, 5]));
 
         // string literals
         check!(T::String, T::Str(os("hello")); T::String);
         check!(T::Str(os("hello")), T::String; T::String);
         check!(T::Str(os("hello")), T::Str(os("hello")); T::Str(os("hello")));
         check!(T::Str(os("hello")), T::Str(os("goodbye"));
-               T::strs(vec![s("hello"), s("goodbye")]));
+               explicit=T::strs(vec![s("hello"), s("goodbye")]), implicit=T::String);
         check!(T::Str(os("hello")), T::strs(vec![s("goodbye")]);
-               T::strs(vec![s("hello"), s("goodbye")]));
+               explicit=T::strs(vec![s("hello"), s("goodbye")]), implicit=T::String);
         check!(T::strs(vec![s("hello"), s("goodbye")]), T::Str(os("goodbye"));
                T::strs(vec![s("hello"), s("goodbye")]));
         check!(T::strs(vec![s("hello"), s("goodbye")]),
                T::strs(vec![s("what"), s("goodbye")]);
-               T::strs(vec![s("hello"), s("goodbye"), s("what")]));
+               explicit=T::strs(vec![s("hello"), s("goodbye"), s("what")]), implicit=T::String);
         check!(T::strs(vec![s("a"), s("b"), s("c")]),
                T::strs(vec![s("b"), s("c"), s("d")]);
-               T::strs(vec![s("a"), s("b"), s("c"), s("d")]));
+               explicit=T::strs(vec![s("a"), s("b"), s("c"), s("d")]), implicit=T::String);
+        check!(T::strs(vec![s("x"), s("y"), s("z")]),
+               T::strs(vec![s("x"), s("y"), s("z")]);
+               T::strs(vec![s("x"), s("y"), s("z")]));
 
         // tables
-        check!(T::table(), T::array(just(T::Integer)); T::table());
-        check!(T::table(), T::array(var(T::Integer)); T::table());
-        check!(T::table(), T::array(curr(T::Integer)); T::table());
+        check!(T::table(), T::table(); T::table());
+        check!(T::table(), T::array(just(T::Integer)); _);
+        check!(T::table(), T::array(var(T::Integer)); _);
+        check!(T::table(), T::array(curr(T::Integer)); _);
         check!(T::array(just(T::Integer)), T::array(just(T::Integer));
                T::array(just(T::Integer)));
         check!(T::array(var(T::Integer)), T::array(var(T::Integer));
-               T::array(varcnst(T::Integer)));
+               T::array(var(T::Integer)));
         check!(T::array(cnst(T::Integer)), T::array(cnst(T::Integer));
                T::array(cnst(T::Integer)));
-        check!(T::array(just(T::Int(3))), T::array(just(T::Int(4)));
-               T::array(just(T::ints(vec![3, 4]))));
-        check!(T::array(cnst(T::Int(3))), T::array(cnst(T::Int(4)));
-               T::array(cnst(T::ints(vec![3, 4]))));
-        check!(T::array(var(T::Int(3))), T::array(var(T::Int(4)));
-               T::array(varcnst(T::ints(vec![3, 4]))));
-        check!(T::array(var(T::Int(3))), T::array(just(T::Int(4)));
-               T::array(varcnst(T::ints(vec![3, 4]))));
+        check!(T::array(just(T::Int(3))), T::array(just(T::Int(4))); _);
+        check!(T::array(cnst(T::Int(3))), T::array(cnst(T::Int(4))); _);
+        check!(T::array(var(T::Int(3))), T::array(var(T::Int(4))); _);
+        check!(T::array(var(T::Int(3))), T::array(just(T::Int(4))); _);
+        check!(T::tuple(vec![just(T::Integer), just(T::String)]),
+               T::tuple(vec![just(T::Integer), just(T::String)]);
+               T::tuple(vec![just(T::Integer), just(T::String)]));
         check!(T::tuple(vec![just(T::Integer), just(T::String)]),
                T::tuple(vec![just(T::Number), just(T::Dynamic(Dyn::User)), just(T::Boolean)]);
-               T::tuple(vec![just(T::Number), just(T::Dynamic(Dyn::User)),
-                             just(T::Boolean)]));
+               _);
         check!(T::tuple(vec![just(T::Integer), just(T::String)]),
                T::tuple(vec![just(T::Number), just(T::Boolean), just(T::Dynamic(Dyn::User))]);
-               T::tuple(vec![just(T::Number), just(T::String | T::Boolean),
-                             just(T::Dynamic(Dyn::User))]));
-        { // self-modifying unions
-            let (lhs, rhs, _) = check!(
-                T::tuple(vec![var(T::Integer), curr(T::String)]),
-                T::tuple(vec![cnst(T::String), just(T::Number), var(T::Boolean)]);
-                T::tuple(vec![cnst(T::Integer | T::String), varcnst(T::String | T::Number),
-                              varcnst(T::Boolean)]));
-            assert_eq!(lhs, T::tuple(vec![var(T::Integer), var(T::String)]));
-            assert_eq!(rhs, T::tuple(vec![cnst(T::String), just(T::Number), var(T::Boolean)]));
-
-            let (lhs, rhs, _) = check!(
-                T::tuple(vec![cnst(T::Integer)]),
-                T::tuple(vec![cnst(T::Number), curr(T::String)]);
-                T::tuple(vec![cnst(T::Number), varcnst(T::String)]));
-            assert_eq!(lhs, T::tuple(vec![cnst(T::Integer)]));
-            assert_eq!(rhs, T::tuple(vec![cnst(T::Number), var(T::String)]));
-
-            let (lhs, _, _) = check!(
-                T::tuple(vec![just(T::Integer), var(T::String), curr(T::Boolean)]),
-                T::empty_table();
-                T::tuple(vec![just(T::Integer), varcnst(T::String), varcnst(T::Boolean)]));
-            assert_eq!(lhs, T::tuple(vec![just(T::Integer), var(T::String), var(T::Boolean)]));
-        }
+               _);
+        check!(T::tuple(vec![var(T::Integer), curr(T::String)]),
+               T::tuple(vec![cnst(T::String), just(T::Number), var(T::Boolean)]);
+               _);
+        check!(T::tuple(vec![cnst(T::Integer)]),
+               T::tuple(vec![cnst(T::Number), curr(T::String)]);
+               _);
+        check!(T::tuple(vec![just(T::Integer), var(T::String), curr(T::Boolean)]),
+               T::empty_table();
+               _);
+        check!(T::record(hash![foo=just(T::Integer), bar=just(T::String)]),
+               T::record(hash![foo=just(T::Integer), bar=just(T::String)]);
+               T::record(hash![foo=just(T::Integer), bar=just(T::String)]));
         check!(T::record(hash![foo=just(T::Integer), bar=just(T::String)]),
                T::record(hash![quux=just(T::Boolean)]);
-               T::record(hash![foo=just(T::Integer), bar=just(T::String), quux=just(T::Boolean)]));
+               _);
         check!(T::record(hash![foo=just(T::Int(3)), bar=just(T::String)]),
                T::record(hash![foo=just(T::Int(4))]);
-               T::record(hash![foo=just(T::ints(vec![3, 4])), bar=just(T::String)]));
+               _);
         check!(T::record(hash![foo=just(T::Integer), bar=just(T::Number),
                                     quux=just(T::array(just(T::Dynamic(Dyn::User))))]),
                T::record(hash![foo=just(T::Number), bar=just(T::String),
                                     quux=just(T::array(just(T::Boolean)))]);
-               T::record(hash![foo=just(T::Number), bar=just(T::Number | T::String),
-                                    quux=just(T::array(just(T::Dynamic(Dyn::User))))]));
+               _);
         check!(T::record(hash![foo=just(T::Int(3)), bar=just(T::Number)]),
                T::map(T::String, just(T::Integer));
-               T::map(T::String, just(T::Number)));
-        check!(T::array(just(T::Integer)), T::tuple(vec![just(T::String)]);
-               T::map(T::Integer, just(T::Integer | T::String)));
+               _);
+        check!(T::map(T::String, just(T::Integer)),
+               T::map(T::String, just(T::Integer));
+               T::map(T::String, just(T::Integer)));
+        check!(T::map(T::String, cnst(T::Integer)),
+               T::map(T::String, just(T::Integer));
+               _);
+        check!(T::array(just(T::Integer)),
+               T::tuple(vec![just(T::String)]);
+               _);
         check!(T::map(T::Str(os("wat")), just(T::Integer)),
                T::map(T::String, just(T::Int(42)));
-               T::map(T::String, just(T::Integer)));
-        check!(T::array(just(T::Number)), T::map(T::Dynamic(Dyn::User), just(T::Integer));
-               T::map(T::Dynamic(Dyn::User), just(T::Number)));
-        check!(T::empty_table(), T::array(just(T::Integer));
+               _);
+        check!(T::array(just(T::Number)),
+               T::map(T::Dynamic(Dyn::User), just(T::Integer));
+               _);
+        check!(T::empty_table(),
+               T::empty_table();
+               T::empty_table());
+        check!(T::empty_table(),
+               T::array(just(T::Integer));
+               _);
+        check!(T::array(just(T::Integer)),
+               T::array(just(T::Integer));
                T::array(just(T::Integer)));
 
         // others
@@ -1502,7 +1603,8 @@ mod tests {
         // general unions
         check!(T::True, T::False; T::Boolean);
         check!(T::Int(3) | T::String, T::Str(os("wat")) | T::Int(4);
-               T::ints(vec![3, 4]) | T::String);
+               explicit = T::ints(vec![3, 4]) | T::String,
+               implicit = T::Integer | T::String);
         let m1 = T::map(T::String, Slot::new(F::Just, Ty::from(T::Integer)));
         let m2 = T::map(T::String, Slot::new(F::Just, Ty::from(T::Integer).or_nil(Nil::Noisy)));
         m1.assert_eq(&m2, &mut NoTypeContext).unwrap();
@@ -1511,26 +1613,25 @@ mod tests {
     #[test]
     fn test_union_ty() {
         macro_rules! check {
-            ($l:expr, $r:expr; $u:expr) => ({
-                let left = $l;
-                let right = $r;
-                let union = Ok($u);
-                let mut ctx = Context::new(Rc::new(NoReport));
-                let actualunion = left.union(&right, &mut ctx);
-                if actualunion != union {
-                    panic!("{:?} | {:?} = expected {:?}, actual {:?}",
-                           left, right, union, actualunion);
-                }
-                (left, right, actualunion.unwrap())
-            });
+            ($l:expr, $r:expr; explicit=_, implicit=$ui:expr) =>
+                (check_base!($l, $r; explicit=_, implicit=$ui));
+            ($l:expr, $r:expr; explicit=$ue:expr, implicit=_) =>
+                (check_base!($l, $r; explicit=$ue, implicit=_));
+            ($l:expr, $r:expr; explicit=$ue:expr, implicit=$ui:expr) =>
+                (check_base!($l, $r; explicit=$ue, implicit=$ui));
+            ($l:expr, $r:expr; _) => (check_base!($l, $r; _));
+            ($l:expr, $r:expr; $u:expr) => (check_base!($l, $r; $u));
         }
 
         check!(nil(T::Int(3)), nil(T::Int(4));
-               nil(T::ints(vec![3, 4])));
+               explicit=nil(T::ints(vec![3, 4])),
+               implicit=nil(T::Integer));
         check!(nil(T::Int(3) | T::UserData), nil(T::Thread | T::Int(4));
-               nil(T::Thread | T::ints(vec![3, 4]) | T::UserData));
+               explicit=nil(T::Thread | T::ints(vec![3, 4]) | T::UserData),
+               implicit=nil(T::Thread | T::Integer | T::UserData));
         check!(nil(T::ints(vec![3, 5])), T::Int(4) | T::String;
-               nil(T::String | T::ints(vec![3, 4, 5])));
+               explicit=nil(T::String | T::ints(vec![3, 4, 5])),
+               implicit=nil(T::String | T::Integer));
     }
 
     #[test]

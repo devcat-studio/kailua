@@ -172,7 +172,8 @@ impl S {
     // self and other may be possibly different slots and being merged by union
     // (thus Currently cannot be merged, even if the type is identical)
     // mainly used by `and`/`or` operators and table lifting
-    pub fn union(&mut self, other: &mut S, ctx: &mut TypeContext) -> CheckResult<S> {
+    pub fn union(&mut self, other: &mut S, explicit: bool,
+                 ctx: &mut TypeContext) -> CheckResult<S> {
         // Currently is first *changed* to Var, since it will be going to be shared anyway
         if self.flex.is_linear() { self.flex = F::Var; }
         if other.flex.is_linear() { other.flex = F::Var; }
@@ -187,7 +188,7 @@ impl S {
             (F::Any, _) | (_, F::Any) => (F::Any, Ty::new(T::None)),
 
             // it's fine to merge r-values
-            (F::Just, F::Just) => (F::Just, self.ty.union(&other.ty, ctx)?),
+            (F::Just, F::Just) => (F::Just, self.ty.union(&other.ty, explicit, ctx)?),
 
             // merging Var will result in Const unless a and b are identical
             (F::Var, F::Var) |
@@ -196,7 +197,7 @@ impl S {
                 let m = ctx.gen_mark();
                 assert_eq!(ctx.assert_mark_require_eq(m, &self.ty, &other.ty),
                            Ok(())); // can't fail
-                (F::VarOrConst(m), self.ty.union(&other.ty, ctx)?)
+                (F::VarOrConst(m), self.ty.union(&other.ty, explicit, ctx)?)
             },
 
             // Var and VarConst are lifted to Const otherwise, regardless of marks
@@ -212,7 +213,7 @@ impl S {
             (F::VarOrConst(_), F::Const) |
             (F::VarOrConst(_), F::Var) |
             (F::VarOrConst(_), F::VarOrConst(_)) =>
-                (F::Const, self.ty.union(&other.ty, ctx)?),
+                (F::Const, self.ty.union(&other.ty, explicit, ctx)?),
 
             // other cases are impossible
             (F::Currently, _) | (_, F::Currently) => unreachable!(),
@@ -534,12 +535,12 @@ impl Slot {
 impl Union for Slot {
     type Output = Slot;
 
-    fn union(&self, other: &Slot, ctx: &mut TypeContext) -> CheckResult<Slot> {
+    fn union(&self, other: &Slot, explicit: bool, ctx: &mut TypeContext) -> CheckResult<Slot> {
         // if self and other point to the same slot, do not try to borrow mutably
         if self.0.deref() as *const _ == other.0.deref() as *const _ { return Ok(self.clone()); }
 
         // now it is safe to borrow mutably
-        Ok(Slot::from(self.0.borrow_mut().union(&mut other.0.borrow_mut(), ctx)?))
+        Ok(Slot::from(self.0.borrow_mut().union(&mut other.0.borrow_mut(), explicit, ctx)?))
     }
 }
 

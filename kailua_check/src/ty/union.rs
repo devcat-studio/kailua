@@ -139,19 +139,42 @@ impl Unioned {
 impl Union for Unioned {
     type Output = Unioned;
 
-    fn union(&self, other: &Unioned, ctx: &mut TypeContext) -> CheckResult<Unioned> {
-        let simple    = self.simple | other.simple;
-        let numbers   = self.numbers.union(&other.numbers, ctx)?;
-        let strings   = self.strings.union(&other.strings, ctx)?;
-        let tables    = self.tables.union(&other.tables, ctx)?;
-        let functions = self.functions.union(&other.functions, ctx)?;
+    fn union(&self, other: &Unioned, explicit: bool,
+             ctx: &mut TypeContext) -> CheckResult<Unioned> {
+        let simple = self.simple | other.simple;
+
+        // numbers and strings can be unioned, though only the explicitly constructed
+        // literal types can use unions; implicit unions always resolve to integer or number
+        let numbers = self.numbers.union(&other.numbers, explicit, ctx)?;
+        let strings = self.strings.union(&other.strings, explicit, ctx)?;
+
+        // tables and functions cannot be unioned in any case;
+        // unequal table and function components always results in an error
+        let tables = match (&self.tables, &other.tables) {
+            (&Some(ref lhs), &Some(ref rhs)) => {
+                lhs.assert_eq(rhs, ctx)?;
+                Some(lhs.clone())
+            },
+            (&Some(ref lhs), &None) => Some(lhs.clone()),
+            (&None, &Some(ref rhs)) => Some(rhs.clone()),
+            (&None, &None) => None,
+        };
+        let functions = match (&self.functions, &other.functions) {
+            (&Some(ref lhs), &Some(ref rhs)) => {
+                lhs.assert_eq(rhs, ctx)?;
+                Some(lhs.clone())
+            },
+            (&Some(ref lhs), &None) => Some(lhs.clone()),
+            (&None, &Some(ref rhs)) => Some(rhs.clone()),
+            (&None, &None) => None,
+        };
 
         let mut classes = self.classes.clone();
         classes.extend(other.classes.iter().cloned());
 
         Ok(Unioned {
-            simple: simple, numbers: numbers, strings: strings, tables: tables,
-            functions: functions, classes: classes,
+            simple: simple, numbers: numbers, strings: strings,
+            tables: tables, functions: functions, classes: classes,
         })
     }
 }
@@ -164,15 +187,6 @@ impl Lattice for Unioned {
 
         self.numbers.assert_sub(&other.numbers, &mut NoTypeContext)?;
         self.strings.assert_sub(&other.strings, &mut NoTypeContext)?;
-
-        // XXX err on unions with possible overlapping instantiation for now
-        if self.tables.is_some() && self.functions.is_some() {
-            return error_not_sub(self, other);
-        }
-        if other.tables.is_some() && other.functions.is_some() {
-            return error_not_sub(self, other);
-        }
-
         self.tables.assert_sub(&other.tables, ctx)?;
         self.functions.assert_sub(&other.functions, ctx)?;
 
