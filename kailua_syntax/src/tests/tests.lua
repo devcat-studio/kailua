@@ -1805,3 +1805,8 @@ end --@< Error: Expected an expression, got a keyword `end`
 g()
 --! [Do([Void(`f`_[Oops])]), Void(`g`_())]
 
+--8<-- multibyte-invalid-chars
+-- should result in only one error
+do아햏햏end --@< Error: Unexpected character
+--! [Do([])]
+

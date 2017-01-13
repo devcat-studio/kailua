@@ -168,6 +168,13 @@ impl SourceFile {
         span_from_u32(self.unit, *self.lineoffs.first().unwrap(), *self.lineoffs.last().unwrap())
     }
 
+    pub fn data<'a>(&'a self) -> SourceSlice<'a> {
+        match self.buf {
+            SourceBuf::U8(ref data) => SourceSlice::U8(data),
+            SourceBuf::U16(ref data) => SourceSlice::U16(data),
+        }
+    }
+
     pub fn line_spans(&self) -> SourceLineSpans {
         assert!(!self.lineoffs.is_empty());
         SourceLineSpans { slice: &self.lineoffs, unit: self.unit }

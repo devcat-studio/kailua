@@ -537,8 +537,13 @@ impl<'a> Lexer<'a> {
                 U8(b'|') if self.meta => return tok!(Pipe),
 
                 U8(_) | U16(_) => {
+                    // try to consume more invalid multi-byte characters in a row
+                    self.scan_while(
+                        |c| match c { U8(0x80...0xff) | U16(_) => true, _ => false },
+                        |_| {});
                     self.report.error(begin..self.pos(), m::UnexpectedChar {}).done()?;
                 },
+
                 EOF => {
                     if self.meta { // the last line should be closed by the (dummy) Newline token
                         self.meta = false;
