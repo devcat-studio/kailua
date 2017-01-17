@@ -1,18 +1,11 @@
 use std::mem;
 use std::ptr;
-use std::rc::Rc;
-use std::sync::Mutex;
-use std::sync::mpsc::{self, Sender, Receiver};
+use std::sync::{Arc, Mutex};
+use std::collections::VecDeque;
 use std::panic::{self, AssertUnwindSafe};
 use widestring::{WideCStr, WideCString};
 use kailua_env::Span;
 use kailua_diag::{self, Localize, Localized, Kind, Report, Stop};
-
-// report can be shared by multiple parties, possibly across multiple threads.
-// but the current Kailua interfaces are NOT thread-safe since its normal usage is a single thread.
-// there is not much point to make it fully thread-safe (it changes a type, after all),
-// so we instead have a proxy Report (VSReportProxy) for each usage
-// which sends the diagnostics back to the main thread-safe Report (VSReport).
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -43,42 +36,23 @@ struct Diag {
     msg: String,
 }
 
-struct ReportInner {
-    lang: String,
-    sender: Sender<Diag>,
-    receiver: Receiver<Diag>, // acts as an infinite queue
-}
-
 pub struct VSReport {
-    // it is not Arc<Mutex<...>> since C# has no notion of ownership and thus Arc is not required
-    inner: Mutex<ReportInner>,
+    lang: String,
+    reports: Mutex<VecDeque<Diag>>,
 }
 
 impl VSReport {
-    pub fn new(lang: &str) -> Box<VSReport> {
-        let (sender, reciever) = mpsc::channel();
-        Box::new(VSReport {
-            inner: Mutex::new(ReportInner {
-                lang: lang.to_owned(),
-                sender: sender,
-                receiver: reciever,
-            }),
-        })
-    }
-
-    // while this is Rc, it is uniquely owned by each use of Report
-    pub fn proxy(&self) -> Rc<Report> {
-        let inner = self.inner.lock().unwrap();
-        Rc::new(VSReportProxy {
-            lang: inner.lang.clone(),
-            sender: inner.sender.clone(),
+    pub fn new(lang: &str) -> Arc<VSReport> {
+        Arc::new(VSReport {
+            lang: lang.to_owned(),
+            reports: Mutex::new(VecDeque::new()),
         })
     }
 
     pub fn get_next(&self, kind: &mut VSReportKind, span: &mut Span,
                     msg: &mut WideCString) -> i32 {
-        let inner = self.inner.lock().unwrap();
-        if let Ok(diag) = inner.receiver.try_recv() {
+        let mut reports = self.reports.lock().unwrap();
+        if let Some(diag) = reports.pop_front() {
             if let Ok(msgw) = WideCString::from_str(diag.msg) {
                 *kind = VSReportKind::from(diag.kind);
                 *span = diag.span;
@@ -94,20 +68,12 @@ impl VSReport {
     }
 }
 
-struct VSReportProxy {
-    lang: String,
-    sender: Sender<Diag>,
-}
-
-impl Report for VSReportProxy {
+impl Report for VSReport {
     fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> kailua_diag::Result<()> {
         let msg = Localized::new(msg, &self.lang).to_string();
         let diag = Diag { kind: kind, span: span, msg: msg };
 
-        // it is totally possible that the receiver has been already disconnected;
-        // this happens when C# has caught an exception or has reached the error limit.
-        // it's no point to continue from now on, so we translate SendError to Stop.
-        self.sender.send(diag).map_err(|_| Stop)?;
+        self.reports.lock().unwrap().push_back(diag);
 
         if kind == Kind::Fatal { Err(Stop) } else { Ok(()) }
     }
@@ -134,7 +100,7 @@ pub extern "C" fn kailua_report_get_next(report: *const VSReport, kind: *mut VSR
     if span.is_null() { return -1; }
     if msg.is_null() { return -1; }
 
-    let report: &VSReport = unsafe { mem::transmute(report) };
+    let report: &Arc<VSReport> = unsafe { mem::transmute(&report) };
     let kind = unsafe { kind.as_mut().unwrap() };
     let span = unsafe { span.as_mut().unwrap() };
     let msg = unsafe { msg.as_mut().unwrap() };
@@ -154,7 +120,7 @@ pub extern "C" fn kailua_report_get_next(report: *const VSReport, kind: *mut VSR
 #[no_mangle]
 pub extern "C" fn kailua_report_free(report: *const VSReport) {
     if report.is_null() { return; }
-    let report: Box<VSReport> = unsafe { mem::transmute(report) };
+    let report: Arc<VSReport> = unsafe { mem::transmute(report) };
 
     let report = AssertUnwindSafe(report); // XXX use Unique when it is stabilized
     let _ = panic::catch_unwind(move || {

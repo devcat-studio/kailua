@@ -1369,7 +1369,6 @@ impl fmt::Debug for Ty {
 mod tests {
     use kailua_diag::NoReport;
     use kailua_syntax::Str;
-    use std::rc::Rc;
     use std::borrow::Cow;
     use ty::{Lattice, Union, TypeContext, NoTypeContext, F, Slot, Mark, Tag};
     use env::Context;
@@ -1394,7 +1393,7 @@ mod tests {
         (@explicitness implicit) => (false);
 
         ($l:expr, $r:expr; [$e:tt]=_) => ({
-            let mut ctx = Context::new(Rc::new(NoReport));
+            let mut ctx = Context::new(NoReport);
             let actualunion = $l.union(&$r, check_base!(@explicitness $e), &mut ctx);
             if actualunion.is_ok() {
                 panic!("{:?} | {:?} ({}) = expected Err(_), actual {:?}",
@@ -1404,7 +1403,7 @@ mod tests {
 
         ($l:expr, $r:expr; [$e:tt]=$u:expr) => ({
             let union = Ok($u);
-            let mut ctx = Context::new(Rc::new(NoReport));
+            let mut ctx = Context::new(NoReport);
             let actualunion = $l.union(&$r, check_base!(@explicitness $e), &mut ctx);
             if actualunion != union {
                 panic!("{:?} | {:?} ({}) = expected {:?}, actual {:?}",
@@ -1664,7 +1663,7 @@ mod tests {
         assert!(nosubboolorstr.assert_sub(&substr, &mut NoTypeContext).is_err());
         assert!(nosubboolorstr.assert_sub(&nosubboolorstr, &mut NoTypeContext).is_ok());
 
-        let mut ctx = Context::new(Rc::new(NoReport));
+        let mut ctx = Context::new(NoReport);
 
         {
             let v1 = ctx.gen_tvar();

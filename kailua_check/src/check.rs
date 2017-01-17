@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 use take_mut::take;
 
 use kailua_env::{Span, Spanned, WithLoc};
-use kailua_diag::Reporter;
+use kailua_diag::{Report, Reporter};
 use kailua_syntax::{Str, NameRef, Var, M, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
 use kailua_syntax::{SelfParam, Args, St, Stmt, Block, K};
 use diag::CheckResult;
@@ -30,19 +30,21 @@ impl Exit {
     fn or(self, other: Exit) -> Exit { cmp::min(self, other) }
 }
 
-struct ScopedChecker<'chk, 'envr: 'chk, 'env: 'envr>(&'chk mut Checker<'envr, 'env>);
-
-impl<'chk, 'envr, 'env> Deref for ScopedChecker<'chk, 'envr, 'env> {
-    type Target = &'chk mut Checker<'envr, 'env>;
-    fn deref(&self) -> &&'chk mut Checker<'envr, 'env> { &self.0 }
+struct ScopedChecker<'chk, 'envr: 'chk, 'env: 'envr, R: 'env + Report> {
+    checker: &'chk mut Checker<'envr, 'env, R>
 }
 
-impl<'chk, 'envr, 'env> DerefMut for ScopedChecker<'chk, 'envr, 'env> {
-    fn deref_mut(&mut self) -> &mut &'chk mut Checker<'envr, 'env> { &mut self.0 }
+impl<'chk, 'envr, 'env, R: Report> Deref for ScopedChecker<'chk, 'envr, 'env, R> {
+    type Target = &'chk mut Checker<'envr, 'env, R>;
+    fn deref(&self) -> &Self::Target { &self.checker }
 }
 
-impl<'chk, 'envr, 'env> Drop for ScopedChecker<'chk, 'envr, 'env> {
-    fn drop(&mut self) { self.0.env.leave(); }
+impl<'chk, 'envr, 'env, R: Report> DerefMut for ScopedChecker<'chk, 'envr, 'env, R> {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.checker }
+}
+
+impl<'chk, 'envr, 'env, R: Report> Drop for ScopedChecker<'chk, 'envr, 'env, R> {
+    fn drop(&mut self) { self.checker.env.leave(); }
 }
 
 // conditions out of boolean expression, used for assertion and branch typing
@@ -61,16 +63,16 @@ enum Bool {
     Falsy,
 }
 
-pub struct Checker<'envr, 'env: 'envr> {
-    env: &'envr mut Env<'env>,
+pub struct Checker<'envr, 'env: 'envr, R: 'env> {
+    env: &'envr mut Env<'env, R>,
 }
 
-impl<'envr, 'env> Checker<'envr, 'env> {
-    pub fn new(env: &'envr mut Env<'env>) -> Checker<'envr, 'env> {
+impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
+    pub fn new(env: &'envr mut Env<'env, R>) -> Checker<'envr, 'env, R> {
         Checker { env: env }
     }
 
-    fn context(&mut self) -> &mut Context {
+    fn context(&mut self) -> &mut Context<R> {
         self.env.context()
     }
 
@@ -79,9 +81,9 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         self.env.display(x)
     }
 
-    fn scoped<'chk>(&'chk mut self, scope: Scope) -> ScopedChecker<'chk, 'envr, 'env> {
+    fn scoped<'chk>(&'chk mut self, scope: Scope) -> ScopedChecker<'chk, 'envr, 'env, R> {
         self.env.enter(scope);
-        ScopedChecker(self)
+        ScopedChecker { checker: self }
     }
 
     // XXX in general reachability checking should continue when the type variable get resolved
@@ -386,7 +388,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
             return Ok(Some(Slot::dummy()));
         }
 
-        let new_slot = |context: &mut Context, linear: bool| {
+        let new_slot = |context: &mut Context<R>, linear: bool| {
             // we don't yet know the exact value type, so generate a new type variable
             let tvar = T::TVar(context.gen_tvar());
             let flex = if linear {
@@ -1421,7 +1423,7 @@ impl<'envr, 'env> Checker<'envr, 'env> {
         let mut fieldset = BTreeMap::new();
 
         let mut fieldspans = HashMap::new();
-        let mut add_field = |fieldset: &mut BTreeMap<Key, Slot>, env: &Env, k: Key, v: Slot,
+        let mut add_field = |fieldset: &mut BTreeMap<Key, Slot>, env: &Env<R>, k: Key, v: Slot,
                              span: Span| -> CheckResult<()> {
             use std::collections::btree_map::Entry;
             if let Entry::Vacant(e) = fieldset.entry(k.clone()) {

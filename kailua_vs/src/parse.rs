@@ -1,6 +1,7 @@
 use std::mem;
 use std::ptr;
 use std::i32;
+use std::sync::Arc;
 use std::panic::{self, AssertUnwindSafe};
 use lex::VSTokenStream;
 use names::{VSNameEntry, VSNameEntries};
@@ -56,12 +57,12 @@ pub extern "C" fn kailua_parse_tree_new(stream: *mut VSTokenStream,
     let stream: Box<VSTokenStream> = unsafe { mem::transmute(stream) };
 
     if report.is_null() { return ptr::null_mut(); }
-    let report: &VSReport = unsafe { mem::transmute(report) };
+    let report: &Arc<VSReport> = unsafe { mem::transmute(&report) };
 
     let stream = AssertUnwindSafe(stream); // XXX use Unique when it is stabilized
     let report = AssertUnwindSafe(report);
     panic::catch_unwind(move || {
-        let tree = VSParseTree::new(stream.0, &report.proxy());
+        let tree = VSParseTree::new(stream.0, &report.0);
         unsafe { mem::transmute(tree) }
     }).unwrap_or(ptr::null_mut())
 }

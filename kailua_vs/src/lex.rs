@@ -1,5 +1,6 @@
 use std::mem;
 use std::ptr;
+use std::sync::Arc;
 use std::panic::{self, AssertUnwindSafe};
 use source::VSSource;
 use report::VSReport;
@@ -187,13 +188,13 @@ pub extern "C" fn kailua_token_stream_new(src: *const VSSource,
 
     let src: &VSSource = unsafe { mem::transmute(src) };
     let span = unsafe { *span };
-    let report: &VSReport = unsafe { mem::transmute(report) };
+    let report: &Arc<VSReport> = unsafe { mem::transmute(&report) };
 
     let src = AssertUnwindSafe(src);
     let span = AssertUnwindSafe(span);
     let report = AssertUnwindSafe(report);
     panic::catch_unwind(move || {
-        let stream = VSTokenStream::new(&src, span.0, &report.proxy());
+        let stream = VSTokenStream::new(&src, span.0, &report.0);
         unsafe { mem::transmute(stream) }
     }).unwrap_or(ptr::null_mut())
 }

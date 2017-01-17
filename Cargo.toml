@@ -7,3 +7,7 @@ members = [
     "kailua_check",
     "kailua_vs",
 ]
+
+[profile.release]
+lto = true
+

@@ -2,6 +2,7 @@ use std::mem;
 use std::ptr;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::sync::Arc;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
 use names::{VSNameEntry, VSNameEntries};
@@ -53,12 +54,12 @@ impl FsSource for VSFsSource {
 
 pub struct VSChecker {
     fssource: VSFsSource,
-    report: Rc<Report>,
+    report: Arc<Report + Send + Sync>,
 }
 
 impl VSChecker {
     pub fn new(callback: VSFsSourceCallback, callback_data: usize,
-               report: Rc<Report>) -> Box<VSChecker> {
+               report: Arc<Report + Send + Sync>) -> Box<VSChecker> {
         Box::new(VSChecker {
             fssource: VSFsSource::new(callback, callback_data),
             report: report,
@@ -89,7 +90,7 @@ impl VSChecker {
 
 pub struct VSCheckerOutput {
     // TODO not all of this might be required
-    context: Context,
+    context: Context<Arc<Report + Send + Sync>>,
 }
 
 impl VSCheckerOutput {
@@ -145,11 +146,11 @@ pub extern "C" fn kailua_checker_new(callback: VSFsSourceCallback,
                                      callback_data: usize,
                                      report: *const VSReport) -> *mut VSChecker {
     if report.is_null() { return ptr::null_mut(); }
-    let report: &VSReport = unsafe { mem::transmute(report) };
+    let report: &Arc<VSReport> = unsafe { mem::transmute(&report) };
 
     let report = AssertUnwindSafe(report); // XXX use Unique when it is stabilized
     panic::catch_unwind(move || {
-        let checker = VSChecker::new(callback, callback_data, report.proxy());
+        let checker = VSChecker::new(callback, callback_data, report.clone());
         unsafe { mem::transmute(checker) }
     }).unwrap_or(ptr::null_mut())
 }

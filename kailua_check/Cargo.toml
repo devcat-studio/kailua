@@ -19,6 +19,7 @@ bitflags = "0.7"
 vec_map = "0.4"
 take_mut = "0.1"
 parse-generics-shim = "0.1.0"
+parking_lot = "0.3"
 kailua_env = { path = "../kailua_env" }
 kailua_diag = { path = "../kailua_diag" }
 kailua_syntax = { path = "../kailua_syntax" }

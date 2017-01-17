@@ -113,18 +113,12 @@ pub trait TypeResolver: Report {
     fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<Ty>;
 }
 
-impl<'a, R: TypeResolver> TypeResolver for &'a mut R {
+impl<'a, R: TypeResolver + ?Sized> TypeResolver for &'a mut R {
     fn context(&mut self) -> &mut TypeContext {
         (**self).context()
     }
     fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<Ty> {
         (**self).ty_from_name(name)
-    }
-}
-
-impl<'a> Report for &'a mut TypeResolver {
-    fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> kailua_diag::Result<()> {
-        (**self).add_span(kind, span, msg)
     }
 }
 
@@ -154,12 +148,6 @@ pub trait TypeContext: Report {
     // nominal type management
     fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result;
     fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool;
-}
-
-impl<'a> Report for &'a mut TypeContext {
-    fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> kailua_diag::Result<()> {
-        (**self).add_span(kind, span, msg)
-    }
 }
 
 pub trait Union<Other = Self> {

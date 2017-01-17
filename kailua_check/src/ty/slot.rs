@@ -1,8 +1,8 @@
 use std::fmt;
 use std::mem;
 use std::ops::Deref;
-use std::rc::Rc;
-use std::cell::{Ref, RefCell};
+use std::sync::Arc;
+use parking_lot::{RwLock, RwLockReadGuard};
 
 use kailua_env::Spanned;
 use kailua_diag::Reporter;
@@ -336,16 +336,23 @@ impl fmt::Debug for S {
     }
 }
 
-#[derive(Clone, PartialEq)]
-pub struct Slot(Rc<RefCell<S>>);
+pub struct UnliftedSlot<'a>(RwLockReadGuard<'a, S>);
+
+impl<'a> Deref for UnliftedSlot<'a> {
+    type Target = Ty;
+    fn deref(&self) -> &Ty { self.0.unlift() }
+}
+
+#[derive(Clone)]
+pub struct Slot(Arc<RwLock<S>>);
 
 impl Slot {
     pub fn new<'a>(flex: F, ty: Ty) -> Slot {
-        Slot(Rc::new(RefCell::new(S { flex: flex, ty: ty })))
+        Slot(Arc::new(RwLock::new(S { flex: flex, ty: ty })))
     }
 
     pub fn from(s: S) -> Slot {
-        Slot(Rc::new(RefCell::new(s)))
+        Slot(Arc::new(RwLock::new(s)))
     }
 
     pub fn just(t: Ty) -> Slot {
@@ -360,14 +367,14 @@ impl Slot {
         Slot::new(F::Dynamic(Dyn::Oops), Ty::dummy())
     }
 
-    pub fn unlift<'a>(&'a self) -> Ref<'a, Ty> {
-        Ref::map(self.0.borrow(), |s| s.unlift())
+    pub fn unlift<'a>(&'a self) -> UnliftedSlot<'a> {
+        UnliftedSlot(self.0.read())
     }
 
     // one tries to assign to `self` through parent with `flex`. how should `self` change?
     // (only makes sense when `self` is a Just slot, otherwise no-op)
     pub fn adapt(&self, flex: F, ctx: &mut TypeContext) {
-        let mut slot = self.0.borrow_mut();
+        let mut slot = self.0.write();
         if slot.flex == F::Just {
             slot.flex = match flex {
                 F::Const => F::Const,
@@ -387,8 +394,8 @@ impl Slot {
         // but it has to be filtered since it will borrow twice otherwise
         if self.0.deref() as *const _ == rhs.0.deref() as *const _ { return Ok(()); }
 
-        let mut lhs = self.0.borrow_mut();
-        let mut rhs = rhs.0.borrow_mut();
+        let mut lhs = self.0.write();
+        let mut rhs = rhs.0.write();
 
         // assumes that lhs.flex is already known to be linear.
         let is_shared = |lty: &T, rhs: &S|
@@ -401,7 +408,7 @@ impl Slot {
             (F::Any, _, _) |
             (F::Just, _, _) |
             (F::Const, _, false) => {
-                return Err(format!("impossible to assign {:?} to {:?}", rhs, lhs));
+                return Err(format!("impossible to assign {:?} to {:?}", *rhs, *lhs));
             }
 
             // dynamic rhs *may* change the flex of lhs as well, if the initial flex permits
@@ -470,13 +477,13 @@ impl Slot {
     // conceptually this is same to `accept`, but some special types (notably nominal types)
     // have a representation that is hard to express with `accept` only.
     pub fn accept_in_place(&self, ctx: &mut TypeContext) -> CheckResult<()> {
-        let s = self.0.borrow();
+        let s = self.0.read();
 
         match s.flex {
             F::Dynamic(_) => {}
 
             F::Any | F::Just | F::Const | F::Var | F::VarOrConst(_) => {
-                return Err(format!("impossible to update {:?}", s));
+                return Err(format!("impossible to update {:?}", *s));
             }
 
             // since the value is not shared via this "assignment", it can remain as Currently.
@@ -493,7 +500,7 @@ impl Slot {
 
     pub fn filter_by_flags(&self, flags: Flags, ctx: &mut TypeContext) -> CheckResult<()> {
         // when filter_by_flags fails, the slot itself has no valid type
-        let mut s = self.0.borrow_mut();
+        let mut s = self.0.write();
         let t = mem::replace(&mut s.ty, Ty::new(T::None).or_nil(Nil::Absent));
         s.ty = t.filter_by_flags(flags, ctx)?;
         Ok(())
@@ -501,7 +508,7 @@ impl Slot {
 
     // following methods are direct analogues to value type's ones, whenever applicable
 
-    pub fn flex(&self) -> F { self.0.borrow().flex() }
+    pub fn flex(&self) -> F { self.0.read().flex() }
     pub fn flags(&self) -> Flags { self.unlift().flags() }
 
     pub fn is_integral(&self) -> bool { self.flags().is_integral() }
@@ -517,17 +524,17 @@ impl Slot {
     pub fn tag(&self) -> Option<Tag> { self.unlift().tag() }
 
     pub fn with_nil(&self) -> Slot {
-        let s = self.0.borrow();
+        let s = self.0.read();
         Slot::from(s.clone().with_nil())
     }
 
     pub fn without_nil(&self) -> Slot {
-        let s = self.0.borrow();
+        let s = self.0.read();
         Slot::from(s.clone().without_nil())
     }
 
     pub fn weaken(&self, ctx: &mut TypeContext) -> CheckResult<Slot> {
-        let s = self.0.borrow();
+        let s = self.0.read();
         Ok(Slot::from(s.weaken(ctx)?))
     }
 }
@@ -540,17 +547,17 @@ impl Union for Slot {
         if self.0.deref() as *const _ == other.0.deref() as *const _ { return Ok(self.clone()); }
 
         // now it is safe to borrow mutably
-        Ok(Slot::from(self.0.borrow_mut().union(&mut other.0.borrow_mut(), explicit, ctx)?))
+        Ok(Slot::from(self.0.write().union(&mut other.0.write(), explicit, ctx)?))
     }
 }
 
 impl Lattice for Slot {
     fn assert_sub(&self, other: &Slot, ctx: &mut TypeContext) -> CheckResult<()> {
-        self.0.borrow().assert_sub(&other.0.borrow(), ctx)
+        self.0.read().assert_sub(&other.0.read(), ctx)
     }
 
     fn assert_eq(&self, other: &Slot, ctx: &mut TypeContext) -> CheckResult<()> {
-        self.0.borrow().assert_eq(&other.0.borrow(), ctx)
+        self.0.read().assert_eq(&other.0.read(), ctx)
     }
 }
 
@@ -610,9 +617,15 @@ impl<'a> Lattice<Ty> for Spanned<Slot> {
     }
 }
 
+impl PartialEq for Slot {
+    fn eq(&self, other: &Slot) -> bool {
+        *self.0.read() == *other.0.read()
+    }
+}
+
 impl Display for Slot {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
-        let s = &*self.0.borrow();
+        let s = &*self.0.read();
 
         // for the purpose of display, Currently is most powerful *and* most constrained,
         // Var is second, and Const is least powerful.
@@ -635,9 +648,9 @@ impl Display for Slot {
 impl fmt::Debug for Slot {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if f.sign_minus() {
-            fmt::Debug::fmt(&self.0.borrow().ty, f)
+            fmt::Debug::fmt(&self.0.read().ty, f)
         } else {
-            fmt::Debug::fmt(&self.0.borrow(), f)
+            fmt::Debug::fmt(&*self.0.read(), f)
         }
     }
 }
@@ -646,7 +659,6 @@ impl fmt::Debug for Slot {
 #[allow(unused_variables, dead_code)]
 mod tests {
     use kailua_diag::NoReport;
-    use std::rc::Rc;
     use ty::{T, Ty, Lattice, TypeContext, NoTypeContext};
     use super::*;
 
@@ -654,7 +666,7 @@ mod tests {
     fn test_sub() {
         use env::Context;
 
-        let mut ctx = Context::new(Rc::new(NoReport));
+        let mut ctx = Context::new(NoReport);
 
         let just = |t| Slot::new(F::Just, Ty::new(t));
         let cnst = |t| Slot::new(F::Const, Ty::new(t));

@@ -33,14 +33,14 @@ impl Id {
         }
     }
 
-    pub fn name<'a>(&'a self, ctx: &'a Context) -> &'a Name {
+    pub fn name<'a, R: Report>(&'a self, ctx: &'a Context<R>) -> &'a Name {
         match *self {
             Id::Local(map_index, ref scoped_id) => scoped_id.name(&ctx.scope_maps[map_index]),
             Id::Global(ref name) => name,
         }
     }
 
-    pub fn scope(&self, ctx: &Context) -> Option<kailua_env::Scope> {
+    pub fn scope<R: Report>(&self, ctx: &Context<R>) -> Option<kailua_env::Scope> {
         match *self {
             Id::Local(map_index, ref scoped_id) =>
                 Some(scoped_id.scope(&ctx.scope_maps[map_index])),
@@ -55,18 +55,18 @@ impl Id {
         }
     }
 
-    pub fn display<'a>(&'a self, ctx: &'a Context) -> IdDisplay<'a> {
+    pub fn display<'a, R: Report>(&'a self, ctx: &'a Context<R>) -> IdDisplay<'a, R> {
         IdDisplay { id: self, ctx: ctx }
     }
 }
 
 #[must_use]
-pub struct IdDisplay<'a> {
+pub struct IdDisplay<'a, R: 'a> {
     id: &'a Id,
-    ctx: &'a Context,
+    ctx: &'a Context<R>,
 }
 
-impl<'a> fmt::Display for IdDisplay<'a> {
+impl<'a, R: Report> fmt::Display for IdDisplay<'a, R> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self.id {
             Id::Local(map_index, ref scoped_id) => {
@@ -471,8 +471,8 @@ enum LoadStatus {
 
 // global context (also acts as a type context).
 // anything has to be retained across multiple files should be here
-pub struct Context {
-    report: Rc<Report>,
+pub struct Context<R> {
+    report: R,
 
     // name, scope and span information
     ids: HashMap<Id, NameDef>,
@@ -503,8 +503,8 @@ pub struct Context {
     classes: Vec<ClassDef>,
 }
 
-impl Context {
-    pub fn new(report: Rc<Report>) -> Context {
+impl<R: Report> Context<R> {
+    pub fn new(report: R) -> Context<R> {
         let mut ctx = Context {
             report: report,
             ids: HashMap::new(),
@@ -529,8 +529,8 @@ impl Context {
         ctx
     }
 
-    pub fn report(&self) -> &Report {
-        &*self.report
+    pub fn report(&self) -> &R {
+        &self.report
     }
 
     pub fn spanned_slots(&self) -> &SpanMap<Slot> {
@@ -695,13 +695,13 @@ impl Context {
     }
 }
 
-impl Report for Context {
+impl<R: Report> Report for Context<R> {
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> kailua_diag::Result<()> {
         self.report.add_span(k, s, m)
     }
 }
 
-impl TypeContext for Context {
+impl<R: Report> TypeContext for Context<R> {
     fn last_tvar(&self) -> Option<TVar> {
         let tvar = self.next_tvar.get();
         if tvar == TVar(0) { None } else { Some(TVar(tvar.0 - 1)) }
@@ -1096,16 +1096,16 @@ impl TypeContext for Context {
 }
 
 // per-file environment
-pub struct Env<'ctx> {
-    context: &'ctx mut Context,
+pub struct Env<'ctx, R: 'ctx> {
+    context: &'ctx mut Context<R>,
     opts: Rc<RefCell<Options>>,
     map_index: usize,
     scopes: Vec<Scope>,
 }
 
-impl<'ctx> Env<'ctx> {
-    pub fn new(context: &'ctx mut Context, opts: Rc<RefCell<Options>>,
-               map: ScopeMap<Name>) -> Env<'ctx> {
+impl<'ctx, R: Report> Env<'ctx, R> {
+    pub fn new(context: &'ctx mut Context<R>, opts: Rc<RefCell<Options>>,
+               map: ScopeMap<Name>) -> Env<'ctx, R> {
         let map_index = context.scope_maps.len();
         context.scope_maps.push(map);
         let global_frame = Frame { vararg: None, returns: None, returns_exact: false };
@@ -1119,7 +1119,7 @@ impl<'ctx> Env<'ctx> {
     }
 
     // not to be called internally; it intentionally reduces the lifetime
-    pub fn context(&mut self) -> &mut Context {
+    pub fn context(&mut self) -> &mut Context<R> {
         self.context
     }
 
@@ -1568,13 +1568,13 @@ impl<'ctx> Env<'ctx> {
     }
 }
 
-impl<'ctx> Report for Env<'ctx> {
+impl<'ctx, R: Report> Report for Env<'ctx, R> {
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> kailua_diag::Result<()> {
         self.context.report.add_span(k, s, m)
     }
 }
 
-impl<'ctx> TypeResolver for Env<'ctx> {
+impl<'ctx, R: Report> TypeResolver for Env<'ctx, R> {
     fn context(&mut self) -> &mut TypeContext {
         self.context
     }
@@ -1590,10 +1590,17 @@ impl<'ctx> TypeResolver for Env<'ctx> {
 }
 
 #[test]
+fn test_context_is_send() {
+    use kailua_diag::NoReport;
+    fn _assert_send<T: Send>(_x: T) {}
+    _assert_send(Context::new(NoReport));
+}
+
+#[test]
 fn test_context_tvar() {
     use kailua_diag::NoReport;
 
-    let mut ctx = Context::new(Rc::new(NoReport));
+    let mut ctx = Context::new(NoReport);
 
     { // idempotency of bounds
         let v1 = ctx.gen_tvar();

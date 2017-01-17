@@ -4,6 +4,7 @@ use std::cmp;
 use std::result;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 use unicode_width::UnicodeWidthChar;
 use kailua_env::{Source, SourceSlice, Span, Pos};
 
@@ -56,19 +57,23 @@ pub trait Report {
     fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> Result<()>;
 }
 
-impl<'a, R: Report> Report for &'a R {
+impl<'a, R: Report + ?Sized> Report for &'a R {
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
 }
 
-impl<'a, R: Report> Report for &'a mut R {
+impl<'a, R: Report + ?Sized> Report for &'a mut R {
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
 }
 
-impl<'a> Report for &'a Report {
+impl<'a, R: Report + ?Sized> Report for Box<R> {
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
 }
 
-impl<'a> Report for Rc<Report> {
+impl<'a, R: Report + ?Sized> Report for Rc<R> {
+    fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
+}
+
+impl<'a, R: Report + ?Sized> Report for Arc<R> {
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
 }
 
