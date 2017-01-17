@@ -2,10 +2,12 @@ use std::mem;
 use std::ops;
 use std::str;
 use std::fmt;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::collections::{hash_map, HashMap, HashSet};
 use vec_map::VecMap;
+use atomic::Atomic;
+use atomic::Ordering::Relaxed;
 
 use kailua_env::{self, Span, Spanned, WithLoc, ScopedId, ScopeMap, SpanMap};
 use kailua_diag::{self, Kind, Report, Reporter, Localize};
@@ -231,7 +233,7 @@ impl<T> ops::DerefMut for Partitions<T> {
 
 #[derive(Debug)]
 struct Bound {
-    parent: Cell<u32>,
+    parent: Atomic<u32>,
     rank: u8,
     bound: Option<Ty>,
 }
@@ -255,15 +257,15 @@ fn is_bound_trivial(t: &Option<Ty>) -> bool {
 
 impl Partition for Box<Bound> {
     fn create(parent: usize, rank: usize) -> Box<Bound> {
-        Box::new(Bound { parent: Cell::new(parent as u32), rank: rank as u8, bound: None })
+        Box::new(Bound { parent: Atomic::new(parent as u32), rank: rank as u8, bound: None })
     }
 
     fn read(&self) -> (usize /*parent*/, usize /*rank*/) {
-        (self.parent.get() as usize, self.rank as usize)
+        (self.parent.load(Relaxed) as usize, self.rank as usize)
     }
 
     fn write_parent(&self, parent: usize) {
-        self.parent.set(parent as u32);
+        self.parent.store(parent as u32, Relaxed);
     }
 
     fn increment_rank(&mut self) {
@@ -440,23 +442,23 @@ impl MarkValue {
 
 #[derive(Debug)]
 struct MarkInfo {
-    parent: Cell<u32>,
+    parent: Atomic<u32>,
     rank: u8,
     value: MarkValue,
 }
 
 impl Partition for Box<MarkInfo> {
     fn create(parent: usize, rank: usize) -> Box<MarkInfo> {
-        Box::new(MarkInfo { parent: Cell::new(parent as u32), rank: rank as u8,
+        Box::new(MarkInfo { parent: Atomic::new(parent as u32), rank: rank as u8,
                             value: MarkValue::Unknown(None) })
     }
 
     fn read(&self) -> (usize /*parent*/, usize /*rank*/) {
-        (self.parent.get() as usize, self.rank as usize)
+        (self.parent.load(Relaxed) as usize, self.rank as usize)
     }
 
     fn write_parent(&self, parent: usize) {
-        self.parent.set(parent as u32);
+        self.parent.store(parent as u32, Relaxed);
     }
 
     fn increment_rank(&mut self) {
@@ -483,13 +485,13 @@ pub struct Context<R> {
     global_scope: Scope,
 
     // type variable information
-    next_tvar: Cell<TVar>,
+    next_tvar: TVar,
     tvar_sub: Constraints, // upper bound
     tvar_sup: Constraints, // lower bound
     tvar_eq: Constraints, // tight bound
 
     // mark information
-    next_mark: Cell<Mark>,
+    next_mark: Mark,
     mark_infos: Partitions<Box<MarkInfo>>,
 
     // module information
@@ -511,11 +513,11 @@ impl<R: Report> Context<R> {
             scope_maps: Vec::new(),
             spanned_slots: SpanMap::new(),
             global_scope: Scope::new(),
-            next_tvar: Cell::new(TVar(1)), // TVar(0) for the top-level return
+            next_tvar: TVar(1), // TVar(0) for the top-level return
             tvar_sub: Constraints::new("<:"),
             tvar_sup: Constraints::new(":>"),
             tvar_eq: Constraints::new("="),
-            next_mark: Cell::new(Mark(0)),
+            next_mark: Mark(0),
             mark_infos: Partitions::new(),
             opened: HashSet::new(),
             loaded: HashMap::new(),
@@ -703,14 +705,13 @@ impl<R: Report> Report for Context<R> {
 
 impl<R: Report> TypeContext for Context<R> {
     fn last_tvar(&self) -> Option<TVar> {
-        let tvar = self.next_tvar.get();
+        let tvar = self.next_tvar;
         if tvar == TVar(0) { None } else { Some(TVar(tvar.0 - 1)) }
     }
 
     fn gen_tvar(&mut self) -> TVar {
-        let tvar = self.next_tvar.get();
-        self.next_tvar.set(TVar(tvar.0 + 1));
-        tvar
+        self.next_tvar.0 += 1;
+        self.next_tvar
     }
 
     fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()> {
@@ -807,9 +808,8 @@ impl<R: Report> TypeContext for Context<R> {
     }
 
     fn gen_mark(&mut self) -> Mark {
-        let mark = self.next_mark.get();
-        self.next_mark.set(Mark(mark.0 + 1));
-        mark
+        self.next_mark.0 += 1;
+        self.next_mark
     }
 
     fn assert_mark_true(&mut self, mark: Mark) -> CheckResult<()> {
@@ -1590,10 +1590,14 @@ impl<'ctx, R: Report> TypeResolver for Env<'ctx, R> {
 }
 
 #[test]
-fn test_context_is_send() {
+fn test_context_is_send_and_sync() {
     use kailua_diag::NoReport;
+
     fn _assert_send<T: Send>(_x: T) {}
+    fn _assert_sync<T: Sync>(_x: T) {}
+
     _assert_send(Context::new(NoReport));
+    _assert_sync(Context::new(NoReport));
 }
 
 #[test]

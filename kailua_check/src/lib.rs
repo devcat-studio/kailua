@@ -6,6 +6,7 @@ extern crate kailua_syntax;
 #[macro_use] extern crate log;
 extern crate vec_map;
 extern crate take_mut;
+extern crate atomic;
 extern crate parking_lot;
 
 use std::cell::RefCell;
