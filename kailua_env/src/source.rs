@@ -443,6 +443,10 @@ impl Source {
         self.files.remove(&unit)
     }
 
+    pub fn file<'a>(&'a self, unit: Unit) -> Option<&'a SourceFile> {
+        self.files.get(&unit)
+    }
+
     pub fn files(&self) -> hash_map::Values<Unit, SourceFile> {
         self.files.values()
     }

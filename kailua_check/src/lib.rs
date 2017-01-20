@@ -16,7 +16,7 @@ use kailua_diag::Report;
 pub use diag::{Error, CheckResult};
 pub use ty::*;
 pub use options::{Options, FsOptions, FsSource};
-pub use env::{Id, IdDisplay, Frame, NameDef, TypeDef, ClassDef, Scope, Context, Env};
+pub use env::{Id, IdDisplay, Frame, NameDef, TypeDef, ClassDef, Scope, Context, Output, Env};
 pub use check::Checker;
 
 mod diag;

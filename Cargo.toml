@@ -6,6 +6,7 @@ members = [
     "kailua_syntax",
     "kailua_check",
     "kailua_vs",
+    "kailua_langsvr",
 ]
 
 [profile.release]

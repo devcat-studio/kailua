@@ -475,7 +475,11 @@ enum LoadStatus {
 // anything has to be retained across multiple files should be here
 pub struct Context<R> {
     report: R,
+    output: Output,
+}
 
+// a "reportless" version of Context, used for analysis
+pub struct Output {
     // name, scope and span information
     ids: HashMap<Id, NameDef>,
     scope_maps: Vec<ScopeMap<Name>>,
@@ -509,20 +513,22 @@ impl<R: Report> Context<R> {
     pub fn new(report: R) -> Context<R> {
         let mut ctx = Context {
             report: report,
-            ids: HashMap::new(),
-            scope_maps: Vec::new(),
-            spanned_slots: SpanMap::new(),
-            global_scope: Scope::new(),
-            next_tvar: TVar(1), // TVar(0) for the top-level return
-            tvar_sub: Constraints::new("<:"),
-            tvar_sup: Constraints::new(":>"),
-            tvar_eq: Constraints::new("="),
-            next_mark: Mark(0),
-            mark_infos: Partitions::new(),
-            opened: HashSet::new(),
-            loaded: HashMap::new(),
-            string_meta: None,
-            classes: Vec::new(),
+            output: Output {
+                ids: HashMap::new(),
+                scope_maps: Vec::new(),
+                spanned_slots: SpanMap::new(),
+                global_scope: Scope::new(),
+                next_tvar: TVar(1), // TVar(0) for the top-level return
+                tvar_sub: Constraints::new("<:"),
+                tvar_sup: Constraints::new(":>"),
+                tvar_eq: Constraints::new("="),
+                next_mark: Mark(0),
+                mark_infos: Partitions::new(),
+                opened: HashSet::new(),
+                loaded: HashMap::new(),
+                string_meta: None,
+                classes: Vec::new(),
+            }
         };
 
         // it is fine to return from the top-level, so we treat it as like a function frame
@@ -533,34 +539,6 @@ impl<R: Report> Context<R> {
 
     pub fn report(&self) -> &R {
         &self.report
-    }
-
-    pub fn spanned_slots(&self) -> &SpanMap<Slot> {
-        &self.spanned_slots
-    }
-
-    pub fn spanned_slots_mut(&mut self) -> &mut SpanMap<Slot> {
-        &mut self.spanned_slots
-    }
-
-    pub fn global_scope(&self) -> &Scope {
-        &self.global_scope
-    }
-
-    pub fn global_scope_mut(&mut self) -> &mut Scope {
-        &mut self.global_scope
-    }
-
-    pub fn get<'a>(&'a self, id: &Id) -> Option<&'a NameDef> {
-        self.ids.get(id)
-    }
-
-    pub fn get_mut<'a>(&'a mut self, id: &Id) -> Option<&'a mut NameDef> {
-        self.ids.get_mut(id)
-    }
-
-    pub fn all<'a>(&'a self) -> hash_map::Iter<'a, Id, NameDef> {
-        self.ids.iter()
     }
 
     pub fn open_library(&mut self, name: &Spanned<Name>,
@@ -602,10 +580,6 @@ impl<R: Report> Context<R> {
         self.loaded.entry(name.to_owned()).or_insert(LoadStatus::Ongoing(span));
     }
 
-    pub fn get_class_mut<'a>(&'a mut self, cid: ClassId) -> Option<&'a mut ClassDef> {
-        self.classes.get_mut(cid.0 as usize)
-    }
-
     pub fn make_class(&mut self, parent: Option<ClassId>, span: Span) -> ClassId {
         assert!(parent.map_or(true, |cid| (cid.0 as usize) < self.classes.len()));
 
@@ -621,7 +595,7 @@ impl<R: Report> Context<R> {
     }
 
     pub fn name_class(&mut self, cid: ClassId, name: Spanned<Name>) -> CheckResult<()> {
-        let cls = &mut self.classes[cid.0 as usize];
+        let cls = &mut self.output.classes[cid.0 as usize];
         if let Some(ref prevname) = cls.name {
             self.report.warn(name, m::RedefinedClassName {})
                        .note(prevname, m::PreviousClassName {})
@@ -630,33 +604,6 @@ impl<R: Report> Context<R> {
             cls.name = Some(name);
         }
         Ok(())
-    }
-
-    // returns a pair of type flags that is an exact lower and upper bound for that type
-    // used as an approximate type bound testing like arithmetics;
-    // better be replaced with a non-instantiating assertion though.
-    pub fn get_type_bounds(&self, ty: &Ty) -> (/*lb*/ Flags, /*ub*/ Flags) {
-        let flags = ty.flags();
-        let (lb, ub) = ty.get_tvar().map_or((T_NONE, T_NONE), |v| self.get_tvar_bounds(v));
-        (flags | lb, flags | ub)
-    }
-
-    // exactly resolves the type variable inside `ty` if possible
-    // this is a requirement for table indexing and function calls
-    pub fn resolve_exact_type<'a>(&mut self, ty: &Ty) -> Option<Ty> {
-        if let T::TVar(tv) = **ty {
-            if let Some(ty2) = self.get_tvar_exact_type(tv) {
-                Some(ty2.union_nil(ty.nil()).with_tag(ty.tag()))
-            } else {
-                None
-            }
-        } else {
-            Some(ty.clone())
-        }
-    }
-
-    pub fn get_string_meta(&self) -> Option<Spanned<Slot>> {
-        self.string_meta.clone()
     }
 
     // used by assert_mark_require_{eq,sup}
@@ -695,6 +642,162 @@ impl<R: Report> Context<R> {
         self.mark_infos.get_mut(&mark_).unwrap().value = value;
         ret
     }
+
+    pub fn into_output(self) -> Output {
+        self.output
+    }
+}
+
+impl Output {
+    pub fn spanned_slots(&self) -> &SpanMap<Slot> {
+        &self.spanned_slots
+    }
+
+    pub fn spanned_slots_mut(&mut self) -> &mut SpanMap<Slot> {
+        &mut self.spanned_slots
+    }
+
+    pub fn global_scope(&self) -> &Scope {
+        &self.global_scope
+    }
+
+    pub fn global_scope_mut(&mut self) -> &mut Scope {
+        &mut self.global_scope
+    }
+
+    pub fn get<'a>(&'a self, id: &Id) -> Option<&'a NameDef> {
+        self.ids.get(id)
+    }
+
+    pub fn get_mut<'a>(&'a mut self, id: &Id) -> Option<&'a mut NameDef> {
+        self.ids.get_mut(id)
+    }
+
+    pub fn all<'a>(&'a self) -> hash_map::Iter<'a, Id, NameDef> {
+        self.ids.iter()
+    }
+
+    pub fn get_class<'a>(&'a self, cid: ClassId) -> Option<&'a ClassDef> {
+        self.classes.get(cid.0 as usize)
+    }
+
+    pub fn get_class_mut<'a>(&'a mut self, cid: ClassId) -> Option<&'a mut ClassDef> {
+        self.classes.get_mut(cid.0 as usize)
+    }
+
+    // returns a pair of type flags that is an exact lower and upper bound for that type
+    // used as an approximate type bound testing like arithmetics;
+    // better be replaced with a non-instantiating assertion though.
+    pub fn get_type_bounds(&self, ty: &Ty) -> (/*lb*/ Flags, /*ub*/ Flags) {
+        let flags = ty.flags();
+        let (lb, ub) = ty.get_tvar().map_or((T_NONE, T_NONE), |v| self.get_tvar_bounds(v));
+        (flags | lb, flags | ub)
+    }
+
+    // exactly resolves the type variable inside `ty` if possible
+    // this is a requirement for table indexing and function calls
+    pub fn resolve_exact_type<'a>(&mut self, ty: &Ty) -> Option<Ty> {
+        if let T::TVar(tv) = **ty {
+            if let Some(ty2) = self.get_tvar_exact_type(tv) {
+                Some(ty2.union_nil(ty.nil()).with_tag(ty.tag()))
+            } else {
+                None
+            }
+        } else {
+            Some(ty.clone())
+        }
+    }
+
+    pub fn get_string_meta(&self) -> Option<Spanned<Slot>> {
+        self.string_meta.clone()
+    }
+
+    pub fn last_tvar(&self) -> Option<TVar> {
+        let tvar = self.next_tvar;
+        if tvar == TVar(0) { None } else { Some(TVar(tvar.0 - 1)) }
+    }
+
+    pub fn get_tvar_bounds(&self, tvar: TVar) -> (Flags /*lb*/, Flags /*ub*/) {
+        if let Some(b) = self.tvar_eq.get_bound(tvar).and_then(|b| b.bound.as_ref()) {
+            let flags = b.flags();
+            (flags, flags)
+        } else {
+            let lb = self.tvar_sup.get_bound(tvar).and_then(|b| b.bound.as_ref())
+                                                  .map_or(T_NONE, |b| b.flags());
+            let ub = self.tvar_sub.get_bound(tvar).and_then(|b| b.bound.as_ref())
+                                                  .map_or(!T_NONE, |b| b.flags());
+            assert_eq!(lb & !ub, T_NONE);
+            (lb, ub)
+        }
+    }
+
+    pub fn get_tvar_exact_type(&self, tvar: TVar) -> Option<Ty> {
+        self.tvar_eq.get_bound(tvar).and_then(|b| b.bound.as_ref()).cloned()
+    }
+
+    pub fn get_mark_exact(&self, mark: Mark) -> Option<bool> {
+        let m = self.mark_infos.find(mark.0 as usize);
+        if let Some(info) = self.mark_infos.map.get(&m) {
+            match info.value {
+                MarkValue::True => return Some(true),
+                MarkValue::False => return Some(false),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    pub fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result {
+        fn class_name(classes: &[ClassDef],
+                      cid: ClassId) -> Option<(&Spanned<Name>, &'static str)> {
+            let cid = cid.0 as usize;
+            if cid < classes.len() {
+                if let Some(ref name) = classes[cid].name {
+                    let q = if unquotable_name(&name) { "" } else { "`" };
+                    return Some((name, q));
+                }
+            }
+            None
+        }
+
+        match cls {
+            Class::Prototype(cid) => {
+                if let Some((name, q)) = class_name(&self.classes, cid) {
+                    write!(f, "<prototype for {}{:-?}{}>", q, name, q)
+                } else {
+                    write!(f, "<prototype for unnamed class #{}>", cid.0)
+                }
+            }
+            Class::Instance(cid) => {
+                if let Some((name, q)) = class_name(&self.classes, cid) {
+                    write!(f, "{}{:-?}{}", q, name, q)
+                } else {
+                    write!(f, "<unnamed class #{}>", cid.0)
+                }
+            }
+        }
+    }
+
+    pub fn is_subclass_of(&self, mut lhs: ClassId, rhs: ClassId) -> bool {
+        if lhs == rhs { return true; }
+
+        while let Some(parent) = self.classes[lhs.0 as usize].parent {
+            assert!(parent < lhs);
+            lhs = parent;
+            if lhs == rhs { return true; }
+        }
+
+        false
+    }
+}
+
+impl<R: Report> ops::Deref for Context<R> {
+    type Target = Output;
+    fn deref(&self) -> &Output { &self.output }
+}
+
+impl<R: Report> ops::DerefMut for Context<R> {
+    fn deref_mut(&mut self) -> &mut Output { &mut self.output }
 }
 
 impl<R: Report> Report for Context<R> {
@@ -705,8 +808,7 @@ impl<R: Report> Report for Context<R> {
 
 impl<R: Report> TypeContext for Context<R> {
     fn last_tvar(&self) -> Option<TVar> {
-        let tvar = self.next_tvar;
-        if tvar == TVar(0) { None } else { Some(TVar(tvar.0 - 1)) }
+        self.output.last_tvar()
     }
 
     fn gen_tvar(&mut self) -> TVar {
@@ -790,21 +892,11 @@ impl<R: Report> TypeContext for Context<R> {
     }
 
     fn get_tvar_bounds(&self, tvar: TVar) -> (Flags /*lb*/, Flags /*ub*/) {
-        if let Some(b) = self.tvar_eq.get_bound(tvar).and_then(|b| b.bound.as_ref()) {
-            let flags = b.flags();
-            (flags, flags)
-        } else {
-            let lb = self.tvar_sup.get_bound(tvar).and_then(|b| b.bound.as_ref())
-                                                  .map_or(T_NONE, |b| b.flags());
-            let ub = self.tvar_sub.get_bound(tvar).and_then(|b| b.bound.as_ref())
-                                                  .map_or(!T_NONE, |b| b.flags());
-            assert_eq!(lb & !ub, T_NONE);
-            (lb, ub)
-        }
+        self.output.get_tvar_bounds(tvar)
     }
 
     fn get_tvar_exact_type(&self, tvar: TVar) -> Option<Ty> {
-        self.tvar_eq.get_bound(tvar).and_then(|b| b.bound.as_ref()).cloned()
+        self.output.get_tvar_exact_type(tvar)
     }
 
     fn gen_mark(&mut self) -> Mark {
@@ -1040,58 +1132,15 @@ impl<R: Report> TypeContext for Context<R> {
     }
 
     fn get_mark_exact(&self, mark: Mark) -> Option<bool> {
-        let m = self.mark_infos.find(mark.0 as usize);
-        if let Some(info) = self.mark_infos.map.get(&m) {
-            match info.value {
-                MarkValue::True => return Some(true),
-                MarkValue::False => return Some(false),
-                _ => {}
-            }
-        }
-        None
+        self.output.get_mark_exact(mark)
     }
 
     fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result {
-        fn class_name(classes: &[ClassDef],
-                      cid: ClassId) -> Option<(&Spanned<Name>, &'static str)> {
-            let cid = cid.0 as usize;
-            if cid < classes.len() {
-                if let Some(ref name) = classes[cid].name {
-                    let q = if unquotable_name(&name) { "" } else { "`" };
-                    return Some((name, q));
-                }
-            }
-            None
-        }
-
-        match cls {
-            Class::Prototype(cid) => {
-                if let Some((name, q)) = class_name(&self.classes, cid) {
-                    write!(f, "<prototype for {}{:-?}{}>", q, name, q)
-                } else {
-                    write!(f, "<prototype for unnamed class #{}>", cid.0)
-                }
-            }
-            Class::Instance(cid) => {
-                if let Some((name, q)) = class_name(&self.classes, cid) {
-                    write!(f, "{}{:-?}{}", q, name, q)
-                } else {
-                    write!(f, "<unnamed class #{}>", cid.0)
-                }
-            }
-        }
+        self.output.fmt_class(cls, f)
     }
 
-    fn is_subclass_of(&self, mut lhs: ClassId, rhs: ClassId) -> bool {
-        if lhs == rhs { return true; }
-
-        while let Some(parent) = self.classes[lhs.0 as usize].parent {
-            assert!(parent < lhs);
-            lhs = parent;
-            if lhs == rhs { return true; }
-        }
-
-        false
+    fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool {
+        self.output.is_subclass_of(lhs, rhs)
     }
 }
 
