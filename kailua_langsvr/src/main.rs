@@ -203,50 +203,63 @@ fn on_file_changed(file: &WorkspaceFile, server: Arc<Server>, pool: &futures_cpu
     send_diagnostics_when_available(server, pool, file.ensure_chunk());
 }
 
-fn force_checking_thread(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
-    use std::io;
-    use std::thread;
-    use std::time::Duration;
+// in the reality, the "loop" is done via a chain of futures and the function immediately returns
+fn force_checking_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
+    use protocol::*;
 
-    let pool = workspace.read().pool().clone();
-    loop {
-        let output = workspace.read().ensure_check_output();
+    let pool;
+    let cancel_future;
+    let output_future;
+    {
+        let ws = workspace.read();
+        pool = ws.pool().clone();
+        // cancel_future should be earlier than output_future;
+        // otherwise it is possible that output_future is immediately canceled before cancel_future
+        cancel_future = ws.cancel_future();
+        output_future = ws.ensure_check_output();
+    };
 
-        if let Ok(fut) = output {
-            let server = server.clone();
-            let fut = fut.then(move |res| -> io::Result<()> {
-                let diags = match res {
-                    Ok(ref value_and_diags) => &value_and_diags.1,
-                    Err(ref e) => match **e {
-                        CancelError::Canceled => return Ok(()),
-                        CancelError::Error(ref diags) => diags,
-                    },
-                };
-                send_diagnostics(server, diags.clone())
-            });
+    if let Ok(fut) = output_future {
+        let server = server.clone();
+        let workspace = workspace.clone();
+        let fut = fut.then(move |res| {
+            // send diagnostics for this check
+            let diags = match res {
+                Ok(ref value_and_diags) => Some(&value_and_diags.1),
+                Err(ref e) => match **e {
+                    CancelError::Canceled => None,
+                    CancelError::Error(ref diags) => Some(diags),
+                },
+            };
+            if let Some(diags) = diags {
+                let _ = send_diagnostics(server.clone(), diags.clone());
+            }
 
-            // this should be forgotten as we won't make use of its result
-            pool.spawn(fut).forget();
-        }
+            // when the cancel was properly requested (even after the completion), restart the loop;
+            // if there were any error (most possibly the panic) stop it.
+            cancel_future.map(move |_| force_checking_loop(server, workspace))
+        });
 
-        thread::sleep(Duration::from_secs(10));
+        // this should be forgotten as we won't make use of its result
+        pool.spawn(fut).forget();
+    } else if workspace.read().has_read_config() {
+        // avoid a duplicate message if kailua.json is missing
+        let _ = server.send_notify("window/showMessage", ShowMessageParams {
+            type_: MessageType::Warning,
+            message: format!("There is no start path specified in `kailua.json`, \
+                              checking is disabled for this session."),
+        });
     }
 }
 
 fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
     use std::io::{self, Write};
-    use std::thread;
     use workspace::WorkspaceError;
     use protocol::*;
 
     let mut stderr = io::stderr();
-    let _checker_thread = if workspace.read().has_read_config() {
-        let server = server.clone();
-        let ws = workspace.clone();
-        Some(thread::spawn(move || force_checking_thread(server, ws)))
-    } else {
-        None
-    };
+
+    force_checking_loop(server.clone(), workspace.clone());
 
     'restart: loop {
         let res = server.recv().unwrap();

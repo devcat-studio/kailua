@@ -19,7 +19,7 @@ use kailua_syntax::{Lexer, Nest, NestedToken, Parser, Chunk};
 use kailua_check::{self, FsSource, FsOptions, Context, Output};
 
 use diags::{self, ReportTree};
-use futureutils::{CancelError, CancelToken};
+use futureutils::{CancelError, CancelToken, CancelFuture};
 use protocol;
 
 #[derive(Clone, Debug)]
@@ -570,6 +570,10 @@ impl Workspace {
 
     pub fn cancel(&self) {
         self.shared.write().cancel();
+    }
+
+    pub fn cancel_future(&self) -> CancelFuture {
+        self.shared.read().cancel_token.future()
     }
 
     pub fn ensure_check_output(&self) -> WorkspaceResult<ReportFuture<Output>> {
