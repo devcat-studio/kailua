@@ -20,6 +20,7 @@ futures-cpupool = { git = "https://github.com/alexcrichton/futures-rs/", rev = "
 owning_ref = "0.2"
 num_cpus = "1.2"
 parking_lot = "0.3"
+parse-generics-shim = "0.1.0"
 kailua_env = { path = "../kailua_env" }
 kailua_diag = { path = "../kailua_diag" }
 kailua_syntax = { path = "../kailua_syntax" }

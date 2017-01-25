@@ -14,7 +14,7 @@ use url::Url;
 use parking_lot::{RwLock, RwLockWriteGuard};
 
 use kailua_env::{Unit, Span, Source, SourceFile};
-use kailua_diag::{self, Report};
+use kailua_diag::{self, Report, Localize, Localized};
 use kailua_syntax::{Lexer, Nest, NestedToken, Parser, Chunk};
 use kailua_check::{self, FsSource, FsOptions, Context, Output};
 
@@ -510,6 +510,10 @@ impl Workspace {
         }
         self.config_read = true;
         Ok(())
+    }
+
+    pub fn localize(&self, msg: &Localize) -> String {
+        Localized::new(&msg, &self.shared.read().message_lang).to_string()
     }
 
     pub fn file<'a>(&'a self, uri: &str) -> Option<WorkspaceFile> {

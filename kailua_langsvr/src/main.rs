@@ -10,8 +10,9 @@ extern crate futures_cpupool;
 extern crate owning_ref;
 extern crate num_cpus;
 extern crate parking_lot;
+#[macro_use] extern crate parse_generics_shim;
 extern crate kailua_env;
-extern crate kailua_diag;
+#[macro_use] extern crate kailua_diag;
 extern crate kailua_syntax;
 extern crate kailua_check;
 
@@ -20,6 +21,7 @@ pub mod server;
 pub mod diags;
 pub mod workspace;
 pub mod futureutils;
+pub mod message;
 
 use std::io;
 use std::sync::Arc;
@@ -94,6 +96,7 @@ fn initialize_workspace(server: &Server) -> Workspace {
     use futures_cpupool::CpuPool;
     use workspace::Workspace;
     use protocol::*;
+    use message as m;
 
     let mut stderr = io::stderr();
 
@@ -122,9 +125,7 @@ fn initialize_workspace(server: &Server) -> Workspace {
                     if let Err(e) = workspace.read_config() {
                         let _ = server.send_notify("window/showMessage", ShowMessageParams {
                             type_: MessageType::Warning,
-                            message: format!("Cannot read `kailua.json` in the project \
-                                              (cause: {}), checking is disabled for \
-                                              this session.", e),
+                            message: workspace.localize(&m::CannotReadConfig { error: &e }),
                         });
                     }
 
@@ -206,6 +207,7 @@ fn on_file_changed(file: &WorkspaceFile, server: Arc<Server>, pool: &futures_cpu
 // in the reality, the "loop" is done via a chain of futures and the function immediately returns
 fn force_checking_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
     use protocol::*;
+    use message as m;
 
     let pool;
     let cancel_future;
@@ -246,8 +248,7 @@ fn force_checking_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
         // avoid a duplicate message if kailua.json is missing
         let _ = server.send_notify("window/showMessage", ShowMessageParams {
             type_: MessageType::Warning,
-            message: format!("There is no start path specified in `kailua.json`, \
-                              checking is disabled for this session."),
+            message: workspace.read().localize(&m::NoStartPath {}),
         });
     }
 }
