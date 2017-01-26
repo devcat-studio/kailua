@@ -4,7 +4,7 @@ extern crate term;
 extern crate kailua_env;
 extern crate kailua_diag;
 #[macro_use] extern crate log;
-#[macro_use] extern crate clap;
+extern crate clap;
 
 use std::str;
 use std::fmt;

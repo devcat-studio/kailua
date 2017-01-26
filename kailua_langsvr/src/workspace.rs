@@ -13,7 +13,7 @@ use serde_json;
 use url::Url;
 use parking_lot::{RwLock, RwLockWriteGuard};
 
-use kailua_env::{Unit, Span, Source, SourceFile};
+use kailua_env::{Unit, Pos, Span, Source, SourceFile, SourceSlice};
 use kailua_diag::{self, Report, Localize, Localized};
 use kailua_syntax::{Lexer, Nest, NestedToken, Parser, Chunk};
 use kailua_check::{self, FsSource, FsOptions, Context, Output};
@@ -73,6 +73,44 @@ fn uri_to_path(uri: &str) -> WorkspaceResult<PathBuf> {
     }
 
     Err(WorkspaceError("non-file URI"))
+}
+
+fn position_to_pos(file: &SourceFile, pos: &protocol::Position) -> Pos {
+    if let Some(mut span) = file.line_spans().nth(pos.line as usize) {
+        let begin = span.begin().to_usize();
+        let end = span.end().to_usize();
+
+        let mut k = pos.character as usize;
+        match file.data() {
+            SourceSlice::U8(s) => {
+                // locate k-th non-continuation byte in s where k is the 0-based column index.
+                //
+                // this code seems to be overly complicated. this is necessary because
+                // we need to detect the end of the line, and a plain .nth(k) cannot determine
+                // if the line has k exact scalar values or k is just out of bound.
+                let iter = span.zip(s[begin..end].iter());
+                for (p, _) in iter.filter(|&(_, &b)| b & 0b1100_0000 != 0b1000_0000) {
+                    if k == 0 { return p; }
+                    k -= 1;
+                }
+                if k == 0 { return span.end(); }
+                Pos::dummy()
+            },
+
+            SourceSlice::U16(_) => {
+                // same here, but the logic is much simpler
+                if span.len() == k {
+                    span.end()
+                } else if let Some(p) = span.nth(k) {
+                    p
+                } else {
+                    Pos::dummy()
+                }
+            },
+        }
+    } else {
+        Pos::dummy()
+    }
 }
 
 fn collect_tokens(source: &Source, span: Span, report: &Report) -> Vec<NestedToken> {
@@ -140,6 +178,9 @@ struct WorkspaceFileInner {
     pool: Arc<CpuPool>,
     cancel_token: CancelToken,
 
+    source: Arc<RwLock<Source>>,
+    message_lang: String,
+
     path: PathBuf,
     unit: Unit,
 
@@ -148,8 +189,10 @@ struct WorkspaceFileInner {
 
     // each parts are calculated on demand; in either case diagnostics are produced
     span: Option<IoFuture<Span>>,
-    tokens: Option<ReportFuture<Vec<NestedToken>>>,
-    chunk: Option<ReportFuture<Chunk>>,
+    tokens: Option<ReportFuture<Arc<Vec<NestedToken>>>>,
+    chunk: Option<ReportFuture<Arc<Chunk>>>,
+
+    last_chunk: Option<Arc<Chunk>>,
 }
 
 type Inner = Arc<RwLock<WorkspaceFileInner>>;
@@ -167,30 +210,36 @@ impl fmt::Debug for WorkspaceFile {
          .field("workspace", &Ellipsis) // avoid excess output
          .field("pool", &Ellipsis)
          .field("cancel_token", &inner.cancel_token)
+         .field("source", &Ellipsis)
+         .field("message_lang", &inner.message_lang)
          .field("path", &inner.path)
          .field("unit", &inner.unit)
          .field("document", &inner.document)
          .field("span", &inner.span.as_ref().map(|_| Ellipsis))
          .field("tokens", &inner.tokens.as_ref().map(|_| Ellipsis))
          .field("chunk", &inner.chunk.as_ref().map(|_| Ellipsis))
+         .field("last_chunk", &inner.last_chunk.as_ref().map(|_| Ellipsis))
          .finish()
     }
 }
 
 impl WorkspaceFile {
     fn new(shared: &Arc<RwLock<WorkspaceShared>>, pool: &Arc<CpuPool>,
-           path: PathBuf) -> WorkspaceFile {
+           source: &Arc<RwLock<Source>>, message_lang: &str, path: PathBuf) -> WorkspaceFile {
         WorkspaceFile {
             inner: Arc::new(RwLock::new(WorkspaceFileInner {
                 workspace: shared.clone(),
                 pool: pool.clone(),
                 cancel_token: CancelToken::new(),
+                source: source.clone(),
+                message_lang: message_lang.to_owned(),
                 path: path,
                 unit: Unit::dummy(),
                 document: None,
                 span: None,
                 tokens: None,
                 chunk: None,
+                last_chunk: None,
             })),
         }
     }
@@ -227,7 +276,7 @@ impl WorkspaceFile {
     fn ensure_span_with_inner(spare_inner: Inner, inner: &mut InnerWrite) -> IoFuture<Span> {
         if inner.span.is_none() {
             let fut = future::lazy(move || -> Result<Span, CancelError<io::Error>> {
-                let inner = spare_inner.read();
+                let mut inner = spare_inner.write();
                 inner.cancel_token.keep_going()?;
 
                 let file = if let Some(ref doc) = inner.document {
@@ -236,8 +285,14 @@ impl WorkspaceFile {
                 } else {
                     SourceFile::from_file(&inner.path)?
                 };
-                let mut ws = inner.workspace.write();
-                let span = ws.source.add(file);
+
+                let span = if inner.unit.is_dummy() {
+                    let span = inner.source.write().add(file);
+                    inner.unit = span.unit();
+                    span
+                } else {
+                    inner.source.write().replace(inner.unit, file).unwrap()
+                };
                 Ok(span)
             });
 
@@ -253,7 +308,7 @@ impl WorkspaceFile {
     }
 
     fn ensure_tokens_with_inner(spare_inner: Inner,
-                                inner: &mut InnerWrite) -> ReportFuture<Vec<NestedToken>> {
+                                inner: &mut InnerWrite) -> ReportFuture<Arc<Vec<NestedToken>>> {
         if inner.tokens.is_none() {
             let span_fut = Self::ensure_span_with_inner(spare_inner.clone(), inner);
 
@@ -271,15 +326,14 @@ impl WorkspaceFile {
                 let inner = spare_inner.read();
                 inner.cancel_token.keep_going()?;
 
-                let ws = inner.workspace.read();
-                let source = &ws.source;
+                let source = inner.source.read();
 
                 let path = source.file(span.unit()).map(|f| f.path());
-                let diags = ReportTree::new(&ws.message_lang, path);
+                let diags = ReportTree::new(&inner.message_lang, path);
 
-                let report = diags.report(|r| diags::translate_diag(r, source));
-                let tokens = collect_tokens(source, span, &report);
-                Ok((tokens, diags))
+                let report = diags.report(|r| diags::translate_diag(r, &source));
+                let tokens = collect_tokens(&source, span, &report);
+                Ok((Arc::new(tokens), diags))
             });
 
             inner.tokens = Some(inner.pool.spawn(fut).boxed().shared());
@@ -288,30 +342,37 @@ impl WorkspaceFile {
         inner.tokens.as_ref().unwrap().clone()
     }
 
-    pub fn ensure_tokens(&self) -> ReportFuture<Vec<NestedToken>> {
+    pub fn ensure_tokens(&self) -> ReportFuture<Arc<Vec<NestedToken>>> {
         let cloned = self.inner.clone();
         Self::ensure_tokens_with_inner(cloned, &mut self.inner.write())
     }
 
     fn ensure_chunk_with_inner(spare_inner: Inner,
-                               inner: &mut InnerWrite) -> ReportFuture<Chunk> {
+                               inner: &mut InnerWrite) -> ReportFuture<Arc<Chunk>> {
         if inner.chunk.is_none() {
             let tokens_fut = Self::ensure_tokens_with_inner(spare_inner.clone(), inner);
 
             let fut = tokens_fut.map_err(|e| (*e).clone()).and_then(move |tokens_ret| {
-                let tokens = tokens_ret.0.clone();
+                let tokens = (*tokens_ret.0).clone();
                 let parent_diags = tokens_ret.1.clone();
 
-                let inner = spare_inner.read();
+                let mut inner = spare_inner.write();
                 inner.cancel_token.keep_going()?;
 
-                let ws = inner.workspace.read();
-                let diags = ReportTree::new(&ws.message_lang, None);
+                let diags = ReportTree::new(&inner.message_lang, None);
                 diags.add_parent(parent_diags);
 
-                let report = diags.report(|r| diags::translate_diag(r, &ws.source));
-                match parse_to_chunk(tokens, &report) {
-                    Ok(chunk) => Ok((chunk, diags)),
+                // in this future source access is only needed for reporting
+                let chunk = {
+                    let report = diags.report(|r| diags::translate_diag(r, &inner.source.read()));
+                    parse_to_chunk(tokens, &report)
+                };
+                match chunk {
+                    Ok(chunk) => {
+                        let chunk = Arc::new(chunk);
+                        inner.last_chunk = Some(chunk.clone());
+                        Ok((chunk, diags))
+                    },
                     Err(_) => Err(From::from(diags)),
                 }
             });
@@ -322,9 +383,31 @@ impl WorkspaceFile {
         inner.chunk.as_ref().unwrap().clone()
     }
 
-    pub fn ensure_chunk(&self) -> ReportFuture<Chunk> {
+    pub fn ensure_chunk(&self) -> ReportFuture<Arc<Chunk>> {
         let cloned = self.inner.clone();
         Self::ensure_chunk_with_inner(cloned, &mut self.inner.write())
+    }
+
+    pub fn last_chunk(&self) -> Option<Arc<Chunk>> {
+        self.inner.read().last_chunk.clone()
+    }
+
+    pub fn translate_position(&self, pos: &protocol::Position) -> BoxFuture<Pos, CancelError<()>> {
+        let pos = pos.clone();
+        let source = self.inner.read().source.clone();
+        self.ensure_span().then(move |res| {
+            match res {
+                Ok(span) => {
+                    let source = source.read();
+                    if let Some(file) = source.file(span.unit()) {
+                        Ok(position_to_pos(file, &pos))
+                    } else {
+                        Ok(Pos::dummy())
+                    }
+                },
+                Err(e) => Err(e.as_ref().map(|_| ()))
+            }
+        }).boxed()
     }
 
     pub fn apply_change(&mut self, version: u64,
@@ -350,21 +433,19 @@ impl WorkspaceFile {
     }
 }
 
-// a portion of Workspace that should be shared across WorkspaceFile
+// a portion of Workspace that should be shared across WorkspaceFile.
+// this should not be modified in the normal cases (otherwise it can be easily deadlocked),
+// with an exception of cascading cancellation.
 struct WorkspaceShared {
-    message_lang: String,
-    source: Source,
-
     cancel_token: CancelToken, // used for stopping ongoing checks
 
-    check_output: Option<ReportFuture<Output>>,
+    check_output: Option<ReportFuture<Arc<Output>>>,
+    last_check_output: Option<Arc<Output>>,
 }
 
 impl fmt::Debug for WorkspaceShared {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("WorkspaceShared")
-         .field("message_lang", &self.message_lang)
-         .field("source", &Ellipsis)
          .field("cancel_token", &self.cancel_token)
          .field("check_output", &self.check_output.as_ref().map(|_| Ellipsis))
          .finish()
@@ -381,13 +462,14 @@ impl WorkspaceShared {
 }
 
 struct WorkspaceFsSourceInner {
-    shared: Arc<RwLock<WorkspaceShared>>,
-    cancel_token: CancelToken, // will be used independently of shared
+    cancel_token: CancelToken, // will be used independently of WorkspaceShared
     files: Arc<RwLock<HashMap<PathBuf, WorkspaceFile>>>,
 
+    source: Arc<RwLock<Source>>,
     temp_units: Vec<Unit>, // will be gone after checking
     temp_files: HashMap<PathBuf, Chunk>,
 
+    message_lang: String,
     root_report: ReportTree,
 }
 
@@ -409,7 +491,7 @@ impl FsSource for WorkspaceFsSource {
             let (chunk, diags) = match file.ensure_chunk().wait() {
                 Ok(res) => {
                     let (ref chunk, ref diags) = *res;
-                    (Some(chunk.clone()), diags.clone())
+                    (Some((**chunk).clone()), diags.clone())
                 },
                 Err(res) => match *res {
                     CancelError::Canceled => return Err("cancel requested".to_string()),
@@ -430,19 +512,20 @@ impl FsSource for WorkspaceFsSource {
 
         // try to read the file (and finally raise an error if it can't be read)
 
-        let shared = fssource.shared.clone();
-        let mut shared = shared.write();
-
         let sourcefile = SourceFile::from_file(path).map_err(|e| e.to_string())?;
-        let span = shared.source.add(sourcefile);
+        let span = fssource.source.write().add(sourcefile);
         fssource.temp_units.push(span.unit());
 
-        let diags = ReportTree::new(&shared.message_lang, path.to_str());
+        let diags = ReportTree::new(&fssource.message_lang, path.to_str());
         fssource.root_report.add_parent(diags.clone());
 
-        let report = diags.report(|r| diags::translate_diag(r, &shared.source));
-        let tokens = collect_tokens(&shared.source, span, &report);
-        match parse_to_chunk(tokens, &report) {
+        let chunk = {
+            let source = fssource.source.read();
+            let report = diags.report(|r| diags::translate_diag(r, &source));
+            let tokens = collect_tokens(&source, span, &report);
+            parse_to_chunk(tokens, &report)
+        };
+        match chunk {
             Ok(chunk) => {
                 fssource.temp_files.insert(path.to_owned(), chunk.clone());
                 Ok(Some(chunk))
@@ -455,10 +538,15 @@ impl FsSource for WorkspaceFsSource {
 pub struct Workspace {
     base_dir: PathBuf,
     start_path: Option<PathBuf>,
+    message_lang: String,
     config_read: bool,
 
     pool: Arc<CpuPool>,
     files: Arc<RwLock<HashMap<PathBuf, WorkspaceFile>>>,
+
+    // conceptually this belongs to shared, but it is frequently updated by futures
+    // unlike all other fields in shared, so getting this out avoids deadlock
+    source: Arc<RwLock<Source>>,
 
     shared: Arc<RwLock<WorkspaceShared>>,
 }
@@ -468,9 +556,11 @@ impl fmt::Debug for Workspace {
         f.debug_struct("Workspace")
          .field("base_dir", &self.base_dir)
          .field("start_path", &self.start_path)
+         .field("message_lang", &self.message_lang)
          .field("config_read", &self.config_read)
          .field("pool", &Ellipsis)
          .field("files", &self.files)
+         .field("source", &Ellipsis)
          .field("shared", &self.shared)
          .finish()
     }
@@ -481,14 +571,15 @@ impl Workspace {
         Workspace {
             base_dir: base_dir,
             start_path: None,
+            message_lang: default_lang,
             config_read: false,
             pool: pool,
             files: Arc::new(RwLock::new(HashMap::new())),
+            source: Arc::new(RwLock::new(Source::new())),
             shared: Arc::new(RwLock::new(WorkspaceShared {
-                message_lang: default_lang,
-                source: Source::new(),
                 cancel_token: CancelToken::new(),
                 check_output: None,
+                last_check_output: None,
             })),
         }
     }
@@ -505,15 +596,14 @@ impl Workspace {
         let config = WorkspaceConfig::read(&self.base_dir)?;
         self.start_path = Some(config.start_path);
         if let Some(lang) = config.message_lang {
-            let mut shared = self.shared.write();
-            shared.message_lang = lang;
+            self.message_lang = lang;
         }
         self.config_read = true;
         Ok(())
     }
 
     pub fn localize(&self, msg: &Localize) -> String {
-        Localized::new(&msg, &self.shared.read().message_lang).to_string()
+        Localized::new(&msg, &self.message_lang).to_string()
     }
 
     pub fn file<'a>(&'a self, uri: &str) -> Option<WorkspaceFile> {
@@ -526,11 +616,10 @@ impl Workspace {
     pub fn open_file(&self, item: protocol::TextDocumentItem) -> WorkspaceResult<()> {
         let path = uri_to_path(&item.uri)?;
 
-        let shared = &self.shared;
-        let pool = &self.pool;
         let mut files = self.files.write();
         let file = files.entry(path.clone()).or_insert_with(|| {
-            WorkspaceFile::new(shared, pool, path)
+            WorkspaceFile::new(&self.shared, &self.pool, &self.source,
+                               &self.message_lang, path)
         });
 
         file.update_document(|doc| {
@@ -543,11 +632,10 @@ impl Workspace {
     }
 
     fn ensure_file(&self, path: &Path) -> WorkspaceFile {
-        let shared = &self.shared;
-        let pool = &self.pool;
         let mut files = self.files.write();
         files.entry(path.to_owned()).or_insert_with(|| {
-            WorkspaceFile::new(shared, pool, path.to_owned())
+            WorkspaceFile::new(&self.shared, &self.pool, &self.source,
+                               &self.message_lang, path.to_owned())
         }).clone()
     }
 
@@ -559,7 +647,7 @@ impl Workspace {
         let ok = if let Some(file) = files.remove(&path) {
             file.cancel();
             let file = file.inner.read();
-            let sourcefile = self.shared.write().source.remove(file.unit);
+            let sourcefile = self.source.write().remove(file.unit);
             file.document.is_some() && sourcefile.is_some()
         } else {
             false
@@ -580,7 +668,7 @@ impl Workspace {
         self.shared.read().cancel_token.future()
     }
 
-    pub fn ensure_check_output(&self) -> WorkspaceResult<ReportFuture<Output>> {
+    pub fn ensure_check_output(&self) -> WorkspaceResult<ReportFuture<Arc<Output>>> {
         let start_path = match self.start_path {
             Some(ref path) => path,
             None => {
@@ -594,15 +682,17 @@ impl Workspace {
         if shared.check_output.is_none() {
             // get a future for the entrypoint's chunk
             let start_chunk_fut = self.ensure_file(start_path).ensure_chunk();
+
             let base_dir = self.base_dir.clone();
             let files = self.files.clone();
+            let source = self.source.clone();
             let cancel_token = shared.cancel_token.clone();
-            let message_lang = shared.message_lang.clone();
+            let message_lang = self.message_lang.clone();
 
             let fut = start_chunk_fut.map_err(|e| (*e).clone()).and_then(move |chunk_ret| {
                 cancel_token.keep_going()?;
 
-                let start_chunk = chunk_ret.0.clone();
+                let start_chunk = (*chunk_ret.0).clone();
                 let diags = ReportTree::new(&message_lang, None);
                 diags.add_parent(chunk_ret.1.clone());
 
@@ -612,21 +702,22 @@ impl Workspace {
                 // by cloning required values prematurely.
                 let fssource = WorkspaceFsSource {
                     inner: Rc::new(RefCell::new(WorkspaceFsSourceInner {
-                        shared: spare_shared.clone(),
                         cancel_token: cancel_token.clone(),
                         files: files,
+                        source: source.clone(),
                         temp_units: Vec::new(),
                         temp_files: HashMap::new(),
+                        message_lang: message_lang.clone(),
                         root_report: diags.clone(),
                     })),
                 };
 
                 let opts = Rc::new(RefCell::new(FsOptions::new(fssource.clone(), base_dir)));
                 let (ok, output) = {
-                    // the translation should NOT lock the entire WorkspaceShared.
+                    // the translation should NOT lock the source (read or write) indefinitely.
                     // we also want to drop the proxy report as fast as possible.
                     let mut context = Context::new(diags.report(|r| {
-                        diags::translate_diag(r, &spare_shared.read().source)
+                        diags::translate_diag(r, &source.read())
                     }));
                     let ok = kailua_check::check_from_chunk(&mut context, start_chunk,
                                                             opts).is_ok();
@@ -637,13 +728,11 @@ impl Workspace {
                 let fssource = Rc::try_unwrap(fssource.inner).ok().expect("no single owner");
                 let fssource = fssource.into_inner();
 
-                // *now* we can get the write lock and do the cleanup
-                let mut shared = spare_shared.write();
-
                 // remove all temporarily added chunks from the source
                 // XXX ideally this should be cached as much as possible though
+                let mut source = source.write();
                 for unit in fssource.temp_units {
-                    let sourcefile = shared.source.remove(unit);
+                    let sourcefile = source.remove(unit);
                     assert!(sourcefile.is_some());
                 }
 
@@ -651,6 +740,8 @@ impl Workspace {
                 cancel_token.keep_going()?;
 
                 if ok {
+                    let output = Arc::new(output);
+                    spare_shared.write().last_check_output = Some(output.clone());
                     Ok((output, diags))
                 } else {
                     Err(From::from(diags))
@@ -661,6 +752,10 @@ impl Workspace {
         }
 
         Ok(shared.check_output.as_ref().unwrap().clone())
+    }
+
+    pub fn last_check_output(&self) -> Option<Arc<Output>> {
+        self.shared.read().last_check_output.clone()
     }
 }
 

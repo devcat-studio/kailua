@@ -12,16 +12,16 @@ serde = "0.9"
 serde_derive = "0.9"
 serde_json = "0.9"
 url = "1.2"
-# XXX needs not yet released feature!
-#futures = "0.1.6"
-#futures-cpupool = "0.1.2"
-futures = { git = "https://github.com/alexcrichton/futures-rs/", rev = "ce09c16" }
-futures-cpupool = { git = "https://github.com/alexcrichton/futures-rs/", rev = "ce09c16" }
+futures = "=0.1.9"
+futures-cpupool = "=0.1.2"
+tokio-timer = "0.1.0"
 owning_ref = "0.2"
 num_cpus = "1.2"
 parking_lot = "0.3"
+errln = "0.1"
 parse-generics-shim = "0.1.0"
 kailua_env = { path = "../kailua_env" }
 kailua_diag = { path = "../kailua_diag" }
 kailua_syntax = { path = "../kailua_syntax" }
 kailua_check = { path = "../kailua_check" }
+

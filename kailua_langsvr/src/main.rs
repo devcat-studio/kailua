@@ -4,9 +4,11 @@ extern crate serde_json;
 extern crate url;
 extern crate futures;
 extern crate futures_cpupool;
+extern crate tokio_timer;
 extern crate owning_ref;
 extern crate num_cpus;
 extern crate parking_lot;
+#[macro_use] extern crate errln;
 #[macro_use] extern crate parse_generics_shim;
 extern crate kailua_env;
 #[macro_use] extern crate kailua_diag;
@@ -19,11 +21,13 @@ pub mod diags;
 pub mod workspace;
 pub mod futureutils;
 pub mod message;
+pub mod completion;
 
 use std::io;
 use std::sync::Arc;
 use parking_lot::RwLock;
-use futures::Future;
+use futures::{Future, BoxFuture};
+use tokio_timer::Timer;
 
 use server::Server;
 use futureutils::CancelError;
@@ -33,11 +37,8 @@ use workspace::{Workspace, WorkspaceFile};
 fn connect_to_client() -> Server {
     use std::env;
     use std::net::{SocketAddr, TcpStream};
-    use std::io::{self, Write};
     use std::process;
     use server::Server;
-
-    let mut stderr = io::stderr();
 
     let mut server = None;
     if let Some(firstopt) = env::args().nth(1) {
@@ -48,7 +49,7 @@ fn connect_to_client() -> Server {
                 match TcpStream::connect(ip).and_then(Server::from_tcp_stream) {
                     Ok(s) => server = Some(s),
                     Err(e) => {
-                        let _ = writeln!(stderr, "*** Couldn't connect to the client: {}", e);
+                        errln!("*** Couldn't connect to the client: {}", e);
                         process::exit(1);
                     }
                 }
@@ -57,8 +58,8 @@ fn connect_to_client() -> Server {
     }
 
     if server.is_none() {
-        let _ = writeln!(stderr, "Kailua language server is intended to be used with VS Code. \
-                                  Use the Kailua extension instead.");
+        errln!("Kailua language server is intended to be used with VS Code. \
+                Use the Kailua extension instead.");
         process::exit(1);
     }
 
@@ -87,33 +88,45 @@ fn parse_init_options(opts: Option<serde_json::Value>) -> InitOptions {
 }
 
 fn initialize_workspace(server: &Server) -> Workspace {
-    use std::cmp;
     use std::path::PathBuf;
-    use std::io::{self, Write};
     use futures_cpupool::CpuPool;
     use workspace::Workspace;
     use protocol::*;
     use message as m;
 
-    let mut stderr = io::stderr();
-
     loop {
         let res = server.recv().unwrap();
         let req = if let Some(req) = res { req } else { continue };
-        writeln!(stderr, "read: {:#?}", req).unwrap();
+        errln!("read: {:#?}", req);
 
         match req {
             Request::Initialize(id, params) => {
                 if let Some(dir) = params.rootPath {
                     let initopts = parse_init_options(params.initializationOptions);
-                    let ncpus = cmp::max(num_cpus::get(), 2); // 2+ workers required by checker
-                    let pool = Arc::new(CpuPool::new(ncpus));
+
+                    // due to the current architecture, chained futures take the worker up
+                    // without doing any work (fortunately, no CPU time as well).
+                    // therefore we should prepare enough workers for concurrent execution.
+                    //
+                    // since the longest-running chain would be span-tokens-chunk-output,
+                    // we need at least 4x the number of CPUs to use all CPUs at the worst case.
+                    let nworkers = num_cpus::get() * 4;
+                    let pool = Arc::new(CpuPool::new(nworkers));
+
                     let mut workspace = Workspace::new(PathBuf::from(dir), pool,
                                                        initopts.default_locale);
 
                     let _ = server.send_ok(id, InitializeResult {
                         capabilities: ServerCapabilities {
                             textDocumentSync: TextDocumentSyncKind::Full,
+                            completionProvider: Some(CompletionOptions {
+                                resolveProvider: false,
+                                triggerCharacters:
+                                    ".:ABCDEFGHIJKLMNOPQRSTUVWXYZ\
+                                       abcdefghijklmnopqrstuvwxyz".chars()
+                                                                  .map(|c| c.to_string())
+                                                                  .collect(),
+                            }),
                             ..Default::default()
                         },
                     });
@@ -202,67 +215,82 @@ fn on_file_changed(file: &WorkspaceFile, server: Arc<Server>, pool: &futures_cpu
 }
 
 // in the reality, the "loop" is done via a chain of futures and the function immediately returns
-fn force_checking_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
+fn checking_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>,
+                 timer: Timer) -> BoxFuture<(), ()> {
+    use std::time::Duration;
+    use futures;
+    use futureutils::FutureExt;
     use protocol::*;
     use message as m;
 
-    let pool;
-    let cancel_future;
-    let output_future;
-    {
-        let ws = workspace.read();
-        pool = ws.pool().clone();
-        // cancel_future should be earlier than output_future;
-        // otherwise it is possible that output_future is immediately canceled before cancel_future
-        cancel_future = ws.cancel_future();
-        output_future = ws.ensure_check_output();
-    };
+    let cancel_future = workspace.read().cancel_future();
 
-    if let Ok(fut) = output_future {
-        let server = server.clone();
-        let workspace = workspace.clone();
-        let fut = fut.then(move |res| {
-            // send diagnostics for this check
-            let diags = match res {
-                Ok(ref value_and_diags) => Some(&value_and_diags.1),
-                Err(ref e) => match **e {
-                    CancelError::Canceled => None,
-                    CancelError::Error(ref diags) => Some(diags),
-                },
-            };
-            if let Some(diags) = diags {
-                let _ = send_diagnostics(server.clone(), diags.clone());
+    // wait for a bit before actually starting the check (if not requested by completion etc).
+    // if the cancel was requested during the wait we quickly restart the loop.
+    const DELAY_MILLIS: u64 = 750;
+    cancel_future.clone().map(|_| true).erase_err().select({
+        Future::map(timer.sleep(Duration::from_millis(DELAY_MILLIS)), |_| false).erase_err()
+    }).erase_err().and_then(move |(canceled, _next)| {
+        if canceled {
+            // immediately restart the loop with a fresh CancelFuture
+            return checking_loop(server, workspace, timer);
+        }
+
+        let output_fut = workspace.read().ensure_check_output();
+        if let Ok(fut) = output_fut {
+            let server_ = server.clone();
+            fut.then(move |res| {
+                // send diagnostics for this check
+                let diags = match res {
+                    Ok(ref value_and_diags) => Some(&value_and_diags.1),
+                    Err(ref e) => match **e {
+                        CancelError::Canceled => None,
+                        CancelError::Error(ref diags) => Some(diags),
+                    },
+                };
+                if let Some(diags) = diags {
+                    let _ = send_diagnostics(server_, diags.clone());
+                }
+                Ok(())
+            }).and_then(move |_| {
+                // when the cancel was properly requested (even after the completion),
+                // restart the loop; if there were any error (most possibly the panic) stop it.
+                cancel_future
+            }).and_then(move |_| {
+                checking_loop(server, workspace, timer)
+            }).boxed()
+        } else {
+            // the loop terminates, possibly with a message
+            if workspace.read().has_read_config() {
+                // avoid a duplicate message if kailua.json is missing
+                let _ = server.send_notify("window/showMessage", ShowMessageParams {
+                    type_: MessageType::Warning,
+                    message: workspace.read().localize(&m::NoStartPath {}),
+                });
             }
-
-            // when the cancel was properly requested (even after the completion), restart the loop;
-            // if there were any error (most possibly the panic) stop it.
-            cancel_future.map(move |_| force_checking_loop(server, workspace))
-        });
-
-        // this should be forgotten as we won't make use of its result
-        pool.spawn(fut).forget();
-    } else if workspace.read().has_read_config() {
-        // avoid a duplicate message if kailua.json is missing
-        let _ = server.send_notify("window/showMessage", ShowMessageParams {
-            type_: MessageType::Warning,
-            message: workspace.read().localize(&m::NoStartPath {}),
-        });
-    }
+            futures::finished(()).boxed()
+        }
+    }).erase_err().boxed()
 }
 
 fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
-    use std::io::{self, Write};
+    use std::collections::HashMap;
+    use futureutils::CancelToken;
     use workspace::WorkspaceError;
+    use completion::{self, CompletionClass};
     use protocol::*;
 
-    let mut stderr = io::stderr();
+    let mut cancel_tokens: HashMap<Id, CancelToken> = HashMap::new();
+    let timer = Timer::default();
 
-    force_checking_loop(server.clone(), workspace.clone());
+    // launch the checking future, which will be executed throughout the entire loop
+    let checking_fut = checking_loop(server.clone(), workspace.clone(), timer.clone());
+    workspace.read().pool().spawn(checking_fut).forget();
 
     'restart: loop {
         let res = server.recv().unwrap();
         let req = if let Some(req) = res { req } else { continue };
-        writeln!(stderr, "read: {:#?}", req).unwrap();
+        errln!("read: {:#?}", req);
 
         macro_rules! try_or_notify {
             ($e:expr) => (match $e {
@@ -280,12 +308,18 @@ fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
                                         "already initialized", InitializeError { retry: false });
             }
 
+            Request::CancelRequest(params) => {
+                if let Some(token) = cancel_tokens.remove(&params.id) {
+                    token.cancel();
+                }
+            }
+
             Request::DidOpenTextDocument(params) => {
                 let uri = params.textDocument.uri.clone();
 
                 let ws = workspace.write();
                 try_or_notify!(ws.open_file(params.textDocument));
-                writeln!(stderr, "workspace: {:#?}", *ws).unwrap();
+                errln!("workspace: {:#?}", *ws);
 
                 let pool = ws.pool().clone();
                 let file = ws.file(&uri).unwrap();
@@ -310,13 +344,54 @@ fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
 
                     on_file_changed(&file, server.clone(), &pool);
                 }
-                writeln!(stderr, "workspace: {:#?}", *ws).unwrap();
+                errln!("workspace: {:#?}", *ws);
             }
 
             Request::DidCloseTextDocument(params) => {
                 let ws = workspace.write();
                 try_or_notify!(ws.close_file(&params.textDocument.uri));
-                writeln!(stderr, "workspace: {:#?}", *ws).unwrap();
+                errln!("workspace: {:#?}", *ws);
+            }
+
+            Request::Completion(id, params) => {
+                let token = CancelToken::new();
+                cancel_tokens.insert(id.clone(), token.clone());
+
+                let spare_workspace = workspace.clone();
+
+                let ws = workspace.read();
+                let file = try_or_notify!(ws.file(&params.textDocument.uri).ok_or_else(|| {
+                    WorkspaceError("file does not exist for completion")
+                }));
+
+                let tokens_fut = file.ensure_tokens().map_err(|e| e.as_ref().map(|_| ()));
+                let pos_fut = file.translate_position(&params.position);
+
+                let server = server.clone();
+                let fut = tokens_fut.join(pos_fut).and_then(move |(tokens, pos)| {
+                    let workspace = spare_workspace;
+                    let tokens = &tokens.0;
+
+                    let class = completion::classify(tokens, pos);
+                    errln!("completion: {:?}@{:#?}", class, pos);
+                    let items = match class {
+                        Some(CompletionClass::Name(idx, category)) => {
+                            file.last_chunk().map(|chunk| {
+                                completion::complete_name(tokens, idx, category, pos, chunk)
+                            })
+                        },
+                        Some(CompletionClass::Field(idx)) => {
+                            let output = workspace.read().last_check_output();
+                            output.map(|output| completion::complete_field(tokens, idx, output))
+                        },
+                        None => None,
+                    };
+
+                    let _ = server.send_ok(id, items.unwrap_or(Vec::new()));
+                    Ok(())
+                });
+
+                ws.pool().spawn(fut).forget();
             }
 
             _ => {}

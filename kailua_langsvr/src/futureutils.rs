@@ -11,6 +11,22 @@ pub enum CancelError<T> {
     Error(T),
 }
 
+impl<T> CancelError<T> {
+    pub fn as_ref(&self) -> CancelError<&T> {
+        match *self {
+            CancelError::Canceled => CancelError::Canceled,
+            CancelError::Error(ref e) => CancelError::Error(e),
+        }
+    }
+
+    pub fn map<F: FnOnce(T) -> U, U>(self, f: F) -> CancelError<U> {
+        match self {
+            CancelError::Canceled => CancelError::Canceled,
+            CancelError::Error(e) => CancelError::Error(f(e)),
+        }
+    }
+}
+
 // CancelError::Canceled is expected to be produced only from CancelToken::keep_going
 impl<T> From<T> for CancelError<T> {
     fn from(err: T) -> CancelError<T> { CancelError::Error(err) }
@@ -77,6 +93,22 @@ impl Future for CancelFuture {
             Ok(async) => Ok(async.map(|_| ())),
             Err(_) => Err(()),
         }
+    }
+}
+
+pub trait FutureExt: Future {
+    fn erase_err(self) -> EraseErr<Self> where Self: Sized { EraseErr(self) }
+}
+
+impl<F: Future> FutureExt for F {}
+
+pub struct EraseErr<F: Future>(F);
+
+impl<F: Future> Future for EraseErr<F> {
+    type Item = F::Item;
+    type Error = ();
+    fn poll(&mut self) -> Poll<F::Item, ()> {
+        self.0.poll().map_err(|_| ())
     }
 }
 

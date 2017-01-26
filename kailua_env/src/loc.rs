@@ -188,9 +188,9 @@ impl Span {
 
     pub fn len(&self) -> usize {
         if self.is_source_dependent() {
-            0
-        } else {
             (self.end - self.begin) as usize
+        } else {
+            0
         }
     }
 
@@ -241,6 +241,59 @@ impl ops::BitOr for Span {
 
 impl ops::BitOrAssign for Span {
     fn bitor_assign(&mut self, other: Span) { *self = *self | other; }
+}
+
+impl Iterator for Span {
+    type Item = Pos;
+
+    fn next(&mut self) -> Option<Pos> {
+        if self.is_source_dependent() && self.begin < self.end {
+            let pos = Pos { unit: self.unit, pos: self.begin };
+            self.begin += 1;
+            Some(pos)
+        } else {
+            None
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.len();
+        (len, Some(len))
+    }
+
+    fn count(self) -> usize {
+        self.len()
+    }
+
+    fn last(self) -> Option<Pos> {
+        if self.is_source_dependent() && self.begin < self.end {
+            Some(Pos { unit: self.unit, pos: self.end - 1 })
+        } else {
+            None
+        }
+    }
+
+    fn nth(&mut self, n: usize) -> Option<Pos> {
+        if self.is_source_dependent() && n < (self.end - self.begin) as usize {
+            let pos = Pos { unit: self.unit, pos: self.begin + n as u32 };
+            self.begin += n as u32;
+            Some(pos)
+        } else {
+            None
+        }
+    }
+}
+
+impl DoubleEndedIterator for Span {
+    fn next_back(&mut self) -> Option<Pos> {
+        if self.is_source_dependent() && self.begin < self.end {
+            let pos = Pos { unit: self.unit, pos: self.end - 1 };
+            self.end -= 1;
+            Some(pos)
+        } else {
+            None
+        }
+    }
 }
 
 impl fmt::Debug for Span {

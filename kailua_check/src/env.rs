@@ -696,7 +696,7 @@ impl Output {
 
     // exactly resolves the type variable inside `ty` if possible
     // this is a requirement for table indexing and function calls
-    pub fn resolve_exact_type<'a>(&mut self, ty: &Ty) -> Option<Ty> {
+    pub fn resolve_exact_type<'a>(&self, ty: &Ty) -> Option<Ty> {
         if let T::TVar(tv) = **ty {
             if let Some(ty2) = self.get_tvar_exact_type(tv) {
                 Some(ty2.union_nil(ty.nil()).with_tag(ty.tag()))
@@ -1206,7 +1206,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
     // exactly resolves the type variable inside `ty` if possible
     // this is a requirement for table indexing and function calls
-    pub fn resolve_exact_type<'a>(&mut self, ty: &Ty) -> Option<Ty> {
+    pub fn resolve_exact_type<'a>(&self, ty: &Ty) -> Option<Ty> {
         self.context.resolve_exact_type(ty)
     }
 
