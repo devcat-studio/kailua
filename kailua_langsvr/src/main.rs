@@ -1,6 +1,3 @@
-// TODO remove this when macros 1.1 hit the stable
-#![feature(proc_macro)]
-
 extern crate serde;
 #[macro_use] extern crate serde_derive;
 extern crate serde_json;

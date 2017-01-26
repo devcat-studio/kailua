@@ -93,21 +93,23 @@ macro_rules! enum_number {
         }
 
         impl Serialize for $name {
-            fn serialize<S: Serializer>(&self, s: &mut S) -> Result<(), S::Error> {
+            fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
                 s.serialize_u64(*self as u64)
             }
         }
 
         impl Deserialize for $name {
-            fn deserialize<D: Deserializer>(d: &mut D) -> Result<Self, D::Error> {
+            fn deserialize<D: Deserializer>(d: D) -> Result<Self, D::Error> {
                 struct EnumVisitor;
                 impl de::Visitor for EnumVisitor {
                     type Value = $name;
-                    fn visit_u64<E: de::Error>(&mut self, v: u64) -> Result<$name, E> {
+                    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                        write!(f, "{}", stringify!($name))
+                    }
+                    fn visit_u64<E: de::Error>(self, v: u64) -> Result<$name, E> {
                         match v {
                             $($value => Ok($name::$variant),)*
-                            _ => Err(E::invalid_value(&format!("unknown {} value: {}",
-                                                               stringify!($name), v))),
+                            _ => Err(E::invalid_value(de::Unexpected::Unsigned(v), &self)),
                         }
                     }
                 }
@@ -156,17 +158,20 @@ impl fmt::Debug for Version {
 }
 
 impl Serialize for Version {
-    fn serialize<S: Serializer>(&self, s: &mut S) -> Result<(), S::Error> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str("2.0")
     }
 }
 
 impl Deserialize for Version {
-    fn deserialize<D: Deserializer>(d: &mut D) -> Result<Version, D::Error> {
+    fn deserialize<D: Deserializer>(d: D) -> Result<Version, D::Error> {
         struct VersionVisitor;
         impl de::Visitor for VersionVisitor {
             type Value = Version;
-            fn visit_str<E: de::Error>(&mut self, v: &str) -> Result<Self::Value, E> {
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(f, "a string `2.0`")
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
                 if v == "2.0" {
                     Ok(Version)
                 } else {
@@ -191,7 +196,7 @@ impl fmt::Debug for Id {
 }
 
 impl Serialize for Id {
-    fn serialize<S: Serializer>(&self, s: &mut S) -> Result<(), S::Error> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match *self {
             Id::Number(id) => s.serialize_i64(id),
             Id::String(ref id) => s.serialize_str(id),
@@ -200,21 +205,24 @@ impl Serialize for Id {
 }
 
 impl Deserialize for Id {
-    fn deserialize<D: Deserializer>(d: &mut D) -> Result<Id, D::Error> {
+    fn deserialize<D: Deserializer>(d: D) -> Result<Id, D::Error> {
         struct IdVisitor;
         impl de::Visitor for IdVisitor {
             type Value = Id;
-            fn visit_i64<E: de::Error>(&mut self, v: i64) -> Result<Self::Value, E> {
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(f, "a string or an integer")
+            }
+            fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
                 Ok(Id::Number(v))
             }
-            fn visit_u64<E: de::Error>(&mut self, v: u64) -> Result<Self::Value, E> {
+            fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
                 if (v >> 63) == 0 {
                     Ok(Id::Number(v as i64))
                 } else {
                     Err(E::custom("message ID out of range"))
                 }
             }
-            fn visit_string<E: de::Error>(&mut self, v: String) -> Result<Self::Value, E> {
+            fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
                 Ok(Id::String(v))
             }
         }

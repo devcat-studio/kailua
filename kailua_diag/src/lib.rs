@@ -1,6 +1,6 @@
 extern crate term;
 extern crate unicode_width;
-#[macro_use] extern crate parse_generics_shim;
+extern crate parse_generics_shim;
 #[macro_use] extern crate log;
 #[cfg(windows)] extern crate winapi;
 #[cfg(windows)] extern crate kernel32;
