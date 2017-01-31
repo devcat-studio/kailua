@@ -20,14 +20,16 @@ pub enum CompletionClass {
     Field(usize),
 }
 
-pub fn classify(tokens: &[NestedToken], pos: Pos) -> Option<CompletionClass> {
+fn index_and_neighbor<T, F>(tokens: &[T], pos: Pos, as_span: F) -> (usize, bool, bool)
+    where F: Fn(&T) -> Span
+{
     //        pos
     // ________v________   idx  end   after
     //     BOF^  0000000   0    false false
     //     BOF^  $EOF      0    false false
     //     BOF^$EOF        0    false false
     // iiiiiiii  jjjjjjj   i    true  true
-    // iiiiiiiijjjjjjjjj   j    true  true
+    // iiiiiiiijjjjjjjjj   i    true  true
     // iiiiii    jjjjjjj   i    false false
     // iiiiii  jjjjjjjjj   j    false false
     // iiii   jjjjjj kkk   j    false true
@@ -35,10 +37,10 @@ pub fn classify(tokens: &[NestedToken], pos: Pos) -> Option<CompletionClass> {
     // ii jjjjj   kkkkkk   j    true  true
     // zzzzzzzz   $EOF     z    true  true
     // zzzz    $EOF        z    false false
-    let (idx, end, after) = match tokens.binary_search_by(|tok| tok.tok.span.begin().cmp(&pos)) {
+    match tokens.binary_search_by(|tok| as_span(tok).begin().cmp(&pos)) {
         Ok(i) => { // tokens[i].begin == pos
-            if i > 0 && tokens[i-1].tok.span.end() == pos {
-                (i, true, true)
+            if i > 0 && as_span(&tokens[i-1]).end() == pos {
+                (i-1, true, true)
             } else {
                 (i, false, false)
             }
@@ -47,13 +49,46 @@ pub fn classify(tokens: &[NestedToken], pos: Pos) -> Option<CompletionClass> {
             (0, false, false)
         },
         Err(i) => { // tokens[i-1].begin < pos < tokens[i].begin or inf
-            match pos.cmp(&tokens[i-1].tok.span.end()) {
+            match pos.cmp(&as_span(&tokens[i-1]).end()) {
                 Ordering::Less => (i-1, false, true),
                 Ordering::Equal => (i-1, true, true),
                 Ordering::Greater => (i-1, false, false),
             }
         },
-    };
+    }
+}
+
+#[test]
+fn test_index_and_neighbor() {
+    use kailua_env::{Source, SourceFile};
+
+    // we need a sizable span to construct a dummy list of "tokens" (solely represented by spans)
+    let mut source = Source::new();
+    let span = source.add(SourceFile::from_u8("dummy".to_string(), b"0123456789"[..].to_owned()));
+    let pos = |i| span.clone().nth(i).unwrap();
+
+    let tokens = [Span::new(pos(1), pos(2)), Span::new(pos(2), pos(4)),
+                  Span::new(pos(5), pos(7)), Span::new(pos(8), pos(8))];
+    assert_eq!(index_and_neighbor(&tokens, pos(0), |&sp| sp), (0, false, false));
+    assert_eq!(index_and_neighbor(&tokens, pos(1), |&sp| sp), (0, false, false));
+    assert_eq!(index_and_neighbor(&tokens, pos(2), |&sp| sp), (0, true, true));
+    assert_eq!(index_and_neighbor(&tokens, pos(3), |&sp| sp), (1, false, true));
+    assert_eq!(index_and_neighbor(&tokens, pos(4), |&sp| sp), (1, true, true));
+    assert_eq!(index_and_neighbor(&tokens, pos(5), |&sp| sp), (2, false, false));
+    assert_eq!(index_and_neighbor(&tokens, pos(6), |&sp| sp), (2, false, true));
+    assert_eq!(index_and_neighbor(&tokens, pos(7), |&sp| sp), (2, true, true));
+    assert_eq!(index_and_neighbor(&tokens, pos(8), |&sp| sp), (3, false, false));
+    assert_eq!(index_and_neighbor(&tokens, pos(9), |&sp| sp), (3, false, false));
+
+    let tokens = [Span::new(pos(1), pos(2)), Span::new(pos(2), pos(4)),
+                  Span::new(pos(5), pos(8)), Span::new(pos(8), pos(8))];
+    assert_eq!(index_and_neighbor(&tokens, pos(7), |&sp| sp), (2, false, true));
+    assert_eq!(index_and_neighbor(&tokens, pos(8), |&sp| sp), (2, true, true));
+    assert_eq!(index_and_neighbor(&tokens, pos(9), |&sp| sp), (3, false, false));
+}
+
+pub fn classify(tokens: &[NestedToken], pos: Pos) -> Option<CompletionClass> {
+    let (idx, end, after) = index_and_neighbor(tokens, pos, |tok| tok.tok.span);
 
     let ptok = if idx > 0 { tokens.get(idx-1) } else { None };
     let tok = tokens.get(idx);

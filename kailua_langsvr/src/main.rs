@@ -373,7 +373,7 @@ fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
                     let tokens = &tokens.0;
 
                     let class = completion::classify(tokens, pos);
-                    errln!("completion: {:?}@{:#?}", class, pos);
+                    errln!("completion: {:?} {:#?}", class, pos);
                     let items = match class {
                         Some(CompletionClass::Name(idx, category)) => {
                             file.last_chunk().map(|chunk| {
