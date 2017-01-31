@@ -182,7 +182,7 @@ fn is_name_completion_disabled(tokens: &[NestedToken], name_idx: usize) -> bool 
                 Tok::Comment |
                 Tok::Name(_) |
                 Tok::Punct(Punct::Dot) |
-                Tok::Punct(Punct::Colon) => break,
+                Tok::Punct(Punct::Colon) => {},
 
                 Tok::Keyword(Keyword::Function) => return true,
 
@@ -196,7 +196,7 @@ fn is_name_completion_disabled(tokens: &[NestedToken], name_idx: usize) -> bool 
                 Tok::Name(_) |
                 Tok::Punct(Punct::Comma) |
                 // Newline to account for meta comments (other tokens are nested)
-                Tok::Punct(Punct::Newline) => break,
+                Tok::Punct(Punct::Newline) => {},
 
                 Tok::Punct(Punct::LParen) => {
                     // `function ... ( ... | ... )` is possible
