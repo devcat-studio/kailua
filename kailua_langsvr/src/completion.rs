@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
-use std::sync::Arc;
+use std::collections::HashSet;
 
-use kailua_env::{Pos, Span};
+use kailua_env::{Pos, Span, Source, ScopedId};
 use kailua_syntax::{Tok, Punct, Keyword, NestedToken, NestingCategory, Chunk};
 use kailua_check::{Output, Key, Tables};
 use kailua_check::flags::T_STRING;
@@ -60,7 +60,7 @@ fn index_and_neighbor<T, F>(tokens: &[T], pos: Pos, as_span: F) -> (usize, bool,
 
 #[test]
 fn test_index_and_neighbor() {
-    use kailua_env::{Source, SourceFile};
+    use kailua_env::SourceFile;
 
     // we need a sizable span to construct a dummy list of "tokens" (solely represented by spans)
     let mut source = Source::new();
@@ -235,8 +235,24 @@ fn keywords_per_category(nesting_category: NestingCategory) -> &'static [&'stati
     }
 }
 
+fn detail_from_scoped_id(chunk: &Chunk, id: ScopedId, source: &Source) -> Option<String> {
+    if let Some(span) = chunk.decl_spans.get(&id) {
+        let begin = span.begin(); // span.end() won't be in the different line, probably
+        if let Some(file) = source.file(begin.unit()) {
+            // XXX the file names can collide
+            let path = file.path().split(|c| c == '\\' || c == '/').last().unwrap_or("");
+            if let Some((line, _)) = file.line_from_pos(begin) {
+                return Some(format!("{}:{}", path, line + 1));
+            } else {
+                return Some(format!("{}", path));
+            }
+        }
+    }
+    None
+}
+
 pub fn complete_name(tokens: &[NestedToken], name_idx: usize, nesting_category: NestingCategory,
-                     pos: Pos, last_chunk: Arc<Chunk>) -> Vec<CompletionItem> {
+                     pos: Pos, last_chunk: &Chunk, source: &Source) -> Vec<CompletionItem> {
     let mut items = Vec::new();
 
     // check if the caret is at the name definition and autocompletion should be disabled
@@ -244,10 +260,14 @@ pub fn complete_name(tokens: &[NestedToken], name_idx: usize, nesting_category: 
         return items;
     }
 
-    for scope in last_chunk.map.scope_from_pos(pos) {
-        for (name, _scope, _id) in last_chunk.map.names_and_scopes(scope) {
-            let name = String::from_utf8_lossy(name).into_owned();
-            items.push(make_item(name, CompletionItemKind::Variable, None));
+    if let Some(scope) = last_chunk.map.scope_from_pos(pos) {
+        let mut seen = HashSet::new();
+        for (name, _scope, id) in last_chunk.map.names_and_scopes(scope) {
+            if seen.insert(name) { // ignore shadowed names (always appear later)
+                let name = String::from_utf8_lossy(name).into_owned();
+                let detail = detail_from_scoped_id(last_chunk, id, source);
+                items.push(make_item(name, CompletionItemKind::Variable, detail));
+            }
         }
     }
 
@@ -261,7 +281,7 @@ pub fn complete_name(tokens: &[NestedToken], name_idx: usize, nesting_category: 
 }
 
 pub fn complete_field(tokens: &[NestedToken], sep_idx: usize,
-                      last_output: Arc<Output>) -> Vec<CompletionItem> {
+                      last_output: &Output) -> Vec<CompletionItem> {
     let mut items = Vec::new();
 
     // note that this approach of using the closest non-comment token's end is

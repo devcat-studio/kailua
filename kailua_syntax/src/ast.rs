@@ -1,8 +1,8 @@
 use std::fmt;
 use std::ops;
 use std::cell::Cell;
-use std::collections::HashSet;
-use kailua_env::{Spanned, Scope, ScopedId, ScopeMap};
+use std::collections::HashMap;
+use kailua_env::{Span, Spanned, Scope, ScopedId, ScopeMap};
 
 fn format_ascii_vec(f: &mut fmt::Formatter, s: &[u8]) -> fmt::Result {
     for &c in s {
@@ -640,7 +640,8 @@ pub type Kind = Box<K>;
 #[derive(Clone)]
 pub struct Chunk {
     pub block: Spanned<Block>,
-    pub global_scope: HashSet<Name>,
+    pub global_scope: HashMap<Name, Span>,
     pub map: ScopeMap<Name>,
+    pub decl_spans: HashMap<ScopedId, Span>,
 }
 

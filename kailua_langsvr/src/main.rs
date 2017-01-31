@@ -377,12 +377,15 @@ fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
                     let items = match class {
                         Some(CompletionClass::Name(idx, category)) => {
                             file.last_chunk().map(|chunk| {
-                                completion::complete_name(tokens, idx, category, pos, chunk)
+                                let ws = workspace.read();
+                                let items = completion::complete_name(tokens, idx, category, pos,
+                                                                      &chunk, &ws.source());
+                                items
                             })
                         },
                         Some(CompletionClass::Field(idx)) => {
                             let output = workspace.read().last_check_output();
-                            output.map(|output| completion::complete_field(tokens, idx, output))
+                            output.map(|output| completion::complete_field(tokens, idx, &output))
                         },
                         None => None,
                     };

@@ -277,6 +277,8 @@ impl<Name: Clone + Hash + Eq + fmt::Debug> ScopeMap<Name> {
         Names { iter: iter }
     }
 
+    // that this may include duplicates from shadowed names. the caller should do
+    // its own duplicate removal to avoid them---they always appear after the visible name.
     pub fn names_and_scopes<'a>(&'a self, scope: Scope) -> NamesAndScopes<'a, Name> {
         assert!((scope.scope as usize) < self.scopes.len());
         let iter = self.scopes[scope.scope as usize].names.iter();

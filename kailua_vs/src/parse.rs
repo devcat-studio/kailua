@@ -45,7 +45,7 @@ impl VSParseTree {
     }
 
     pub fn global_names(&self) -> VSNameEntries {
-        self.chunk.global_scope.iter().map(|name| VSNameEntry::new(&name[..], 0)).collect()
+        self.chunk.global_scope.keys().map(|name| VSNameEntry::new(&name[..], 0)).collect()
     }
 }
 

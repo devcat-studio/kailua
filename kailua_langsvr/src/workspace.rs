@@ -11,7 +11,7 @@ use futures::{future, Future, BoxFuture};
 use futures_cpupool::CpuPool;
 use serde_json;
 use url::Url;
-use parking_lot::{RwLock, RwLockWriteGuard};
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use kailua_env::{Unit, Pos, Span, Source, SourceFile, SourceSlice};
 use kailua_diag::{self, Report, Localize, Localized};
@@ -586,6 +586,10 @@ impl Workspace {
 
     pub fn pool(&self) -> &Arc<CpuPool> {
         &self.pool
+    }
+
+    pub fn source<'a>(&'a self) -> RwLockReadGuard<'a, Source> {
+        self.source.read()
     }
 
     pub fn has_read_config(&self) -> bool {

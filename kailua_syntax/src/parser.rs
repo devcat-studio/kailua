@@ -3,8 +3,8 @@ use std::u8;
 use std::i32;
 use std::fmt;
 use std::result;
-use std::collections::{hash_map, HashMap, HashSet};
-use kailua_env::{Pos, Span, Spanned, WithLoc, Scope, ScopeMap};
+use std::collections::{hash_map, HashMap};
+use kailua_env::{Pos, Span, Spanned, WithLoc, Scope, ScopedId, ScopeMap};
 use kailua_diag as diag;
 use kailua_diag::{Report, Localize};
 
@@ -36,9 +36,10 @@ pub struct Parser<'a> {
     report: &'a Report,
 
     scope_map: ScopeMap<Name>,
+    decl_spans: HashMap<ScopedId, Span>,
     // the global scope; visible to every other file and does not go through a scope map
     // (the local root scopes are generated as needed, and invisible from the outside)
-    global_scope: HashSet<Name>,
+    global_scope: HashMap<Name, Span>,
     // Pos for the starting position
     scope_stack: Vec<(Scope, Pos)>,
 }
@@ -251,7 +252,8 @@ impl<'a> Parser<'a> {
             ignore_after_newline: None,
             report: report,
             scope_map: ScopeMap::new(),
-            global_scope: HashSet::new(),
+            decl_spans: HashMap::new(),
+            global_scope: HashMap::new(),
             scope_stack: Vec::new(),
         };
 
@@ -705,6 +707,12 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn add_spanned_local_name(&mut self, scope: Scope, name: Spanned<Name>) -> Spanned<ScopedId> {
+        let id = name.map(|name| self.scope_map.add_name(scope, name));
+        self.decl_spans.insert(id.base.clone(), id.span);
+        id
+    }
+
     fn generate_sibling_scope(&mut self) -> Scope {
         if let Some(&(parent, _parentbegin)) = self.scope_stack.last() {
             self.scope_map.generate(parent)
@@ -996,8 +1004,7 @@ impl<'a> Parser<'a> {
                         };
                         self.expect(Keyword::Do)?;
                         let (id, scope, block) = self.parse_block_with_scope(|parser, scope| {
-                            let id = name.map(|name| parser.scope_map.add_name(scope, name));
-                            id
+                            parser.add_spanned_local_name(scope, name)
                         });
                         let block = self.recover(|_| block, Keyword::End)?;
                         Box::new(St::For(id, start, end, step, scope, block))
@@ -1031,7 +1038,7 @@ impl<'a> Parser<'a> {
                 let rootname = self.parse_name()?.map(|name| self.resolve_name(name));
                 if let NameRef::Global(ref name) = rootname.base {
                     // this will assign a global name, and is handled like a global assignment
-                    self.global_scope.insert(name.clone());
+                    self.global_scope.insert(name.clone(), rootname.span);
                 }
                 let mut names = Vec::new();
                 while self.may_expect(Punct::Dot) {
@@ -1087,9 +1094,8 @@ impl<'a> Parser<'a> {
                         if let Some((_, sig, scope, body)) = self.parse_func_body(None, funcspec)? {
                             let sibling_scope = self.generate_sibling_scope();
                             self.push_scope(sibling_scope);
-                            let name = name.map(|name| {
-                                NameRef::Local(self.scope_map.add_name(sibling_scope, name))
-                            });
+                            let name = self.add_spanned_local_name(sibling_scope, name);
+                            let name = name.map(NameRef::Local);
                             Box::new(St::FuncDecl(name, sig, scope, body, Some(sibling_scope)))
                         } else {
                             Box::new(St::Oops)
@@ -1133,7 +1139,7 @@ impl<'a> Parser<'a> {
                         let namerefs = names.map(|names: Vec<_>| {
                             names.into_iter().map(|namespec: TypeSpec<_>| {
                                 namespec.map(|name: Spanned<Name>| {
-                                    name.map(|name| self.scope_map.add_name(sibling_scope, name))
+                                    self.add_spanned_local_name(sibling_scope, name)
                                 })
                             }).collect()
                         });
@@ -1270,7 +1276,7 @@ impl<'a> Parser<'a> {
         let (names, scope, block) = self.parse_block_with_scope(|parser, scope| {
             let names = names.map(|names: Vec<_>| {
                 names.into_iter().map(|name: Spanned<Name>| {
-                    name.map(|name| parser.scope_map.add_name(scope, name))
+                    parser.add_spanned_local_name(scope, name)
                 }).collect()
             });
             names
@@ -1456,15 +1462,14 @@ impl<'a> Parser<'a> {
             // TODO should we add varargs?
             let selfparam = selfparam.map(|paramspec: TypeSpec<Span>| {
                 paramspec.map(|span| {
-                    let scoped_id =
-                        parser.scope_map.add_name(scope, Name::from(b"self"[..].to_owned()));
-                    SelfParam(scoped_id).with_loc(span)
+                    let selfname = Name::from(b"self"[..].to_owned()).with_loc(span);
+                    parser.add_spanned_local_name(scope, selfname).map(SelfParam)
                 })
             });
             let args = args.map(|args: Seq<_, _>| {
                 args.map(|argspec: TypeSpec<_>| {
                     argspec.map(|arg: Spanned<Name>| {
-                        arg.map(|name| parser.scope_map.add_name(scope, name))
+                        parser.add_spanned_local_name(scope, arg)
                     })
                 }, |varargspec| varargspec)
             });
@@ -1662,7 +1667,7 @@ impl<'a> Parser<'a> {
                 // if Var refers to a global variable assignment,
                 // register its name to the global scope
                 if let NameRef::Global(ref name) = name.base {
-                    self.global_scope.insert(name.clone());
+                    self.global_scope.insert(name.clone(), span);
                 }
                 Ok(Var::Name(name).with_loc(span))
             },
@@ -2604,12 +2609,12 @@ impl<'a> Parser<'a> {
                         let kind = parser.recover_upto(Self::parse_kailua_kind)?;
 
                         let name = if global {
-                            parser.global_scope.insert(name.base.clone());
+                            parser.global_scope.insert(name.base.clone(), name.span);
                             name.map(NameRef::Global)
                         } else {
                             let scope = parser.generate_sibling_scope();
                             sibling_scope = Some(scope);
-                            name.map(|name| NameRef::Local(parser.scope_map.add_name(scope, name)))
+                            parser.add_spanned_local_name(scope, name).map(NameRef::Local)
                         };
                         Some(Box::new(St::KailuaAssume(name, modf, kind, sibling_scope)))
                     }
@@ -2671,7 +2676,12 @@ impl<'a> Parser<'a> {
         }
 
         if let Ok(block) = ret {
-            Ok(Chunk { block: block, global_scope: self.global_scope, map: self.scope_map })
+            Ok(Chunk {
+                block: block,
+                global_scope: self.global_scope,
+                map: self.scope_map,
+                decl_spans: self.decl_spans,
+            })
         } else {
             Err(diag::Stop)
         }
