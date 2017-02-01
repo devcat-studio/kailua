@@ -1,7 +1,8 @@
 use std::cmp::Ordering;
 use std::collections::HashSet;
+use std::sync::Arc;
 
-use kailua_env::{Pos, Span, Source, ScopedId};
+use kailua_env::{Pos, Span, Source};
 use kailua_syntax::{Tok, Punct, Keyword, NestedToken, NestingCategory, Chunk};
 use kailua_check::{Output, Key, Tables};
 use kailua_check::flags::T_STRING;
@@ -235,24 +236,24 @@ fn keywords_per_category(nesting_category: NestingCategory) -> &'static [&'stati
     }
 }
 
-fn detail_from_scoped_id(chunk: &Chunk, id: ScopedId, source: &Source) -> Option<String> {
-    if let Some(span) = chunk.decl_spans.get(&id) {
-        let begin = span.begin(); // span.end() won't be in the different line, probably
-        if let Some(file) = source.file(begin.unit()) {
-            // XXX the file names can collide
-            let path = file.path().split(|c| c == '\\' || c == '/').last().unwrap_or("");
-            if let Some((line, _)) = file.line_from_pos(begin) {
-                return Some(format!("{}:{}", path, line + 1));
-            } else {
-                return Some(format!("{}", path));
-            }
+fn detail_from_span(span: Span, source: &Source) -> Option<String> {
+    let begin = span.begin(); // span.end() won't be in the different line, probably
+    if let Some(file) = source.file(begin.unit()) {
+        // XXX the file names can collide
+        let path = file.path().split(|c| c == '\\' || c == '/').last().unwrap_or("");
+        if let Some((line, _)) = file.line_from_pos(begin) {
+            Some(format!("{}:{}", path, line + 1))
+        } else {
+            Some(format!("{}", path))
         }
+    } else {
+        None
     }
-    None
 }
 
 pub fn complete_name(tokens: &[NestedToken], name_idx: usize, nesting_category: NestingCategory,
-                     pos: Pos, last_chunk: &Chunk, source: &Source) -> Vec<CompletionItem> {
+                     pos: Pos, last_chunk: &Chunk, all_chunks: &[Arc<Chunk>],
+                     source: &Source) -> Vec<CompletionItem> {
     let mut items = Vec::new();
 
     // check if the caret is at the name definition and autocompletion should be disabled
@@ -260,18 +261,28 @@ pub fn complete_name(tokens: &[NestedToken], name_idx: usize, nesting_category: 
         return items;
     }
 
+    let mut seen = HashSet::new();
+
     if let Some(scope) = last_chunk.map.scope_from_pos(pos) {
-        let mut seen = HashSet::new();
         for (name, _scope, id) in last_chunk.map.names_and_scopes(scope) {
             if seen.insert(name) { // ignore shadowed names (always appear later)
                 let name = String::from_utf8_lossy(name).into_owned();
-                let detail = detail_from_scoped_id(last_chunk, id, source);
+                let detail =
+                    last_chunk.decl_spans.get(&id).and_then(|&s| detail_from_span(s, source));
                 items.push(make_item(name, CompletionItemKind::Variable, detail));
             }
         }
     }
 
-    // TODO: global scope should be here
+    for chunk in all_chunks {
+        for (name, &span) in chunk.global_scope.iter() {
+            if seen.insert(name) {
+                let name = String::from_utf8_lossy(name).into_owned();
+                let detail = detail_from_span(span, source);
+                items.push(make_item(name, CompletionItemKind::Variable, detail));
+            }
+        }
+    }
 
     for keyword in keywords_per_category(nesting_category) {
         items.push(make_item(keyword[..].to_owned(), CompletionItemKind::Keyword, None));

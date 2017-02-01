@@ -512,7 +512,11 @@ impl FsSource for WorkspaceFsSource {
 
         // try to read the file (and finally raise an error if it can't be read)
 
-        let sourcefile = SourceFile::from_file(path).map_err(|e| e.to_string())?;
+        let sourcefile = match SourceFile::from_file(path) {
+            Ok(f) => f,
+            Err(ref e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.to_string()),
+        };
         let span = fssource.source.write().add(sourcefile);
         fssource.temp_units.push(span.unit());
 
@@ -608,6 +612,10 @@ impl Workspace {
 
     pub fn localize(&self, msg: &Localize) -> String {
         Localized::new(&msg, &self.message_lang).to_string()
+    }
+
+    pub fn files<'a>(&'a self) -> RwLockReadGuard<'a, HashMap<PathBuf, WorkspaceFile>> {
+        self.files.read()
     }
 
     pub fn file<'a>(&'a self, uri: &str) -> Option<WorkspaceFile> {

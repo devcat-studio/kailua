@@ -1,3 +1,4 @@
+extern crate env_logger;
 extern crate serde;
 #[macro_use] extern crate serde_derive;
 extern crate serde_json;
@@ -378,8 +379,14 @@ fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
                         Some(CompletionClass::Name(idx, category)) => {
                             file.last_chunk().map(|chunk| {
                                 let ws = workspace.read();
-                                let items = completion::complete_name(tokens, idx, category, pos,
-                                                                      &chunk, &ws.source());
+
+                                // the list of all chunks is used to get the global names
+                                // TODO make last_global_names and optimize for that
+                                let all_chunks: Vec<_> =
+                                    ws.files().values().flat_map(|f| f.last_chunk()).collect();
+
+                                let items = completion::complete_name(
+                                    tokens, idx, category, pos, &chunk, &all_chunks, &ws.source());
                                 items
                             })
                         },

@@ -67,13 +67,17 @@ impl<S: FsSource> Options for FsOptions<S> {
     fn require_chunk(&mut self, path: &[u8]) -> Result<Chunk, String> {
         let path = str::from_utf8(path).map_err(|e| e.to_string())?;
 
-        for &search_path in &[&self.package_path, &self.package_cpath][..] {
-            for &suffix in &[".kailua", ""][..] {
-                if let Some(chunk) = self.search_file(&path, search_path, suffix)? {
-                    return Ok(chunk);
-                }
-            }
+        if let Some(chunk) = self.search_file(&path, &self.package_path, ".kailua")? {
+            return Ok(chunk);
         }
+        if let Some(chunk) = self.search_file(&path, &self.package_path, "")? {
+            return Ok(chunk);
+        }
+        if let Some(chunk) = self.search_file(&path, &self.package_cpath, ".kailua")? {
+            return Ok(chunk);
+        }
+        // avoid loading the native libraries as is
+
         Err(format!("module not found"))
     }
 }
