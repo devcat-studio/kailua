@@ -54,6 +54,12 @@ export function activate(context: vscode.ExtensionContext) {
 
     let clientOptions: LanguageClientOptions = {
 		documentSelector: ['lua'],
+        synchronize: {
+            fileEvents: [
+                vscode.workspace.createFileSystemWatcher('**/*.lua'),
+                vscode.workspace.createFileSystemWatcher('**/*.kailua'),
+            ],
+        },
         initializationOptions: {
             default_locale: vscode.env.language,
         },

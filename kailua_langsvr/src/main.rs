@@ -10,6 +10,7 @@ extern crate owning_ref;
 extern crate num_cpus;
 extern crate parking_lot;
 #[macro_use] extern crate errln;
+extern crate walkdir;
 #[macro_use] extern crate parse_generics_shim;
 extern crate kailua_env;
 #[macro_use] extern crate kailua_diag;
@@ -117,6 +118,18 @@ fn initialize_workspace(server: &Server) -> Workspace {
                     let mut workspace = Workspace::new(PathBuf::from(dir), pool,
                                                        initopts.default_locale);
 
+                    // try to read the config...
+                    if let Err(e) = workspace.read_config() {
+                        let _ = server.send_notify("window/showMessage", ShowMessageParams {
+                            type_: MessageType::Warning,
+                            message: workspace.localize(&m::CannotReadConfig { error: &e }),
+                        });
+                    } else {
+                        // ...then try to initially scan the directory (should happen before sending
+                        // an initialize response so that changes reported later are not dups)
+                        workspace.populate_watchlist();
+                    }
+
                     let _ = server.send_ok(id, InitializeResult {
                         capabilities: ServerCapabilities {
                             textDocumentSync: TextDocumentSyncKind::Full,
@@ -131,14 +144,6 @@ fn initialize_workspace(server: &Server) -> Workspace {
                             ..Default::default()
                         },
                     });
-
-                    // try to read the config
-                    if let Err(e) = workspace.read_config() {
-                        let _ = server.send_notify("window/showMessage", ShowMessageParams {
-                            type_: MessageType::Warning,
-                            message: workspace.localize(&m::CannotReadConfig { error: &e }),
-                        });
-                    }
 
                     return workspace;
                 } else {
@@ -351,6 +356,18 @@ fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
             Request::DidCloseTextDocument(params) => {
                 let ws = workspace.write();
                 try_or_notify!(ws.close_file(&params.textDocument.uri));
+                errln!("workspace: {:#?}", *ws);
+            }
+
+            Request::DidChangeWatchedFiles(params) => {
+                let ws = workspace.write();
+                for ev in params.changes {
+                    match ev.type_ {
+                        FileChangeType::Created => { ws.on_file_created(&ev.uri); }
+                        FileChangeType::Changed => { ws.on_file_changed(&ev.uri); }
+                        FileChangeType::Deleted => { ws.on_file_deleted(&ev.uri); }
+                    }
+                }
                 errln!("workspace: {:#?}", *ws);
             }
 

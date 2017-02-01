@@ -1,8 +1,10 @@
+use std::mem;
 use std::fmt;
 use std::io;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
+use std::ffi::OsStr;
+use std::collections::{hash_map, HashMap};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -12,6 +14,7 @@ use futures_cpupool::CpuPool;
 use serde_json;
 use url::Url;
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use walkdir::WalkDir;
 
 use kailua_env::{Unit, Pos, Span, Source, SourceFile, SourceSlice};
 use kailua_diag::{self, Report, Localize, Localized};
@@ -610,6 +613,19 @@ impl Workspace {
         Ok(())
     }
 
+    pub fn populate_watchlist(&mut self) {
+        for e in WalkDir::new(&self.base_dir).follow_links(true) {
+            // we don't care about I/O errors and (in Unix) symlink loops
+            let e = if let Ok(e) = e { e } else { continue };
+
+            let ext = e.path().extension();
+            if ext == Some(OsStr::new("lua")) || ext == Some(OsStr::new("kailua")) {
+                // TODO probably this should be of the lower priority
+                let _ = self.ensure_file(e.path()).ensure_chunk();
+            }
+        }
+    }
+
     pub fn localize(&self, msg: &Localize) -> String {
         Localized::new(&msg, &self.message_lang).to_string()
     }
@@ -625,14 +641,22 @@ impl Workspace {
         }
     }
 
+    fn make_file(&self, path: PathBuf) -> WorkspaceFile {
+        WorkspaceFile::new(&self.shared, &self.pool, &self.source, &self.message_lang, path)
+    }
+
+    fn destroy_file(&self, file: WorkspaceFile) -> bool {
+        file.cancel();
+        let file = file.inner.read();
+        let sourcefile = self.source.write().remove(file.unit);
+        file.document.is_some() && sourcefile.is_some()
+    }
+
     pub fn open_file(&self, item: protocol::TextDocumentItem) -> WorkspaceResult<()> {
         let path = uri_to_path(&item.uri)?;
 
         let mut files = self.files.write();
-        let file = files.entry(path.clone()).or_insert_with(|| {
-            WorkspaceFile::new(&self.shared, &self.pool, &self.source,
-                               &self.message_lang, path)
-        });
+        let file = files.entry(path.clone()).or_insert_with(|| self.make_file(path));
 
         file.update_document(|doc| {
             if doc.is_some() {
@@ -645,10 +669,7 @@ impl Workspace {
 
     fn ensure_file(&self, path: &Path) -> WorkspaceFile {
         let mut files = self.files.write();
-        files.entry(path.to_owned()).or_insert_with(|| {
-            WorkspaceFile::new(&self.shared, &self.pool, &self.source,
-                               &self.message_lang, path.to_owned())
-        }).clone()
+        files.entry(path.to_owned()).or_insert_with(|| self.make_file(path.to_owned())).clone()
     }
 
     pub fn close_file(&self, uri: &str) -> WorkspaceResult<()> {
@@ -656,11 +677,10 @@ impl Workspace {
 
         // closing file breaks the synchronization so the file should be re-read from fs
         let mut files = self.files.write();
-        let ok = if let Some(file) = files.remove(&path) {
-            file.cancel();
-            let file = file.inner.read();
-            let sourcefile = self.source.write().remove(file.unit);
-            file.document.is_some() && sourcefile.is_some()
+        let ok = if let hash_map::Entry::Occupied(mut e) = files.entry(path.clone()) {
+            // replace the previous WorkspaceFile by a fresh WorkspaceFile
+            let file = mem::replace(e.get_mut(), self.make_file(path));
+            self.destroy_file(file)
         } else {
             false
         };
@@ -669,6 +689,30 @@ impl Workspace {
             Ok(())
         } else {
             Err(WorkspaceError("close notification with non-existent or non-open file"))
+        }
+    }
+
+    pub fn on_file_created(&self, uri: &str) {
+        if let Ok(path) = uri_to_path(uri) {
+            let file = self.ensure_file(&path);
+            let _ = file.ensure_chunk();
+        }
+    }
+
+    pub fn on_file_changed(&self, uri: &str) {
+        if let Ok(path) = uri_to_path(uri) {
+            let file = self.ensure_file(&path);
+            file.cancel();
+            let _ = file.ensure_chunk();
+        }
+    }
+
+    pub fn on_file_deleted(&self, uri: &str) {
+        if let Ok(path) = uri_to_path(uri) {
+            let mut files = self.files.write();
+            if let Some(file) = files.remove(&path) {
+                self.destroy_file(file);
+            }
         }
     }
 
