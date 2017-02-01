@@ -261,6 +261,15 @@ pub fn complete_name(tokens: &[NestedToken], name_idx: usize, nesting_category: 
         return items;
     }
 
+    // if the current word being typed matches exactly a keyword, we temporarily pause
+    // the completion to avoid capturing the carriage return from the completion. (XXX suboptimal)
+    let name_token = &tokens[name_idx].tok;
+    if name_token.span.end() == pos {
+        if let Tok::Keyword(_) = name_token.base {
+            return items;
+        }
+    }
+
     let mut seen = HashSet::new();
 
     if let Some(scope) = last_chunk.map.scope_from_pos(pos) {
