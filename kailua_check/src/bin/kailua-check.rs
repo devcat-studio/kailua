@@ -26,9 +26,8 @@ impl FsSource for LocalFsSource {
     fn chunk_from_path(&self, resolved_path: &Path) -> Result<Option<Chunk>, String> {
         match SourceFile::from_file(resolved_path) {
             Ok(file) => {
-                let mut source = self.source.borrow_mut();
-                let span = source.add(file);
-                if let Ok(chunk) = parse_chunk(&source, span, &*self.report) {
+                let span = self.source.borrow_mut().add(file);
+                if let Ok(chunk) = parse_chunk(&self.source.borrow(), span, &*self.report) {
                     Ok(Some(chunk))
                 } else {
                     Err(format!("parse error"))
