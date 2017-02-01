@@ -1,8 +1,12 @@
+extern crate serde;
+#[macro_use] extern crate serde_derive;
+extern crate serde_json;
+
 use std::str;
 use std::fmt;
 use std::collections::BTreeMap as Object;
 use serde::{de, Serialize, Serializer, Deserialize, Deserializer};
-use serde_json::{self, Value};
+use serde_json::Value;
 
 // utilities for serde_derive
 
@@ -45,7 +49,7 @@ macro_rules! interface {
              pub $fname:ident?: $ftype:ty, $($t:tt)*) => (
         interface!(@fields
                    ($($acc)*
-                    #[serde(skip_serializing_if = "::protocol::is_default")]
+                    #[serde(skip_serializing_if = "::is_default")]
                     $($attrs)* pub $fname: $ftype,)
                    () $default $($t)*);
     );

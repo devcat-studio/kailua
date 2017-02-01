@@ -14,8 +14,8 @@ extern crate kailua_env;
 #[macro_use] extern crate kailua_diag;
 extern crate kailua_syntax;
 extern crate kailua_check;
+extern crate kailua_langsvr_protocol as protocol;
 
-pub mod protocol;
 pub mod server;
 pub mod diags;
 pub mod workspace;
