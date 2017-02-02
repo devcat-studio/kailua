@@ -1,3 +1,4 @@
+#[macro_use] extern crate log;
 extern crate env_logger;
 extern crate serde;
 #[macro_use] extern crate serde_derive;
@@ -18,6 +19,7 @@ extern crate kailua_syntax;
 extern crate kailua_check;
 extern crate kailua_langsvr_protocol as protocol;
 
+mod fmtutils;
 pub mod server;
 pub mod diags;
 pub mod workspace;
@@ -99,7 +101,7 @@ fn initialize_workspace(server: &Server) -> Workspace {
     loop {
         let res = server.recv().unwrap();
         let req = if let Some(req) = res { req } else { continue };
-        errln!("read: {:#?}", req);
+        debug!("pre-init read: {:#?}", req);
 
         match req {
             Request::Initialize(id, params) => {
@@ -296,7 +298,7 @@ fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
     'restart: loop {
         let res = server.recv().unwrap();
         let req = if let Some(req) = res { req } else { continue };
-        errln!("read: {:#?}", req);
+        debug!("read: {:#?}", req);
 
         macro_rules! try_or_notify {
             ($e:expr) => (match $e {
@@ -325,7 +327,7 @@ fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
 
                 let ws = workspace.write();
                 try_or_notify!(ws.open_file(params.textDocument));
-                errln!("workspace: {:#?}", *ws);
+                debug!("workspace: {:#?}", *ws);
 
                 let pool = ws.pool().clone();
                 let file = ws.file(&uri).unwrap();
@@ -350,13 +352,13 @@ fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
 
                     on_file_changed(&file, server.clone(), &pool);
                 }
-                errln!("workspace: {:#?}", *ws);
+                debug!("workspace: {:#?}", *ws);
             }
 
             Request::DidCloseTextDocument(params) => {
                 let ws = workspace.write();
                 try_or_notify!(ws.close_file(&params.textDocument.uri));
-                errln!("workspace: {:#?}", *ws);
+                debug!("workspace: {:#?}", *ws);
             }
 
             Request::DidChangeWatchedFiles(params) => {
@@ -368,7 +370,7 @@ fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
                         FileChangeType::Deleted => { ws.on_file_deleted(&ev.uri); }
                     }
                 }
-                errln!("workspace: {:#?}", *ws);
+                debug!("workspace: {:#?}", *ws);
             }
 
             Request::Completion(id, params) => {
@@ -391,7 +393,7 @@ fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
                     let tokens = &tokens.0;
 
                     let class = completion::classify(tokens, pos);
-                    errln!("completion: {:?} {:#?}", class, pos);
+                    debug!("completion: {:?} {:#?}", class, pos);
                     let items = match class {
                         Some(CompletionClass::Name(idx, category)) => {
                             file.last_chunk().map(|chunk| {
@@ -427,8 +429,11 @@ fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
 }
 
 pub fn main() {
+    env_logger::init().unwrap();
     let server = connect_to_client();
+    info!("established connection");
     let workspace = Arc::new(RwLock::new(initialize_workspace(&server)));
+    info!("initialized workspace, starting a main loop");
     let server = Arc::new(server);
     main_loop(server, workspace);
 }

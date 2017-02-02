@@ -1,23 +1,37 @@
 {
   "name": "kailua",
-  "displayName": "kailua",
+  "displayName": "Kailua",
   "description": "A type checker and IDE support for Lua",
-  "version": "0.0.1",
-  "publisher": "Nexon Corporation",
+  "version": "0.0.0",
+  "publisher": "devCAT",
+  "preview": true,
   "engines": {
-    "vscode": "^1.5.0"
+    "vscode": "^1.8.0"
   },
+  "keywords": [
+    "Lua",
+    "Kailua"
+  ],
   "categories": [
-    "Other"
+    "Languages",
+    "Linters"
   ],
   "extensionDependencies": [
     "vscode.lua"
   ],
   "activationEvents": [
-    "onLanguage:lua"
+    "onLanguage:lua",
+    "onCommand:Kailua.EditConfiguration",
+    "workspaceContains:.vscode/kailua.json"
   ],
   "main": "./out/src/extension",
   "contributes": {
+    "commands": [
+      {
+        "command": "Kailua.EditConfiguration",
+        "title": "Kailua: Edit a Configuration File"
+      }
+    ],
     "languages": [
       {
         "id": "lua",
@@ -37,11 +51,18 @@
         "scopeName": "source.lua",
         "path": "./syntaxes/kailua.json"
       }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": "kailua.json",
+        "url": "./kailua.schema.json"
+      }
     ]
   },
   "scripts": {
     "vscode:prepublish": "tsc -p ./",
-    "compile": "tsc -watch -p ./",
+    "precompile": "cd ../kailua_langsvr && cargo build",
+    "compile": "tsc -p ./",
     "postinstall": "node ./node_modules/vscode/bin/install",
     "test": "node ./node_modules/vscode/bin/test"
   },

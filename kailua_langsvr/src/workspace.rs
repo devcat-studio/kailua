@@ -21,6 +21,7 @@ use kailua_diag::{self, Report, Localize, Localized};
 use kailua_syntax::{Lexer, Nest, NestedToken, Parser, Chunk};
 use kailua_check::{self, FsSource, FsOptions, Context, Output};
 
+use fmtutils::Ellipsis;
 use diags::{self, ReportTree};
 use futureutils::{CancelError, CancelToken, CancelFuture};
 use protocol;
@@ -142,7 +143,7 @@ struct WorkspaceConfig {
 
 impl WorkspaceConfig {
     fn read(base_dir: &Path) -> io::Result<WorkspaceConfig> {
-        let f = File::open(base_dir.join("kailua.json"))?;
+        let f = File::open(base_dir.join(".vscode").join("kailua.json"))?;
         let mut config: WorkspaceConfig = serde_json::de::from_reader(f).map_err(|e| {
             io::Error::new(io::ErrorKind::InvalidData, e)
         })?;
@@ -813,11 +814,5 @@ impl Workspace {
     pub fn last_check_output(&self) -> Option<Arc<Output>> {
         self.shared.read().last_check_output.clone()
     }
-}
-
-struct Ellipsis;
-
-impl fmt::Debug for Ellipsis {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "...") }
 }
 

@@ -5,6 +5,7 @@ use std::net::TcpStream;
 use serde::Serialize;
 use serde_json::{self, Value};
 use parking_lot::Mutex;
+use fmtutils::Asis;
 use protocol::{self, Id, Request, RequestMessage, RequestError, ResponseMessage, ResponseError};
 
 fn invalid<E: Into<Box<Error + Send + Sync>>>(e: E) -> io::Error {
@@ -65,6 +66,9 @@ impl Server {
 
         let mut body = vec![0; bodylen.unwrap()];
         reader.read_exact(&mut body)?;
+        if cfg!(debug_assertions) {
+            trace!("read: {}", Asis(&body));
+        }
         Ok(body)
     }
 
@@ -75,10 +79,7 @@ impl Server {
         drop(writer);
 
         if cfg!(debug_assertions) {
-            let mut err = ::std::io::stderr();
-            write!(err, "write: ")?;
-            err.write(buf)?;
-            write!(err, "\n")?;
+            trace!("write: {}", Asis(buf));
         }
 
         Ok(())
