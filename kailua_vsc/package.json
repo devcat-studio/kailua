@@ -60,7 +60,7 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "tsc -p ./",
+    "vscode:prepublish": "tsc -p ./ && node ./out/src/tools/build-langsvr",
     "precompile": "cd ../kailua_langsvr && cargo build",
     "compile": "tsc -p ./",
     "postinstall": "node ./node_modules/vscode/bin/install",
@@ -68,13 +68,15 @@
   },
   "dependencies": {
     "@types/lodash": "^4.14.45",
+    "lodash": "^4.17.4",
     "vscode-languageclient": "^2.6.3"
   },
   "devDependencies": {
-    "typescript": "^2.0.3",
-    "vscode": "^1.0.0",
-    "mocha": "^2.3.3",
+    "@types/mocha": "^2.2.32",
     "@types/node": "^6.0.40",
-    "@types/mocha": "^2.2.32"
+    "fs-extra": "^2.0.0",
+    "mocha": "^2.3.3",
+    "typescript": "^2.0.3",
+    "vscode": "^1.0.0"
   }
 }

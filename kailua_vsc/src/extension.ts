@@ -25,7 +25,7 @@ function isDebugging() {
     // v8 is launched in the debugging mode, or vs code has received a debugging option
     let debugging = typeof v8debug === 'object';
     if (!debugging) {
-        let args: string[] = (process as any).execArgv;
+        let args: string[] = process.execArgv;
         debugging = args && args.some((arg) => /^--(?:debug|debug-brk)=?/.test(arg));
     }
     return debugging;
