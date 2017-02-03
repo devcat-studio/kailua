@@ -1,26 +1,58 @@
 # 🌴 Kailua
 
+[한국어](README.ko.md)
+
 **Kailua** is an experimental type checker and integrated development environment (IDE)
 for the [Lua] programming language (currently only Lua 5.1 is supported).
 
-## Installation
-
-*TBW*
-
-## Usage
+## Installation and Usage
 
 Kailua can be used as a standalone checker (`kailua-check`) or an IDE plugin.
 
-In the latter case, you would need a separate configuration file
-to specify where to start the checking.
-In the case of [Visual Studio Code][VSCode],
-the file `.vscode/kailua.json` should contain the following:
+### Standalone Checker
 
-```lua
+To install a standalone checker,
+[install Rust] first, then checkout this repository and then type the following:
+
+```
+cd kailua_check
+cargo install
+```
+
+You can run `kailua-check <path to the entry point>` now.
+
+![](etc/images/kailua-check.png)
+
+### Visual Studio Code
+
+**Caution: Currently the extension only works in Windows due to the packaging issue.**
+
+Kailua can be used as an IDE support for [Visual Studio Code][VSCode].
+Install Kailua by typing `ext install kailua` from the Quick Launch (`Ctrl-P`).
+
+You will see a warning that the configuration file is missing
+when you open a folder containing Lua codes.
+You need it for real-time checking.
+
+![](etc/images/kailua-vsc-missing-config.png)
+
+You can either create `.vscode/kailua.json` by hand,
+or search "Kailua" from the Command Palette (`Ctrl-Shift-P`) to edit one.
+
+![](etc/images/kailua-vsc-edit-config.png)
+
+The following content is required for `.vscode/kailua.json`,
+in case you are editing it by hand:
+
+```json
 {
     "start_path": "<path to the entry point>"
 }
 ```
+
+You need to reload the current window () to apply the configuration.
+
+### Your First Kailua Code
 
 Once you've set the entry point, you can write your first Kailua code:
 
@@ -31,7 +63,7 @@ print('Hello, world!')
 
 Play a bit with this code to see which errors Kailua can detect.
 
-## Overview
+## Kailua the Language
 
 ### Special Comments
 
@@ -44,8 +76,8 @@ The additional annotations are described in special comments:
   `local` (either individual names or statement), `function` (arguments),
   `for` (individual names) and assignment (either individual names or statement).
 
-  When used right after the name, you can put a comma or closing parenthesis
-  *before* the type like this:
+  When used right after the name, for the ease of typing,
+  you can put a comma or closing parenthesis *before* the type like this:
 
   ```lua
   function f(x, --: integer
@@ -61,7 +93,7 @@ The additional annotations are described in special comments:
 * `--> <type>` describes the type(s) of function returns.
 
   It is valid only after the closing parenthesis of function arguments.
-  It is valid to put `--:` and `--v` in the same line.
+  It is valid to put `--:` (for the last argument) and `--v` in the same line.
 
 * `--v function(<name>: <type> ...) [--> <type>]` describes a function type.
 
@@ -70,8 +102,9 @@ The additional annotations are described in special comments:
 
 * `--# ...` is a special directive for the type checker.
 
-  The most important directive is `--# open <name>`,
-  which also implicitly specifies what language variant is currently in use.
+  The most important directive is `--# open <built-in library name>`,
+  which loads the corresponding built-in names and
+  also implicitly specifies what language variant is currently in use.
   The only supported name so far is `lua51`, for the vanilla Lua 5.1.
   It is recommended to put it to the first non-comment line in the entry point.
 
@@ -103,20 +136,26 @@ The following basic types are recognized:
 * `nil`, `boolean`, `number`, `string`, `function`, `userdata`, `thread`, `table`
   for primitive Lua types.
 
-* `integer` for a check-time subset of `number`. (Primitive in Lua 5.3 or later)
+* `integer` for a check-time integral subset of `number`.
+  (In the future, in the Lua 5.3 mode or later, it will be also recognized as primitive.)
 
-* Boolean, integer and string literals are valid subtypes of
+* `true` or `false`, integer and string literals are valid subtypes of
   `boolean`, `integer` and `string`, respectively.
 
-* `vector<T>` for a table with consecutive integer keys.
+* The table type is divided into four useful cases.
 
-* `map<Key, Value>` for a homogeneous associative table.
+  Importantly, first two cases are not automatically inferred from the use and
+  should be explicitly annotated like `local tab = {} --: vector<integer>`.
 
-* `{ key = T, ... }` for records, whose keys are strings and fixed at the check time.
-  You can use semicolons in place of commas.
+  * `vector<T>` for a table with consecutive integer keys.
 
-* `{ T, ... }` for tuples, whose keys are consecutive integers.
-  Otherwise they are similar to records.
+  * `map<Key, Value>` for a homogeneous associative table.
+
+  * `{ key = T, ... }` for records, whose keys are strings and fixed at the check time.
+    You can use semicolons in place of commas.
+
+  * `{ T, ... }` for tuples, whose keys are consecutive integers.
+    Otherwise they are similar to records.
 
 * `function(Arg, ...)` or `function(Arg, ...) --> Ret` for functions.
   `Ret` can be multiple types, in which case you need parentheses
@@ -136,12 +175,13 @@ The following basic types are recognized:
 
 The Kailua types are by default *not checked for `nil`*.
 That is, you can assign `nil` to `integer` but you can also add two `integer`s;
-the valid Kailua code can still result in an error therefore.
+the valid Kailua code can still result in a runtime error therefore.
 This restriction was required for making a practical type checker
 without changing the source programming language.
 
 You can opt in two other `nil`-handling modes if you need to make it explicit.
-As they are (transitively) freely assignable, think them more as a documentation.
+As they are (transitively) freely assignable,
+consider them more a machine-readable documentation.
 
 * `T?` also accepts `nil` but it is aware that it can contain `nil`.
   Two `integer?`s cannot be added.
@@ -151,7 +191,7 @@ As they are (transitively) freely assignable, think them more as a documentation
 Also, the table values are always `T` or `T?` (for the obvious reason).
 
 Finally, types for the names and table values can optionally have a `const` prefix.
-You cannot modify `const` types: `map<integer, const vector<string>>`.
+You cannot modify the innard of `const` types: `map<integer, const vector<string>>`.
 You can still assign to them (otherwise this type won't be useful at all).
 
 ### Avoiding the type checker
@@ -187,7 +227,7 @@ Kailua is a [Rust] application, composed of multiple [crates][crates-and-modules
 * [`kailua_test`](kailua_test/): Testing harness for `kailua_syntax` and `kailua_check`.
   For those crates `cargo test` will include a battery of integration tests.
 
-* [`kailua_syntax`](kailua_syntax/): Versatile Lua lexer and parser.
+* [`kailua_syntax`](kailua_syntax/): Fully recoverable Lua lexer and parser.
   Aware of Kailua extensions as well.
 
 * [`kailua_check`](kailua_check/): Main type checker for Kailua.
@@ -202,6 +242,10 @@ Kailua is a [Rust] application, composed of multiple [crates][crates-and-modules
 
   * [`kailua_langsvr_protocol`](kailua_langsvr_protocol/): A macro-heavy portion of
     `kailua_langsvr`, separated in order to reduce compilation time.
+
+## License
+
+<!-- -->
 
 [Lua]: https://www.lua.org/
 [Rust]: https://www.rust-lang.org/

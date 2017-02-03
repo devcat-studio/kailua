@@ -2,7 +2,7 @@
   "name": "kailua",
   "displayName": "Kailua",
   "description": "A type checker and IDE support for Lua",
-  "version": "0.0.0",
+  "version": "0.0.0-20170203",
   "publisher": "devCAT",
   "preview": true,
   "engines": {
@@ -16,6 +16,8 @@
     "Languages",
     "Linters"
   ],
+  "icon": "kailua-vsc-icon.png",
+  "galleryBanner.color": "#252526",
   "extensionDependencies": [
     "vscode.lua"
   ],
