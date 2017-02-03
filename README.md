@@ -11,8 +11,8 @@ Kailua can be used as a standalone checker (`kailua-check`) or an IDE plugin.
 
 ### Standalone Checker
 
-To install a standalone checker,
-[install Rust] first, then checkout this repository and then type the following:
+To install a standalone checker, [install Rust] first (1.15 or later required),
+then checkout this repository and then type the following:
 
 ```
 cd kailua_check
