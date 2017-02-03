@@ -1,4 +1,4 @@
-## 0.0.0-20170203
+## 0.0.0
 
 * Initial public release.
 
