@@ -214,7 +214,7 @@ The additional annotations are described in special comments:
 * `--> <type>` describes the type(s) of function returns.
 
   It is valid only after the closing parenthesis of function arguments.
-  It is valid to put `--:` (for the last argument) and `--v` in the same line.
+  It is valid to put `--:` (for the last argument) and `-->` in the same line.
 
 * `--v function(<name>: <type> ...) [--> <type>]` describes a function type.
 
