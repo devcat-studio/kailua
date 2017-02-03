@@ -249,6 +249,7 @@ Kailua is a [Rust] application, composed of multiple [crates][crates-and-modules
 
 [Lua]: https://www.lua.org/
 [Rust]: https://www.rust-lang.org/
+[install Rust]: https://www.rust-lang.org/install.html
 [crates-and-modules]: https://doc.rust-lang.org/book/crates-and-modules.html
 [VS]: https://www.visualstudio.com/
 [VSCode]: https://code.visualstudio.com/
