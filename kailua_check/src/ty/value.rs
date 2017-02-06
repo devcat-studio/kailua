@@ -1383,9 +1383,7 @@ mod tests {
     fn just(t: T) -> Slot { Slot::new(F::Just, Ty::from(t)) }
     fn var(t: T) -> Slot { Slot::new(F::Var, Ty::from(t)) }
     fn cnst(t: T) -> Slot { Slot::new(F::Const, Ty::from(t)) }
-    fn curr(t: T) -> Slot { Slot::new(F::Currently, Ty::from(t)) }
     fn varcnst(t: T) -> Slot { Slot::new(F::VarOrConst(Mark::any()), Ty::from(t)) }
-    fn varcurr(t: T) -> Slot { Slot::new(F::VarOrCurrently(Mark::any()), Ty::from(t)) }
     fn nil(t: T) -> Ty { Ty::from(t).or_nil(Nil::Noisy) }
 
     macro_rules! check_base {
@@ -1473,7 +1471,7 @@ mod tests {
         check!(T::Dynamic(Dyn::User), T::Dynamic(Dyn::Oops); T::Dynamic(Dyn::Oops));
         check!(T::Dynamic(Dyn::User), T::Dynamic(Dyn::User); T::Dynamic(Dyn::User));
         check!(T::Dynamic(Dyn::User), T::Integer; T::Dynamic(Dyn::User));
-        check!(T::tuple(vec![var(T::Integer), curr(T::Boolean)]), T::Dynamic(Dyn::User);
+        check!(T::tuple(vec![var(T::Integer), cnst(T::Boolean)]), T::Dynamic(Dyn::User);
                T::Dynamic(Dyn::User));
         check!(T::All, T::Boolean; T::All);
         check!(T::Dynamic(Dyn::User), T::All; T::Dynamic(Dyn::User));
@@ -1522,7 +1520,7 @@ mod tests {
         check!(T::table(), T::table(); T::table());
         check!(T::table(), T::array(just(T::Integer)); _);
         check!(T::table(), T::array(var(T::Integer)); _);
-        check!(T::table(), T::array(curr(T::Integer)); _);
+        check!(T::table(), T::array(cnst(T::Integer)); _);
         check!(T::array(just(T::Integer)), T::array(just(T::Integer));
                T::array(just(T::Integer)));
         check!(T::array(var(T::Integer)), T::array(var(T::Integer));
@@ -1542,13 +1540,13 @@ mod tests {
         check!(T::tuple(vec![just(T::Integer), just(T::String)]),
                T::tuple(vec![just(T::Number), just(T::Boolean), just(T::Dynamic(Dyn::User))]);
                _);
-        check!(T::tuple(vec![var(T::Integer), curr(T::String)]),
+        check!(T::tuple(vec![var(T::Integer), cnst(T::String)]),
                T::tuple(vec![cnst(T::String), just(T::Number), var(T::Boolean)]);
                _);
         check!(T::tuple(vec![cnst(T::Integer)]),
-               T::tuple(vec![cnst(T::Number), curr(T::String)]);
+               T::tuple(vec![cnst(T::Number), cnst(T::String)]);
                _);
-        check!(T::tuple(vec![just(T::Integer), var(T::String), curr(T::Boolean)]),
+        check!(T::tuple(vec![just(T::Integer), var(T::String), cnst(T::Boolean)]),
                T::empty_table();
                _);
         check!(T::record(hash![foo=just(T::Integer), bar=just(T::String)]),

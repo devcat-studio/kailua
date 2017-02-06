@@ -388,15 +388,10 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             return Ok(Some(Slot::dummy()));
         }
 
-        let new_slot = |context: &mut Context<R>, linear: bool| {
+        let new_slot = |context: &mut Context<R>| {
             // we don't yet know the exact value type, so generate a new type variable
             let tvar = T::TVar(context.gen_tvar());
-            let flex = if linear {
-                F::VarOrCurrently(context.gen_mark())
-            } else {
-                F::Var
-            };
-            Slot::new(flex, Ty::new(tvar))
+            Slot::new(F::Var, Ty::new(tvar))
         };
 
         let clsinfo = match *ety {
@@ -459,7 +454,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         (slot, true)
                     } else if litkey == &b"new"[..] {
                         // `new` is handled from the assignment (it cannot be copied from `init`
-                        // because it initially starts as as a type varibale, i.e. unknown)
+                        // because it initially starts as as a type variable, i.e. unknown)
                         self.env.error(expspan, m::ReservedNewMethod {}).done()?;
                         return Ok(Some(Slot::dummy()));
                     } else if let Some(v) = fields!(class_ty).get(&litkey).cloned() {
@@ -473,8 +468,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         }
 
                         // prototypes always use Var slots; it is in principle append-only.
-                        // XXX but methods cannot be easily resolved without linearity.
-                        let slot = new_slot(self.context(), true);
+                        let slot = new_slot(self.context());
                         fields!(class_ty).insert(litkey, slot.clone());
                         (slot, true)
                     }
@@ -490,7 +484,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         return Ok(Some(Slot::dummy()));
                     } else {
                         // the constructor (checked earlier) can add Currently slots to instances.
-                        let slot = new_slot(self.context(), true);
+                        let slot = new_slot(self.context());
                         fields!(instance_ty).insert(litkey, slot.clone());
                         (slot, true)
                     }
@@ -502,7 +496,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 if new {
                     // the following is like `adapt_table` but specialized for this particular case.
                     // `accept_in_place` simulates the self-assignment (not possible with `accept`).
-                    ety0.adapt(F::Currently, self.context());
+                    ety0.adapt(F::Var, self.context());
                     if let Err(e) = ety0.accept_in_place(self.context()) {
                         error!("{}", e);
                         self.env.error(&*ety0, m::CannotAdaptClass { cls: self.display(&*ety0) })
@@ -600,7 +594,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             ($adapted:expr) => ({
                 // the table itself may be at the Just slot, most primarily by
                 // being directly constructed from the table constructor.
-                ety0.adapt(F::Currently, self.context());
+                ety0.adapt(F::Var, self.context());
 
                 let adapted = Ty::new(T::Tables(Cow::Owned($adapted)));
                 if ety0.accept(&Slot::just(adapted.clone()), self.context(), false).is_err() {
@@ -627,7 +621,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         if let Some(litkey) = litkey {
             match (ety.get_tables(), lval) {
                 (Some(&Tables::Empty), true) => {
-                    let vslot = new_slot(self.context(), true);
+                    let vslot = new_slot(self.context());
                     let fields = Some((litkey, vslot.clone())).into_iter().collect();
                     adapt_table!(Tables::Fields(fields));
                     return Ok(Some(vslot));
@@ -636,7 +630,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 (Some(&Tables::Fields(ref fields)), true) => {
                     let mut fields = fields.clone();
                     let vslot = fields.entry(litkey)
-                                      .or_insert_with(|| new_slot(self.context(), true))
+                                      .or_insert_with(|| new_slot(self.context()))
                                       .clone();
                     vslot.adapt(ety0.flex(), self.context());
                     adapt_table!(Tables::Fields(fields));
@@ -674,7 +668,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             },
 
             (Some(&Tables::Empty), true) => {
-                let vslot = new_slot(self.context(), false);
+                let vslot = new_slot(self.context());
                 let tab = if intkey {
                     Tables::Array(vslot.clone())
                 } else {
@@ -818,8 +812,11 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                             }
 
                             // map the name span to the resulting slot
-                            let varslot = self.env.get_var(nameref).unwrap().slot.clone();
-                            self.context().spanned_slots_mut().insert(varslot.with_loc(nameref));
+                            let varslot = self.env.get_var(nameref).unwrap().slot.slot().cloned();
+                            if let Some(varslot) = varslot {
+                                let varslot = varslot.with_loc(nameref);
+                                self.context().spanned_slots_mut().insert(varslot);
+                            }
                         }
 
                         // indexed assignment
@@ -1038,9 +1035,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 assert!(meths.len() >= 1);
 
                 // find a slot for the first name
-                let info = if let Some(def) = self.env.get_var(name).cloned() {
-                    self.env.ensure_var(name)?;
-                    def.slot
+                let info = if self.env.get_var(name).is_some() {
+                    self.env.ensure_var(name)?
                 } else {
                     self.env.error(name, m::NoVar { name: self.env.get_name(name) }).done()?;
                     Slot::dummy()
@@ -1079,8 +1075,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         if let T::Class(Class::Prototype(cid)) = **info.unlift() {
                             let inst = T::Class(Class::Instance(cid));
                             if *method.base == *b"init" {
-                                // currently [constructible] <class instance #cid>
-                                Some((F::Currently, Ty::new(inst).with_tag(Tag::Constructible)))
+                                // var [constructible] <class instance #cid>
+                                Some((F::Var, Ty::new(inst).with_tag(Tag::Constructible)))
                             } else {
                                 // var <class instance #cid>
                                 Some((F::Var, Ty::new(inst)))
@@ -1190,22 +1186,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             }
 
             St::KailuaAssume(ref name, kindm, ref kind, _nextscope) => {
-                // while Currently slot is not explicitly constructible for most cases,
-                // `assume` frequently has to *suppose* that the variable is Currently.
-                // detect [currently] attribute and strip it.
-                let mut kind = kind;
-                let mut currently = false;
-                if kindm == M::None {
-                    if let K::Attr(ref k, ref a) = *kind.base {
-                        if *a.name.base == *b"currently" {
-                            currently = true;
-                            kind = k;
-                        }
-                    }
-                }
-
-                let flex = if currently { F::Currently } else { F::from(kindm) };
-                let slot = self.visit_kind(flex, kind)?;
+                let slot = self.visit_kind(F::from(kindm), kind)?;
                 self.env.assume_var(name, slot)?;
                 Ok(Exit::None)
             }
@@ -1542,9 +1523,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 }
             },
             Ex::Var(ref name) => {
-                if let Some(def) = self.env.get_var(name).cloned() {
-                    self.env.ensure_var(name)?;
-                    Ok(SlotSeq::from(def.slot))
+                if self.env.get_var(name).is_some() {
+                    Ok(SlotSeq::from(self.env.ensure_var(name)?))
                 } else {
                     self.env.error(exp, m::NoVar { name: self.env.get_name(name) }).done()?;
                     Ok(SlotSeq::dummy())

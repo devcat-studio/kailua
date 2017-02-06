@@ -108,8 +108,30 @@ pub struct Frame {
 #[derive(Clone, Debug)]
 pub struct NameDef {
     pub span: Span,
-    pub slot: Slot,
-    pub set: bool,
+    pub slot: NameSlot,
+}
+
+#[derive(Clone, Debug)]
+pub enum NameSlot {
+    None, // not initialized, no type specified
+    Unset(Slot),
+    Set(Slot),
+}
+
+impl NameSlot {
+    pub fn set(&self) -> bool {
+        match *self {
+            NameSlot::None | NameSlot::Unset(_) => false,
+            NameSlot::Set(_) => true,
+        }
+    }
+
+    pub fn slot(&self) -> Option<&Slot> {
+        match *self {
+            NameSlot::None => None,
+            NameSlot::Unset(ref slot) | NameSlot::Set(ref slot) => Some(slot),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1412,21 +1434,36 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         self.assign_(lhs, rhs, false)
     }
 
-    pub fn ensure_var(&mut self, nameref: &Spanned<NameRef>) -> CheckResult<()> {
+    pub fn ensure_var(&mut self, nameref: &Spanned<NameRef>) -> CheckResult<Slot> {
         let id = self.id_from_nameref(nameref);
 
-        let defslot = {
-            let def = self.context.ids.get(&id).expect("Env::ensure_var with an undefined var");
-            if def.set { return Ok(()); }
-            def.slot.clone().with_loc(def.span)
-        };
+        let defslot;
+        {
+            let def = self.context.ids.get_mut(&id);
+            let mut def = def.expect("Env::ensure_var with an undefined var");
+            match def.slot {
+                NameSlot::None => {
+                    // do not try to accept the slot again
+                    let nil = Slot::just(Ty::noisy_nil());
+                    def.slot = NameSlot::Set(nil.clone());
+                    return Ok(nil);
+                }
+                NameSlot::Unset(ref slot) => {
+                    // needs to be updated, but we hold the context right now.
+                    // clone the slot and continue from the outside.
+                    defslot = slot.clone().with_loc(def.span);
+                }
+                NameSlot::Set(ref slot) => {
+                    return Ok(slot.clone());
+                }
+            }
+        }
 
-        // if the variable is not yet set, we may still try to assign nil
-        // to allow `local x --: string?` (which is fine even when "uninitialized").
+        // not yet set but typed (e.g. `local x --: string`), the type should accept `nil`
         let nil = Slot::just(Ty::noisy_nil()).without_loc();
         self.assign_special(&defslot, &nil)?;
         if defslot.accept(&nil, self.context, true).is_ok() { // this IS still initialization
-            self.context.ids.get_mut(&id).unwrap().set = true;
+            self.context.ids.get_mut(&id).unwrap().slot = NameSlot::Set(defslot.base.clone());
         } else {
             // won't alter the set flag, so subsequent uses are still errors
             self.error(&id, m::UseOfUnassignedVar {})
@@ -1434,7 +1471,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
                      .done()?;
         }
 
-        Ok(())
+        Ok(defslot.base)
     }
 
     fn name_class_if_any(&mut self, id: &Spanned<Id>, info: &Spanned<Slot>) -> CheckResult<()> {
@@ -1494,19 +1531,21 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             return Ok(());
         }
 
-        let assigned = initinfo.is_some();
-        let specinfo = specinfo.unwrap_or_else(|| {
-            Slot::var(Ty::noisy_nil(), self.context).without_loc()
-        });
-        if let Some(initinfo) = initinfo {
+        let slot = if let Some(initinfo) = initinfo {
+            let specinfo = specinfo.unwrap_or_else(|| initinfo.clone());
             self.assign_(&specinfo, &initinfo, true)?;
 
             // name the class if it is currently unnamed
             self.name_class_if_any(&id, &initinfo)?;
-        }
 
-        self.context.ids.insert(id.base, NameDef { span: id.span, slot: specinfo.base,
-                                                   set: assigned });
+            NameSlot::Set(specinfo.base)
+        } else if let Some(specinfo) = specinfo {
+            NameSlot::Unset(specinfo.base)
+        } else {
+            NameSlot::None
+        };
+
+        self.context.ids.insert(id.base, NameDef { span: id.span, slot: slot });
         Ok(())
     }
 
@@ -1517,12 +1556,12 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
         // we cannot blindly `accept` the `initinfo`, since it will discard the flexibility
         // (e.g. if the callee requests `F::Var`, we need to keep that).
-        // therefore we just remap `F::Just` to `F::VarOrCurrently`.
-        info.adapt(F::Currently, self.context);
+        // therefore we just remap `F::Just` to `F::Var`.
+        info.adapt(F::Var, self.context);
 
         self.name_class_if_any(&id, &info)?;
 
-        self.context.ids.insert(id.base, NameDef { span: id.span, slot: info.base, set: true });
+        self.context.ids.insert(id.base, NameDef { span: id.span, slot: NameSlot::Set(info.base) });
         Ok(())
     }
 
@@ -1531,22 +1570,29 @@ impl<'ctx, R: Report> Env<'ctx, R> {
     pub fn assign_to_var(&mut self, nameref: &Spanned<NameRef>,
                          info: Spanned<Slot>) -> CheckResult<()> {
         let id = self.id_from_nameref(nameref);
-        let (previnfo, prevset) = if self.context.ids.contains_key(&id.base) {
-            let def = self.context.ids.get_mut(&id.base).unwrap();
-            let prevset = def.set;
-            def.set = true;
-            (def.slot.clone(), prevset)
+
+        let (previnfo, prevset, needslotassign) = if self.context.ids.contains_key(&id.base) {
+            let mut def = self.context.ids.get_mut(&id.base).unwrap();
+            let (previnfo, prevset, needslotassign) = match def.slot {
+                NameSlot::None => (info.base.clone(), false, false),
+                NameSlot::Unset(ref slot) => (slot.clone(), false, true),
+                NameSlot::Set(ref slot) => (slot.clone(), true, true),
+            };
+            def.slot = NameSlot::Set(previnfo.clone());
+            (previnfo, prevset, needslotassign)
         } else {
-            let slot = Slot::var(Ty::noisy_nil(), self.context);
             self.context.ids.insert(id.base.clone(),
-                                    NameDef { span: id.span, slot: slot.clone(), set: true });
-            (slot, true)
+                                    NameDef { span: id.span,
+                                              slot: NameSlot::Set(info.base.clone()) });
+            (info.base.clone(), true, true)
         };
         debug!("assigning {:?} to a variable {} with type {:?}",
                info, id.display(&self.context), previnfo);
 
-        self.assign_(&previnfo.with_loc(&id), &info, !prevset)?;
-        self.name_class_if_any(&id, &info)?;
+        if needslotassign {
+            self.assign_(&previnfo.with_loc(&id), &info, !prevset)?;
+            self.name_class_if_any(&id, &info)?;
+        }
         Ok(())
     }
 
@@ -1573,16 +1619,11 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         debug!("(force) adding a variable {} as {:?}", id.display(&self.context), info);
 
         self.assume_special(&info)?;
-        match self.context.ids.entry(id) {
-            hash_map::Entry::Vacant(e) => {
-                e.insert(NameDef { span: name.span, slot: info.base, set: true });
-            }
-            hash_map::Entry::Occupied(mut e) => {
-                let def = e.get_mut();
-                def.slot = info.base;
-                def.set = true;
-            }
-        }
+
+        let mut def = self.context.ids.entry(id).or_insert_with(|| {
+            NameDef { span: name.span, slot: NameSlot::None }
+        });
+        def.slot = NameSlot::Set(info.base);
 
         Ok(())
     }

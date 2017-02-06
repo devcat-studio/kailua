@@ -98,7 +98,7 @@
 --#     function(function, function) --> (boolean, any...)
 --#
 --# assume global `coroutine`:
---#     [currently] {
+--#     {
 --#         -- TODO genericity
 --#         `create` = function(function) --> thread;
 --#         `resume` = function(thread, any...) --> (boolean, any...);

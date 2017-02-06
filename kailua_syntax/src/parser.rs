@@ -1742,7 +1742,7 @@ impl<'a> Parser<'a> {
     // thus op(K+1) is the first token with precedence higher than or equal to opK.
     //
     // for right-associative operators precedences should be _strictly_ decreasing instead.
-    // to simplify the matter we have a difference precedence for comparison and recursion.
+    // to simplify the matter we have different precedences for comparison and recursion.
     // while left-associative operators have the same precedence for both,
     // right-associative operators have comparison precedence higher than recusion precedence;
     // if opK is right-associative, subexprK can contain opK and result in a correct tree.

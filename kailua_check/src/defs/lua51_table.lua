@@ -2,7 +2,7 @@
 
 --# -- TODO lacks genericity (yet)
 --# assume global `table`:
---#     [currently] {
+--#     {
 --#         `concat` = function(vector<const string|number>, string?,
 --#                             integer?, integer?) --> string;
 --#         -- TODO ah fuck, needs overloading with function(vector<any>, integer, any)

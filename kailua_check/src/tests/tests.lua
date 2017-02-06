@@ -176,7 +176,7 @@ local x = p < q --@< Error: Operand `(number|"hello")` to < operator should be e
 
 --8<-- lt-func-number
 local function p() end
-local x = p < 3.14 --@< Error: Cannot apply < operator to `<currently> function() --> ()` and `number`
+local x = p < 3.14 --@< Error: Cannot apply < operator to `function() --> ()` and `number`
 --! error
 
 --8<-- unknown-type
@@ -308,20 +308,50 @@ local s = (42):char() --@< Error: Tried to index a non-table type `42`
 local p = (function() end)[3] --@< Error: Tried to index a non-table type `function() --> ()`
 --! error
 
---8<-- currently-nil-to-string
+--8<-- delayed-init-nil
+local f
+f = nil
+--! ok
+
+--8<-- delayed-init-string
 local f
 f = 'hello?'
 --! ok
 
---8<-- currently-func-to-func
-local f = function() end
-f = function() return 54 end
+--8<-- reinit-nil-string-implicit
+local f = nil
+f = 'hello?' --@< Error: Cannot assign `"hello?"` into `nil`
+             --@^ Note: The other type originates here
+--! error
+
+--8<-- reinit-nil-string-explicit
+local f = nil --: string
+f = 'hello?'
 --! ok
 
---8<-- currently-func-to-table
-local f = function() end
-f = {54, 49}
+--8<-- reinit-string-nil-implicit
+local x = 'hello?' --: string
+local f = x
+f = nil
 --! ok
+
+--8<-- reinit-string-nil-explicit
+local x = 'hello?' --: string
+local f = x --: string
+f = nil
+--! ok
+
+--8<-- reinit-func-func
+local f = function() end
+f = function() return 54 end --@< Error: Cannot assign `function() --> 54` into `function() --> ()`
+                             --@^ Note: The other type originates here
+--! error
+
+--8<-- reinit-func-table
+local f = function() end
+f = {54, 49} --@< Error: Cannot assign `{54, 49}` into `function() --> ()`
+             --@^ Note: The other type originates here
+--! error
 
 --8<-- assume-rec
 local f = function() end
@@ -532,32 +562,6 @@ q = p + p --@< Error: Cannot assign `number` into `integer`
           --@^ Note: The other type originates here
 --! error
 
---8<-- assume-currently-integer
-local a = true
-a = 'string'
---# assume a: [currently] integer
-a = a + 3.1
---! ok
-
---8<-- assume-currently-currently-integer
-local a = true
-a = 'string'
--- the parser intentionally avoids parsing two consecutive attributes, but one can work around
---# assume a: [currently] ([currently] integer)
---@^ Warning: `currently` is an unknown type attribute and ignored
-a = a + 3.1
---! ok
-
---8<-- assume-table-currently
-local a = true
-a = 'string'
---# assume a: [currently] { x = [currently] integer }
---@^ Warning: `currently` is an unknown type attribute and ignored
-a.x = 'foo' -- a.x is still integer
---@^ Error: Cannot assign `"foo"` into `integer`
---@^^ Note: The other type originates here
---! error
-
 --8<-- len-table
 local a = 3 + #{1, 2, 3}
 --! ok
@@ -583,7 +587,7 @@ for i = 1, 9, 2 do a = i end
 --8<-- for-non-integer
 --# assume a: integer
 for i = 1.1, 9 do
-    a = i --@< Error: Cannot assign `<currently> number` into `integer`
+    a = i --@< Error: Cannot assign `number` into `integer`
           --@^ Note: The other type originates here
 end
 --! error
@@ -591,7 +595,7 @@ end
 --8<-- for-non-integer-step
 --# assume a: integer
 for i = 1, 9, 2.1 do
-    a = i --@< Error: Cannot assign `<currently> number` into `integer`
+    a = i --@< Error: Cannot assign `number` into `integer`
           --@^ Note: The other type originates here
 end
 --! error
@@ -631,13 +635,13 @@ b = a.y
 --8<-- index-rec-with-wrong-name-1
 local a = { x = 3, y = 'foo' }
 local b = a.z + 1 -- z should be nil
---@^ Error: Cannot index `<currently> {x = 3, y = "foo"}` with `"z"`
+--@^ Error: Cannot index `{x = 3, y = "foo"}` with `"z"`
 --! error
 
 --8<-- index-rec-with-wrong-name-2
 local a = { x = 3, y = 'foo' }
 local b = a.z .. 'bar' -- ditto
---@^ Error: Cannot index `<currently> {x = 3, y = "foo"}` with `"z"`
+--@^ Error: Cannot index `{x = 3, y = "foo"}` with `"z"`
 --! error
 
 --8<-- table-update
@@ -712,10 +716,10 @@ a[2] = 54
 --8<-- var-table-update-with-integer
 local a = {} --: {} -- cannot be changed!
 a[1] = 42
---@^ Error: Cannot adapt the table type `{}` into `{<currently> <unknown type>}`
+--@^ Error: Cannot adapt the table type `{}` into `{<unknown type>}`
 --@^^ Note: The table had to be adapted in order to index it with `1`
 a[2] = 54
---@^ Error: Cannot adapt the table type `{}` into `{2 = <currently> <unknown type>}`
+--@^ Error: Cannot adapt the table type `{}` into `{2 = <unknown type>}`
 --@^^ Note: The table had to be adapted in order to index it with `2`
 --! error
 
@@ -923,7 +927,7 @@ local x = p().a.b --@< Error: Tried to index a non-table type `integer`
 --v function() --> {a=integer}
 local function p() return {a=4} end
 local x = p().a
-local y = x.b --@< Error: Tried to index a non-table type `<currently> integer`
+local y = x.b --@< Error: Tried to index a non-table type `integer`
 --! error
 
 --8<-- func-implicit-returns-rec
@@ -1999,8 +2003,8 @@ p.a:b()
 
 --8<-- method-decl-nontable
 local p = 42
-function p.a() end --@< Error: Tried to index a non-table type `<currently> 42`
-p.a()              --@< Error: Tried to index a non-table type `<currently> 42`
+function p.a() end --@< Error: Tried to index a non-table type `42`
+p.a()              --@< Error: Tried to index a non-table type `42`
 --! error
 
 --8<-- method-decl-nontable-nested
@@ -2012,7 +2016,7 @@ p.a.b()              --@< Error: Tried to index a non-table type `42`
 --8<-- method-decl-const
 local p = {} --: const {}
 function p.a() end
---@^ Error: Cannot adapt the table type `const {}` into `{a = <currently> <unknown type>}`
+--@^ Error: Cannot adapt the table type `const {}` into `{a = <unknown type>}`
 --@^^ Note: The table had to be adapted in order to index it with `"a"`
 p.a() --@< Error: Cannot index `const {}` with `"a"`
 --! error
@@ -2020,7 +2024,7 @@ p.a() --@< Error: Cannot index `const {}` with `"a"`
 --8<-- method-decl-const-nested
 local p = { a = {} } --: const {a = const {}}
 function p.a.b() end
---@^ Error: Cannot adapt the table type `const {}` into `{b = <currently> <unknown type>}`
+--@^ Error: Cannot adapt the table type `const {}` into `{b = <unknown type>}`
 --@^^ Note: The table had to be adapted in order to index it with `"b"`
 p.a.b() --@< Error: Cannot index `const {}` with `"b"`
 --! error
@@ -2089,7 +2093,7 @@ f('string')
 
 --8<-- methodcall-recover
 local q = {}
-local x = q:f() --@< Error: Cannot index `<currently> {}` with `"f"`
+local x = q:f() --@< Error: Cannot index `{}` with `"f"`
 -- `x` should be a dummy type now, so the following shouldn't fail
 x()
 local p = 3 + x

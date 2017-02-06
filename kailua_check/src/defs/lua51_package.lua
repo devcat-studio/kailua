@@ -7,7 +7,7 @@
 --#     [require] function(string) --> any
 --#
 --# assume global `package`:
---#     [currently] {
+--#     {
 --#         `cpath` = [package_cpath] string;
 --#         `loaded` = map<string, table>;
 --#         `loaders` = vector<function(string) --> (function|string|nil)>;

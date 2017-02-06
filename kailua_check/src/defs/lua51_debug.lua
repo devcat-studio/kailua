@@ -2,7 +2,7 @@
 
 --# -- TODO many of them will interfere with Kailua's own reasoning, so the support is minimal
 --# assume global `debug`:
---#     [currently] {
+--#     {
 --#         `debug` = function();
 --#         `getfenv` = function;
 --#         `gethook` = function;
