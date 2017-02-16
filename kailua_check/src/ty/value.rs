@@ -10,7 +10,7 @@ use kailua_diag::Reporter;
 use diag::CheckResult;
 use super::{F, Slot};
 use super::{TypeContext, NoTypeContext, TypeResolver, Lattice, Union, TySeq, Display};
-use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, Tag, Class};
+use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, RVar, Tag, Class};
 use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 use message as m;
@@ -82,12 +82,12 @@ impl<'a> T<'a> {
     pub fn tuple<'b, I: IntoIterator<Item=Slot>>(i: I) -> T<'a> {
         let i = i.into_iter().enumerate();
         let fields = i.map(|(i,v)| ((i as i32 + 1).into(), v));
-        T::Tables(Cow::Owned(Tables::Fields(fields.collect())))
+        T::Tables(Cow::Owned(Tables::Fields(fields.collect(), RVar::fresh())))
     }
     pub fn record<'b, I: IntoIterator<Item=(Str,Slot)>>(i: I) -> T<'a> {
         let i = i.into_iter();
         let fields = i.map(|(k,v)| (k.into(), v));
-        T::Tables(Cow::Owned(Tables::Fields(fields.collect())))
+        T::Tables(Cow::Owned(Tables::Fields(fields.collect(), RVar::fresh())))
     }
     pub fn array(v: Slot) -> T<'a> {
         T::Tables(Cow::Owned(Tables::Array(v)))
@@ -926,7 +926,7 @@ impl Ty {
                     let slot = slot_from_slotkind(&slotkind.base, resolv)?;
                     newfields.insert(name.base.clone().into(), slot);
                 }
-                Ty::new(T::Tables(Cow::Owned(Tables::Fields(newfields))))
+                Ty::new(T::Tables(Cow::Owned(Tables::Fields(newfields, RVar::fresh()))))
             }
 
             K::Tuple(ref fields) => {
@@ -936,7 +936,7 @@ impl Ty {
                     let slot = slot_from_slotkind(slotkind, resolv)?;
                     newfields.insert(key, slot);
                 }
-                Ty::new(T::Tables(Cow::Owned(Tables::Fields(newfields))))
+                Ty::new(T::Tables(Cow::Owned(Tables::Fields(newfields, RVar::fresh()))))
             },
 
             K::Array(ref v) => {

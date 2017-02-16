@@ -4,6 +4,8 @@ use message as m;
 use kailua_env::{Span, Spanned};
 use kailua_diag::{self, Kind, Report, Reporter, Localize};
 use kailua_syntax::Name;
+use atomic::Atomic;
+use atomic::Ordering::Relaxed;
 
 pub use self::literals::{Numbers, Strings};
 pub use self::tables::{Key, Tables};
@@ -67,9 +69,6 @@ impl Mark {
     pub fn assert_require_eq(&self, base: &Ty, ty: &Ty, ctx: &mut TypeContext) -> CheckResult<()> {
         ctx.assert_mark_require_eq(*self, base, ty)
     }
-    pub fn assert_require_sup(&self, base: &Ty, ty: &Ty, ctx: &mut TypeContext) -> CheckResult<()> {
-        ctx.assert_mark_require_sup(*self, base, ty)
-    }
 }
 
 impl fmt::Debug for Mark {
@@ -78,6 +77,74 @@ impl fmt::Debug for Mark {
             write!(f, "<mark #?>")
         } else {
             write!(f, "<mark #{}>", self.0)
+        }
+    }
+}
+
+// row variable, where:
+// - `fresh` denotes any fresh row variable which not yet has been added to the type context
+// - `empty` denotes a inextensible "empty" row variable;
+//   this cannot occur from unification, but is required to handle subtyping between
+//   records and non-records, which effectively disables any further record extension
+pub struct RVar(Atomic<u32>);
+
+impl RVar {
+    pub fn new(id: usize) -> RVar { RVar(Atomic::new(id as u32)) }
+    pub fn fresh() -> RVar { RVar::new(0) }
+    pub fn empty() -> RVar { RVar::new(0xfffffffe) }
+    pub fn any() -> RVar { RVar::new(0xffffffff) }
+
+    fn to_u32(&self) -> u32 {
+        self.0.load(Relaxed)
+    }
+
+    pub fn to_usize(&self) -> usize {
+        self.to_u32() as usize
+    }
+
+    pub fn set(&self, rvar: RVar) {
+        self.0.store(rvar.to_u32(), Relaxed);
+    }
+
+    pub fn incr(&self) -> RVar {
+        RVar(Atomic::new(self.0.fetch_add(1, Relaxed)))
+    }
+
+    pub fn ensure(&self, ctx: &mut TypeContext) -> RVar {
+        // we are really (ab)using Atomic as a Sendable Cell, so no ordering is required
+        // (as ctx being a mutable borrow ensures that the variable is exclusively accessed)
+        if *self == RVar::fresh() {
+            self.0.store(ctx.gen_rvar().to_u32(), Relaxed);
+        }
+        self.clone()
+    }
+}
+
+impl Clone for RVar {
+    fn clone(&self) -> RVar {
+        RVar::new(self.to_usize())
+    }
+}
+
+impl PartialEq for RVar {
+    fn eq(&self, other: &RVar) -> bool {
+        self.to_u32() == other.to_u32()
+    }
+}
+
+impl Eq for RVar {
+}
+
+impl fmt::Debug for RVar {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if *self == RVar::fresh() {
+            write!(f, "<row #_>")
+        } else if *self == RVar::empty() {
+            write!(f, "<empty row>")
+        } else if *self == RVar::any() {
+            write!(f, "<row #?>")
+        } else {
+            write!(f, "<row #{}>", self.to_u32())
         }
     }
 }
@@ -142,8 +209,14 @@ pub trait TypeContext: Report {
     fn assert_mark_imply(&mut self, lhs: Mark, rhs: Mark) -> CheckResult<()>;
     // base should be identical over the subsequent method calls for same mark
     fn assert_mark_require_eq(&mut self, mark: Mark, base: &Ty, ty: &Ty) -> CheckResult<()>;
-    fn assert_mark_require_sup(&mut self, mark: Mark, base: &Ty, ty: &Ty) -> CheckResult<()>;
     fn get_mark_exact(&self, mark: Mark) -> Option<bool>;
+
+    // row variable management
+    fn gen_rvar(&mut self) -> RVar;
+    fn assert_rvar_sub(&mut self, lhs: RVar, rhs: RVar) -> CheckResult<()>;
+    fn assert_rvar_eq(&mut self, lhs: RVar, rhs: RVar) -> CheckResult<()>;
+    fn assert_rvar_includes(&mut self, lhs: RVar, rhs: &[(Key, Slot)]) -> CheckResult<()>;
+    fn assert_rvar_closed(&mut self, rvar: RVar) -> CheckResult<()>;
 
     // nominal type management
     fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result;
@@ -317,12 +390,24 @@ impl TypeContext for NoTypeContext {
         panic!("assert_mark_require_eq({:?}, {:?}, {:?}) is not supposed to be called here",
                mark, base, ty);
     }
-    fn assert_mark_require_sup(&mut self, mark: Mark, base: &Ty, ty: &Ty) -> CheckResult<()> {
-        panic!("assert_mark_require_sup({:?}, {:?}, {:?}) is not supposed to be called here",
-               mark, base, ty);
-    }
     fn get_mark_exact(&self, mark: Mark) -> Option<bool> {
         panic!("get_mark_exact({:?}) is not supposed to be called here", mark);
+    }
+
+    fn gen_rvar(&mut self) -> RVar {
+        panic!("gen_rvar is not supposed to be called here");
+    }
+    fn assert_rvar_sub(&mut self, lhs: RVar, rhs: RVar) -> CheckResult<()> {
+        panic!("assert_rvar_sub({:?}, {:?}) is not supposed to be called here", lhs, rhs);
+    }
+    fn assert_rvar_eq(&mut self, lhs: RVar, rhs: RVar) -> CheckResult<()> {
+        panic!("assert_rvar_eq({:?}, {:?}) is not supposed to be called here", lhs, rhs);
+    }
+    fn assert_rvar_includes(&mut self, lhs: RVar, rhs: &[(Key, Slot)]) -> CheckResult<()> {
+        panic!("assert_rvar_includes({:?}, {:?}) is not supposed to be called here", lhs, rhs);
+    }
+    fn assert_rvar_closed(&mut self, rvar: RVar) -> CheckResult<()> {
+        panic!("assert_rvar_closed({:?}) is not supposed to be called here", rvar);
     }
 
     fn fmt_class(&self, cls: Class, _f: &mut fmt::Formatter) -> fmt::Result {
@@ -340,6 +425,16 @@ impl Lattice for TVar {
 
     fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         ctx.assert_tvar_eq_tvar(*self, *other)
+    }
+}
+
+impl Lattice for RVar {
+    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+        ctx.assert_rvar_sub(self.clone(), other.clone())
+    }
+
+    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+        ctx.assert_rvar_eq(self.clone(), other.clone())
     }
 }
 

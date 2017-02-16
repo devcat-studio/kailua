@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use kailua_syntax::Str;
 use diag::{CheckResult, unquotable_name};
-use super::{T, Ty, Slot, TypeContext, Lattice, Display};
+use super::{T, Ty, Slot, TypeContext, Lattice, Display, RVar};
 use super::{error_not_sub, error_not_eq};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -70,8 +70,10 @@ impl fmt::Debug for Key {
 pub enum Tables {
     Empty,
 
-    // tuples and records
-    Fields(BTreeMap<Key, Slot>),
+    // tuples and records are internally treated equally;
+    // the extension is represented as a row variable,
+    // which can be empty (RVar::empty()) in which case no other field is allowed
+    Fields(BTreeMap<Key, Slot>, RVar),
 
     // does not appear naturally (indistinguishable from Map from integers)
     // determined only from the function usages, e.g. table.insert
@@ -88,7 +90,8 @@ pub enum Tables {
 impl Tables {
     fn fmt_generic<WriteTy, WriteSlot>(&self, f: &mut fmt::Formatter,
                                        mut write_ty: WriteTy,
-                                       mut write_slot: WriteSlot) -> fmt::Result
+                                       mut write_slot: WriteSlot,
+                                       expose_rvar: bool) -> fmt::Result
             where WriteTy: FnMut(&Ty, &mut fmt::Formatter) -> fmt::Result,
                   WriteSlot: FnMut(&Slot, &mut fmt::Formatter, bool) -> fmt::Result {
         match *self {
@@ -96,9 +99,10 @@ impl Tables {
 
             Tables::Empty => write!(f, "{{}}"),
 
-            Tables::Fields(ref fields) => {
+            Tables::Fields(ref fields, ref rvar) => {
                 write!(f, "{{")?;
                 let mut first = true;
+
                 // try consecutive initial integers first
                 let mut nextlen = 1;
                 while let Some(t) = fields.get(&Key::Int(nextlen)) {
@@ -107,6 +111,7 @@ impl Tables {
                     if nextlen >= 0x10000 { break; } // too much
                     nextlen += 1;
                 }
+
                 // print other keys
                 for (name, t) in fields.iter() {
                     match *name {
@@ -117,6 +122,13 @@ impl Tables {
                     write!(f, "{} = ", name)?;
                     write_slot(t, f, false)?;
                 }
+
+                // print the extension if any
+                if expose_rvar {
+                    if first { first = false; } else { write!(f, ", ")?; }
+                    write!(f, "...{}", rvar.to_usize())?;
+                }
+
                 write!(f, "}}")?;
                 Ok(())
             }
@@ -149,7 +161,7 @@ impl Lattice for Tables {
             (_, &Tables::All) => true,
             (&Tables::All, _) => false,
 
-            (&Tables::Fields(ref a), &Tables::Fields(ref b)) => {
+            (&Tables::Fields(ref a, ref ar), &Tables::Fields(ref b, ref br)) => {
                 for (k, av) in a {
                     if let Some(ref bv) = b.get(k) {
                         av.assert_sub(*bv, ctx)?;
@@ -157,10 +169,16 @@ impl Lattice for Tables {
                         return error_not_sub(self, other);
                     }
                 }
+                // TODO do something with ar and br
                 true
             },
 
-            (&Tables::Fields(ref fields), &Tables::Map(ref key, ref value)) => {
+            (&Tables::Fields(ref fields, ref rvar), &Tables::Map(ref key, ref value)) => {
+                // since an extensible row can result in soundness error,
+                // we disable the extensibility once we need subtyping
+                let rvar = rvar.ensure(ctx);
+                ctx.assert_rvar_closed(rvar)?;
+
                 for (k, v) in fields {
                     k.to_type().assert_sub(&**key, ctx)?;
                     v.assert_sub(&value.clone().with_nil(), ctx)?;
@@ -168,7 +186,10 @@ impl Lattice for Tables {
                 true
             },
 
-            (&Tables::Fields(ref fields), &Tables::Array(ref value)) => {
+            (&Tables::Fields(ref fields, ref rvar), &Tables::Array(ref value)) => {
+                let rvar = rvar.ensure(ctx);
+                ctx.assert_rvar_closed(rvar)?;
+
                 // the fields should have consecutive integer keys
                 for (idx, (k, v)) in fields.iter().enumerate() {
                     k.to_type().assert_sub(&T::Int(idx as i32 + 1), ctx)?;
@@ -211,7 +232,7 @@ impl Lattice for Tables {
                 av.assert_eq(bv, ctx)?;
                 true
             }
-            (&Tables::Fields(ref a), &Tables::Fields(ref b)) => {
+            (&Tables::Fields(ref a, ref ar), &Tables::Fields(ref b, ref br)) => {
                 for (k, va) in a {
                     if let Some(vb) = b.get(k) {
                         va.assert_eq(vb, ctx)?;
@@ -222,6 +243,7 @@ impl Lattice for Tables {
                 for (k, _) in b {
                     if !a.contains_key(k) { return error_not_eq(self, other); }
                 }
+                // TODO do something with ar and br
                 true
             }
             (_, _) => false,
@@ -241,9 +263,12 @@ impl PartialEq for Tables {
             (&Tables::Map(ref ak, ref av), &Tables::Map(ref bk, ref bv)) =>
                 *ak == *bk && *av == *bv,
 
-            (&Tables::Fields(ref a), &Tables::Fields(ref b)) => *a == *b,
-            (&Tables::Fields(ref a), &Tables::Empty) => a.is_empty(),
-            (&Tables::Empty, &Tables::Fields(ref b)) => b.is_empty(),
+            (&Tables::Fields(ref a, ref ar), &Tables::Fields(ref b, ref br)) =>
+                *a == *b && ar == br,
+            (&Tables::Fields(ref a, ref ar), &Tables::Empty) =>
+                a.is_empty() && *ar == RVar::empty(),
+            (&Tables::Empty, &Tables::Fields(ref b, ref br)) =>
+                b.is_empty() && *br == RVar::empty(),
 
             (_, _) => false,
         }
@@ -258,14 +283,15 @@ impl Display for Tables {
             |s, f, without_nil| {
                 let s = s.display(ctx);
                 if without_nil { write!(f, "{:#}", s) } else { write!(f, "{}", s) }
-            }
+            },
+            false
         )
     }
 }
 
 impl fmt::Debug for Tables {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.fmt_generic(f, |t, f| fmt::Debug::fmt(t, f), |s, f, _| fmt::Debug::fmt(s, f))
+        self.fmt_generic(f, |t, f| fmt::Debug::fmt(t, f), |s, f, _| fmt::Debug::fmt(s, f), true)
     }
 }
 

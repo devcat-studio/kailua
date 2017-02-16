@@ -8,11 +8,11 @@ use take_mut::take;
 
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag::{Report, Reporter};
-use kailua_syntax::{Str, NameRef, Var, M, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
-use kailua_syntax::{SelfParam, Args, St, Stmt, Block, K};
+use kailua_syntax::{Str, NameRef, Var, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
+use kailua_syntax::{SelfParam, Args, St, Stmt, Block};
 use diag::CheckResult;
 use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, Displayed, Display, TypeContext};
-use ty::{Key, Tables, Function, Functions};
+use ty::{RVar, Key, Tables, Function, Functions};
 use ty::{F, Slot, SlotSeq, SpannedSlotSeq, Tag, Class};
 use ty::flags::*;
 use env::{Env, Frame, Scope, Context};
@@ -623,22 +623,22 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 (Some(&Tables::Empty), true) => {
                     let vslot = new_slot(self.context());
                     let fields = Some((litkey, vslot.clone())).into_iter().collect();
-                    adapt_table!(Tables::Fields(fields));
+                    adapt_table!(Tables::Fields(fields, RVar::fresh()));
                     return Ok(Some(vslot));
                 }
 
-                (Some(&Tables::Fields(ref fields)), true) => {
+                (Some(&Tables::Fields(ref fields, ref _rvar)), true) => {
                     let mut fields = fields.clone();
                     let vslot = fields.entry(litkey)
                                       .or_insert_with(|| new_slot(self.context()))
                                       .clone();
                     vslot.adapt(ety0.flex(), self.context());
-                    adapt_table!(Tables::Fields(fields));
+                    adapt_table!(Tables::Fields(fields, RVar::fresh()));
                     return Ok(Some(vslot));
                 }
 
                 // while we cannot adapt the table, we can resolve the field
-                (Some(&Tables::Fields(ref fields)), false) => {
+                (Some(&Tables::Fields(ref fields, ref _rvar)), false) => {
                     return Ok(fields.get(&litkey).map(|s| (*s).clone()));
                 }
 
@@ -1471,7 +1471,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         if fieldset.is_empty() {
             Ok(T::Tables(Cow::Owned(Tables::Empty)))
         } else {
-            Ok(T::Tables(Cow::Owned(Tables::Fields(fieldset))))
+            Ok(T::Tables(Cow::Owned(Tables::Fields(fieldset, RVar::fresh()))))
         }
     }
 
