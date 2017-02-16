@@ -47,40 +47,6 @@ impl fmt::Debug for TVar {
     }
 }
 
-// boolean marks for slot tracking
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub struct Mark(pub u32);
-
-impl Mark {
-    pub fn any() -> Mark { Mark(0xffffffff) }
-
-    pub fn assert_true(&self, ctx: &mut TypeContext) -> CheckResult<()> {
-        ctx.assert_mark_true(*self)
-    }
-    pub fn assert_false(&self, ctx: &mut TypeContext) -> CheckResult<()> {
-        ctx.assert_mark_false(*self)
-    }
-    pub fn assert_eq(&self, other: Mark, ctx: &mut TypeContext) -> CheckResult<()> {
-        ctx.assert_mark_eq(*self, other)
-    }
-    pub fn assert_imply(&self, other: Mark, ctx: &mut TypeContext) -> CheckResult<()> {
-        ctx.assert_mark_imply(*self, other)
-    }
-    pub fn assert_require_eq(&self, base: &Ty, ty: &Ty, ctx: &mut TypeContext) -> CheckResult<()> {
-        ctx.assert_mark_require_eq(*self, base, ty)
-    }
-}
-
-impl fmt::Debug for Mark {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if *self == Mark::any() {
-            write!(f, "<mark #?>")
-        } else {
-            write!(f, "<mark #{}>", self.0)
-        }
-    }
-}
-
 // row variable, where:
 // - `fresh` denotes any fresh row variable which not yet has been added to the type context
 // - `empty` denotes a inextensible "empty" row variable;
@@ -200,16 +166,6 @@ pub trait TypeContext: Report {
     fn assert_tvar_eq_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()>;
     fn get_tvar_bounds(&self, tvar: TVar) -> (flags::Flags /*lb*/, flags::Flags /*ub*/);
     fn get_tvar_exact_type(&self, tvar: TVar) -> Option<Ty>;
-
-    // flexibility mark management
-    fn gen_mark(&mut self) -> Mark;
-    fn assert_mark_true(&mut self, mark: Mark) -> CheckResult<()>;
-    fn assert_mark_false(&mut self, mark: Mark) -> CheckResult<()>;
-    fn assert_mark_eq(&mut self, lhs: Mark, rhs: Mark) -> CheckResult<()>;
-    fn assert_mark_imply(&mut self, lhs: Mark, rhs: Mark) -> CheckResult<()>;
-    // base should be identical over the subsequent method calls for same mark
-    fn assert_mark_require_eq(&mut self, mark: Mark, base: &Ty, ty: &Ty) -> CheckResult<()>;
-    fn get_mark_exact(&self, mark: Mark) -> Option<bool>;
 
     // row variable management
     fn gen_rvar(&mut self) -> RVar;
@@ -371,29 +327,6 @@ impl TypeContext for NoTypeContext {
     }
     fn get_tvar_exact_type(&self, tvar: TVar) -> Option<Ty> {
         panic!("get_tvar_exact_type({:?}) is not supposed to be called here", tvar);
-    }
-
-    fn gen_mark(&mut self) -> Mark {
-        panic!("gen_mark is not supposed to be called here");
-    }
-    fn assert_mark_true(&mut self, mark: Mark) -> CheckResult<()> {
-        panic!("assert_mark_true({:?}) is not supposed to be called here", mark);
-    }
-    fn assert_mark_false(&mut self, mark: Mark) -> CheckResult<()> {
-        panic!("assert_mark_false({:?}) is not supposed to be called here", mark);
-    }
-    fn assert_mark_eq(&mut self, lhs: Mark, rhs: Mark) -> CheckResult<()> {
-        panic!("assert_mark_eq({:?}, {:?}) is not supposed to be called here", lhs, rhs);
-    }
-    fn assert_mark_imply(&mut self, lhs: Mark, rhs: Mark) -> CheckResult<()> {
-        panic!("assert_mark_imply({:?}, {:?}) is not supposed to be called here", lhs, rhs);
-    }
-    fn assert_mark_require_eq(&mut self, mark: Mark, base: &Ty, ty: &Ty) -> CheckResult<()> {
-        panic!("assert_mark_require_eq({:?}, {:?}, {:?}) is not supposed to be called here",
-               mark, base, ty);
-    }
-    fn get_mark_exact(&self, mark: Mark) -> Option<bool> {
-        panic!("get_mark_exact({:?}) is not supposed to be called here", mark);
     }
 
     fn gen_rvar(&mut self) -> RVar {

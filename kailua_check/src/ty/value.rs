@@ -1370,7 +1370,7 @@ mod tests {
     use kailua_diag::NoReport;
     use kailua_syntax::Str;
     use std::borrow::Cow;
-    use ty::{Lattice, Union, TypeContext, NoTypeContext, F, Slot, Mark, Tag};
+    use ty::{Lattice, Union, TypeContext, NoTypeContext, F, Slot, Tag};
     use env::Context;
     use super::*;
 
@@ -1383,7 +1383,6 @@ mod tests {
     fn just(t: T) -> Slot { Slot::new(F::Just, Ty::from(t)) }
     fn var(t: T) -> Slot { Slot::new(F::Var, Ty::from(t)) }
     fn cnst(t: T) -> Slot { Slot::new(F::Const, Ty::from(t)) }
-    fn varcnst(t: T) -> Slot { Slot::new(F::VarOrConst(Mark::any()), Ty::from(t)) }
     fn nil(t: T) -> Ty { Ty::from(t).or_nil(Nil::Noisy) }
 
     macro_rules! check_base {

@@ -13,7 +13,7 @@ use kailua_env::{self, Span, Spanned, WithLoc, ScopedId, ScopeMap, SpanMap};
 use kailua_diag::{self, Kind, Report, Reporter, Localize};
 use kailua_syntax::{Name, NameRef};
 use diag::{CheckResult, unquotable_name};
-use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, Mark, RVar, Lattice, Union, Tag, Displayed, Display};
+use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, RVar, Lattice, Union, Tag, Displayed, Display};
 use ty::{TypeContext, TypeResolver, ClassId, Class, Functions, Function, Key};
 use ty::flags::*;
 use defs::get_defs;
@@ -366,123 +366,6 @@ impl Constraints {
 }
 
 #[derive(Debug)]
-struct MarkDeps {
-    // this mark implies the following mark
-    follows: Option<Mark>,
-    // the preceding mark implies this mark
-    precedes: Option<Mark>,
-    // equal types for this mark to be true
-    // the first type is considered the base type and should be associated to this mark forever
-    constraints: Option<(Ty, Vec<Ty>)>,
-}
-
-impl MarkDeps {
-    fn new() -> MarkDeps {
-        MarkDeps { follows: None, precedes: None, constraints: None }
-    }
-
-    fn assert_true(self, ctx: &mut TypeContext) -> CheckResult<()> {
-        if let Some((ref base, ref others)) = self.constraints {
-            for other in others {
-                base.assert_eq(other, ctx)?;
-            }
-        }
-        if let Some(follows) = self.follows {
-            ctx.assert_mark_true(follows)?;
-        }
-        Ok(())
-    }
-
-    fn assert_false(self, ctx: &mut TypeContext) -> CheckResult<()> {
-        if let Some(precedes) = self.precedes {
-            ctx.assert_mark_false(precedes)?;
-        }
-        Ok(())
-    }
-
-    fn merge(self, other: MarkDeps, ctx: &mut TypeContext) -> CheckResult<MarkDeps> {
-        // while technically possible, the base type should be equal for the simplicity.
-        let constraints = match (self.constraints, other.constraints) {
-            (None, None) => None,
-            (None, Some(r)) => Some(r),
-            (Some(l), None) => Some(l),
-            (Some((lb, mut lt)), Some((rb, rt))) => {
-                lb.assert_eq(&rb, ctx)?;
-                lt.extend(rt.into_iter());
-                Some((lb, lt))
-            }
-        };
-
-        let merge_marks = |l: Option<Mark>, r: Option<Mark>| match (l, r) {
-            (None, None) => None,
-            (None, Some(r)) => Some(r),
-            (Some(l), None) => Some(l),
-            (Some(_), Some(_)) => panic!("non-linear deps detected"),
-        };
-
-        let follows = merge_marks(self.follows, other.follows);
-        let precedes = merge_marks(self.precedes, other.precedes);
-        Ok(MarkDeps { follows: follows, precedes: precedes, constraints: constraints })
-    }
-}
-
-#[derive(Debug)]
-enum MarkValue {
-    Invalid,
-    True,
-    False,
-    Unknown(Option<Box<MarkDeps>>),
-}
-
-impl MarkValue {
-    fn assert_true(self, mark: Mark, ctx: &mut TypeContext) -> CheckResult<()> {
-        match self {
-            MarkValue::Invalid => panic!("self-recursive mark resolution"),
-            MarkValue::True => Ok(()),
-            MarkValue::False => Err(format!("mark {:?} cannot be true", mark)),
-            MarkValue::Unknown(None) => Ok(()),
-            MarkValue::Unknown(Some(deps)) => deps.assert_true(ctx),
-        }
-    }
-
-    fn assert_false(self, mark: Mark, ctx: &mut TypeContext) -> CheckResult<()> {
-        match self {
-            MarkValue::Invalid => panic!("self-recursive mark resolution"),
-            MarkValue::True => Err(format!("mark {:?} cannot be false", mark)),
-            MarkValue::False => Ok(()),
-            MarkValue::Unknown(None) => Ok(()),
-            MarkValue::Unknown(Some(deps)) => deps.assert_false(ctx),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct MarkInfo {
-    parent: Atomic<u32>,
-    rank: u8,
-    value: MarkValue,
-}
-
-impl Partition for Box<MarkInfo> {
-    fn create(parent: usize, rank: usize) -> Box<MarkInfo> {
-        Box::new(MarkInfo { parent: Atomic::new(parent as u32), rank: rank as u8,
-                            value: MarkValue::Unknown(None) })
-    }
-
-    fn read(&self) -> (usize /*parent*/, usize /*rank*/) {
-        (self.parent.load(Relaxed) as usize, self.rank as usize)
-    }
-
-    fn write_parent(&self, parent: usize) {
-        self.parent.store(parent as u32, Relaxed);
-    }
-
-    fn increment_rank(&mut self) {
-        self.rank += 1;
-    }
-}
-
-#[derive(Debug)]
 struct RowInfo {
     // the hashmap being None indicates that it is currently recursing;
     // the value can be Some(slot) for "positive" fields, which the row variable contains that key,
@@ -533,10 +416,6 @@ pub struct Output {
     next_rvar: RVar,
     row_infos: VecMap<Box<RowInfo>>,
 
-    // mark information
-    next_mark: Mark,
-    mark_infos: Partitions<Box<MarkInfo>>,
-
     // module information
     opened: HashSet<String>,
     loaded: HashMap<Vec<u8>, LoadStatus>, // corresponds to `package.loaded`
@@ -563,8 +442,6 @@ impl<R: Report> Context<R> {
                 tvar_eq: Constraints::new("="),
                 next_rvar: RVar::new(1), // RVar::new(0) for any fresh row variables
                 row_infos: VecMap::new(),
-                next_mark: Mark(0),
-                mark_infos: Partitions::new(),
                 opened: HashSet::new(),
                 loaded: HashMap::new(),
                 string_meta: None,
@@ -915,40 +792,6 @@ impl<R: Report> Context<R> {
         }
     }
 
-    // used by assert_mark_require_{eq,sup}
-    fn assert_mark_require(&mut self, mark: Mark, base: &Ty, ty: &Ty) -> CheckResult<()> {
-        let mark_ = self.mark_infos.find(mark.0 as usize);
-
-        let mut value = {
-            let info = self.mark_infos.entry(mark_).or_insert_with(|| Partition::create(mark_, 0));
-            mem::replace(&mut info.value, MarkValue::Invalid)
-        };
-
-        let ret = (|value: &mut MarkValue| {
-            match *value {
-                MarkValue::Invalid => panic!("self-recursive mark resolution"),
-                MarkValue::True => base.assert_eq(ty, self),
-                MarkValue::False => Ok(()),
-                MarkValue::Unknown(ref mut deps) => {
-                    if deps.is_none() { *deps = Some(Box::new(MarkDeps::new())); }
-                    let deps = deps.as_mut().unwrap();
-
-                    // XXX probably we can test if `base = ty` this early with a wrapped context
-                    if let Some(ref mut constraints) = deps.constraints {
-                        base.assert_eq(&mut constraints.0, self)?;
-                        constraints.1.push(ty.clone());
-                    } else {
-                        deps.constraints = Some((base.clone(), vec![ty.clone()]));
-                    }
-                    Ok(())
-                }
-            }
-        })(&mut value);
-
-        self.mark_infos.get_mut(&mark_).unwrap().value = value;
-        ret
-    }
-
     pub fn into_output(self) -> Output {
         self.output
     }
@@ -1039,18 +882,6 @@ impl Output {
 
     pub fn get_tvar_exact_type(&self, tvar: TVar) -> Option<Ty> {
         self.tvar_eq.get_bound(tvar).and_then(|b| b.bound.as_ref()).cloned()
-    }
-
-    pub fn get_mark_exact(&self, mark: Mark) -> Option<bool> {
-        let m = self.mark_infos.find(mark.0 as usize);
-        if let Some(info) = self.mark_infos.map.get(&m) {
-            match info.value {
-                MarkValue::True => return Some(true),
-                MarkValue::False => return Some(false),
-                _ => {}
-            }
-        }
-        None
     }
 
     pub fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result {
@@ -1277,237 +1108,6 @@ impl<R: Report> TypeContext for Context<R> {
                 return Ok(rvar);
             }
         }
-    }
-
-    fn gen_mark(&mut self) -> Mark {
-        self.next_mark.0 += 1;
-        self.next_mark
-    }
-
-    fn assert_mark_true(&mut self, mark: Mark) -> CheckResult<()> {
-        debug!("asserting {:?} is true", mark);
-        let mark_ = self.mark_infos.find(mark.0 as usize);
-        let value = {
-            // take the value out of the mapping. even if the mark is somehow recursively consulted
-            // (which is normally an error), it should assume that it's true by now.
-            let info = self.mark_infos.entry(mark_).or_insert_with(|| Partition::create(mark_, 0));
-            mem::replace(&mut info.value, MarkValue::True)
-        };
-        value.assert_true(mark, self)
-    }
-
-    fn assert_mark_false(&mut self, mark: Mark) -> CheckResult<()> {
-        debug!("asserting {:?} is false", mark);
-        let mark_ = self.mark_infos.find(mark.0 as usize);
-        let value = {
-            // same as above, but it's false instead
-            let info = self.mark_infos.entry(mark_).or_insert_with(|| Partition::create(mark_, 0));
-            mem::replace(&mut info.value, MarkValue::False)
-        };
-        value.assert_false(mark, self)
-    }
-
-    fn assert_mark_eq(&mut self, lhs: Mark, rhs: Mark) -> CheckResult<()> {
-        debug!("asserting {:?} and {:?} are same", lhs, rhs);
-
-        if lhs == rhs { return Ok(()); }
-
-        let lhs_ = self.mark_infos.find(lhs.0 as usize);
-        let rhs_ = self.mark_infos.find(rhs.0 as usize);
-        if lhs_ == rhs_ { return Ok(()); }
-
-        { // early error checks
-            let lvalue = self.mark_infos.get(&lhs_).map(|info| &info.value);
-            let rvalue = self.mark_infos.get(&rhs_).map(|info| &info.value);
-            match (lvalue, rvalue) {
-                (Some(&MarkValue::Invalid), _) | (_, Some(&MarkValue::Invalid)) =>
-                    panic!("self-recursive mark resolution"),
-                (Some(&MarkValue::True), Some(&MarkValue::True)) => return Ok(()),
-                (Some(&MarkValue::True), Some(&MarkValue::False)) =>
-                    return Err(format!("{:?} (known to be true) and {:?} (known to be false) \
-                                        cannot never be same", lhs, rhs)),
-                (Some(&MarkValue::False), Some(&MarkValue::True)) =>
-                    return Err(format!("{:?} (known to be false) and {:?} (known to be true) \
-                                        cannot never be same", lhs, rhs)),
-                (Some(&MarkValue::False), Some(&MarkValue::False)) => return Ok(()),
-                (_, _) => {}
-            }
-        }
-
-        fn take_value(mark_infos: &mut VecMap<Box<MarkInfo>>, i: usize) -> MarkValue {
-            if let Some(info) = mark_infos.get_mut(&i) {
-                mem::replace(&mut info.value, MarkValue::Invalid)
-            } else {
-                MarkValue::Unknown(None)
-            }
-        }
-
-        let lvalue = take_value(&mut self.mark_infos, lhs_);
-        let rvalue = take_value(&mut self.mark_infos, rhs_);
-
-        let new = self.mark_infos.union(lhs_, rhs_);
-
-        let newvalue = match (lvalue, rvalue) {
-            (MarkValue::Invalid, _) | (_, MarkValue::Invalid) |
-            (MarkValue::True, MarkValue::True) |
-            (MarkValue::True, MarkValue::False) |
-            (MarkValue::False, MarkValue::True) |
-            (MarkValue::False, MarkValue::False) => unreachable!(),
-
-            (MarkValue::True, MarkValue::Unknown(deps)) |
-            (MarkValue::Unknown(deps), MarkValue::True) => {
-                if let Some(deps) = deps { deps.assert_true(self)?; }
-                MarkValue::True
-            }
-
-            (MarkValue::False, MarkValue::Unknown(deps)) |
-            (MarkValue::Unknown(deps), MarkValue::False) => {
-                if let Some(deps) = deps { deps.assert_false(self)?; }
-                MarkValue::False
-            }
-
-            (MarkValue::Unknown(None), MarkValue::Unknown(None)) =>
-                MarkValue::Unknown(None),
-            (MarkValue::Unknown(None), MarkValue::Unknown(Some(deps))) |
-            (MarkValue::Unknown(Some(deps)), MarkValue::Unknown(None)) =>
-                MarkValue::Unknown(Some(deps)),
-
-            // the only case that we need the true merger of dependencies
-            (MarkValue::Unknown(Some(mut ldeps)), MarkValue::Unknown(Some(mut rdeps))) => {
-                // implication may refer to each other; they should be eliminated first
-                if ldeps.follows  == Some(Mark(rhs_ as u32)) { ldeps.follows  = None; }
-                if ldeps.precedes == Some(Mark(rhs_ as u32)) { ldeps.precedes = None; }
-                if rdeps.follows  == Some(Mark(lhs_ as u32)) { rdeps.follows  = None; }
-                if rdeps.precedes == Some(Mark(lhs_ as u32)) { rdeps.precedes = None; }
-
-                let deps = ldeps.merge(*rdeps, self)?;
-
-                // update dependencies for *other* marks depending on this mark
-                if let Some(m) = deps.follows {
-                    let info = self.mark_infos.get_mut(&(m.0 as usize)).unwrap();
-                    if let MarkValue::Unknown(Some(ref mut deps)) = info.value {
-                        assert!(deps.precedes == Some(Mark(lhs_ as u32)) ||
-                                deps.precedes == Some(Mark(rhs_ as u32)));
-                        deps.precedes = Some(Mark(new as u32));
-                    } else {
-                        panic!("desynchronized dependency implication \
-                                from {:?} or {:?} to {:?}", lhs, rhs, m);
-                    }
-                }
-                if let Some(m) = deps.precedes {
-                    let info = self.mark_infos.get_mut(&(m.0 as usize)).unwrap();
-                    if let MarkValue::Unknown(Some(ref mut deps)) = info.value {
-                        assert!(deps.follows == Some(Mark(lhs_ as u32)) ||
-                                deps.follows == Some(Mark(rhs_ as u32)));
-                        deps.follows = Some(Mark(new as u32));
-                    } else {
-                        panic!("desynchronized dependency implication \
-                                from {:?} to {:?} or {:?}", m, lhs, rhs);
-                    }
-                }
-
-                MarkValue::Unknown(Some(Box::new(deps)))
-            }
-        };
-
-        self.mark_infos.get_mut(&new).unwrap().value = newvalue;
-        Ok(())
-    }
-
-    fn assert_mark_imply(&mut self, lhs: Mark, rhs: Mark) -> CheckResult<()> {
-        debug!("asserting {:?} implies {:?}", lhs, rhs);
-
-        if lhs == rhs { return Ok(()); }
-
-        let lhs_ = self.mark_infos.find(lhs.0 as usize);
-        let rhs_ = self.mark_infos.find(rhs.0 as usize);
-        if lhs_ == rhs_ { return Ok(()); }
-
-        enum Next { AddDeps, AssertRhsTrue, AssertLhsFalse }
-        let next = { // early error checks
-            let lvalue = self.mark_infos.get(&lhs_).map(|info| &info.value);
-            let rvalue = self.mark_infos.get(&rhs_).map(|info| &info.value);
-            match (lvalue, rvalue) {
-                (Some(&MarkValue::Invalid), _) | (_, Some(&MarkValue::Invalid)) =>
-                    panic!("self-recursive mark resolution"),
-                (Some(&MarkValue::True), Some(&MarkValue::True)) => return Ok(()),
-                (Some(&MarkValue::True), Some(&MarkValue::False)) =>
-                    return Err(format!("{:?} (known to be true) cannot imply \
-                                        {:?} (known to be false)", lhs, rhs)),
-                (Some(&MarkValue::True), _) => Next::AssertRhsTrue,
-                (Some(&MarkValue::False), _) => return Ok(()),
-                (_, Some(&MarkValue::True)) => return Ok(()),
-                (_, Some(&MarkValue::False)) => Next::AssertLhsFalse,
-                (_, _) => Next::AddDeps,
-            }
-        };
-
-        fn get_deps_mut(mark_infos: &mut VecMap<Box<MarkInfo>>, i: usize) -> &mut MarkDeps {
-            let info = mark_infos.entry(i).or_insert_with(|| Partition::create(i, 0));
-            if let MarkValue::Unknown(ref mut deps) = info.value {
-                if deps.is_none() { *deps = Some(Box::new(MarkDeps::new())); }
-                deps.as_mut().unwrap()
-            } else {
-                unreachable!()
-            }
-        }
-
-        fn take_deps(mark_infos: &mut VecMap<Box<MarkInfo>>, i: usize,
-                     repl: MarkValue) -> Option<Box<MarkDeps>> {
-            let info = mark_infos.entry(i).or_insert_with(|| Partition::create(i, 0));
-            if let MarkValue::Unknown(deps) = mem::replace(&mut info.value, repl) {
-                deps
-            } else {
-                unreachable!()
-            }
-        }
-
-        match next {
-            Next::AddDeps => { // unknown implies unknown
-                {
-                    let deps = get_deps_mut(&mut self.mark_infos, lhs_);
-                    let follows = Mark(rhs_ as u32);
-                    if deps.follows == None {
-                        deps.follows = Some(follows);
-                    } else if deps.follows != Some(follows) {
-                        panic!("non-linear deps detected");
-                    }
-                }
-
-                {
-                    let deps = get_deps_mut(&mut self.mark_infos, rhs_);
-                    let precedes = Mark(lhs_ as u32);
-                    if deps.precedes == None {
-                        deps.precedes = Some(precedes);
-                    } else if deps.precedes != Some(precedes) {
-                        panic!("non-linear deps detected");
-                    }
-                }
-            }
-
-            Next::AssertRhsTrue => { // true implies unknown
-                if let Some(deps) = take_deps(&mut self.mark_infos, rhs_, MarkValue::True) {
-                    deps.assert_true(self)?;
-                }
-            }
-
-            Next::AssertLhsFalse => { // unknown implies false
-                if let Some(deps) = take_deps(&mut self.mark_infos, lhs_, MarkValue::False) {
-                    deps.assert_false(self)?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn assert_mark_require_eq(&mut self, mark: Mark, base: &Ty, ty: &Ty) -> CheckResult<()> {
-        debug!("asserting {:?} requires {:?} = {:?}", mark, base, ty);
-        self.assert_mark_require(mark, base, ty)
-    }
-
-    fn get_mark_exact(&self, mark: Mark) -> Option<bool> {
-        self.output.get_mark_exact(mark)
     }
 
     fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result {

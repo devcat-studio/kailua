@@ -8,13 +8,13 @@ use kailua_env::Spanned;
 use kailua_diag::Reporter;
 use kailua_syntax::M;
 use diag::CheckResult;
-use super::{Dyn, Nil, T, Ty, TypeContext, Lattice, Union, Display, Mark, TVar, Tag};
+use super::{Dyn, Nil, T, Ty, TypeContext, Lattice, Union, Display, TVar, Tag};
 use super::{error_not_sub, error_not_eq};
 use super::flags::Flags;
 use message as m;
 
 // slot type flexibility (a superset of type mutability)
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum F {
     // invalid top type (no type information available)
     // for the typing convenience the type information itself is retained, but never used.
@@ -22,14 +22,12 @@ pub enum F {
     // dynamic slot; all assignments are allowed and ignored
     Dynamic(Dyn),
     // temporary r-value slot
-    // coerces to VarOrConst when used in the table fields
+    // coerces to Var (default) or Const depending on the unification
     Just,
     // covariant immutable slot
     Const,
     // invariant mutable slot
     Var,
-    // either Var (when mark is true) or Const (when mark is false)
-    VarOrConst(Mark),
 }
 
 impl F {
@@ -37,54 +35,6 @@ impl F {
         match modf {
             M::None => F::Var,
             M::Const => F::Const,
-        }
-    }
-
-    pub fn weaken(&self, ctx: &mut TypeContext) -> CheckResult<F> {
-        match *self {
-            F::Any => Ok(F::Any),
-
-            F::Dynamic(dyn) => Ok(F::Dynamic(dyn)),
-
-            // if the Just slot contains a table it should be recursively weakened.
-            // this is not handled here, but via `Slot::adapt` which gets called
-            // whenever the Just slot is returned from the lvalue table (`Checker::check_index`).
-            F::Just => Ok(F::VarOrConst(ctx.gen_mark())),
-
-            F::Const => Ok(F::Const),
-
-            F::Var => Ok(F::VarOrConst(ctx.gen_mark())),
-
-            F::VarOrConst(m) => Ok(F::VarOrConst(m)),
-        }
-    }
-
-    pub fn resolve(&self, ctx: &TypeContext) -> F {
-        match *self {
-            F::VarOrConst(m) => match ctx.get_mark_exact(m) {
-                Some(true) => F::Var,
-                Some(false) => F::Const,
-                None => *self,
-            },
-            _ => *self,
-        }
-    }
-}
-
-impl PartialEq for F {
-    fn eq(&self, other: &F) -> bool {
-        match (*self, *other) {
-            (F::Any, F::Any) => true,
-            (F::Dynamic(dyn1), F::Dynamic(dyn2)) => dyn1 == dyn2,
-            (F::Just, F::Just) => true,
-            (F::Const, F::Const) => true,
-            (F::Var, F::Var) => true,
-
-            // Mark::any() is used for debugging comparison
-            (F::VarOrConst(am), F::VarOrConst(bm)) =>
-                am == Mark::any() || bm == Mark::any() || am == bm,
-
-            (_, _) => false,
         }
     }
 }
@@ -98,7 +48,6 @@ impl<'a> fmt::Debug for F {
             F::Just               => write!(f, "just"),
             F::Const              => write!(f, "const"),
             F::Var                => write!(f, "var"),
-            F::VarOrConst(m)      => write!(f, "{:?}?var:const", m),
         }
     }
 }
@@ -117,10 +66,6 @@ impl S {
 
     pub fn unlift(&self) -> &Ty {
         &self.ty
-    }
-
-    pub fn weaken(&self, ctx: &mut TypeContext) -> CheckResult<S> {
-        Ok(S { flex: self.flex.weaken(ctx)?, ty: self.ty.clone() })
     }
 
     pub fn with_nil(self) -> S {
@@ -147,29 +92,21 @@ impl S {
             // it's fine to merge r-values
             (F::Just, F::Just) => (F::Just, self.ty.union(&other.ty, explicit, ctx)?),
 
-            // merging Var will result in Const unless a and b are identical
+            // merging Var requires a and b are identical
+            // (the user is expected to annotate a and b if it's not the case)
             (F::Var, F::Var) |
             (F::Var, F::Just) |
             (F::Just, F::Var) => {
-                let m = ctx.gen_mark();
-                assert_eq!(ctx.assert_mark_require_eq(m, &self.ty, &other.ty),
-                           Ok(())); // can't fail
-                (F::VarOrConst(m), self.ty.union(&other.ty, explicit, ctx)?)
+                self.ty.assert_eq(&other.ty, ctx)?;
+                (F::Var, self.ty.clone())
             },
 
-            // Var and VarConst are lifted to Const otherwise, regardless of marks
+            // Var and Just are lifted to Const otherwise
             (F::Const, F::Just) |
             (F::Const, F::Const) |
             (F::Const, F::Var) |
-            (F::Const, F::VarOrConst(_)) |
             (F::Just, F::Const) |
-            (F::Just, F::VarOrConst(_)) |
-            (F::Var, F::Const) |
-            (F::Var, F::VarOrConst(_)) |
-            (F::VarOrConst(_), F::Just) |
-            (F::VarOrConst(_), F::Const) |
-            (F::VarOrConst(_), F::Var) |
-            (F::VarOrConst(_), F::VarOrConst(_)) =>
+            (F::Var, F::Const) =>
                 (F::Const, self.ty.union(&other.ty, explicit, ctx)?),
         };
 
@@ -179,84 +116,29 @@ impl S {
     pub fn assert_sub(&self, other: &S, ctx: &mut TypeContext) -> CheckResult<()> {
         debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
-        macro_rules! m {
-            ($(; true, $tm:expr)*
-             $(; false, $fm:expr)*
-             $(; eq, $em1:expr, $em2:expr)*
-             $(; imply, $im1:expr, $im2:expr)*
-             $(; require_eq, $rm:expr)*) => ({
-                $($tm.assert_true(ctx)?;)*
-                $($fm.assert_false(ctx)?;)*
-                $($em1.assert_eq($em2, ctx)?;)*
-                $($im1.assert_imply($im2, ctx)?;)*
-                $($rm.assert_require_eq(&other.ty, &self.ty, ctx)?;)*
-            });
-
-            (a <: b $($t:tt)*) => ({ self.ty.assert_sub(&other.ty, ctx)?; m!($($t)*) });
-            (a = b $($t:tt)*) => ({ self.ty.assert_eq(&other.ty, ctx)?; m!($($t)*) });
-        }
-
         match (self.flex, other.flex) {
-            (_, F::Any) => {}
-            (_, F::Dynamic(_)) | (F::Dynamic(_), _) => {}
+            (_, F::Any) => Ok(()),
+            (_, F::Dynamic(_)) | (F::Dynamic(_), _) => Ok(()),
 
-            (F::Just, F::Just) => m!(a <: b),
+            (F::Just, _) | (_, F::Const) => self.ty.assert_sub(&other.ty, ctx),
+            (F::Var, F::Var) => self.ty.assert_eq(&other.ty, ctx),
 
-            (F::Just,               F::Const) => m!(a <: b),
-            (F::Const,              F::Const) => m!(a <: b),
-            (F::Var,                F::Const) => m!(a <: b),
-            (F::VarOrConst(_),      F::Const) => m!(a <: b),
-
-            (F::Just,               F::Var) => m!(a <: b),
-            (F::Var,                F::Var) => m!(a = b),
-            (F::VarOrConst(am),     F::Var) => m!(a = b; true, am),
-
-            (F::Just,               F::VarOrConst(_))  => m!(a <: b),
-            (F::Const,              F::VarOrConst(bm)) => m!(a <: b; false, bm),
-            (F::Var,                F::VarOrConst(bm)) => m!(a <: b; false, bm),
-            (F::VarOrConst(am),     F::VarOrConst(bm)) => m!(a <: b; imply, bm, am; require_eq, bm),
-
-            (_, _) => return error_not_sub(self, other),
+            (_, _) => error_not_sub(self, other),
         }
-
-        Ok(())
     }
 
     pub fn assert_eq(&self, other: &S, ctx: &mut TypeContext) -> CheckResult<()> {
         debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
-        macro_rules! m {
-            ($(; true, $tm:expr)*
-             $(; false, $fm:expr)*
-             $(; eq, $em1:expr, $em2:expr)*) => ({
-                $($tm.assert_true(ctx)?;)*
-                $($fm.assert_false(ctx)?;)*
-                $($em1.assert_eq($em2, ctx)?;)*
-            });
-
-            (a = b $($t:tt)*) => ({ self.ty.assert_eq(&other.ty, ctx)?; m!($($t)*) });
-        }
-
         match (self.flex, other.flex) {
-            (F::Any, F::Any) => {}
-            (_, F::Dynamic(_)) | (F::Dynamic(_), _) => {}
+            (F::Any, F::Any) => Ok(()),
+            (_, F::Dynamic(_)) | (F::Dynamic(_), _) => Ok(()),
 
-            (F::Just, F::Just) => m!(a = b),
+            (F::Just, F::Just) | (F::Const, F::Const) | (F::Var, F::Var) =>
+                self.ty.assert_eq(&other.ty, ctx),
 
-            (F::Const, F::Const)          => m!(a = b),
-            (F::Const, F::VarOrConst(bm)) => m!(a = b; false, bm),
-
-            (F::Var, F::Var)                => m!(a = b),
-            (F::Var, F::VarOrConst(bm))     => m!(a = b; true, bm),
-
-            (F::VarOrConst(am), F::Const)              => m!(a = b; false, am),
-            (F::VarOrConst(am), F::Var)                => m!(a = b; true, am),
-            (F::VarOrConst(am), F::VarOrConst(bm))     => m!(a = b; eq, am, bm),
-
-            (_, _) => return error_not_eq(self, other),
+            (_, _) => error_not_eq(self, other),
         }
-
-        Ok(())
     }
 }
 
@@ -289,8 +171,8 @@ impl Slot {
         Slot::new(F::Just, t)
     }
 
-    pub fn var(t: Ty, ctx: &mut TypeContext) -> Slot {
-        Slot::new(F::VarOrConst(ctx.gen_mark()), t)
+    pub fn var(t: Ty) -> Slot {
+        Slot::new(F::Var, t)
     }
 
     pub fn dummy() -> Slot {
@@ -303,11 +185,11 @@ impl Slot {
 
     // one tries to assign to `self` through parent with `flex`. how should `self` change?
     // (only makes sense when `self` is a Just slot, otherwise no-op)
-    pub fn adapt(&self, flex: F, ctx: &mut TypeContext) {
+    pub fn adapt(&self, flex: F, _ctx: &mut TypeContext) {
         let mut slot = self.0.write();
         if slot.flex == F::Just {
             slot.flex = match flex {
-                F::Const | F::Var | F::VarOrConst(_) => flex,
+                F::Const | F::Var => flex,
                 _ => F::Just,
             };
         }
@@ -322,45 +204,25 @@ impl Slot {
 
         debug!("accepting {:?} into {:?}{}", rhs, self, if init { " (initializing)" } else { "" });
 
-        let mut lhs = self.0.write();
-        let mut rhs = rhs.0.write();
+        let lhs = self.0.read();
+        let rhs = rhs.0.read();
 
         match (lhs.flex, rhs.flex, init) {
-            (F::Dynamic(_), _, _) => {}
+            (F::Dynamic(_), _, _) => Ok(()),
 
             (_, F::Any, _) |
             (F::Any, _, _) |
             (F::Just, _, _) |
-            (F::Const, _, false) => {
-                return Err(format!("impossible to assign {:?} to {:?}", *rhs, *lhs));
-            }
+            (F::Const, _, false) => Err(format!("impossible to assign {:?} to {:?}", *rhs, *lhs)),
 
-            (_, F::Dynamic(_), _) => {}
+            (_, F::Dynamic(_), _) => Ok(()),
 
             // as long as the type is in agreement, Var can be assigned
-            (F::Var, _, _) => {
-                rhs.ty.assert_sub(&lhs.ty, ctx)?;
-            }
+            (F::Var, _, _) => rhs.ty.assert_sub(&lhs.ty, ctx),
 
             // assignment to Const slot is for initialization only
-            (F::Const, _, true) => {
-                rhs.ty.assert_sub(&lhs.ty, ctx)?;
-            }
-
-            // assigning to VarOrConst asserts the mark and makes it Var
-            (F::VarOrConst(m), _, false) => {
-                m.assert_true(ctx)?;
-                rhs.ty.assert_sub(&lhs.ty, ctx)?;
-                lhs.flex = F::Var;
-            }
-
-            // ...except for the first time
-            (F::VarOrConst(_), _, true) => {
-                rhs.ty.assert_sub(&lhs.ty, ctx)?;
-            }
-        };
-
-        Ok(())
+            (F::Const, _, true) => rhs.ty.assert_sub(&lhs.ty, ctx),
+        }
     }
 
     // one tries to modify `self` in place. the new value, when expressed as a type, is
@@ -369,13 +231,13 @@ impl Slot {
     //
     // conceptually this is same to `accept`, but some special types (notably nominal types)
     // have a representation that is hard to express with `accept` only.
-    pub fn accept_in_place(&self, ctx: &mut TypeContext) -> CheckResult<()> {
+    pub fn accept_in_place(&self, _ctx: &mut TypeContext) -> CheckResult<()> {
         let s = self.0.read();
 
         match s.flex {
             F::Dynamic(_) => {}
 
-            F::Any | F::Just | F::Const | F::Var | F::VarOrConst(_) => {
+            F::Any | F::Just | F::Const | F::Var => {
                 return Err(format!("impossible to update {:?}", *s));
             }
         };
@@ -416,11 +278,6 @@ impl Slot {
     pub fn without_nil(&self) -> Slot {
         let s = self.0.read();
         Slot::from(s.clone().without_nil())
-    }
-
-    pub fn weaken(&self, ctx: &mut TypeContext) -> CheckResult<Slot> {
-        let s = self.0.read();
-        Ok(Slot::from(s.weaken(ctx)?))
     }
 }
 
@@ -512,14 +369,13 @@ impl Display for Slot {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
         let s = &*self.0.read();
 
-        let prefix = match s.flex.resolve(ctx) {
+        let prefix = match s.flex {
             F::Any                => return write!(f, "<inaccessible type>"),
             F::Dynamic(Dyn::User) => return write!(f, "WHATEVER"),
             F::Dynamic(Dyn::Oops) => return write!(f, "<error type>"),
             F::Just               => "", // can be seen as a mutable value yet to be assigned
             F::Const              => "const ",
             F::Var                => "",
-            F::VarOrConst(_)      => "",
         };
 
         write!(f, "{}{}", prefix, s.ty.display(ctx))
@@ -539,21 +395,14 @@ impl fmt::Debug for Slot {
 #[cfg(test)]
 #[allow(unused_variables, dead_code)]
 mod tests {
-    use kailua_diag::NoReport;
-    use ty::{T, Ty, Lattice, TypeContext, NoTypeContext};
+    use ty::{T, Ty, Lattice, NoTypeContext};
     use super::*;
 
     #[test]
     fn test_sub() {
-        use env::Context;
-
-        let mut ctx = Context::new(NoReport);
-
         let just = |t| Slot::new(F::Just, Ty::new(t));
         let cnst = |t| Slot::new(F::Const, Ty::new(t));
         let var = |t| Slot::new(F::Var, Ty::new(t));
-        let varcnst =
-            |ctx: &mut TypeContext, t| Slot::new(F::VarOrConst(ctx.gen_mark()), Ty::new(t));
 
         assert_eq!(just(T::Integer).assert_sub(&just(T::Integer), &mut NoTypeContext), Ok(()));
         assert_eq!(just(T::Integer).assert_sub(&just(T::Number), &mut NoTypeContext), Ok(()));

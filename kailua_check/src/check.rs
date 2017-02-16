@@ -947,7 +947,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 }
 
                 let mut scope = self.scoped(Scope::new());
-                let indty = Slot::var(Ty::new(indty), scope.context());
+                let indty = Slot::var(Ty::new(indty));
                 let nameref = NameRef::Local(localname.base.clone()).with_loc(localname);
                 scope.env.add_var(&nameref, None, Some(indty.without_loc()))?;
                 let exit = scope.visit_block(block)?;
@@ -1004,7 +1004,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
                 let mut scope = self.scoped(Scope::new());
                 for (localname, ty) in names.iter().zip(indtys.into_iter_with_nil()) {
-                    let ty = Slot::var(ty, scope.context());
+                    let ty = Slot::var(ty);
                     let nameref = NameRef::Local(localname.base.clone()).with_loc(localname);
                     scope.env.add_var(&nameref, None, Some(ty.without_loc()))?;
                 }
