@@ -217,6 +217,8 @@ pub trait TypeContext: Report {
     fn assert_rvar_eq(&mut self, lhs: RVar, rhs: RVar) -> CheckResult<()>;
     fn assert_rvar_includes(&mut self, lhs: RVar, rhs: &[(Key, Slot)]) -> CheckResult<()>;
     fn assert_rvar_closed(&mut self, rvar: RVar) -> CheckResult<()>;
+    fn list_rvar_fields(&self, rvar: RVar,
+                        f: &mut FnMut(&Key, &Slot) -> CheckResult<()>) -> CheckResult<RVar>;
 
     // nominal type management
     fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result;
@@ -408,6 +410,10 @@ impl TypeContext for NoTypeContext {
     }
     fn assert_rvar_closed(&mut self, rvar: RVar) -> CheckResult<()> {
         panic!("assert_rvar_closed({:?}) is not supposed to be called here", rvar);
+    }
+    fn list_rvar_fields(&self, _rvar: RVar,
+                        _f: &mut FnMut(&Key, &Slot) -> CheckResult<()>) -> CheckResult<RVar> {
+        Ok(RVar::fresh())
     }
 
     fn fmt_class(&self, cls: Class, _f: &mut fmt::Formatter) -> fmt::Result {

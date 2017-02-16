@@ -89,6 +89,7 @@ pub enum Tables {
 
 impl Tables {
     fn fmt_generic<WriteTy, WriteSlot>(&self, f: &mut fmt::Formatter,
+                                       ctx: Option<&TypeContext>,
                                        mut write_ty: WriteTy,
                                        mut write_slot: WriteSlot,
                                        expose_rvar: bool) -> fmt::Result
@@ -100,6 +101,24 @@ impl Tables {
             Tables::Empty => write!(f, "{{}}"),
 
             Tables::Fields(ref fields, ref rvar) => {
+                let mut fields = Cow::Borrowed(fields);
+                const MAX_FIELDS: usize = 0x10000; // do not try to copy too many fields
+
+                // keys have to be sorted in the output, but row variables may have been
+                // instantiated in an arbitrary order, so we need to collect and sort them
+                // when ctx is available. otherwise we just use the original fields (sorted).
+                let rvar = if let Some(ctx) = ctx {
+                    let fields = fields.to_mut();
+                    ctx.list_rvar_fields(rvar.clone(), &mut |k, v| {
+                        if fields.len() < MAX_FIELDS {
+                            fields.insert(k.clone(), v.clone());
+                        }
+                        Ok(())
+                    }).map_err(|_| fmt::Error)?
+                } else {
+                    rvar.clone()
+                };
+
                 write!(f, "{{")?;
                 let mut first = true;
 
@@ -278,7 +297,7 @@ impl PartialEq for Tables {
 impl Display for Tables {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
         self.fmt_generic(
-            f,
+            f, Some(ctx),
             |t, f| fmt::Display::fmt(&t.display(ctx), f),
             |s, f, without_nil| {
                 let s = s.display(ctx);
@@ -291,7 +310,12 @@ impl Display for Tables {
 
 impl fmt::Debug for Tables {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.fmt_generic(f, |t, f| fmt::Debug::fmt(t, f), |s, f, _| fmt::Debug::fmt(s, f), true)
+        self.fmt_generic(
+            f, None,
+            |t, f| fmt::Debug::fmt(t, f),
+            |s, f, _| fmt::Debug::fmt(s, f),
+            true
+        )
     }
 }
 

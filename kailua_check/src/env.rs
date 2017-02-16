@@ -1230,7 +1230,7 @@ impl<R: Report> TypeContext for Context<R> {
         loop {
             assert_ne!(rvar, RVar::fresh());
 
-            // a row variable has been already closd
+            // a row variable has been already closed
             if rvar == RVar::empty() {
                 return Ok(());
             }
@@ -1255,6 +1255,26 @@ impl<R: Report> TypeContext for Context<R> {
                     return Err("recursive row instantiation".to_string());
                 }
                 slowtick = true;
+            }
+        }
+    }
+
+    fn list_rvar_fields(&self, rvar: RVar,
+                        f: &mut FnMut(&Key, &Slot) -> CheckResult<()>) -> CheckResult<RVar> {
+        let mut rvar = rvar;
+        loop {
+            if let Some(info) = self.row_infos.get(&rvar.to_usize()) {
+                if let Some(ref fields) = info.fields {
+                    for (k, v) in fields.iter() {
+                        if let Some(ref v) = *v { // skip negative fields
+                            f(k, v)?;
+                        }
+                    }
+                }
+                rvar = info.next.clone();
+            } else {
+                // return immediately if the row variable is special or not yet instantiated
+                return Ok(rvar);
             }
         }
     }
