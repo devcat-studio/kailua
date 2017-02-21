@@ -35,9 +35,3 @@ pub fn check_from_chunk<R: Report>(context: &mut Context<R>,
     checker.visit(&chunk.block)
 }
 
-#[test]
-#[ignore] // needs RFC #1543 to be implemented
-fn test_atomic_types_are_lock_free() {
-    assert!(atomic::Atomic::<u32>::is_lock_free(), "Atomic<u32> is not lock-free");
-}
-

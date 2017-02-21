@@ -665,26 +665,16 @@ local x = p('what') --@< Error: `"what"` is not a subtype of `<unknown type>`
 --! error
 
 --8<-- capture-and-return-1
-local a = 'string'
-a = 42
+local a = 42
 function p() return a end
 local b = p() + 54
 --! ok
 
 --8<-- capture-and-return-2
-local a = 'string'
-a = 42
+local a = 42
 function p() return a end
 a = p() * 54
 --! ok
-
--->8-- capture-and-weaken
--- XXX do not yet work
-local a = 'string'
-a = 42
-function p() return a end
-a = true -- a is now fixed to Var
---! error
 
 --8<-- func-argtype-rettype-1
 function p(x) --: string --> string
@@ -707,21 +697,17 @@ end
 local a = p('foo') + 3 --@< Error: `string` is not a subtype of `number`
 --! error
 
---8<-- table-update-with-integer
+--8<-- table-update-with-integer-1
 local a = {}
 a[1] = 42
 a[2] = 54
 --! ok
 
---8<-- var-table-update-with-integer
-local a = {} --: {} -- cannot be changed!
-a[1] = 42
---@^ Error: Cannot adapt the table type `{}` into `{<unknown type>}`
---@^^ Note: The table had to be adapted in order to index it with `1`
+--8<-- table-update-with-integer-2
+local a = {} --: {}
+a[1] = 42 -- now valid to do so
 a[2] = 54
---@^ Error: Cannot adapt the table type `{}` into `{2 = <unknown type>}`
---@^^ Note: The table had to be adapted in order to index it with `2`
---! error
+--! ok
 
 --8<-- table-update-with-name
 local a = {}
@@ -774,9 +760,7 @@ local z = a[3] --: integer
 --8<-- var-map-update-and-index-wrong-key
 local a = {} --: map<number, number>
 a[1] = 42
-a.string = 54
---@^ Error: Cannot adapt the table type `map<number, number>` into `map<(number|"string"), number>`
---@^^ Note: The table had to be adapted in order to index it with `"string"`
+a.string = 54 --@< Error: Cannot index `map<number, number>` with `"string"`
 --! error
 
 --8<-- var-map-update-and-index-without-nil
@@ -795,9 +779,7 @@ local a = {} --: const map<number, number>
 
 --8<-- const-map-update
 local a = {} --: const map<number, number>
-a[1] = 42
---@^ Error: Cannot adapt the table type `const map<number, number>` into `map<number, number>`
---@^^ Note: The table had to be adapted in order to index it with `1`
+a[1] = 42 --@< Error: Cannot update the immutable type `const map<number, number>` by indexing
 --! error
 
 --8<-- var-any-update
@@ -2015,17 +1997,13 @@ p.a.b()              --@< Error: Tried to index a non-table type `42`
 
 --8<-- method-decl-const
 local p = {} --: const {}
-function p.a() end
---@^ Error: Cannot adapt the table type `const {}` into `{a = <unknown type>}`
---@^^ Note: The table had to be adapted in order to index it with `"a"`
+function p.a() end --@< Error: Cannot update the immutable type `const {}` by indexing
 p.a() --@< Error: Cannot index `const {}` with `"a"`
 --! error
 
 --8<-- method-decl-const-nested
 local p = { a = {} } --: const {a = const {}}
-function p.a.b() end
---@^ Error: Cannot adapt the table type `const {}` into `{b = <unknown type>}`
---@^^ Note: The table had to be adapted in order to index it with `"b"`
+function p.a.b() end --@< Error: Cannot update the immutable type `const {}` by indexing
 p.a.b() --@< Error: Cannot index `const {}` with `"b"`
 --! error
 
@@ -2133,7 +2111,19 @@ local c = foo('hi') --: integer
 
 --! error
 
---8<-- no-check-method-type
+--8<-- no-check-method-type-1
+foo = {}
+
+--v [no_check]
+--v function(self: table, x: integer) --> integer
+function foo:bar(x)
+    return x + "string"
+end
+
+local a = foo:bar(3) --: integer
+--! ok
+
+--8<-- no-check-method-type-2
 foo = {}
 
 --v [no_check]
@@ -2381,5 +2371,20 @@ function x(q, a)
 end
 local y = x(true, false)
 --@^ Error: `false` is not a subtype of `true`
+--! error
+
+--8<-- table-assign-just
+({a=1, b=2}).c = 3
+--! ok
+
+--8<-- table-assign-const
+local p = {} --: const {}
+p.a = 42 --@< Error: Cannot update the immutable type `const {}` by indexing
+--! error
+
+--8<-- table-assign-const-nested
+local p = {a = {}, b = {}} --: {a = {}, b = const {}}
+p.a.x = 42
+p.b.y = 54 --@< Error: Cannot update the immutable type `const {}` by indexing
 --! error
 

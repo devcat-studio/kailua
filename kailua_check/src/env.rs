@@ -373,14 +373,14 @@ struct RowInfo {
     // and it's an error for the unification to introduce it.
     fields: Option<HashMap<Key, Option<Slot>>>,
 
-    // when it equals to RVar::fresh(), it it not instantiated yet and
+    // when the next variable is None, it is not instantiated yet and
     // implicitly thought to have negative (absent) fields for each key in fields
-    next: RVar,
+    next: Option<RVar>,
 }
 
 impl RowInfo {
     fn new() -> RowInfo {
-        RowInfo { fields: None, next: RVar::fresh() }
+        RowInfo { fields: Some(HashMap::new()), next: None }
     }
 }
 
@@ -440,7 +440,7 @@ impl<R: Report> Context<R> {
                 tvar_sub: Constraints::new("<:"),
                 tvar_sup: Constraints::new(":>"),
                 tvar_eq: Constraints::new("="),
-                next_rvar: RVar::new(1), // RVar::new(0) for any fresh row variables
+                next_rvar: RVar::new(1), // RVar::new(0) == RVar::empty()
                 row_infos: VecMap::new(),
                 opened: HashSet::new(),
                 loaded: HashMap::new(),
@@ -530,8 +530,7 @@ impl<R: Report> Context<R> {
         let mut rhs = rhs;
 
         loop {
-            assert_ne!(lhs, RVar::fresh());
-            assert_ne!(rhs, RVar::fresh());
+            trace!("{:?} should be {} {:?}", lhs, if is_sub { "<:" } else { "=" }, rhs);
 
             if lhs == rhs {
                 return Ok(());
@@ -639,15 +638,15 @@ impl<R: Report> Context<R> {
 
             // ensure that two next row variables are identical (w.r.t. given relation).
             // this is primarily done by instantiating them as needed and recursing later.
-            let (lnext, rnext) = match (lnext == RVar::fresh(), rnext == RVar::fresh()) {
+            let (lnext, rnext) = match (lnext, rnext) {
                 // if both have been already instantiated we can simply unify them,
                 // i.e. do the tail recursion with next variables.
-                (false, false) => (lnext, rnext),
+                (Some(lnext), Some(rnext)) => (lnext, rnext),
 
                 // if only one of them has been instantiated, another should be newly instantiated.
                 // it will have an exclusion set of all keys in corresponding fields.
                 // then do the tail recursion with instantiated variables.
-                (false, true) => {
+                (Some(lnext), None) => {
                     let rnext = self.gen_rvar();
 
                     let mut row = Box::new(RowInfo::new());
@@ -658,11 +657,11 @@ impl<R: Report> Context<R> {
                     }
                     self.row_infos.insert(rnext.to_usize(), row);
 
-                    self.row_infos.get_mut(&rhs_).unwrap().next = rnext.clone();
+                    self.row_infos.get_mut(&rhs_).unwrap().next = Some(rnext.clone());
                     (lnext, rnext)
                 },
 
-                (true, false) => {
+                (None, Some(rnext)) => {
                     let lnext = self.gen_rvar();
 
                     let mut row = Box::new(RowInfo::new());
@@ -673,7 +672,7 @@ impl<R: Report> Context<R> {
                     }
                     self.row_infos.insert(lnext.to_usize(), row);
 
-                    self.row_infos.get_mut(&lhs_).unwrap().next = lnext.clone();
+                    self.row_infos.get_mut(&lhs_).unwrap().next = Some(lnext.clone());
                     (lnext, rnext)
                 },
 
@@ -683,7 +682,7 @@ impl<R: Report> Context<R> {
                 // this is same to instantiating two variables, setting exclusion sets and
                 // immediately unifying them, but avoids an infinite loop because
                 // unifying one variable with itself trivially ends the recursion.
-                (true, true) => {
+                (None, None) => {
                     let next = self.gen_rvar();
 
                     let mut row = Box::new(RowInfo::new());
@@ -696,8 +695,8 @@ impl<R: Report> Context<R> {
                     }
                     self.row_infos.insert(next.to_usize(), row);
 
-                    self.row_infos.get_mut(&lhs_).unwrap().next = next.clone();
-                    self.row_infos.get_mut(&rhs_).unwrap().next = next.clone();
+                    self.row_infos.get_mut(&lhs_).unwrap().next = Some(next.clone());
+                    self.row_infos.get_mut(&rhs_).unwrap().next = Some(next.clone());
                     (next.clone(), next)
                 },
             };
@@ -718,7 +717,7 @@ impl<R: Report> Context<R> {
 
     fn assert_rvar_includes_and_excludes(&mut self, lhs: RVar, includes: &[(Key, Slot)],
                                          excludes: &[Key]) -> CheckResult<()> {
-        assert_ne!(lhs, RVar::fresh());
+        trace!("{:?} should include {:?} and exclude {:?}", lhs, includes, excludes);
 
         // optimize a no-op just in case
         if includes.is_empty() && excludes.is_empty() {
@@ -744,7 +743,7 @@ impl<R: Report> Context<R> {
         fn inner<R: Report>(ctx: &mut Context<R>, lhs: RVar,
                             includes: &[(Key, Slot)], excludes: &[Key],
                             fields: &mut HashMap<Key, Option<Slot>>,
-                            next: RVar) -> CheckResult<()> {
+                            next: Option<RVar>) -> CheckResult<()> {
             // collect missing fields, whether positive or negative, and
             // check if other matching fields are compatible
             let mut missing = Vec::new();
@@ -780,7 +779,7 @@ impl<R: Report> Context<R> {
 
             // if we have missing fields they should be in the next row variable if any;
             // we can avoid instantiation when it has not yet been instantiated though
-            if next != RVar::fresh() {
+            if let Some(next) = next {
                 // we need to put fields back, so this cannot be a tail recursion
                 ctx.assert_rvar_includes_and_excludes(next, &missing, &absent)?;
             } else {
@@ -1037,7 +1036,9 @@ impl<R: Report> TypeContext for Context<R> {
     }
 
     fn gen_rvar(&mut self) -> RVar {
-        self.next_rvar.incr()
+        let rvar = self.next_rvar.clone();
+        self.next_rvar = RVar::new(rvar.to_usize() + 1);
+        rvar
     }
 
     fn assert_rvar_sub(&mut self, lhs: RVar, rhs: RVar) -> CheckResult<()> {
@@ -1059,8 +1060,6 @@ impl<R: Report> TypeContext for Context<R> {
         let mut slowtick = true;
 
         loop {
-            assert_ne!(rvar, RVar::fresh());
-
             // a row variable has been already closed
             if rvar == RVar::empty() {
                 return Ok(());
@@ -1069,11 +1068,12 @@ impl<R: Report> TypeContext for Context<R> {
             {
                 let rvar_ = rvar.to_usize();
                 let info = self.row_infos.entry(rvar_).or_insert_with(|| Box::new(RowInfo::new()));
-                if info.next == RVar::fresh() {
-                    info.next = RVar::empty();
+                if let Some(ref next) = info.next {
+                    rvar = next.clone();
+                } else {
+                    info.next = Some(RVar::empty());
                     return Ok(());
                 }
-                rvar = info.next.clone();
             }
 
             // advance slowrvar on the 2nd, 4th, 6th, ... iterations and compare with rvar
@@ -1081,7 +1081,7 @@ impl<R: Report> TypeContext for Context<R> {
             if slowtick {
                 slowtick = false;
             } else {
-                slowrvar = self.row_infos.get(&slowrvar.to_usize()).unwrap().next.clone();
+                slowrvar = self.row_infos.get(&slowrvar.to_usize()).unwrap().next.clone().unwrap();
                 if slowrvar == rvar {
                     return Err("recursive row instantiation".to_string());
                 }
@@ -1090,19 +1090,25 @@ impl<R: Report> TypeContext for Context<R> {
         }
     }
 
-    fn list_rvar_fields(&self, rvar: RVar,
-                        f: &mut FnMut(&Key, &Slot) -> CheckResult<()>) -> CheckResult<RVar> {
-        let mut rvar = rvar;
+    fn list_rvar_fields(&self, mut rvar: RVar,
+                        f: &mut FnMut(&Key, &Slot) -> CheckResult<bool>) -> CheckResult<RVar> {
         loop {
             if let Some(info) = self.row_infos.get(&rvar.to_usize()) {
                 if let Some(ref fields) = info.fields {
+                    trace!("{:?} contains {:?}", rvar, fields);
                     for (k, v) in fields.iter() {
                         if let Some(ref v) = *v { // skip negative fields
-                            f(k, v)?;
+                            if !f(k, v)? { // user requested break
+                                return Ok(rvar);
+                            }
                         }
                     }
                 }
-                rvar = info.next.clone();
+                if let Some(ref next) = info.next {
+                    rvar = next.clone();
+                } else {
+                    return Ok(RVar::any());
+                }
             } else {
                 // return immediately if the row variable is special or not yet instantiated
                 return Ok(rvar);

@@ -3,7 +3,7 @@ use std::cmp;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use take_mut::take;
 
 use kailua_env::{Span, Spanned, WithLoc};
@@ -12,7 +12,7 @@ use kailua_syntax::{Str, NameRef, Var, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp
 use kailua_syntax::{SelfParam, Args, St, Stmt, Block};
 use diag::CheckResult;
 use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, Displayed, Display, TypeContext};
-use ty::{RVar, Key, Tables, Function, Functions};
+use ty::{Key, Tables, Function, Functions};
 use ty::{F, Slot, SlotSeq, SpannedSlotSeq, Tag, Class};
 use ty::flags::*;
 use env::{Env, Frame, Scope, Context};
@@ -388,6 +388,13 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             return Ok(Some(Slot::dummy()));
         }
 
+        // if lval is true, we are supposed to update the table and
+        // therefore the table should have an appropriate flex
+        if lval && ety0.accept_in_place(self.context()).is_err() {
+            self.env.error(&*ety0, m::CannotUpdateConst { tab: self.display(&*ety0) }).done()?;
+            return Ok(Some(Slot::dummy()));
+        }
+
         let new_slot = |context: &mut Context<R>| {
             // we don't yet know the exact value type, so generate a new type variable
             let tvar = T::TVar(context.gen_tvar());
@@ -434,7 +441,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             if lval {
                 // l-values. there are strong restrictions over class prototypes and instances.
 
-                let (vslot, new) = if proto {
+                let vslot = if proto {
                     debug!("assigning to a field {:?} of the class prototype of {:?}", litkey, cid);
 
                     if litkey == &b"init"[..] {
@@ -451,7 +458,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         let ty = T::TVar(self.context().gen_tvar());
                         let slot = Slot::new(F::Var, Ty::new(ty).with_tag(Tag::Constructor));
                         fields!(class_ty).insert(litkey, slot.clone());
-                        (slot, true)
+                        slot
                     } else if litkey == &b"new"[..] {
                         // `new` is handled from the assignment (it cannot be copied from `init`
                         // because it initially starts as as a type variable, i.e. unknown)
@@ -459,7 +466,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         return Ok(Some(Slot::dummy()));
                     } else if let Some(v) = fields!(class_ty).get(&litkey).cloned() {
                         // for other methods, it should be used as is...
-                        (v, false)
+                        v
                     } else {
                         // ...or created only when the `init` method is available.
                         if fields!(class_ty).is_empty() {
@@ -470,14 +477,14 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         // prototypes always use Var slots; it is in principle append-only.
                         let slot = new_slot(self.context());
                         fields!(class_ty).insert(litkey, slot.clone());
-                        (slot, true)
+                        slot
                     }
                 } else {
                     debug!("assigning to a field {:?} of the class instance of {:?}", litkey, cid);
 
                     if let Some(v) = fields!(instance_ty).get(&litkey).cloned() {
                         // existing fields can be used as is
-                        (v, false)
+                        v
                     } else if ety.tag() != Some(Tag::Constructible) {
                         // otherwise, only the constructor can add new fields
                         self.env.error(expspan, m::CannotAddFieldsToInstance {}).done()?;
@@ -486,26 +493,11 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         // the constructor (checked earlier) can add Currently slots to instances.
                         let slot = new_slot(self.context());
                         fields!(instance_ty).insert(litkey, slot.clone());
-                        (slot, true)
+                        slot
                     }
                 };
 
                 vslot.adapt(ety0.flex(), self.context());
-
-                // if the table is altered in any way, we need to "adapt" the template
-                if new {
-                    // the following is like `adapt_table` but specialized for this particular case.
-                    // `accept_in_place` simulates the self-assignment (not possible with `accept`).
-                    ety0.adapt(F::Var, self.context());
-                    if let Err(e) = ety0.accept_in_place(self.context()) {
-                        error!("{}", e);
-                        self.env.error(&*ety0, m::CannotAdaptClass { cls: self.display(&*ety0) })
-                                .note(kty0, m::AdaptTriggeredByIndex { key: self.display(kty0) })
-                                .done()?;
-                        return Ok(Some(Slot::dummy()));
-                    }
-                }
-
                 return Ok(Some(vslot));
             } else {
                 // r-values. we just pick the method from the template.
@@ -587,27 +579,6 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             }
         }
 
-        // if a new field is about to be created, make a new slot and
-        // and try to adapt to a table containing that variable.
-        // this "adaptation" only happens for l-value assignments.
-        macro_rules! adapt_table {
-            ($adapted:expr) => ({
-                // the table itself may be at the Just slot, most primarily by
-                // being directly constructed from the table constructor.
-                ety0.adapt(F::Var, self.context());
-
-                let adapted = Ty::new(T::Tables(Cow::Owned($adapted)));
-                if ety0.accept(&Slot::just(adapted.clone()), self.context(), false).is_err() {
-                    self.env.error(&*ety0,
-                                   m::CannotAdaptTable { tab: self.display(&*ety0),
-                                                         adapted: self.display(&adapted) })
-                            .note(kty0, m::AdaptTriggeredByIndex { key: self.display(kty0) })
-                            .done()?;
-                    return Ok(Some(Slot::dummy()));
-                }
-            })
-        }
-
         // try fields first if the key is a string or integer determined in the compile time.
         let litkey =
             if let Some(key) = kty.as_integer() {
@@ -620,45 +591,56 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         let had_litkey = litkey.is_some();
         if let Some(litkey) = litkey {
             match (ety.get_tables(), lval) {
-                (Some(&Tables::Empty), true) => {
-                    let vslot = new_slot(self.context());
-                    let fields = Some((litkey, vslot.clone())).into_iter().collect();
-                    adapt_table!(Tables::Fields(fields, RVar::fresh()));
-                    return Ok(Some(vslot));
-                }
+                (Some(&Tables::Fields(ref rvar)), lval) => {
+                    // find a field in the rvar
+                    let mut vslot = None;
+                    check!(self.context().list_rvar_fields(rvar.clone(), &mut |k, v| {
+                        if *k == litkey {
+                            vslot = Some(v.clone());
+                            Ok(false)
+                        } else {
+                            Ok(true)
+                        }
+                    }));
 
-                (Some(&Tables::Fields(ref fields, ref _rvar)), true) => {
-                    let mut fields = fields.clone();
-                    let vslot = fields.entry(litkey)
-                                      .or_insert_with(|| new_slot(self.context()))
-                                      .clone();
+                    let vslot = match (vslot, lval) {
+                        // the field already exists
+                        (Some(vslot), _) => vslot,
+
+                        // the field does not exist but is used as an l-value
+                        // should *not* extend the terminal rvar (from `list_rvar_fields`),
+                        // since it has to be instantiated which we can't do without a ref
+                        (None, true) => {
+                            let vslot = new_slot(self.context());
+                            check!(self.context().assert_rvar_includes(rvar.clone(),
+                                                                       &[(litkey, vslot.clone())]));
+                            vslot
+                        },
+
+                        // the field does not exist and is used as an r-value, return nothing
+                        (None, false) => return Ok(None),
+                    };
+
                     vslot.adapt(ety0.flex(), self.context());
-                    adapt_table!(Tables::Fields(fields, RVar::fresh()));
                     return Ok(Some(vslot));
-                }
-
-                // while we cannot adapt the table, we can resolve the field
-                (Some(&Tables::Fields(ref fields, ref _rvar)), false) => {
-                    return Ok(fields.get(&litkey).map(|s| (*s).clone()));
                 }
 
                 _ => {}
             }
         }
 
-        // try to adapt arrays and mappings otherwise.
-        // XXX this is severely limited right now, due to the difficulty of union with type vars
+        // handle other cases. in principle arrays and maps should be constructed explicitly
         let intkey = self.env.get_type_bounds(&kty).1.is_integral();
-        match (ety.get_tables(), lval) {
+        match ety.get_tables() {
             // possible! this happens when the string metatable was resolved *and* it is wrong.
-            (None, _) => {
+            None => {
                 let value = Slot::just(Ty::new(T::Dynamic(Dyn::Oops)));
                 // the flex should be retained
                 if lval { value.adapt(ety0.flex(), self.context()); }
                 Ok(Some(value))
             },
 
-            (Some(&Tables::Fields(..)), _) => {
+            Some(&Tables::Fields(..)) => {
                 assert!(!had_litkey);
                 self.env.error(expspan,
                                m::IndexToRecWithUnknownStr { tab: self.display(&*ety0),
@@ -667,25 +649,12 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 Ok(Some(Slot::dummy()))
             },
 
-            (Some(&Tables::Empty), true) => {
-                let vslot = new_slot(self.context());
-                let tab = if intkey {
-                    Tables::Array(vslot.clone())
-                } else {
-                    Tables::Map(kty.clone(), vslot.clone())
-                };
-                adapt_table!(tab);
-                Ok(Some(vslot))
-            },
-
-            (Some(&Tables::Empty), false) => Ok(None),
-
-            (Some(&Tables::Array(ref value)), _) if intkey => {
+            Some(&Tables::Array(ref value)) if intkey => {
                 if lval { value.adapt(ety0.flex(), self.context()); }
                 Ok(Some((*value).clone().with_nil()))
             },
 
-            (Some(&Tables::Array(..)), _) => {
+            Some(&Tables::Array(..)) => {
                 self.env.error(expspan,
                                m::IndexToArrayWithNonInt { tab: self.display(&*ety0),
                                                            key: self.display(&kty) })
@@ -693,19 +662,13 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 Ok(Some(Slot::dummy()))
             },
 
-            (Some(&Tables::Map(ref key, ref value)), false) => {
+            Some(&Tables::Map(ref key, ref value)) => {
                 check!(kty.assert_sub(&**key, self.context()));
+                if lval { value.adapt(ety0.flex(), self.context()); }
                 Ok(Some((*value).clone().with_nil()))
             },
 
-            (Some(&Tables::Map(ref key, ref value)), true) => {
-                let key = check!((**key).union(&kty, false, self.context()));
-                value.adapt(ety0.flex(), self.context());
-                adapt_table!(Tables::Map(key, value.clone()));
-                Ok(Some(value.clone().with_nil()))
-            },
-
-            (Some(&Tables::All), _) => {
+            Some(&Tables::All) => {
                 self.env.error(&*ety0,
                                m::IndexToAnyTable { tab: self.display(&*ety0) }).done()?;
                 Ok(Some(Slot::dummy()))
@@ -1401,20 +1364,18 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
     fn visit_table(&mut self,
                    fields: &[(Option<Spanned<Exp>>, Spanned<Exp>)]) -> CheckResult<T<'static>> {
-        let mut fieldset = BTreeMap::new();
+        let mut newfields = Vec::new();
 
         let mut fieldspans = HashMap::new();
-        let mut add_field = |fieldset: &mut BTreeMap<Key, Slot>, env: &Env<R>, k: Key, v: Slot,
+        let mut add_field = |newfields: &mut Vec<(Key, Slot)>, env: &Env<R>, k: Key, v: Slot,
                              span: Span| -> CheckResult<()> {
-            use std::collections::btree_map::Entry;
-            if let Entry::Vacant(e) = fieldset.entry(k.clone()) {
-                e.insert(v);
-                fieldspans.insert(k, span);
-            } else {
-                let prevspan = fieldspans[&k];
+            if let Some(&prevspan) = fieldspans.get(&k) {
                 env.error(span, m::TableLitWithDuplicateKey { key: &k })
                    .note(prevspan, m::PreviousKeyInTableLit {})
                    .done()?;
+            } else {
+                newfields.push((k.clone(), v));
+                fieldspans.insert(k, span);
             }
             Ok(())
         };
@@ -1428,7 +1389,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 let vty = self.visit_exp(value)?;
                 for ty in vty.head.into_iter() {
                     len += 1;
-                    add_field(&mut fieldset, &self.env, Key::Int(len), ty.base, span)?;
+                    add_field(&mut newfields, &self.env, Key::Int(len), ty.base, span)?;
                 }
                 if let Some(ty) = vty.tail {
                     // a record is no longer sufficient now, and as we don't want to infer
@@ -1464,15 +1425,16 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 };
 
                 let vty = self.visit_exp(value)?.into_first();
-                add_field(&mut fieldset, &self.env, litkey, vty.base, span)?;
+                add_field(&mut newfields, &self.env, litkey, vty.base, span)?;
             }
         }
 
-        if fieldset.is_empty() {
-            Ok(T::Tables(Cow::Owned(Tables::Empty)))
-        } else {
-            Ok(T::Tables(Cow::Owned(Tables::Fields(fieldset, RVar::fresh()))))
+        let rvar = self.context().gen_rvar();
+        if !newfields.is_empty() {
+            // really should not fail...
+            self.context().assert_rvar_includes(rvar.clone(), &newfields)?;
         }
+        Ok(T::Tables(Cow::Owned(Tables::Fields(rvar))))
     }
 
     fn visit_exp(&mut self, exp: &Spanned<Exp>) -> CheckResult<SpannedSlotSeq> {

@@ -1,4 +1,5 @@
 use std::fmt;
+use std::i32;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
@@ -68,12 +69,9 @@ impl fmt::Debug for Key {
 
 #[derive(Clone)]
 pub enum Tables {
-    Empty,
-
-    // tuples and records are internally treated equally;
-    // the extension is represented as a row variable,
-    // which can be empty (RVar::empty()) in which case no other field is allowed
-    Fields(BTreeMap<Key, Slot>, RVar),
+    // tuples and records are internally treated equally, and stored as a row variable
+    // also includes an empty table
+    Fields(RVar),
 
     // does not appear naturally (indistinguishable from Map from integers)
     // determined only from the function usages, e.g. table.insert
@@ -98,22 +96,24 @@ impl Tables {
         match *self {
             Tables::All => write!(f, "table"),
 
-            Tables::Empty => write!(f, "{{}}"),
+            Tables::Fields(ref rvar) => {
+                let mut fields = BTreeMap::new();
+                let mut morefields = 0;
 
-            Tables::Fields(ref fields, ref rvar) => {
-                let mut fields = Cow::Borrowed(fields);
-                const MAX_FIELDS: usize = 0x10000; // do not try to copy too many fields
+                // do not try to copy too many fields
+                const MAX_FIELDS: usize = 0x100;
 
                 // keys have to be sorted in the output, but row variables may have been
                 // instantiated in an arbitrary order, so we need to collect and sort them
-                // when ctx is available. otherwise we just use the original fields (sorted).
+                // when ctx is available. otherwise we just print ctx out.
                 let rvar = if let Some(ctx) = ctx {
-                    let fields = fields.to_mut();
                     ctx.list_rvar_fields(rvar.clone(), &mut |k, v| {
                         if fields.len() < MAX_FIELDS {
                             fields.insert(k.clone(), v.clone());
+                        } else {
+                            morefields += 1;
                         }
-                        Ok(())
+                        Ok(true)
                     }).map_err(|_| fmt::Error)?
                 } else {
                     rvar.clone()
@@ -127,7 +127,6 @@ impl Tables {
                 while let Some(t) = fields.get(&Key::Int(nextlen)) {
                     if first { first = false; } else { write!(f, ", ")?; }
                     write_slot(t, f, false)?;
-                    if nextlen >= 0x10000 { break; } // too much
                     nextlen += 1;
                 }
 
@@ -142,10 +141,20 @@ impl Tables {
                     write_slot(t, f, false)?;
                 }
 
-                // print the extension if any
-                if expose_rvar {
+                // print the number of omitted fields if any
+                if morefields > 0 {
                     if first { first = false; } else { write!(f, ", ")?; }
-                    write!(f, "...{}", rvar.to_usize())?;
+                    write!(f, "<{} fields omitted>", morefields)?;
+                }
+
+                // print the extension if any
+                if expose_rvar && rvar != RVar::empty() {
+                    if !first { write!(f, ", ")?; }
+                    if rvar == RVar::any() {
+                        write!(f, "...?")?;
+                    } else {
+                        write!(f, "...{}", rvar.to_usize())?;
+                    }
                 }
 
                 write!(f, "}}")?;
@@ -174,47 +183,48 @@ impl Tables {
 impl Lattice for Tables {
     fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
-            (&Tables::Empty, _) => true,
-            (_, &Tables::Empty) => false,
-
             (_, &Tables::All) => true,
             (&Tables::All, _) => false,
 
-            (&Tables::Fields(ref a, ref ar), &Tables::Fields(ref b, ref br)) => {
-                for (k, av) in a {
-                    if let Some(ref bv) = b.get(k) {
-                        av.assert_sub(*bv, ctx)?;
-                    } else {
-                        return error_not_sub(self, other);
-                    }
-                }
-                // TODO do something with ar and br
-                true
+            (&Tables::Fields(ref ar), &Tables::Fields(ref br)) => {
+                return ar.assert_sub(&br, ctx);
             },
 
-            (&Tables::Fields(ref fields, ref rvar), &Tables::Map(ref key, ref value)) => {
-                // since an extensible row can result in soundness error,
-                // we disable the extensibility once we need subtyping
-                let rvar = rvar.ensure(ctx);
-                ctx.assert_rvar_closed(rvar)?;
-
-                for (k, v) in fields {
+            (&Tables::Fields(ref rvar), &Tables::Map(ref key, ref value)) => {
+                // subtyping should hold for existing fields
+                for (k, v) in ctx.get_rvar_fields(rvar.clone())? {
                     k.to_type().assert_sub(&**key, ctx)?;
                     v.assert_sub(&value.clone().with_nil(), ctx)?;
                 }
-                true
+
+                // since an extensible row can result in soundness error,
+                // we disable the extensibility once we need subtyping
+                return ctx.assert_rvar_closed(rvar.clone());
             },
 
-            (&Tables::Fields(ref fields, ref rvar), &Tables::Array(ref value)) => {
-                let rvar = rvar.ensure(ctx);
-                ctx.assert_rvar_closed(rvar)?;
-
-                // the fields should have consecutive integer keys
-                for (idx, (k, v)) in fields.iter().enumerate() {
-                    k.to_type().assert_sub(&T::Int(idx as i32 + 1), ctx)?;
-                    v.assert_sub(&value.clone().with_nil(), ctx)?;
+            (&Tables::Fields(ref rvar), &Tables::Array(ref value)) => {
+                // the fields should have consecutive integer keys.
+                // since the fields listing is unordered, we check them by
+                // counting the number of integer keys and determining min and max key.
+                //
+                // this obviously assumes that we have no duplicate keys throughout the chain,
+                // which is the checker's responsibility.
+                let mut min = i32::MAX;
+                let mut max = i32::MIN;
+                let mut count = 0;
+                for (k, v) in ctx.get_rvar_fields(rvar.clone())? {
+                    if let Key::Int(k) = k {
+                        count += 1;
+                        if min > k { min = k; }
+                        if max < k { max = k; }
+                        v.assert_sub(&value.clone().with_nil(), ctx)?;
+                    } else {
+                        return error_not_sub(k.to_type(), &T::Integer);
+                    }
                 }
-                true
+
+                ctx.assert_rvar_closed(rvar.clone())?;
+                count == 0 || (min == 1 && max == count)
             },
 
             (_, &Tables::Fields(..)) => false,
@@ -244,27 +254,13 @@ impl Lattice for Tables {
     fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
         let ok = match (self, other) {
             (&Tables::All, &Tables::All) => true,
-            (&Tables::Empty, &Tables::Empty) => true,
             (&Tables::Array(ref a), &Tables::Array(ref b)) => return a.assert_eq(b, ctx),
             (&Tables::Map(ref ak, ref av), &Tables::Map(ref bk, ref bv)) => {
                 ak.assert_eq(bk, ctx)?;
                 av.assert_eq(bv, ctx)?;
                 true
             }
-            (&Tables::Fields(ref a, ref ar), &Tables::Fields(ref b, ref br)) => {
-                for (k, va) in a {
-                    if let Some(vb) = b.get(k) {
-                        va.assert_eq(vb, ctx)?;
-                    } else {
-                        return error_not_eq(self, other);
-                    }
-                }
-                for (k, _) in b {
-                    if !a.contains_key(k) { return error_not_eq(self, other); }
-                }
-                // TODO do something with ar and br
-                true
-            }
+            (&Tables::Fields(ref ar), &Tables::Fields(ref br)) => return ar.assert_eq(&br, ctx),
             (_, _) => false,
         };
 
@@ -276,19 +272,10 @@ impl PartialEq for Tables {
     fn eq(&self, other: &Tables) -> bool {
         match (self, other) {
             (&Tables::All, &Tables::All) => true,
-            (&Tables::Empty, &Tables::Empty) => true,
-
             (&Tables::Array(ref a), &Tables::Array(ref b)) => *a == *b,
             (&Tables::Map(ref ak, ref av), &Tables::Map(ref bk, ref bv)) =>
                 *ak == *bk && *av == *bv,
-
-            (&Tables::Fields(ref a, ref ar), &Tables::Fields(ref b, ref br)) =>
-                *a == *b && ar == br,
-            (&Tables::Fields(ref a, ref ar), &Tables::Empty) =>
-                a.is_empty() && *ar == RVar::empty(),
-            (&Tables::Empty, &Tables::Fields(ref b, ref br)) =>
-                b.is_empty() && *br == RVar::empty(),
-
+            (&Tables::Fields(ref ar), &Tables::Fields(ref br)) => *ar == *br,
             (_, _) => false,
         }
     }

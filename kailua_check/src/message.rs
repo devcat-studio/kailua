@@ -175,24 +175,14 @@ define_msg! { pub IndexToAnyTable<'a> { tab: Slot<'a> }:
     _    => "Cannot index `{tab}` without downcasting",
 }
 
+define_msg! { pub CannotUpdateConst<'a> { tab: Slot<'a> }:
+    "ko" => "변경할 수 없는 `{tab}` 타입을 인덱싱해서 갱신할 수 없습니다",
+    _    => "Cannot update the immutable type `{tab}` by indexing",
+}
+
 define_msg! { pub CannotIndex<'a> { tab: Slot<'a>, key: Slot<'a> }:
     "ko" => "`{key}` 타입으로 `{tab}`을(를) 인덱싱할 수 없습니다",
     _    => "Cannot index `{tab}` with `{key}`",
-}
-
-define_msg! { pub CannotAdaptTable<'a> { tab: Slot<'a>, adapted: Ty<'a> }:
-    "ko" => "`{tab}` 테이블 타입이 `{adapted}`(으)로 확장되어야 하는데 그럴 수 없습니다",
-    _    => "Cannot adapt the table type `{tab}` into `{adapted}`",
-}
-
-define_msg! { pub CannotAdaptClass<'a> { cls: Slot<'a> }:
-    "ko" => "`{cls}` 타입을 제자리에서 확장할 수 없습니다",
-    _    => "Cannot adapt the type `{cls}` in place",
-}
-
-define_msg! { pub AdaptTriggeredByIndex<'a> { key: Slot<'a> }:
-    "ko" => "테이블을 `{key}` 타입으로 인덱싱하려면 테이블이 확장되어야 합니다",
-    _    => "The table had to be adapted in order to index it with `{key}`",
 }
 
 define_msg! { pub CannotAssign<'a> { lhs: Slot<'a>, rhs: Slot<'a> }:

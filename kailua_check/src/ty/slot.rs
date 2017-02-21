@@ -204,7 +204,7 @@ impl Slot {
 
         debug!("accepting {:?} into {:?}{}", rhs, self, if init { " (initializing)" } else { "" });
 
-        let lhs = self.0.read();
+        let mut lhs = self.0.write();
         let rhs = rhs.0.read();
 
         match (lhs.flex, rhs.flex, init) {
@@ -212,7 +212,6 @@ impl Slot {
 
             (_, F::Any, _) |
             (F::Any, _, _) |
-            (F::Just, _, _) |
             (F::Const, _, false) => Err(format!("impossible to assign {:?} to {:?}", *rhs, *lhs)),
 
             (_, F::Dynamic(_), _) => Ok(()),
@@ -222,6 +221,13 @@ impl Slot {
 
             // assignment to Const slot is for initialization only
             (F::Const, _, true) => rhs.ty.assert_sub(&lhs.ty, ctx),
+
+            // Just becomes Var when assignment happens
+            (F::Just, _, _) => {
+                rhs.ty.assert_sub(&lhs.ty, ctx)?;
+                lhs.flex = F::Var;
+                Ok(())
+            }
         }
     }
 
@@ -232,17 +238,16 @@ impl Slot {
     // conceptually this is same to `accept`, but some special types (notably nominal types)
     // have a representation that is hard to express with `accept` only.
     pub fn accept_in_place(&self, _ctx: &mut TypeContext) -> CheckResult<()> {
-        let s = self.0.read();
-
+        let mut s = self.0.write();
         match s.flex {
-            F::Dynamic(_) => {}
-
-            F::Any | F::Just | F::Const | F::Var => {
-                return Err(format!("impossible to update {:?}", *s));
+            F::Dynamic(_) => Ok(()),
+            F::Any | F::Const => Err(format!("impossible to update {:?}", *s)),
+            F::Var => Ok(()),
+            F::Just => {
+                s.flex = F::Var;
+                Ok(())
             }
-        };
-
-        Ok(())
+        }
     }
 
     pub fn filter_by_flags(&self, flags: Flags, ctx: &mut TypeContext) -> CheckResult<()> {

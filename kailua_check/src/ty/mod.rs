@@ -4,8 +4,6 @@ use message as m;
 use kailua_env::{Span, Spanned};
 use kailua_diag::{self, Kind, Report, Reporter, Localize};
 use kailua_syntax::Name;
-use atomic::Atomic;
-use atomic::Ordering::Relaxed;
 
 pub use self::literals::{Numbers, Strings};
 pub use self::tables::{Key, Tables};
@@ -48,64 +46,29 @@ impl fmt::Debug for TVar {
 }
 
 // row variable, where:
-// - `fresh` denotes any fresh row variable which not yet has been added to the type context
-// - `empty` denotes a inextensible "empty" row variable;
+// - `empty` (row #0) denotes a inextensible "empty" row variable;
 //   this cannot occur from unification, but is required to handle subtyping between
 //   records and non-records, which effectively disables any further record extension
-pub struct RVar(Atomic<u32>);
+#[derive(Clone, PartialEq, Eq)]
+pub struct RVar(u32);
 
 impl RVar {
-    pub fn new(id: usize) -> RVar { RVar(Atomic::new(id as u32)) }
-    pub fn fresh() -> RVar { RVar::new(0) }
-    pub fn empty() -> RVar { RVar::new(0xfffffffe) }
+    pub fn new(id: usize) -> RVar { RVar(id as u32) }
+    pub fn empty() -> RVar { RVar::new(0) }
     pub fn any() -> RVar { RVar::new(0xffffffff) }
 
     fn to_u32(&self) -> u32 {
-        self.0.load(Relaxed)
+        self.0
     }
 
     pub fn to_usize(&self) -> usize {
         self.to_u32() as usize
     }
-
-    pub fn set(&self, rvar: RVar) {
-        self.0.store(rvar.to_u32(), Relaxed);
-    }
-
-    pub fn incr(&self) -> RVar {
-        RVar(Atomic::new(self.0.fetch_add(1, Relaxed)))
-    }
-
-    pub fn ensure(&self, ctx: &mut TypeContext) -> RVar {
-        // we are really (ab)using Atomic as a Sendable Cell, so no ordering is required
-        // (as ctx being a mutable borrow ensures that the variable is exclusively accessed)
-        if *self == RVar::fresh() {
-            self.0.store(ctx.gen_rvar().to_u32(), Relaxed);
-        }
-        self.clone()
-    }
-}
-
-impl Clone for RVar {
-    fn clone(&self) -> RVar {
-        RVar::new(self.to_usize())
-    }
-}
-
-impl PartialEq for RVar {
-    fn eq(&self, other: &RVar) -> bool {
-        self.to_u32() == other.to_u32()
-    }
-}
-
-impl Eq for RVar {
 }
 
 impl fmt::Debug for RVar {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if *self == RVar::fresh() {
-            write!(f, "<row #_>")
-        } else if *self == RVar::empty() {
+        if *self == RVar::empty() {
             write!(f, "<empty row>")
         } else if *self == RVar::any() {
             write!(f, "<row #?>")
@@ -173,8 +136,18 @@ pub trait TypeContext: Report {
     fn assert_rvar_eq(&mut self, lhs: RVar, rhs: RVar) -> CheckResult<()>;
     fn assert_rvar_includes(&mut self, lhs: RVar, rhs: &[(Key, Slot)]) -> CheckResult<()>;
     fn assert_rvar_closed(&mut self, rvar: RVar) -> CheckResult<()>;
+    // should return RVar::any() when the last row variable is yet to be instantiated
     fn list_rvar_fields(&self, rvar: RVar,
-                        f: &mut FnMut(&Key, &Slot) -> CheckResult<()>) -> CheckResult<RVar>;
+                        f: &mut FnMut(&Key, &Slot) -> CheckResult<bool>) -> CheckResult<RVar>;
+
+    fn get_rvar_fields(&self, rvar: RVar) -> CheckResult<Vec<(Key, Slot)>> {
+        let mut fields = Vec::new();
+        self.list_rvar_fields(rvar, &mut |k, v| {
+            fields.push((k.clone(), v.clone()));
+            Ok(true)
+        })?;
+        Ok(fields) // do not return the last rvar, to which operations are no-ops
+    }
 
     // nominal type management
     fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result;
@@ -344,9 +317,9 @@ impl TypeContext for NoTypeContext {
     fn assert_rvar_closed(&mut self, rvar: RVar) -> CheckResult<()> {
         panic!("assert_rvar_closed({:?}) is not supposed to be called here", rvar);
     }
-    fn list_rvar_fields(&self, _rvar: RVar,
-                        _f: &mut FnMut(&Key, &Slot) -> CheckResult<()>) -> CheckResult<RVar> {
-        Ok(RVar::fresh())
+    fn list_rvar_fields(&self, rvar: RVar,
+                        _f: &mut FnMut(&Key, &Slot) -> CheckResult<bool>) -> CheckResult<RVar> {
+        Err(format!("list_rvar_fields({:?}, ...) is not supposed to be called here", rvar))
     }
 
     fn fmt_class(&self, cls: Class, _f: &mut fmt::Formatter) -> fmt::Result {
