@@ -197,6 +197,7 @@ impl Slot {
 
     // one tries to assign `rhs` to `self`. is it *accepted*, and if so how should they change?
     // if `init` is true, this is the first time assignment with lax requirements.
+    // (in this case `self` is the type derived from the specification.)
     pub fn accept(&self, rhs: &Slot, ctx: &mut TypeContext, init: bool) -> CheckResult<()> {
         // accepting itself is always fine and has no effect,
         // but it has to be filtered since it will borrow twice otherwise

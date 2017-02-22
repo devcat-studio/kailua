@@ -185,6 +185,12 @@ define_msg! { pub CannotIndex<'a> { tab: Slot<'a>, key: Slot<'a> }:
     _    => "Cannot index `{tab}` with `{key}`",
 }
 
+define_msg! { pub CannotCreateIndex<'a> { tab: Slot<'a>, key: Slot<'a>, specrhs: Slot<'a> }:
+    "ko" => "`{key}` 타입으로 `{tab}`을(를) 인덱싱하여 `{specrhs}` 타입의 필드를 \
+             새로 만들 수 없습니다",
+    _    => "Cannot index `{tab}` with `{key}` and create a new field of the type `{specrhs}`",
+}
+
 define_msg! { pub CannotAssign<'a> { lhs: Slot<'a>, rhs: Slot<'a> }:
     "ko" => "`{lhs}` 타입에 `{rhs}` 타입을 대입할 수 없습니다",
     _    => "Cannot assign `{rhs}` into `{lhs}`",

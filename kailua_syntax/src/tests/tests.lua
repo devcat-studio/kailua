@@ -322,6 +322,15 @@ a = f() --: integer,
         --: const {} --@^-< Error: Excess type specifications after the assignment
 --! [Assign([`a`_], [`f`_()])]
 
+--8<-- assign-type-index-1
+a.x, b.y = 42, 54 --: integer, integer
+--! [Assign([`a`_.`x`: _ Integer, `b`_.`y`: _ Integer], [42, 54])]
+
+--8<-- assign-type-index-2
+a.x, b, c['z'] = 42, 54 --: integer, integer
+--@^ Error: Excess type specifications in the left hand side
+--! [Assign([`a`_.`x`, `b`_, `c`_["z"]], [42, 54])]
+
 --8<-- func-argtype
 local function r(p --: integer
                 )

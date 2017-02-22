@@ -63,6 +63,19 @@ enum Bool {
     Falsy,
 }
 
+#[derive(Clone, Debug)]
+enum Index {
+    Missing, // field not found, creation not requested
+    Created(Slot), // field not found, creation requested
+    Found(Slot), // field found or the table is a map or vector
+}
+
+impl Index {
+    fn dummy() -> Index {
+        Index::Found(Slot::dummy())
+    }
+}
+
 pub struct Checker<'envr, 'env: 'envr, R: 'env> {
     env: &'envr mut Env<'env, R>,
 }
@@ -373,8 +386,11 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         Ok(returns)
     }
 
-    fn check_index(&mut self, ety0: &Spanned<Slot>, kty0: &Spanned<Slot>, expspan: Span,
-                   lval: bool) -> CheckResult<Option<Slot>> {
+    // common routine for check_{l,r}val_index
+    // when lval is true, the field is created as needed (otherwise it's an error)
+    // when lval is false, the missing field is returned as Index::Missing
+    fn check_index_common(&mut self, ety0: &Spanned<Slot>, kty0: &Spanned<Slot>, expspan: Span,
+                          lval: bool) -> CheckResult<Index> {
         debug!("indexing {:?} with {:?} as an {}-value", ety0, kty0, if lval { "l" } else { "r" });
 
         let mut ety0: Cow<Spanned<Slot>> = Cow::Borrowed(ety0);
@@ -385,14 +401,14 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         let (_, flags) = self.env.get_type_bounds(&ety);
         if !flags.is_tabular() {
             self.env.error(&*ety0, m::IndexToNonTable { tab: self.display(&*ety0) }).done()?;
-            return Ok(Some(Slot::dummy()));
+            return Ok(Index::dummy());
         }
 
         // if lval is true, we are supposed to update the table and
         // therefore the table should have an appropriate flex
         if lval && ety0.accept_in_place(self.context()).is_err() {
             self.env.error(&*ety0, m::CannotUpdateConst { tab: self.display(&*ety0) }).done()?;
-            return Ok(Some(Slot::dummy()));
+            return Ok(Index::dummy());
         }
 
         let new_slot = |context: &mut Context<R>| {
@@ -409,7 +425,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 // it is mixed with other types so it cannot be indexed.
                 self.env.error(&*ety0, m::IndexToUnknownClass { cls: self.display(&*ety0) })
                         .done()?;
-                return Ok(Some(Slot::dummy()));
+                return Ok(Index::dummy());
             },
             _ => None,
         };
@@ -427,7 +443,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                                    m::IndexToClassWithUnknown { cls: self.display(&*ety0),
                                                                 key: self.display(&kty) })
                             .done()?;
-                    return Ok(Some(Slot::dummy()));
+                    return Ok(Index::dummy());
                 };
 
             // this "template" is used to make a reconstructed record type for indexing.
@@ -441,7 +457,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             if lval {
                 // l-values. there are strong restrictions over class prototypes and instances.
 
-                let vslot = if proto {
+                let (vslot, new) = if proto {
                     debug!("assigning to a field {:?} of the class prototype of {:?}", litkey, cid);
 
                     if litkey == &b"init"[..] {
@@ -451,54 +467,58 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                             // since `init` should be the first method ever defined,
                             // non-empty class_ty should always contain `init`.
                             self.env.error(expspan, m::CannotRedefineCtor {}).done()?;
-                            return Ok(Some(Slot::dummy()));
+                            return Ok(Index::dummy());
                         }
 
                         // should have a [constructor] tag to create a `new` method
                         let ty = T::TVar(self.context().gen_tvar());
                         let slot = Slot::new(F::Var, Ty::new(ty).with_tag(Tag::Constructor));
                         fields!(class_ty).insert(litkey, slot.clone());
-                        slot
+                        (slot, true)
                     } else if litkey == &b"new"[..] {
                         // `new` is handled from the assignment (it cannot be copied from `init`
                         // because it initially starts as as a type variable, i.e. unknown)
                         self.env.error(expspan, m::ReservedNewMethod {}).done()?;
-                        return Ok(Some(Slot::dummy()));
+                        return Ok(Index::dummy());
                     } else if let Some(v) = fields!(class_ty).get(&litkey).cloned() {
                         // for other methods, it should be used as is...
-                        v
+                        (v, false)
                     } else {
                         // ...or created only when the `init` method is available.
                         if fields!(class_ty).is_empty() {
                             self.env.error(expspan, m::CannotDefineMethodsWithoutCtor {}).done()?;
-                            return Ok(Some(Slot::dummy()));
+                            return Ok(Index::dummy());
                         }
 
                         // prototypes always use Var slots; it is in principle append-only.
                         let slot = new_slot(self.context());
                         fields!(class_ty).insert(litkey, slot.clone());
-                        slot
+                        (slot, true)
                     }
                 } else {
                     debug!("assigning to a field {:?} of the class instance of {:?}", litkey, cid);
 
                     if let Some(v) = fields!(instance_ty).get(&litkey).cloned() {
                         // existing fields can be used as is
-                        v
+                        (v, false)
                     } else if ety.tag() != Some(Tag::Constructible) {
                         // otherwise, only the constructor can add new fields
                         self.env.error(expspan, m::CannotAddFieldsToInstance {}).done()?;
-                        return Ok(Some(Slot::dummy()));
+                        return Ok(Index::dummy());
                     } else {
                         // the constructor (checked earlier) can add Currently slots to instances.
                         let slot = new_slot(self.context());
                         fields!(instance_ty).insert(litkey, slot.clone());
-                        slot
+                        (slot, true)
                     }
                 };
 
                 vslot.adapt(ety0.flex(), self.context());
-                return Ok(Some(vslot));
+                if new {
+                    return Ok(Index::Created(vslot));
+                } else {
+                    return Ok(Index::Found(vslot));
+                }
             } else {
                 // r-values. we just pick the method from the template.
 
@@ -507,10 +527,14 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 if !proto {
                     // instance fields have a precedence over class fields
                     if let Some(info) = cdef.instance_ty.get(&litkey).map(|v| (*v).clone()) {
-                        return Ok(Some(info));
+                        return Ok(Index::Found(info));
                     }
                 }
-                return Ok(cdef.class_ty.get(&litkey).map(|v| (*v).clone()));
+                if let Some(info) = cdef.class_ty.get(&litkey).map(|v| (*v).clone()) {
+                    return Ok(Index::Found(info));
+                } else {
+                    return Ok(Index::Missing);
+                }
             }
         } else if !flags.is_dynamic() && flags.intersects(T_STRING) {
             // if ety is a string, we go through the previously defined string metatable
@@ -519,7 +543,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 self.env.error(&*ety0,
                                m::IndexedTypeIsBothTableOrStr { indexed: self.display(&*ety0) })
                         .done()?;
-                return Ok(Some(Slot::dummy()));
+                return Ok(Index::dummy());
             }
 
             if let Some(meta) = self.env.get_string_meta() {
@@ -533,18 +557,18 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         self.env.error(&*ety0, m::NonTableStringMeta {})
                                 .note(meta.span, m::PreviousStringMeta {})
                                 .done()?;
-                        return Ok(Some(Slot::dummy()));
+                        return Ok(Index::dummy());
                     }
 
                     ety
                 } else {
                     self.env.error(&*ety0, m::IndexToInexactType { tab: self.display(&*ety0) })
                             .done()?;
-                    return Ok(Some(Slot::dummy()));
+                    return Ok(Index::dummy());
                 }
             } else {
                 self.env.error(&*ety0, m::UndefinedStringMeta {}).done()?;
-                return Ok(Some(Slot::dummy()));
+                return Ok(Index::dummy());
             }
         } else {
             // normal tables, we need to resolve it fully
@@ -553,7 +577,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             } else {
                 self.env.error(&*ety0,
                                m::IndexToInexactType { tab: self.display(&*ety0) }).done()?;
-                return Ok(Some(Slot::dummy()));
+                return Ok(Index::dummy());
             }
         };
 
@@ -562,7 +586,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             let value = Slot::just(Ty::new(T::Dynamic(dyn)));
             // the flex should be retained
             if lval { value.adapt(ety0.flex(), self.context()); }
-            return Ok(Some(value));
+            return Ok(Index::Found(value));
         }
 
         macro_rules! check {
@@ -573,7 +597,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         self.env.error(expspan, m::CannotIndex { tab: self.display(&*ety0),
                                                                  key: self.display(kty0) })
                                 .done()?;
-                        return Ok(Some(Slot::dummy()));
+                        return Ok(Index::dummy());
                     }
                 }
             }
@@ -603,9 +627,9 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         }
                     }));
 
-                    let vslot = match (vslot, lval) {
+                    let (vslot, new) = match (vslot, lval) {
                         // the field already exists
-                        (Some(vslot), _) => vslot,
+                        (Some(vslot), _) => (vslot, false),
 
                         // the field does not exist but is used as an l-value
                         // should *not* extend the terminal rvar (from `list_rvar_fields`),
@@ -614,15 +638,19 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                             let vslot = new_slot(self.context());
                             check!(self.context().assert_rvar_includes(rvar.clone(),
                                                                        &[(litkey, vslot.clone())]));
-                            vslot
+                            (vslot, true)
                         },
 
                         // the field does not exist and is used as an r-value, return nothing
-                        (None, false) => return Ok(None),
+                        (None, false) => return Ok(Index::Missing),
                     };
 
                     vslot.adapt(ety0.flex(), self.context());
-                    return Ok(Some(vslot));
+                    if new {
+                        return Ok(Index::Created(vslot));
+                    } else {
+                        return Ok(Index::Found(vslot));
+                    }
                 }
 
                 _ => {}
@@ -637,7 +665,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 let value = Slot::just(Ty::new(T::Dynamic(Dyn::Oops)));
                 // the flex should be retained
                 if lval { value.adapt(ety0.flex(), self.context()); }
-                Ok(Some(value))
+                Ok(Index::Found(value))
             },
 
             Some(&Tables::Fields(..)) => {
@@ -646,12 +674,12 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                                m::IndexToRecWithUnknownStr { tab: self.display(&*ety0),
                                                              key: self.display(&kty) })
                         .done()?;
-                Ok(Some(Slot::dummy()))
+                Ok(Index::dummy())
             },
 
             Some(&Tables::Array(ref value)) if intkey => {
                 if lval { value.adapt(ety0.flex(), self.context()); }
-                Ok(Some((*value).clone().with_nil()))
+                Ok(Index::Found((*value).clone().with_nil()))
             },
 
             Some(&Tables::Array(..)) => {
@@ -659,21 +687,65 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                                m::IndexToArrayWithNonInt { tab: self.display(&*ety0),
                                                            key: self.display(&kty) })
                         .done()?;
-                Ok(Some(Slot::dummy()))
+                Ok(Index::dummy())
             },
 
             Some(&Tables::Map(ref key, ref value)) => {
                 check!(kty.assert_sub(&**key, self.context()));
                 if lval { value.adapt(ety0.flex(), self.context()); }
-                Ok(Some((*value).clone().with_nil()))
+                Ok(Index::Found((*value).clone().with_nil()))
             },
 
             Some(&Tables::All) => {
                 self.env.error(&*ety0,
                                m::IndexToAnyTable { tab: self.display(&*ety0) }).done()?;
-                Ok(Some(Slot::dummy()))
+                Ok(Index::dummy())
             },
         }
+    }
+
+    fn check_rval_index(&mut self, ety: &Spanned<Slot>, kty: &Spanned<Slot>,
+                        expspan: Span) -> CheckResult<Slot> {
+        match self.check_index_common(ety, kty, expspan, false)? {
+            Index::Missing => {
+                self.env.error(expspan, m::CannotIndex { tab: self.display(&ety),
+                                                         key: self.display(&kty) })
+                        .done()?;
+                Ok(Slot::dummy())
+            },
+            Index::Created(..) => unreachable!(),
+            Index::Found(slot) => Ok(slot),
+        }
+    }
+
+    // this should be followed by assign_to_lval_index
+    fn check_lval_index(&mut self, ety: &Spanned<Slot>, kty: &Spanned<Slot>,
+                        expspan: Span) -> CheckResult<(bool, Slot)> {
+        match self.check_index_common(ety, kty, expspan, true)? {
+            Index::Missing => unreachable!(),
+            Index::Created(slot) => Ok((false, slot)),
+            Index::Found(slot) => Ok((true, slot)),
+        }
+    }
+
+    // this should be preceded by check_lval_index with the equal parameters
+    fn assign_to_lval_index(&mut self, found: bool, ety: &Spanned<Slot>, kty: &Spanned<Slot>,
+                            lhs: &Spanned<Slot>, initrhs: &Spanned<Slot>,
+                            specrhs: Option<&Spanned<Slot>>) -> CheckResult<()> {
+        if found {
+            // ignore specrhs, should have been handled by the caller
+            self.env.assign(lhs, initrhs)?;
+        } else {
+            if self.env.assign_new(lhs, initrhs, specrhs).is_err() {
+                self.env.error(lhs,
+                               m::CannotCreateIndex {
+                                   tab: self.display(ety), key: self.display(kty),
+                                   specrhs: self.display(specrhs.unwrap_or(initrhs)),
+                               })
+                        .done()?;
+            }
+        }
+        Ok(())
     }
 
     pub fn visit(&mut self, chunk: &Spanned<Block>) -> CheckResult<()> {
@@ -710,7 +782,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 #[derive(Debug)]
                 enum VarRef<'a> {
                     Name(&'a Spanned<NameRef>),
-                    Slot(Spanned<Slot>),
+                    // is not newly created?, table slot, key slot, indexd slot
+                    Slot(bool, Spanned<Slot>, Spanned<Slot>, Spanned<Slot>),
                 }
 
                 let varrefs = vars.iter().map(|varspec| {
@@ -718,28 +791,20 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         Var::Name(ref nameref) => Ok(VarRef::Name(nameref)),
 
                         Var::Index(ref e, ref key) => {
-                            if let Some(ref kind) = varspec.kind {
-                                self.env.error(kind, m::TypeSpecToIndex {}).done()?;
-                            }
-
                             let ty = self.visit_exp(e)?.into_first();
                             let kty = self.visit_exp(key)?.into_first();
-                            let slot = self.check_index(&ty, &kty, varspec.base.span, true)?;
-                            // since we've requested a lvalue it would never return None
-                            Ok(VarRef::Slot(slot.unwrap().with_loc(&varspec.base)))
+                            let (found, slot) = self.check_lval_index(&ty, &kty,
+                                                                      varspec.base.span)?;
+                            Ok(VarRef::Slot(found, ty, kty, slot.with_loc(&varspec.base)))
                         },
 
                         Var::IndexName(ref e, ref key) => {
-                            if let Some(ref kind) = varspec.kind {
-                                self.env.error(kind, m::TypeSpecToIndex {}).done()?;
-                            }
-
                             let ty = self.visit_exp(e)?.into_first();
                             let keystr = Str::from(key.base[..].to_owned());
                             let kty = Slot::just(Ty::new(T::Str(Cow::Owned(keystr)))).with_loc(key);
-                            let slot = self.check_index(&ty, &kty, varspec.base.span, true)?;
-                            // since we've requested a lvalue it would never return None
-                            Ok(VarRef::Slot(slot.unwrap().with_loc(&varspec.base)))
+                            let (found, slot) = self.check_lval_index(&ty, &kty,
+                                                                      varspec.base.span)?;
+                            Ok(VarRef::Slot(found, ty, kty, slot.with_loc(&varspec.base)))
                         },
                     }
                 }).collect::<CheckResult<Vec<_>>>()?;
@@ -754,23 +819,25 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 // unlike St::Local, do not tolerate the uninitialized variables
                 for (var, varref) in vars.iter().zip(varrefs.into_iter()) {
                     // ideally should be done via zip, but then concrete types will collide
+                    // just ignore the assignment when info is None instead
                     let info = infos.as_mut().and_then(|it| it.next());
                     debug!("assigning {:?} to {:?} with type {:?}", info, var, varref);
 
+                    let specinfo = match *var {
+                        TypeSpec { modf, kind: Some(ref kind), .. } =>
+                            Some(self.visit_kind(F::from(modf), kind)?),
+                        TypeSpec { kind: None, .. } => None,
+                    };
+
                     match varref {
                         VarRef::Name(nameref) => {
-                            match *var {
+                            if let Some(specinfo) = specinfo {
                                 // variable declaration
-                                TypeSpec { modf, kind: Some(ref kind), .. } => {
-                                    let specinfo = self.visit_kind(F::from(modf), kind)?;
-                                    self.env.add_var(nameref, Some(specinfo), info)?;
-                                }
-
+                                self.env.add_var(nameref, Some(specinfo), info)?;
+                            } else {
                                 // variable assignment
-                                TypeSpec { kind: None, .. } => {
-                                    if let Some(info) = info {
-                                        self.env.assign_to_var(nameref, info)?;
-                                    }
+                                if let Some(info) = info {
+                                    self.env.assign_to_var(nameref, info)?;
                                 }
                             }
 
@@ -783,10 +850,18 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         }
 
                         // indexed assignment
-                        VarRef::Slot(slot) => {
-                            if let Some(info) = info {
-                                self.env.assign(&slot, &info)?;
+                        VarRef::Slot(found, ety, kty, slot) => {
+                            if found {
+                                if let Some(ref specinfo) = specinfo {
+                                    // now we know that this assignment cannot declare a field
+                                    self.env.error(specinfo, m::TypeSpecToIndex {}).done()?;
+                                }
                             }
+                            if let Some(info) = info {
+                                self.assign_to_lval_index(found, &ety, &kty, &slot,
+                                                          &info, specinfo.as_ref())?;
+                            }
+                            // allow lhs to be recorded even when info is missing (for completion)
                             self.context().spanned_slots_mut().insert(slot);
                         }
                     }
@@ -1011,14 +1086,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     let keystr = Str::from(subname.base[..].to_owned());
                     let kty = Slot::just(Ty::new(T::Str(Cow::Owned(keystr)))).with_loc(subname);
                     let subspan = info.span | subname.span; // a subexpr for this indexing
-                    if let Some(subinfo) = self.check_index(&info, &kty, subspan, false)? {
-                        info = subinfo.with_loc(subspan);
-                    } else {
-                        self.env.error(subspan, m::CannotIndex { tab: self.display(&info),
-                                                                 key: self.display(&kty) })
-                                .done()?;
-                        info = Slot::dummy().with_loc(subspan);
-                    }
+                    info = self.check_rval_index(&info, &kty, subspan)?.with_loc(subspan);
                 }
 
                 // now prepare the right-hand side (i.e. method decl)
@@ -1094,9 +1162,9 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 let subspan = info.span | method.span;
                 let keystr = Str::from(method.base[..].to_owned());
                 let kty = Slot::just(Ty::new(T::Str(Cow::Owned(keystr)))).with_loc(method);
-                let slot = self.check_index(&info, &kty, subspan, true)?;
-                // since we've requested a lvalue it would never return None
-                self.env.assign(&slot.unwrap().with_loc(subspan), &methinfo.with_loc(stmt))?;
+                let (found, slot) = self.check_lval_index(&info, &kty, subspan)?;
+                self.assign_to_lval_index(found, &info, &kty, &slot.with_loc(subspan),
+                                          &methinfo.with_loc(stmt), None)?;
 
                 Ok(Exit::None)
             }
@@ -1510,42 +1578,22 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 let keystr = Str::from(method.base[..].to_owned());
                 let ty = self.visit_exp(e)?.into_first();
                 let kty = Slot::just(Ty::new(T::Str(Cow::Owned(keystr)))).with_loc(method.span);
-                if let Some(methinfo) = self.check_index(&ty, &kty, exp.span, false)? {
-                    self.context().spanned_slots_mut().insert(methinfo.clone().with_loc(span));
-                    let methinfo = methinfo.unlift().clone().with_loc(span);
-                    self.visit_func_call(&methinfo, Some(ty), args, exp.span)
-                } else {
-                    self.env.error(exp, m::CannotIndex { tab: self.display(&ty),
-                                                         key: self.display(&kty) })
-                            .done()?;
-                    Ok(SlotSeq::dummy())
-                }
+                let methinfo = self.check_rval_index(&ty, &kty, exp.span)?;
+                self.context().spanned_slots_mut().insert(methinfo.clone().with_loc(span));
+                let methinfo = methinfo.unlift().clone().with_loc(span);
+                self.visit_func_call(&methinfo, Some(ty), args, exp.span)
             },
 
             Ex::Index(ref e, ref key) => {
                 let ty = self.visit_exp(e)?.into_first();
                 let kty = self.visit_exp(key)?.into_first();
-                if let Some(vinfo) = self.check_index(&ty, &kty, exp.span, false)? {
-                    Ok(SlotSeq::from(vinfo))
-                } else {
-                    self.env.error(exp, m::CannotIndex { tab: self.display(&ty),
-                                                         key: self.display(&kty) })
-                            .done()?;
-                    Ok(SlotSeq::dummy())
-                }
+                Ok(SlotSeq::from(self.check_rval_index(&ty, &kty, exp.span)?))
             },
             Ex::IndexName(ref e, ref key) => {
                 let keystr = Str::from(key.base[..].to_owned());
                 let ty = self.visit_exp(e)?.into_first();
                 let kty = Slot::just(Ty::new(T::Str(Cow::Owned(keystr)))).with_loc(key);
-                if let Some(vinfo) = self.check_index(&ty, &kty, exp.span, false)? {
-                    Ok(SlotSeq::from(vinfo))
-                } else {
-                    self.env.error(exp, m::CannotIndex { tab: self.display(&ty),
-                                                         key: self.display(&kty) })
-                            .done()?;
-                    Ok(SlotSeq::dummy())
-                }
+                Ok(SlotSeq::from(self.check_rval_index(&ty, &kty, exp.span)?))
             },
 
             Ex::Un(op, ref e) => {

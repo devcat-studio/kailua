@@ -2133,7 +2133,7 @@ function foo:bar(x)
 end
 
 -- this is an error because `self` type is not affected by [no_check]
---@v Error: `{bar = <currently> function(integer, integer) --> integer}` is not a subtype of `integer`
+--@v Error: `{bar = function(integer, integer) --> integer}` is not a subtype of `integer`
 local a = foo:bar(3) --: integer
 
 --! error
@@ -2386,5 +2386,34 @@ p.a = 42 --@< Error: Cannot update the immutable type `const {}` by indexing
 local p = {a = {}, b = {}} --: {a = {}, b = const {}}
 p.a.x = 42
 p.b.y = 54 --@< Error: Cannot update the immutable type `const {}` by indexing
+--! error
+
+--8<-- table-assign-type-1
+local p = {}
+p.a = 42 --: 42|43
+p.a = 43
+--! ok
+
+--8<-- table-assign-type-2
+local p = {}
+p.a = 42 --: 42|43
+p.a = 44 --@< Error: Cannot assign `44` into `(42|43)`
+         --@^ Note: The other type originates here
+--! error
+
+--8<-- table-assign-type-dup
+local p = {}
+p.a = 42 --: 42|43
+p.a = 42 --: integer --@< Error: Cannot specify the type of indexing expression
+--! error
+
+--8<-- table-assign-type-to-vector
+local p = {} --: vector<integer>
+p[1] = 42 --: integer --@< Error: Cannot specify the type of indexing expression
+--! error
+
+--8<-- table-assign-type-to-map
+local p = {} --: map<string, integer>
+p.a = 42 --: integer --@< Error: Cannot specify the type of indexing expression
 --! error
 

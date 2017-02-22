@@ -1387,10 +1387,23 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         Ok(())
     }
 
-    // same to Slot::accept but also able to handle the built-in semantics
-    // should be used for any kind of non-internal assignments
+    // same to Slot::accept but also able to handle the built-in semantics;
+    // should be used for any kind of non-internal assignments.
     pub fn assign(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> CheckResult<()> {
         self.assign_(lhs, rhs, false)
+    }
+
+    // same to `assign` but the slot is assumed to be newly created (out of field)
+    // and the strict equality instead of subtyping is applied.
+    // this is required because the slot itself is generated before doing any assignment;
+    // the usual notion of accepting by subtyping does not work well here.
+    pub fn assign_new(&mut self, lhs: &Spanned<Slot>, initrhs: &Spanned<Slot>,
+                      specrhs: Option<&Spanned<Slot>>) -> CheckResult<()> {
+        let specrhs = specrhs.unwrap_or(initrhs);
+        self.assign_special(initrhs, specrhs)?;
+        specrhs.accept(initrhs, self.context, true)?;
+        specrhs.adapt(lhs.flex(), self.context);
+        lhs.assert_eq(specrhs, self.context)
     }
 
     pub fn ensure_var(&mut self, nameref: &Spanned<NameRef>) -> CheckResult<Slot> {
