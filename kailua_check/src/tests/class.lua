@@ -83,20 +83,38 @@ local h = Hello.new(3, 4, 5)
 local a = h.x + h.y + h.z --: integer
 --! ok
 
---8<-- class-init-fields-currently
+--8<-- class-init-fields-2
+--# assume `class`: [make_class] function() --> table
+Hello = class()
+--v function(self, x: integer, y: integer, z: integer)
+function Hello:init(x, y, z)
+    self.x = x --: integer|string
+    self.y = y
+    self.z = z
+    self.x = 'string'
+end
+local h = Hello.new(3, 4, 5)
+local a = h.y + h.z --: integer
+local b = h.x .. 'hello' --: string
+local c = h.x + 42 --@< Error: `(integer|string)` is not a subtype of `number`
+--! error
+
+--8<-- class-init-fields-3
 --# assume `class`: [make_class] function() --> table
 Hello = class()
 --v function(self, x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
     self.x = x
     self.y = y
-    self.z = z + self.x
-    self.x = 'string'
+    self.z = z
+    self.x = 'string' --@< Error: Cannot assign `"string"` into `integer`
+                      --@^ Note: The other type originates here
 end
 local h = Hello.new(3, 4, 5)
 local a = h.y + h.z --: integer
 local b = h.x .. 'hello' --: string
---! ok
+local c = h.x + 42 --: integer
+--! error
 
 --8<-- class-init-self-assign
 --# assume `class`: [make_class] function() --> table
@@ -208,7 +226,7 @@ Hello = class()
 
 --v function(self, x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
-    --@v Error: Cannot index `<currently> [internal constructible] Hello` with `"sum"`
+    --@v Error: Cannot index `[internal constructible] Hello` with `"sum"`
     local n = self:sum()
     self.x = x + n
     self.y = y + n
@@ -223,7 +241,7 @@ local h = Hello.new(3, 4, 5)
 local s = h:sum() --: integer
 
 -- test error recovery
---@v Error: Cannot index `<currently> Hello` with `"average"`
+--@v Error: Cannot index `Hello` with `"average"`
 local t = h:average() --: integer
 
 --! error

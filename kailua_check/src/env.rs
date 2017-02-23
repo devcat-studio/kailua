@@ -519,6 +519,7 @@ impl<R: Report> Context<R> {
                        .note(prevname, m::PreviousClassName {})
                        .done()?;
         } else {
+            info!("named {:?} as {:?}", cid, name);
             cls.name = Some(name);
         }
         Ok(())
@@ -1347,7 +1348,8 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         Ok(())
     }
 
-    fn assign_special(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> CheckResult<()> {
+    // returns false if the assignment is failed and constraints should not be added
+    fn assign_special(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> CheckResult<bool> {
         match lhs.tag() {
             Some(b @ Tag::PackagePath) |
             Some(b @ Tag::PackageCpath) => {
@@ -1365,6 +1367,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
             Some(Tag::Constructible) => {
                 self.error(lhs, m::SelfCannotBeAssignedInCtor {}).done()?;
+                return Ok(false);
             }
 
             Some(Tag::Constructor) => {
@@ -1374,15 +1377,16 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             _ => {}
         }
 
-        Ok(())
+        Ok(true)
     }
 
     fn assign_(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>, init: bool) -> CheckResult<()> {
-        self.assign_special(lhs, rhs)?;
-        if lhs.accept(rhs, self.context, init).is_err() {
-            self.error(lhs, m::CannotAssign { lhs: self.display(lhs), rhs: self.display(rhs) })
-                .note_if(rhs, m::OtherTypeOrigin {})
-                .done()?;
+        if self.assign_special(lhs, rhs)? {
+            if lhs.accept(rhs, self.context, init).is_err() {
+                self.error(lhs, m::CannotAssign { lhs: self.display(lhs), rhs: self.display(rhs) })
+                    .note_if(rhs, m::OtherTypeOrigin {})
+                    .done()?;
+            }
         }
         Ok(())
     }
@@ -1390,6 +1394,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
     // same to Slot::accept but also able to handle the built-in semantics;
     // should be used for any kind of non-internal assignments.
     pub fn assign(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> CheckResult<()> {
+        trace!("assigning {:?} to an existing slot {:?}", rhs, lhs);
         self.assign_(lhs, rhs, false)
     }
 
@@ -1397,16 +1402,28 @@ impl<'ctx, R: Report> Env<'ctx, R> {
     // and the strict equality instead of subtyping is applied.
     // this is required because the slot itself is generated before doing any assignment;
     // the usual notion of accepting by subtyping does not work well here.
+    // this is technically two assignments, of which the latter is done via the strict equality.
     pub fn assign_new(&mut self, lhs: &Spanned<Slot>, initrhs: &Spanned<Slot>,
                       specrhs: Option<&Spanned<Slot>>) -> CheckResult<()> {
-        let specrhs = specrhs.unwrap_or(initrhs);
-        self.assign_special(initrhs, specrhs)?;
-        specrhs.accept(initrhs, self.context, true)?;
+        trace!("assigning {:?} to a new slot {:?} with type {:?}", initrhs, lhs, specrhs);
+
+        // first assignment of initrhs to specrhs, if any
+        let specrhs = if let Some(specrhs) = specrhs {
+            if !self.assign_special(initrhs, specrhs)? { return Ok(()); }
+            specrhs.accept(initrhs, self.context, true)?;
+            specrhs
+        } else {
+            initrhs
+        };
+
+        // second assignment of specrhs (or initrhs) to lhs
         specrhs.adapt(lhs.flex(), self.context);
+        if !self.assign_special(lhs, specrhs)? { return Ok(()); }
         lhs.assert_eq(specrhs, self.context)
     }
 
     pub fn ensure_var(&mut self, nameref: &Spanned<NameRef>) -> CheckResult<Slot> {
+        trace!("ensuring {:?} has been initialized", nameref);
         let id = self.id_from_nameref(nameref);
 
         let defslot;
@@ -1433,14 +1450,15 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
         // not yet set but typed (e.g. `local x --: string`), the type should accept `nil`
         let nil = Slot::just(Ty::noisy_nil()).without_loc();
-        self.assign_special(&defslot, &nil)?;
-        if defslot.accept(&nil, self.context, true).is_ok() { // this IS still initialization
-            self.context.ids.get_mut(&id).unwrap().slot = NameSlot::Set(defslot.base.clone());
-        } else {
-            // won't alter the set flag, so subsequent uses are still errors
-            self.error(&id, m::UseOfUnassignedVar {})
-                     .note_if(&defslot, m::UnassignedVarOrigin { var: self.display(&defslot) })
-                     .done()?;
+        if self.assign_special(&defslot, &nil)? {
+            if defslot.accept(&nil, self.context, true).is_ok() { // this IS still initialization
+                self.context.ids.get_mut(&id).unwrap().slot = NameSlot::Set(defslot.base.clone());
+            } else {
+                // won't alter the set flag, so subsequent uses are still errors
+                self.error(&id, m::UseOfUnassignedVar {})
+                         .note_if(&defslot, m::UnassignedVarOrigin { var: self.display(&defslot) })
+                         .done()?;
+            }
         }
 
         Ok(defslot.base)
@@ -1563,8 +1581,8 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
         if needslotassign {
             self.assign_(&previnfo.with_loc(&id), &info, !prevset)?;
-            self.name_class_if_any(&id, &info)?;
         }
+        self.name_class_if_any(&id, &info)?;
         Ok(())
     }
 

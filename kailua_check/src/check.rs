@@ -478,6 +478,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     } else if litkey == &b"new"[..] {
                         // `new` is handled from the assignment (it cannot be copied from `init`
                         // because it initially starts as as a type variable, i.e. unknown)
+                        // see also `Env::create_new_method_from_init`
                         self.env.error(expspan, m::ReservedNewMethod {}).done()?;
                         return Ok(Index::dummy());
                     } else if let Some(v) = fields!(class_ty).get(&litkey).cloned() {
@@ -521,6 +522,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 }
             } else {
                 // r-values. we just pick the method from the template.
+                trace!("indexing to a field {:?} of the class {} of {:?}",
+                       litkey, if proto { "prototype" } else { "instance" }, cid);
 
                 let cdef = self.context().get_class_mut(cid).expect("invalid ClassId");
                 // TODO should we re-adapt methods?
