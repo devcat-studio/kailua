@@ -264,9 +264,15 @@ impl<'a> T<'a> {
         }
     }
 
-    // removes literal types from `self`, by replacing them with `integer` or `string`.
-    // this is used when new variable or field has been added without explicit types.
-    pub fn make_abstract(self) -> T<'static> {
+    // coerces "implicit" types into "explicit" types. this is the only possible way in Kailua
+    // for implicit coercions to happen, and does the following:
+    //
+    // - removes implicit literal types from `self`, by replacing them with `integer` or `string`.
+    //   this does not affect explicit literal types from `Ty::from_kind`.
+    //
+    // this is used when new variable or field has been added without explicit types,
+    // or upper & exact bounds for type variables get updated (lower bounds do not).
+    pub fn coerce(self) -> T<'static> {
         match self {
             T::Dynamic(dyn) => T::Dynamic(dyn),
 
@@ -285,8 +291,8 @@ impl<'a> T<'a> {
             // tables are recursively altered
             T::Tables(tab) => {
                 let tab = match tab.into_owned() {
-                    Tables::Array(v) => Tables::Array(v.make_abstract()),
-                    Tables::Map(k, v) => Tables::Map(k.make_abstract(), v.make_abstract()),
+                    Tables::Array(v) => Tables::Array(v.coerce()),
+                    Tables::Map(k, v) => Tables::Map(k.coerce(), v.coerce()),
                     tab => tab,
                 };
                 T::Tables(Cow::Owned(tab))
@@ -1100,8 +1106,8 @@ impl Ty {
         (tv, ty)
     }
 
-    pub fn make_abstract(mut self) -> Ty {
-        self.inner.remap_ty(|t| t.make_abstract());
+    pub fn coerce(mut self) -> Ty {
+        self.inner.remap_ty(|t| t.coerce());
         self
     }
 

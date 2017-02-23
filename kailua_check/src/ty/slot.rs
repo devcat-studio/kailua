@@ -22,7 +22,7 @@ pub enum F {
     // dynamic slot; all assignments are allowed and ignored
     Dynamic(Dyn),
     // temporary r-value slot
-    // coerces to Var (default) or Const depending on the unification
+    // updates in place to Var (default) or Const depending on the unification
     Just,
     // covariant immutable slot
     Const,
@@ -76,8 +76,13 @@ impl S {
         S { flex: self.flex, ty: self.ty.without_nil() }
     }
 
-    pub fn make_abstract(self) -> S {
-        S { flex: self.flex, ty: self.ty.make_abstract() }
+    // in addition to `Ty::coerce`, also updates the flexibility
+    pub fn coerce(self) -> S {
+        let flex = match self.flex {
+            F::Just | F::Const | F::Var => F::Var,
+            flex => flex,
+        };
+        S { flex: flex, ty: self.ty.coerce() }
     }
 
     // self and other may be possibly different slots and being merged by union
@@ -290,9 +295,9 @@ impl Slot {
         Slot::from(s.clone().without_nil())
     }
 
-    pub fn make_abstract(&self) -> Slot {
+    pub fn coerce(&self) -> Slot {
         let s = self.0.read();
-        Slot::from(s.clone().make_abstract())
+        Slot::from(s.clone().coerce())
     }
 }
 

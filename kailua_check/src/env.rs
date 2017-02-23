@@ -954,28 +954,30 @@ impl<R: Report> TypeContext for Context<R> {
         self.next_tvar
     }
 
-    fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()> {
-        debug!("adding a constraint {:?} <: {:?}", lhs, *rhs);
+    fn assert_tvar_sub(&mut self, lhs: TVar, rhs0: &Ty) -> CheckResult<()> {
+        let rhs = rhs0.clone().coerce();
+        debug!("adding a constraint {:?} <: {:?} (coerced to {:?})", lhs, rhs0, rhs);
         if let Some(eb) = self.tvar_eq.get_bound(lhs).and_then(|b| b.bound.clone()) {
-            eb.assert_sub(rhs, self)?;
+            eb.assert_sub(&rhs, self)?;
         } else {
-            if let Some(ub) = self.tvar_sub.add_bound(lhs, rhs).map(|b| b.clone()) {
+            if let Some(ub) = self.tvar_sub.add_bound(lhs, &rhs).map(|b| b.clone()) {
                 // the original bound is not consistent, bound <: rhs still has to hold
-                if let Err(e) = ub.assert_sub(rhs, self) {
+                if let Err(e) = ub.assert_sub(&rhs, self) {
                     info!("variable {:?} cannot have multiple possibly disjoint \
-                           bounds (original <: {:?}, later <: {:?}): {}", lhs, ub, *rhs, e);
+                           bounds (original <: {:?}, later <: {:?}): {}", lhs, ub, rhs, e);
                     return Err(e);
                 }
             }
             if let Some(lb) = self.tvar_sup.get_bound(lhs).and_then(|b| b.bound.clone()) {
-                lb.assert_sub(rhs, self)?;
+                lb.assert_sub(&rhs, self)?;
             }
         }
         Ok(())
     }
 
     fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()> {
-        debug!("adding a constraint {:?} :> {:?}", lhs, *rhs);
+        // no coercion here, as type coercion will always expand the type
+        debug!("adding a constraint {:?} :> {:?}", lhs, rhs);
         if let Some(eb) = self.tvar_eq.get_bound(lhs).and_then(|b| b.bound.clone()) {
             rhs.assert_sub(&eb, self)?;
         } else {
@@ -983,7 +985,7 @@ impl<R: Report> TypeContext for Context<R> {
                 // the original bound is not consistent, bound :> rhs still has to hold
                 if let Err(e) = rhs.assert_sub(&lb, self) {
                     info!("variable {:?} cannot have multiple possibly disjoint \
-                           bounds (original :> {:?}, later :> {:?}): {}", lhs, lb, *rhs, e);
+                           bounds (original :> {:?}, later :> {:?}): {}", lhs, lb, rhs, e);
                     return Err(e);
                 }
             }
@@ -994,13 +996,14 @@ impl<R: Report> TypeContext for Context<R> {
         Ok(())
     }
 
-    fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()> {
-        debug!("adding a constraint {:?} = {:?}", lhs, *rhs);
-        if let Some(eb) = self.tvar_eq.add_bound(lhs, rhs).map(|b| b.clone()) {
+    fn assert_tvar_eq(&mut self, lhs: TVar, rhs0: &Ty) -> CheckResult<()> {
+        let rhs = rhs0.clone().coerce();
+        debug!("adding a constraint {:?} = {:?} (coerced to {:?})", lhs, rhs0, rhs);
+        if let Some(eb) = self.tvar_eq.add_bound(lhs, &rhs).map(|b| b.clone()) {
             // the original bound is not consistent, bound = rhs still has to hold
-            if let Err(e) = eb.assert_eq(rhs, self) {
+            if let Err(e) = eb.assert_eq(&rhs, self) {
                 info!("variable {:?} cannot have multiple possibly disjoint \
-                       bounds (original = {:?}, later = {:?}): {}", lhs, eb, *rhs, e);
+                       bounds (original = {:?}, later = {:?}): {}", lhs, eb, rhs, e);
                 return Err(e);
             }
         } else {
@@ -1008,7 +1011,7 @@ impl<R: Report> TypeContext for Context<R> {
                 rhs.assert_sub(&ub, self)?;
             }
             if let Some(lb) = self.tvar_sup.get_bound(lhs).and_then(|b| b.bound.clone()) {
-                lb.assert_sub(rhs, self)?;
+                lb.assert_sub(&rhs, self)?;
             }
         }
         Ok(())
@@ -1414,7 +1417,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             specrhs.accept(initrhs, self.context, true)?;
             Cow::Borrowed(specrhs)
         } else {
-            Cow::Owned(initrhs.clone().map(|s| s.make_abstract()))
+            Cow::Owned(initrhs.clone().map(|s| s.coerce()))
         };
 
         // second assignment of specrhs (or initrhs) to lhs
@@ -1523,7 +1526,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         }
 
         let slot = if let Some(initinfo) = initinfo {
-            let specinfo = specinfo.unwrap_or_else(|| initinfo.clone().map(|s| s.make_abstract()));
+            let specinfo = specinfo.unwrap_or_else(|| initinfo.clone().map(|s| s.coerce()));
             self.assign_(&specinfo, &initinfo, true)?;
 
             // name the class if it is currently unnamed

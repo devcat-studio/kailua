@@ -77,10 +77,18 @@ end
 p() --@< Error: Global or local variable `p` is not defined
 --! error
 
--->8-- funccall-integer-or-nil
+--8<-- funccall-integer-or-nil-1
 local c, p
+--@v Warning: These `if` case(s) are never executed
+if c then p = 4 end --@< Note: This condition always evaluates to a falsy value
+p() --@< Error: Tried to call a non-function `nil`
+--! error
+
+--8<-- funccall-integer-or-nil-2
+local c --: boolean?
+local p
 if c then p = 4 end
-p()
+p() --@< Error: Tried to call a non-function `4`
 --! error
 
 --8<-- funccall-undefined
@@ -720,14 +728,6 @@ a[1] = 42
 a.what = 54
 --! ok
 
--->8-- array-update-with-index-and-name
-local a = {}
-local x = 1 --: integer
-a[x] = 42
--- XXX probably blocked on subtyping of union
-a.what = 54 -- vector<number> coerced to map<integer|string, number> in the slot
---! ok
-
 --8<-- var-array
 local a = {} --: vector<number>
 --! ok
@@ -1053,7 +1053,7 @@ local function p(...) end
 p(1, 2, 3, nil, nil, nil)
 --! ok
 
--->8-- func-varargs-type-delegated
+--8<-- func-varargs-type-delegated
 --v function(...: string)
 function f(...)
 end
@@ -2432,6 +2432,20 @@ a.y = 'string'
 a.y = 'another string'
 --! ok
 
+--8<-- implicit-literal-type-in-func-args
+-- XXX this essentially depends on the accuracy of constraint solver,
+-- which we chose not to concern when we are not explicit about types
+local function f(x, y)
+    x = 42
+    x = 54 --@< Error: Cannot assign `54` into `<unknown type>`
+           --@^ Note: The other type originates here
+    y = 'string'
+    y = 'another string' --@< Error: Cannot assign `"another string"` into `<unknown type>`
+                         --@^ Note: The other type originates here
+end
+f(0, '') --@< Error: `0` is not a subtype of `<unknown type>`
+--! error
+
 --8<-- explicit-literal-type
 local x = 42 --: 42
 x = 54 --@< Error: Cannot assign `54` into `42`
@@ -2450,4 +2464,39 @@ a.y = 'string' --: 'string'
 a.y = 'another string' --@< Error: Cannot assign `"another string"` into `"string"`
                        --@^ Note: The other type originates here
 --! error
+
+--8<-- explicit-literal-type-in-func-args-1
+--v function(x: 42, y: 'string')
+local function f(x, y)
+    x = 42
+    x = 54 --@< Error: Cannot assign `54` into `42`
+           --@^ Note: The other type originates here
+    y = 'string'
+    y = 'another string' --@< Error: Cannot assign `"another string"` into `"string"`
+                         --@^ Note: The other type originates here
+end
+f(0, '') --@< Error: `0` is not a subtype of `42`
+--! error
+
+--8<-- explicit-literal-type-in-func-args-2
+--v function(x: 42|54, y: 'string'|'another string')
+local function f(x, y)
+    x = 42
+    x = 54
+    y = 'string'
+    y = 'another string'
+end
+f(0, '') --@< Error: `0` is not a subtype of `(42|54)`
+--! error
+
+--8<-- explicit-literal-type-in-func-args-3
+--v function(x: integer, y: string)
+local function f(x, y)
+    x = 42
+    x = 54
+    y = 'string'
+    y = 'another string'
+end
+f(0, '')
+--! ok
 

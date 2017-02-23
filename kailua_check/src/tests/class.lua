@@ -198,7 +198,7 @@ local h = Hello.new(3, 4, 5)
 h:add(8)
 --! ok
 
--->8-- class-fields-assign-after-ctor-3
+--8<-- class-fields-assign-after-ctor-3
 --# assume `class`: [make_class] function() --> table
 Hello = class()
 
@@ -211,9 +211,12 @@ end
 
 function Hello:stringify()
     -- this is invalid, the type cannot be no longer changed
-    self.x = '' .. self.x
-    self.y = '' .. self.y
-    self.z = '' .. self.z
+    self.x = '' .. self.x --@< Error: Cannot assign `string` into `integer`
+                          --@^ Note: The other type originates here
+    self.y = '' .. self.y --@< Error: Cannot assign `string` into `integer`
+                          --@^ Note: The other type originates here
+    self.z = '' .. self.z --@< Error: Cannot assign `string` into `integer`
+                          --@^ Note: The other type originates here
 end
 
 local h = Hello.new(3, 4, 5)
@@ -326,7 +329,7 @@ Hello.foo(h)
 
 --! ok
 
--->8-- class-self-type-const
+--8<-- class-self-type-const
 --# assume `class`: [make_class] function() --> table
 Hello = class()
 function Hello:init()
@@ -335,7 +338,7 @@ end
 
 --v function(self: const Hello)
 function Hello:foo()
-    self.x = self.x + 1
+    self.x = self.x + 1 --@< Error: Cannot update the immutable type `const Hello` by indexing
 end
 
 local h = Hello.new()
