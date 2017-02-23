@@ -4,6 +4,7 @@ use std::str;
 use std::fmt;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::borrow::Cow;
 use std::collections::{hash_map, HashMap, HashSet};
 use vec_map::VecMap;
 use atomic::Atomic;
@@ -1411,15 +1412,15 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         let specrhs = if let Some(specrhs) = specrhs {
             if !self.assign_special(initrhs, specrhs)? { return Ok(()); }
             specrhs.accept(initrhs, self.context, true)?;
-            specrhs
+            Cow::Borrowed(specrhs)
         } else {
-            initrhs
+            Cow::Owned(initrhs.clone().map(|s| s.make_abstract()))
         };
 
         // second assignment of specrhs (or initrhs) to lhs
         specrhs.adapt(lhs.flex(), self.context);
-        if !self.assign_special(lhs, specrhs)? { return Ok(()); }
-        lhs.assert_eq(specrhs, self.context)
+        if !self.assign_special(lhs, &specrhs)? { return Ok(()); }
+        lhs.assert_eq(&*specrhs, self.context)
     }
 
     pub fn ensure_var(&mut self, nameref: &Spanned<NameRef>) -> CheckResult<Slot> {
@@ -1522,7 +1523,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         }
 
         let slot = if let Some(initinfo) = initinfo {
-            let specinfo = specinfo.unwrap_or_else(|| initinfo.clone());
+            let specinfo = specinfo.unwrap_or_else(|| initinfo.clone().map(|s| s.make_abstract()));
             self.assign_(&specinfo, &initinfo, true)?;
 
             // name the class if it is currently unnamed

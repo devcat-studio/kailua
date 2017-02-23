@@ -2,6 +2,7 @@ use std::fmt;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 
+use kailua_syntax::Str;
 use diag::CheckResult;
 use super::{T, TypeContext, NoTypeContext, Lattice, Union, Display};
 use super::{Numbers, Strings, Tables, Functions, Class};
@@ -23,6 +24,20 @@ impl Unioned {
     pub fn empty() -> Unioned {
         Unioned {
             simple: U_NONE, numbers: None, strings: None, tables: None,
+            functions: None, classes: BTreeSet::new(),
+        }
+    }
+
+    pub fn explicit_int(v: i32) -> Unioned {
+        Unioned {
+            simple: U_NONE, numbers: Some(Numbers::One(v)), strings: None, tables: None,
+            functions: None, classes: BTreeSet::new(),
+        }
+    }
+
+    pub fn explicit_str(s: Str) -> Unioned {
+        Unioned {
+            simple: U_NONE, numbers: None, strings: Some(Strings::One(s)), tables: None,
             functions: None, classes: BTreeSet::new(),
         }
     }
@@ -108,6 +123,13 @@ impl Unioned {
             let mut single = None;
             let ret = self.visit(|ty| {
                 if single.is_some() { return Err(()); }
+
+                // avoid simplifying explicitly written literal types
+                match ty {
+                    T::Int(_) | T::Str(_) => return Err(()),
+                    _ => {}
+                }
+
                 single = Some(ty);
                 Ok(())
             });
@@ -122,7 +144,20 @@ impl Unioned {
 
     fn fmt_generic<WriteTy>(&self, f: &mut fmt::Formatter, mut write_ty: WriteTy) -> fmt::Result
             where WriteTy: FnMut(&T, &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "(")?;
+        // count up to 2 items so that we can determine if parentheses are needed
+        let mut count = 0;
+        let _ = self.visit(|_| {
+            if count < 2 {
+                count += 1;
+                Ok(())
+            } else {
+                Err(())
+            }
+        });
+
+        if count != 1 {
+            write!(f, "(")?;
+        }
         let mut first = true;
         self.visit(|ty| {
             if first {
@@ -132,7 +167,10 @@ impl Unioned {
             }
             write_ty(&ty, f)
         })?;
-        write!(f, ")")
+        if count != 1 {
+            write!(f, ")")?
+        }
+        Ok(())
     }
 }
 
@@ -225,5 +263,16 @@ impl fmt::Debug for Unioned {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt_generic(f, |t, f| fmt::Debug::fmt(t, f))
     }
+}
+
+#[test]
+fn test_unioned_simplify() {
+    assert_eq!(Unioned::empty().simplify(), T::None);
+    assert_eq!(Unioned::explicit_int(42).simplify(),
+               T::Union(Cow::Owned(Unioned::explicit_int(42))));
+    assert_eq!(Unioned::explicit_str(b"foo"[..].into()).simplify(),
+               T::Union(Cow::Owned(Unioned::explicit_str(b"foo"[..].into()))));
+    assert_eq!(Unioned { numbers: Some(Numbers::All), ..Unioned::empty() }.simplify(),
+               T::Number);
 }
 

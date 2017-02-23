@@ -76,6 +76,10 @@ impl S {
         S { flex: self.flex, ty: self.ty.without_nil() }
     }
 
+    pub fn make_abstract(self) -> S {
+        S { flex: self.flex, ty: self.ty.make_abstract() }
+    }
+
     // self and other may be possibly different slots and being merged by union
     // mainly used by `and`/`or` operators and table lifting
     pub fn union(&mut self, other: &mut S, explicit: bool,
@@ -284,6 +288,11 @@ impl Slot {
     pub fn without_nil(&self) -> Slot {
         let s = self.0.read();
         Slot::from(s.clone().without_nil())
+    }
+
+    pub fn make_abstract(&self) -> Slot {
+        let s = self.0.read();
+        Slot::from(s.clone().make_abstract())
     }
 }
 

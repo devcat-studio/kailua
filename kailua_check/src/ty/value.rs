@@ -38,6 +38,11 @@ impl Dyn {
 }
 
 // a value type excluding nil (which is specially treated).
+// unions are specially treated in that they can be generated only from the type specification.
+// also, literal types in `T` are "implicit" in that they will be converted to supertypes
+// when being assigned (otherwise it would be very cumbersome to use);
+// the type specification generates unions for literal types (even when there is only one item),
+// so explicitly written literal types are retained on assignment.
 #[derive(Clone)]
 pub enum T<'a> {
     Dynamic(Dyn),                       // dynamic type
@@ -51,8 +56,8 @@ pub enum T<'a> {
     String,                             // string
     Thread,                             // thread
     UserData,                           // userdata
-    Int(i32),                           // an integer literal
-    Str(Cow<'a, Str>),                  // a string literal
+    Int(i32),                           // an integer literal (implicit)
+    Str(Cow<'a, Str>),                  // a string literal (implicit)
     Tables(Cow<'a, Tables>),            // table, ...
     Functions(Cow<'a, Functions>),      // function, ...
     Class(Class),                       // nominal type
@@ -256,6 +261,46 @@ impl<'a> T<'a> {
                 }
             },
             _ => None,
+        }
+    }
+
+    // removes literal types from `self`, by replacing them with `integer` or `string`.
+    // this is used when new variable or field has been added without explicit types.
+    pub fn make_abstract(self) -> T<'static> {
+        match self {
+            T::Dynamic(dyn) => T::Dynamic(dyn),
+
+            T::All      => T::All,
+            T::None     => T::None,
+            T::Boolean  => T::Boolean,
+            T::True     => T::True,
+            T::False    => T::False,
+            T::Thread   => T::Thread,
+            T::UserData => T::UserData,
+
+            T::Number => T::Number,
+            T::Integer | T::Int(_) => T::Integer,
+            T::String | T::Str(_) => T::String,
+
+            // tables are recursively altered
+            T::Tables(tab) => {
+                let tab = match tab.into_owned() {
+                    Tables::Array(v) => Tables::Array(v.make_abstract()),
+                    Tables::Map(k, v) => Tables::Map(k.make_abstract(), v.make_abstract()),
+                    tab => tab,
+                };
+                T::Tables(Cow::Owned(tab))
+            },
+
+            // functions are _not_ recursively altered
+            // (the definitions should have been abstractized at the point of definition)
+            T::Functions(func) => T::Functions(Cow::Owned(func.into_owned())),
+
+            T::Class(c) => T::Class(c),
+            T::TVar(tv) => T::TVar(tv),
+
+            // unions are also _not_ recursively altered as they are always explicit
+            T::Union(u) => T::Union(Cow::Owned(u.into_owned())),
         }
     }
 
@@ -601,7 +646,9 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
             (&T::Tables(ref a),    &T::Tables(ref b))    => return a.assert_sub(b, ctx),
             (&T::Functions(ref a), &T::Functions(ref b)) => return a.assert_sub(b, ctx),
 
-            // prototypes are NOT compatible to each other!
+            (&T::Class(Class::Prototype(a)), &T::Class(Class::Prototype(b))) => {
+                a == b // prototypes are NOT compatible to each other!
+            },
             (&T::Class(Class::Instance(a)), &T::Class(Class::Instance(b))) => {
                 ctx.is_subclass_of(a, b)
             },
@@ -905,9 +952,7 @@ impl Ty {
             K::BooleanLit(false) => Ty::new(T::False),
             K::Number            => Ty::new(T::Number),
             K::Integer           => Ty::new(T::Integer),
-            K::IntegerLit(v)     => Ty::new(T::Int(v)),
             K::String            => Ty::new(T::String),
-            K::StringLit(ref s)  => Ty::new(T::Str(Cow::Owned(s.to_owned()))),
             K::Table             => Ty::new(T::Tables(Cow::Owned(Tables::All))),
             K::Function          => Ty::new(T::Functions(Cow::Owned(Functions::All))),
             K::Thread            => Ty::new(T::Thread),
@@ -920,6 +965,13 @@ impl Ty {
             K::Error(..) => {
                 resolv.error(kind, m::UnsupportedErrorType {}).done()?;
                 Ty::new(T::Dynamic(Dyn::Oops))
+            },
+
+            K::IntegerLit(v) => {
+                Ty::new(T::Union(Cow::Owned(Unioned::explicit_int(v))))
+            },
+            K::StringLit(ref s) => {
+                Ty::new(T::Union(Cow::Owned(Unioned::explicit_str(s.to_owned()))))
             },
 
             K::EmptyTable => {
@@ -1046,6 +1098,11 @@ impl Ty {
             Ty { inner: Box::new(TyInner::new(t, self.inner.nil(), self.inner.tag())) }
         });
         (tv, ty)
+    }
+
+    pub fn make_abstract(mut self) -> Ty {
+        self.inner.remap_ty(|t| t.make_abstract());
+        self
     }
 
     pub fn flags(&self) -> Flags {

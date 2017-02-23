@@ -1985,8 +1985,8 @@ p.a:b()
 
 --8<-- method-decl-nontable
 local p = 42
-function p.a() end --@< Error: Tried to index a non-table type `42`
-p.a()              --@< Error: Tried to index a non-table type `42`
+function p.a() end --@< Error: Tried to index a non-table type `integer`
+p.a()              --@< Error: Tried to index a non-table type `integer`
 --! error
 
 --8<-- method-decl-nontable-nested
@@ -2415,5 +2415,39 @@ p[1] = 42 --: integer --@< Error: Cannot specify the type of indexing expression
 --8<-- table-assign-type-to-map
 local p = {} --: map<string, integer>
 p.a = 42 --: integer --@< Error: Cannot specify the type of indexing expression
+--! error
+
+--8<-- implicit-literal-type
+local x = 42
+x = 54
+local y = 'string'
+y = 'another string'
+--! ok
+
+--8<-- implicit-literal-type-in-record
+local a = {}
+a.x = 42
+a.x = 54
+a.y = 'string'
+a.y = 'another string'
+--! ok
+
+--8<-- explicit-literal-type
+local x = 42 --: 42
+x = 54 --@< Error: Cannot assign `54` into `42`
+       --@^ Note: The other type originates here
+local y = 'string' --: 'string'
+y = 'another string' --@< Error: Cannot assign `"another string"` into `"string"`
+                     --@^ Note: The other type originates here
+--! error
+
+--8<-- explicit-literal-type-in-record
+local a = {}
+a.x = 42 --: 42
+a.x = 54 --@< Error: Cannot assign `54` into `42`
+         --@^ Note: The other type originates here
+a.y = 'string' --: 'string'
+a.y = 'another string' --@< Error: Cannot assign `"another string"` into `"string"`
+                       --@^ Note: The other type originates here
 --! error
 
