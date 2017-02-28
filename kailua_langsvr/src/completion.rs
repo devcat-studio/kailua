@@ -335,13 +335,14 @@ pub fn complete_field(tokens: &[NestedToken], sep_idx: usize,
                 }
             }
 
-            if let Some(&Tables::Fields(ref fields)) = ty.get_tables() {
-                for key in fields.keys() {
-                    if let Key::Str(ref s) = *key {
+            if let Some(&Tables::Fields(ref rvar)) = ty.get_tables() {
+                let _: Result<_, ()> = last_output.list_rvar_fields(rvar.clone(), |k: &Key, _v| {
+                    if let Key::Str(ref s) = *k {
                         let name = String::from_utf8_lossy(&s).into_owned();
                         items.push(make_item(name, CompletionItemKind::Field, None));
                     }
-                }
+                    Ok(true)
+                });
             }
         }
     }

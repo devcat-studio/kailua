@@ -885,6 +885,34 @@ impl Output {
         self.tvar_eq.get_bound(tvar).and_then(|b| b.bound.as_ref()).cloned()
     }
 
+    // differs from the trait version because we cannot use generics in trait objects
+    pub fn list_rvar_fields<E, F>(&self, mut rvar: RVar, mut f: F) -> Result<RVar, E>
+        where F: FnMut(&Key, &Slot) -> Result<bool, E>
+    {
+        loop {
+            if let Some(info) = self.row_infos.get(&rvar.to_usize()) {
+                if let Some(ref fields) = info.fields {
+                    trace!("{:?} contains {:?}", rvar, fields);
+                    for (k, v) in fields.iter() {
+                        if let Some(ref v) = *v { // skip negative fields
+                            if !f(k, v)? { // user requested break
+                                return Ok(rvar);
+                            }
+                        }
+                    }
+                }
+                if let Some(ref next) = info.next {
+                    rvar = next.clone();
+                } else {
+                    return Ok(RVar::any());
+                }
+            } else {
+                // return immediately if the row variable is special or not yet instantiated
+                return Ok(rvar);
+            }
+        }
+    }
+
     pub fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result {
         fn class_name(classes: &[ClassDef],
                       cid: ClassId) -> Option<(&Spanned<Name>, &'static str)> {
@@ -1095,30 +1123,9 @@ impl<R: Report> TypeContext for Context<R> {
         }
     }
 
-    fn list_rvar_fields(&self, mut rvar: RVar,
+    fn list_rvar_fields(&self, rvar: RVar,
                         f: &mut FnMut(&Key, &Slot) -> CheckResult<bool>) -> CheckResult<RVar> {
-        loop {
-            if let Some(info) = self.row_infos.get(&rvar.to_usize()) {
-                if let Some(ref fields) = info.fields {
-                    trace!("{:?} contains {:?}", rvar, fields);
-                    for (k, v) in fields.iter() {
-                        if let Some(ref v) = *v { // skip negative fields
-                            if !f(k, v)? { // user requested break
-                                return Ok(rvar);
-                            }
-                        }
-                    }
-                }
-                if let Some(ref next) = info.next {
-                    rvar = next.clone();
-                } else {
-                    return Ok(RVar::any());
-                }
-            } else {
-                // return immediately if the row variable is special or not yet instantiated
-                return Ok(rvar);
-            }
-        }
+        self.output.list_rvar_fields(rvar, f)
     }
 
     fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result {
