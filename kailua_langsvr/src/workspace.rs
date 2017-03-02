@@ -17,7 +17,7 @@ use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use walkdir::WalkDir;
 
 use kailua_env::{Unit, Pos, Span, Source, SourceFile, SourceSlice};
-use kailua_diag::{self, Report, Localize, Localized};
+use kailua_diag::{self, Report, Locale, Localize, Localized};
 use kailua_syntax::{Lexer, Nest, NestedToken, Parser, Chunk};
 use kailua_check::{self, FsSource, FsOptions, Context, Output};
 
@@ -183,7 +183,7 @@ struct WorkspaceFileInner {
     cancel_token: CancelToken,
 
     source: Arc<RwLock<Source>>,
-    message_lang: String,
+    message_locale: Locale,
 
     path: PathBuf,
     unit: Unit,
@@ -215,7 +215,7 @@ impl fmt::Debug for WorkspaceFile {
          .field("pool", &Ellipsis)
          .field("cancel_token", &inner.cancel_token)
          .field("source", &Ellipsis)
-         .field("message_lang", &inner.message_lang)
+         .field("message_locale", &inner.message_locale)
          .field("path", &inner.path)
          .field("unit", &inner.unit)
          .field("document", &inner.document)
@@ -229,14 +229,14 @@ impl fmt::Debug for WorkspaceFile {
 
 impl WorkspaceFile {
     fn new(shared: &Arc<RwLock<WorkspaceShared>>, pool: &Arc<CpuPool>,
-           source: &Arc<RwLock<Source>>, message_lang: &str, path: PathBuf) -> WorkspaceFile {
+           source: &Arc<RwLock<Source>>, message_locale: Locale, path: PathBuf) -> WorkspaceFile {
         WorkspaceFile {
             inner: Arc::new(RwLock::new(WorkspaceFileInner {
                 workspace: shared.clone(),
                 pool: pool.clone(),
                 cancel_token: CancelToken::new(),
                 source: source.clone(),
-                message_lang: message_lang.to_owned(),
+                message_locale: message_locale,
                 path: path,
                 unit: Unit::dummy(),
                 document: None,
@@ -323,7 +323,7 @@ impl WorkspaceFile {
             // chaining the already-spawned future will ensure that
             // the task body will be only spawned after the last future has been finished.
             let fut = span_fut.map_err(|_| {
-                CancelError::Error(ReportTree::new("", None))
+                CancelError::Error(ReportTree::new(Locale::dummy(), None))
             }).and_then(move |span| {
                 let span = *span;
 
@@ -333,7 +333,7 @@ impl WorkspaceFile {
                 let source = inner.source.read();
 
                 let path = source.file(span.unit()).map(|f| f.path());
-                let diags = ReportTree::new(&inner.message_lang, path);
+                let diags = ReportTree::new(inner.message_locale, path);
 
                 let report = diags.report(|r| diags::translate_diag(r, &source));
                 let tokens = collect_tokens(&source, span, &report);
@@ -363,7 +363,7 @@ impl WorkspaceFile {
                 let mut inner = spare_inner.write();
                 inner.cancel_token.keep_going()?;
 
-                let diags = ReportTree::new(&inner.message_lang, None);
+                let diags = ReportTree::new(inner.message_locale, None);
                 diags.add_parent(parent_diags);
 
                 // in this future source access is only needed for reporting
@@ -473,7 +473,7 @@ struct WorkspaceFsSourceInner {
     temp_units: Vec<Unit>, // will be gone after checking
     temp_files: HashMap<PathBuf, Chunk>,
 
-    message_lang: String,
+    message_locale: Locale,
     root_report: ReportTree,
 }
 
@@ -524,7 +524,7 @@ impl FsSource for WorkspaceFsSource {
         let span = fssource.source.write().add(sourcefile);
         fssource.temp_units.push(span.unit());
 
-        let diags = ReportTree::new(&fssource.message_lang, path.to_str());
+        let diags = ReportTree::new(fssource.message_locale, path.to_str());
         fssource.root_report.add_parent(diags.clone());
 
         let chunk = {
@@ -546,7 +546,7 @@ impl FsSource for WorkspaceFsSource {
 pub struct Workspace {
     base_dir: PathBuf,
     start_path: Option<PathBuf>,
-    message_lang: String,
+    message_locale: Locale,
     config_read: bool,
 
     pool: Arc<CpuPool>,
@@ -564,7 +564,7 @@ impl fmt::Debug for Workspace {
         f.debug_struct("Workspace")
          .field("base_dir", &self.base_dir)
          .field("start_path", &self.start_path)
-         .field("message_lang", &self.message_lang)
+         .field("message_locale", &self.message_locale)
          .field("config_read", &self.config_read)
          .field("pool", &Ellipsis)
          .field("files", &self.files)
@@ -575,11 +575,11 @@ impl fmt::Debug for Workspace {
 }
 
 impl Workspace {
-    pub fn new(base_dir: PathBuf, pool: Arc<CpuPool>, default_lang: String) -> Workspace {
+    pub fn new(base_dir: PathBuf, pool: Arc<CpuPool>, default_locale: Locale) -> Workspace {
         Workspace {
             base_dir: base_dir,
             start_path: None,
-            message_lang: default_lang,
+            message_locale: default_locale,
             config_read: false,
             pool: pool,
             files: Arc::new(RwLock::new(HashMap::new())),
@@ -608,7 +608,11 @@ impl Workspace {
         let config = WorkspaceConfig::read(&self.base_dir)?;
         self.start_path = Some(config.start_path);
         if let Some(lang) = config.message_lang {
-            self.message_lang = lang;
+            if let Some(locale) = Locale::new(&lang) {
+                self.message_locale = locale;
+            } else {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid message language"));
+            }
         }
         self.config_read = true;
         Ok(())
@@ -628,7 +632,7 @@ impl Workspace {
     }
 
     pub fn localize(&self, msg: &Localize) -> String {
-        Localized::new(&msg, &self.message_lang).to_string()
+        Localized::new(&msg, self.message_locale).to_string()
     }
 
     pub fn files<'a>(&'a self) -> RwLockReadGuard<'a, HashMap<PathBuf, WorkspaceFile>> {
@@ -643,7 +647,7 @@ impl Workspace {
     }
 
     fn make_file(&self, path: PathBuf) -> WorkspaceFile {
-        WorkspaceFile::new(&self.shared, &self.pool, &self.source, &self.message_lang, path)
+        WorkspaceFile::new(&self.shared, &self.pool, &self.source, self.message_locale, path)
     }
 
     fn destroy_file(&self, file: WorkspaceFile) -> bool {
@@ -744,13 +748,13 @@ impl Workspace {
             let files = self.files.clone();
             let source = self.source.clone();
             let cancel_token = shared.cancel_token.clone();
-            let message_lang = self.message_lang.clone();
+            let message_locale = self.message_locale;
 
             let fut = start_chunk_fut.map_err(|e| (*e).clone()).and_then(move |chunk_ret| {
                 cancel_token.keep_going()?;
 
                 let start_chunk = (*chunk_ret.0).clone();
-                let diags = ReportTree::new(&message_lang, None);
+                let diags = ReportTree::new(message_locale, None);
                 diags.add_parent(chunk_ret.1.clone());
 
                 // the actual checking process.
@@ -764,7 +768,7 @@ impl Workspace {
                         source: source.clone(),
                         temp_units: Vec::new(),
                         temp_files: HashMap::new(),
-                        message_lang: message_lang.clone(),
+                        message_locale: message_locale,
                         root_report: diags.clone(),
                     })),
                 };

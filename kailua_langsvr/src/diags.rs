@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use parking_lot::{Mutex, MutexGuard};
 
 use kailua_env::{Pos, Span, Source, SourceFile, SourceSlice};
-use kailua_diag::{self, Kind, Report, Localize, Localized};
+use kailua_diag::{self, Kind, Report, Locale, Localize, Localized};
 
 use protocol::{Position, Range, DiagnosticSeverity, Diagnostic};
 
@@ -79,7 +79,7 @@ pub struct ReportTree {
 #[derive(Debug)]
 struct ReportTreeInner {
     path: Option<String>,
-    lang: String,
+    locale: Locale,
 
     // while we check for dupes, better to make it possible to call .add_parent multiple times
     parents: Mutex<HashSet<Arc<ReportTreeInner>>>,
@@ -104,11 +104,11 @@ impl hash::Hash for ReportTreeInner {
 }
 
 impl ReportTree {
-    pub fn new(lang: &str, path: Option<&str>) -> ReportTree {
+    pub fn new(locale: Locale, path: Option<&str>) -> ReportTree {
         ReportTree {
             inner: Arc::new(ReportTreeInner {
                 path: path.map(|s| s.to_owned()),
-                lang: lang.to_string(),
+                locale: locale,
                 parents: Mutex::new(HashSet::new()),
                 collected: Mutex::new(Vec::new()),
             })
@@ -157,8 +157,12 @@ pub struct ReportTreeReport<F> {
 impl<F> Report for ReportTreeReport<F>
     where F: Fn((Kind, Span, String)) -> Option<(String, Diagnostic)>
 {
+    fn message_locale(&self) -> Locale {
+        self.inner.locale
+    }
+
     fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> kailua_diag::Result<()> {
-        let msg = Localized::new(msg, &self.inner.lang).to_string();
+        let msg = Localized::new(msg, self.inner.locale).to_string();
         if let Some((path, diag)) = (self.translate)((kind, span, msg)) {
             self.inner.collected.lock().push((path, diag));
         }

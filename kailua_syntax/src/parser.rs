@@ -6,7 +6,7 @@ use std::result;
 use std::collections::{hash_map, HashMap};
 use kailua_env::{Pos, Span, Spanned, WithLoc, Scope, ScopedId, ScopeMap};
 use kailua_diag as diag;
-use kailua_diag::{Report, Localize};
+use kailua_diag::{Locale, Report, Localize};
 
 use message as m;
 use lang::{Language, Lua, Kailua};
@@ -65,8 +65,8 @@ impl From<diag::Stop> for Stop {
 type Result<T> = result::Result<T, Stop>;
 
 impl Localize for EOF {
-    fn fmt_localized(&self, f: &mut fmt::Formatter, lang: &str) -> fmt::Result {
-        match lang {
+    fn fmt_localized(&self, f: &mut fmt::Formatter, locale: Locale) -> fmt::Result {
+        match &locale[..] {
             "ko" => write!(f, "파일의 끝"),
             _ => write!(f, "end of file"),
         }
@@ -194,6 +194,10 @@ struct ElidedTokens(Option<Span>);
 enum AtomicKind { One(Spanned<Kind>), Seq(Seq<Spanned<Kind>>) }
 
 impl<'a> Report for Parser<'a> {
+    fn message_locale(&self) -> Locale {
+        self.report.message_locale()
+    }
+
     fn add_span(&self, k: diag::Kind, s: Span, m: &Localize) -> diag::Result<()> {
         self.report.add_span(k, s, m)
     }

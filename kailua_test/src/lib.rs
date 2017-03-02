@@ -27,7 +27,7 @@ use regex::Regex;
 use term::StderrTerminal;
 use clap::{App, Arg, ArgMatches};
 use kailua_env::{Source, SourceFile, Span};
-use kailua_diag::{Kind, Report, CollectedReport};
+use kailua_diag::{Locale, Kind, Report, CollectedReport};
 
 pub trait Testing {
     fn run(&self, source: Rc<RefCell<Source>>, span: Span, filespans: &HashMap<String, Span>,
@@ -402,7 +402,7 @@ pub struct Tester<T> {
     term: Box<StderrTerminal>,
     verbose: bool,
     exact_diags: bool,
-    message_lang: String,
+    message_locale: Locale,
     stop_on_panic: bool,
     displayed_logs: Vec<TestLog>,
     num_tested: usize,
@@ -433,11 +433,11 @@ impl<T: Testing> Tester<T> {
                 .long("exact-diags")
                 .help("Requires the exact output for reports.\n\
                        Without this flag the excess reports are ignored."))
-            .arg(Arg::with_name("message_lang")
+            .arg(Arg::with_name("message_locale")
                 .short("l")
-                .long("message-language")
+                .long("message-locale")
                 .takes_value(true)
-                .help("Switches to given language for reports.\n\
+                .help("Switches to given language/locale for reports.\n\
                        Likely to fail most tests."))
             .arg(Arg::with_name("stop_on_panic")
                 .short("p")
@@ -453,7 +453,8 @@ impl<T: Testing> Tester<T> {
         };
         let verbose = matches.is_present("verbose");
         let exact_diags = matches.is_present("exact_diags");
-        let message_lang = matches.value_of("message_lang").unwrap_or("en");
+        let message_locale = matches.value_of("message_locale").unwrap_or("en");
+        let message_locale = Locale::new(message_locale).expect("unrecognized message locale");
         let stop_on_panic = matches.is_present("stop_on_panic");
         testing.collect_args(&matches);
 
@@ -466,7 +467,7 @@ impl<T: Testing> Tester<T> {
         Tester {
             testing: testing, filter: filter, term: term,
             verbose: verbose,
-            exact_diags: exact_diags, message_lang: String::from(message_lang),
+            exact_diags: exact_diags, message_locale: message_locale,
             stop_on_panic: stop_on_panic,
             displayed_logs: Vec::new(), num_tested: 0, num_passed: 0,
         }
@@ -537,7 +538,7 @@ impl<T: Testing> Tester<T> {
         }
 
         let source = Rc::new(RefCell::new(source));
-        let collected = Rc::new(CollectedReport::new(self.message_lang.clone()));
+        let collected = Rc::new(CollectedReport::new(self.message_locale));
         let output = {
             let testing = panic::AssertUnwindSafe(&mut self.testing);
             let source = panic::AssertUnwindSafe(source.clone());

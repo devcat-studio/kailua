@@ -10,7 +10,7 @@ use kailua_env::{Source, SourceSlice, Span, Pos};
 
 use dummy_term::{stderr_or_dummy};
 use term::{color, StderrTerminal};
-use message::{Localize, Localized, get_message_language};
+use message::{Locale, Localize, Localized, get_message_locale};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Kind {
@@ -54,26 +54,32 @@ impl From<Stop> for String {
 pub type Result<T> = result::Result<T, Stop>;
 
 pub trait Report {
+    fn message_locale(&self) -> Locale;
     fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> Result<()>;
 }
 
 impl<'a, R: Report + ?Sized> Report for &'a R {
+    fn message_locale(&self) -> Locale { (**self).message_locale() }
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
 }
 
 impl<'a, R: Report + ?Sized> Report for &'a mut R {
+    fn message_locale(&self) -> Locale { (**self).message_locale() }
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
 }
 
 impl<'a, R: Report + ?Sized> Report for Box<R> {
+    fn message_locale(&self) -> Locale { (**self).message_locale() }
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
 }
 
 impl<'a, R: Report + ?Sized> Report for Rc<R> {
+    fn message_locale(&self) -> Locale { (**self).message_locale() }
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
 }
 
 impl<'a, R: Report + ?Sized> Report for Arc<R> {
+    fn message_locale(&self) -> Locale { (**self).message_locale() }
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> { (**self).add_span(k, s, m) }
 }
 
@@ -158,25 +164,21 @@ fn strip_newline(mut s: SourceSlice) -> SourceSlice {
 pub struct ConsoleReport {
     source: Rc<RefCell<Source>>,
     term: RefCell<Box<StderrTerminal>>,
-    lang: String,
+    locale: Locale,
 }
 
 impl ConsoleReport {
     pub fn new(source: Rc<RefCell<Source>>) -> ConsoleReport {
-        let lang = get_message_language().unwrap_or_else(|| String::new());
-        ConsoleReport::with_lang(source, lang)
+        let locale = get_message_locale().unwrap_or_else(|| Locale::dummy());
+        ConsoleReport::with_locale(source, locale)
     }
 
-    pub fn with_lang(source: Rc<RefCell<Source>>, lang: String) -> ConsoleReport {
+    pub fn with_locale(source: Rc<RefCell<Source>>, locale: Locale) -> ConsoleReport {
         ConsoleReport {
             source: source,
             term: RefCell::new(stderr_or_dummy()),
-            lang: lang,
+            locale: locale,
         }
-    }
-
-    pub fn lang(&self) -> &str {
-        &self.lang
     }
 
     // column number starts from 0
@@ -294,6 +296,10 @@ impl ConsoleReport {
 }
 
 impl Report for ConsoleReport {
+    fn message_locale(&self) -> Locale {
+        self.locale
+    }
+
     fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> Result<()> {
         let mut term = self.term.borrow_mut();
         let term = &mut *term;
@@ -322,7 +328,7 @@ impl Report for ConsoleReport {
         let _ = term.fg(dim);
         let _ = write!(term, "] ");
         let _ = term.fg(color::BRIGHT_WHITE);
-        let _ = write!(term, "{}", Localized::new(msg, &self.lang));
+        let _ = write!(term, "{}", Localized::new(msg, self.locale));
         let _ = term.reset();
         let _ = writeln!(term, "");
 
@@ -463,12 +469,12 @@ impl Report for ConsoleReport {
 
 pub struct CollectedReport {
     collected: RefCell<Vec<(Kind, Span, String)>>,
-    lang: String,
+    locale: Locale,
 }
 
 impl CollectedReport {
-    pub fn new(lang: String) -> CollectedReport {
-        CollectedReport { collected: RefCell::new(Vec::new()), lang: lang }
+    pub fn new(locale: Locale) -> CollectedReport {
+        CollectedReport { collected: RefCell::new(Vec::new()), locale: locale }
     }
 
     pub fn into_reports(self) -> Vec<(Kind, Span, String)> {
@@ -477,8 +483,12 @@ impl CollectedReport {
 }
 
 impl Report for CollectedReport {
+    fn message_locale(&self) -> Locale {
+        self.locale
+    }
+
     fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> Result<()> {
-        let msg = Localized::new(msg, &self.lang).to_string();
+        let msg = Localized::new(msg, self.locale).to_string();
         self.collected.borrow_mut().push((kind, span, msg));
         if kind == Kind::Fatal { Err(Stop) } else { Ok(()) }
     }
@@ -487,6 +497,10 @@ impl Report for CollectedReport {
 pub struct NoReport;
 
 impl Report for NoReport {
+    fn message_locale(&self) -> Locale {
+        Locale::dummy()
+    }
+
     fn add_span(&self, _kind: Kind, _span: Span, _msg: &Localize) -> Result<()> {
         Err(Stop)
     }
@@ -515,6 +529,10 @@ impl<R: Report> TrackMaxKind<R> {
 }
 
 impl<R: Report> Report for TrackMaxKind<R> {
+    fn message_locale(&self) -> Locale {
+        self.report.message_locale()
+    }
+
     fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> Result<()> {
         if let Some(maxkind) = self.maxkind.get() {
             self.maxkind.set(Some(cmp::max(maxkind, kind)));

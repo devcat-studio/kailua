@@ -1,36 +1,109 @@
 use std::fmt;
+use std::ops;
+use std::str;
 use std::env;
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Locale {
+    lang: [u8; 8],
+}
+
+impl Locale {
+    pub fn new(locale: &str) -> Option<Locale> {
+        // should be 2--8 bytes long
+        if locale.len() < 2 || locale.len() > 8 {
+            return None;
+        }
+
+        // should be letters (normalized to lowercase), `-` or `_` (normalized to `-`)
+        let mut lang = [0u8; 8];
+        lang[..locale.len()].copy_from_slice(locale.as_bytes());
+        for c in &mut lang[..locale.len()] {
+            match *c {
+                b'a'...b'z' | b'-' => {},
+                b'A'...b'Z' => *c += 32,
+                b'_' => *c = b'-',
+                _ => return None,
+            }
+        }
+
+        // first two letters should be letters
+        if !(b'a' <= lang[0] && lang[0] <= b'z' && b'a' <= lang[1] && lang[1] <= b'z') {
+            return None;
+        }
+
+        Some(Locale { lang: lang })
+    }
+
+    pub fn dummy() -> Locale {
+        Locale { lang: *b"xx\0\0\0\0\0\0" }
+    }
+}
+
+impl<'a> From<&'a str> for Locale {
+    fn from(s: &'a str) -> Locale {
+        Locale::new(s).expect("invalid locale")
+    }
+}
+
+impl ops::Deref for Locale {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        str::from_utf8(&self.lang).expect("locale is not UTF-8").trim_right_matches('\0')
+    }
+}
+
+impl fmt::Debug for Locale {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "<Locale {}>", &self[..])
+    }
+}
+
+#[test]
+fn test_locale_names() {
+    assert!(Locale::new("").is_none());
+    assert!(Locale::new("e").is_none());
+    assert!(Locale::new("en").is_some());
+    assert!(Locale::new("ko").is_some());
+    assert!(Locale::new("ko-KR").is_some());
+    assert_eq!(Locale::from("ko-KR"), Locale::from("ko_kr"));
+    assert_ne!(Locale::from("ko-KR"), Locale::from("ko"));
+    assert_ne!(Locale::from("kor"), Locale::from("ko"));
+    assert_eq!(Locale::from("KO"), Locale::from("ko"));
+    assert!(Locale::new("ko-KR-x-qqq").is_none());
+}
+
 pub trait Localize: fmt::Debug {
-    fn fmt_localized(&self, f: &mut fmt::Formatter, lang: &str) -> fmt::Result;
+    fn fmt_localized(&self, f: &mut fmt::Formatter, locale: Locale) -> fmt::Result;
 }
 
 impl<'a> Localize for &'a Localize {
-    fn fmt_localized(&self, f: &mut fmt::Formatter, lang: &str) -> fmt::Result {
-        (**self).fmt_localized(f, lang)
+    fn fmt_localized(&self, f: &mut fmt::Formatter, locale: Locale) -> fmt::Result {
+        (**self).fmt_localized(f, locale)
     }
 }
 
 impl<T: fmt::Display + fmt::Debug> Localize for T {
-    fn fmt_localized(&self, f: &mut fmt::Formatter, _lang: &str) -> fmt::Result {
+    fn fmt_localized(&self, f: &mut fmt::Formatter, _locale: Locale) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }
 }
 
-pub struct Localized<'b, 'c, T: Localize + ?Sized + 'b> {
+pub struct Localized<'b, T: Localize + ?Sized + 'b> {
     base: &'b T,
-    lang: &'c str,
+    locale: Locale,
 }
 
-impl<'b, 'c, T: Localize + ?Sized + 'b> Localized<'b, 'c, T> {
-    pub fn new(base: &'b T, lang: &'c str) -> Localized<'b, 'c, T> {
-        Localized { base: base, lang: lang }
+impl<'b, T: Localize + ?Sized + 'b> Localized<'b, T> {
+    pub fn new(base: &'b T, locale: Locale) -> Localized<'b, T> {
+        Localized { base: base, locale: locale }
     }
 }
 
-impl<'b, 'c, T: Localize + ?Sized + 'b> fmt::Display for Localized<'b, 'c, T> {
+impl<'b, T: Localize + ?Sized + 'b> fmt::Display for Localized<'b, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.base.fmt_localized(f, self.lang)
+        self.base.fmt_localized(f, self.locale)
     }
 }
 
@@ -39,9 +112,9 @@ impl<'b, 'c, T: Localize + ?Sized + 'b> fmt::Display for Localized<'b, 'c, T> {
 macro_rules! define_msg_internal {
     (@as_item $i:item) => ($i);
 
-    (@gen_match $f:ident, $l:ident; $($lang:pat => $format:tt),*; $tail:tt) => (
-        match $l {
-            $($lang => define_msg_internal!(@gen_arm $f; $format; $tail),)*
+    (@gen_match $f:ident, $l:ident; $($locale:pat => $format:tt),*; $tail:tt) => (
+        match &$l[..] {
+            $($locale => define_msg_internal!(@gen_arm $f; $format; $tail),)*
         }
     );
 
@@ -60,7 +133,7 @@ macro_rules! define_msg_internal {
         $({
             $($fname:ident: $ftype:ty),* $(,)*
         })*:
-        $($lang:pat => $format:tt),* $(,)*
+        $($locale:pat => $format:tt),* $(,)*
     ) => (
         // since `$($constr)*` and `$($params)*` have to be expanded lazily,
         // we need to coerce the AST to delay the expansion
@@ -75,11 +148,11 @@ macro_rules! define_msg_internal {
         define_msg_internal! { @as_item
             impl<$($constr)*> $crate::Localize for $name<$($params)*> {
                 fn fmt_localized(&self, f: &mut ::std::fmt::Formatter,
-                                 lang: &str) -> ::std::fmt::Result {
+                                 locale: ::kailua_diag::Locale) -> ::std::fmt::Result {
                     // "tt bundling" as in http://stackoverflow.com/a/37754096
-                    define_msg_internal!(@gen_match f, lang;
-                        $($lang => $format),*;
-                        ($($(, $fname = $crate::Localized::new(&self.$fname, lang))*)*))
+                    define_msg_internal!(@gen_match f, locale;
+                        $($locale => $format),*;
+                        ($($(, $fname = $crate::Localized::new(&self.$fname, locale))*)*))
                 }
             }
         }
@@ -151,18 +224,7 @@ fn get_locale_string() -> Option<String> {
     get_locale_string_from_env()
 }
 
-pub fn get_message_language() -> Option<String> {
-    if let Some(locale) = get_locale_string() {
-        let locale = locale.to_lowercase();
-        // either `xx`, `xx-<trail>` or `xx_<trail>`; not `/path/to/locale` or `xyz`
-        if locale.len() >= 2 && locale.chars().take(2).all(|c| 'a' <= c && c <= 'z')
-                             && locale[2..].chars().next().map_or(true, |c| !c.is_alphabetic()) {
-            Some(locale)
-        } else {
-            None
-        }
-    } else {
-        None
-    }
+pub fn get_message_locale() -> Option<Locale> {
+    get_locale_string().and_then(|locale| Locale::new(&locale))
 }
 

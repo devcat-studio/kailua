@@ -2,7 +2,7 @@ use std::fmt;
 use diag::CheckResult;
 use message as m;
 use kailua_env::{Span, Spanned};
-use kailua_diag::{self, Kind, Report, Reporter, Localize};
+use kailua_diag::{self, Kind, Report, Reporter, Locale, Localize};
 use kailua_syntax::Name;
 
 pub use self::literals::{Numbers, Strings};
@@ -268,6 +268,10 @@ impl<A: Display, B: Display> Lattice<Spanned<B>> for Spanned<A> where A: Lattice
 struct NoTypeContext;
 
 impl Report for NoTypeContext {
+    fn message_locale(&self) -> Locale {
+        Locale::dummy()
+    }
+
     fn add_span(&self, _kind: Kind, _span: Span, _msg: &Localize) -> kailua_diag::Result<()> {
         Ok(()) // ignore any report
     }

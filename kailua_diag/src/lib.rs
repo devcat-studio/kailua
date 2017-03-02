@@ -6,7 +6,7 @@ extern crate parse_generics_shim;
 #[cfg(windows)] extern crate kernel32;
 extern crate kailua_env;
 
-pub use message::{Localize, Localized, get_message_language};
+pub use message::{Locale, Localize, Localized, get_message_locale};
 pub use report::{Kind, Stop, Result, Report, ReportMore, Reporter};
 pub use report::{ConsoleReport, CollectedReport, NoReport, TrackMaxKind};
 

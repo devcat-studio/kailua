@@ -11,7 +11,7 @@ use atomic::Atomic;
 use atomic::Ordering::Relaxed;
 
 use kailua_env::{self, Span, Spanned, WithLoc, ScopedId, ScopeMap, SpanMap};
-use kailua_diag::{self, Kind, Report, Reporter, Localize};
+use kailua_diag::{self, Kind, Report, Reporter, Locale, Localize};
 use kailua_syntax::{Name, NameRef};
 use diag::{CheckResult, unquotable_name};
 use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, RVar, Lattice, Union, Tag, Displayed, Display};
@@ -967,6 +967,10 @@ impl<R: Report> ops::DerefMut for Context<R> {
 }
 
 impl<R: Report> Report for Context<R> {
+    fn message_locale(&self) -> Locale {
+        self.report.message_locale()
+    }
+
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> kailua_diag::Result<()> {
         self.report.add_span(k, s, m)
     }
@@ -1660,6 +1664,10 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 }
 
 impl<'ctx, R: Report> Report for Env<'ctx, R> {
+    fn message_locale(&self) -> Locale {
+        self.context.report.message_locale()
+    }
+
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> kailua_diag::Result<()> {
         self.context.report.add_span(k, s, m)
     }

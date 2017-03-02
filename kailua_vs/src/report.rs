@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use std::panic::{self, AssertUnwindSafe};
 use widestring::{WideCStr, WideCString};
 use kailua_env::Span;
-use kailua_diag::{self, Localize, Localized, Kind, Report, Stop};
+use kailua_diag::{self, Locale, Localize, Localized, Kind, Report, Stop};
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -37,16 +37,20 @@ struct Diag {
 }
 
 pub struct VSReport {
-    lang: String,
+    locale: Locale,
     reports: Mutex<VecDeque<Diag>>,
 }
 
 impl VSReport {
-    pub fn new(lang: &str) -> Arc<VSReport> {
-        Arc::new(VSReport {
-            lang: lang.to_owned(),
-            reports: Mutex::new(VecDeque::new()),
-        })
+    pub fn new(lang: &str) -> Option<Arc<VSReport>> {
+        if let Some(locale) = Locale::new(lang) {
+            Some(Arc::new(VSReport {
+                locale: locale,
+                reports: Mutex::new(VecDeque::new()),
+            }))
+        } else {
+            None
+        }
     }
 
     pub fn get_next(&self, kind: &mut VSReportKind, span: &mut Span,
@@ -69,8 +73,12 @@ impl VSReport {
 }
 
 impl Report for VSReport {
+    fn message_locale(&self) -> Locale {
+        self.locale
+    }
+
     fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> kailua_diag::Result<()> {
-        let msg = Localized::new(msg, &self.lang).to_string();
+        let msg = Localized::new(msg, self.locale).to_string();
         let diag = Diag { kind: kind, span: span, msg: msg };
 
         self.reports.lock().unwrap().push_back(diag);

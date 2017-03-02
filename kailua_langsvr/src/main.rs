@@ -71,24 +71,30 @@ fn connect_to_client() -> Server {
 }
 
 // initialization options supposed to be sent from the extension
-#[derive(Deserialize)]
 struct InitOptions {
-    default_locale: String,
+    default_locale: kailua_diag::Locale,
 }
 
 impl Default for InitOptions {
     fn default() -> InitOptions {
-        InitOptions { default_locale: "en".to_string() }
+        InitOptions { default_locale: kailua_diag::Locale::from("en") }
     }
 }
 
 fn parse_init_options(opts: Option<serde_json::Value>) -> InitOptions {
-    use std::ascii::AsciiExt;
+    #[derive(Deserialize)]
+    struct Options {
+        default_locale: String,
+    }
 
-    let opts = opts.and_then(|opts| serde_json::from_value::<InitOptions>(opts).ok());
-    let mut opts = opts.unwrap_or_else(InitOptions::default);
-    opts.default_locale = opts.default_locale.to_ascii_lowercase();
-    opts
+    if let Some(opts) = opts {
+        if let Ok(opts) = serde_json::from_value::<Options>(opts) {
+            if let Some(locale) = kailua_diag::Locale::new(&opts.default_locale) {
+                return InitOptions { default_locale: locale };
+            }
+        }
+    }
+    InitOptions::default()
 }
 
 fn initialize_workspace(server: &Server) -> Workspace {

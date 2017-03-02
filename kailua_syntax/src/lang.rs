@@ -1,5 +1,5 @@
 use std::fmt;
-use kailua_diag::{Localize, Localized};
+use kailua_diag::{Locale, Localize, Localized};
 
 // a number describing a language version being used.
 // this affects the parsing but not the lexing (well, at least currently).
@@ -52,12 +52,12 @@ impl fmt::Debug for Language {
 }
 
 impl Localize for Language {
-    fn fmt_localized(&self, f: &mut fmt::Formatter, lang: &str) -> fmt::Result {
+    fn fmt_localized(&self, f: &mut fmt::Formatter, locale: Locale) -> fmt::Result {
         let lua = self.lua();
-        let lua_name = Localized::new(&lua, lang);
+        let lua_name = Localized::new(&lua, locale);
         if let Some(kailua) = self.kailua() {
-            let kailua_name = Localized::new(&kailua, lang);
-            match lang {
+            let kailua_name = Localized::new(&kailua, locale);
+            match &locale[..] {
                 "ko" => write!(f, "{} 확장을 사용하는 {}", kailua_name, lua_name),
                 _ => write!(f, "{} with {} extension", lua_name, kailua_name),
             }
@@ -100,7 +100,7 @@ impl fmt::Debug for Lua {
 }
 
 impl Localize for Lua {
-    fn fmt_localized(&self, f: &mut fmt::Formatter, _lang: &str) -> fmt::Result {
+    fn fmt_localized(&self, f: &mut fmt::Formatter, _locale: Locale) -> fmt::Result {
         write!(f, "{}", self.name())
     }
 }
@@ -133,7 +133,7 @@ impl fmt::Debug for Kailua {
 }
 
 impl Localize for Kailua {
-    fn fmt_localized(&self, f: &mut fmt::Formatter, _lang: &str) -> fmt::Result {
+    fn fmt_localized(&self, f: &mut fmt::Formatter, _locale: Locale) -> fmt::Result {
         write!(f, "{}", self.name())
     }
 }

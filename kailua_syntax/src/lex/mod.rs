@@ -1,7 +1,7 @@
 use std::str;
 use std::fmt;
 
-use kailua_diag::{Localize, Localized};
+use kailua_diag::{Locale, Localize, Localized};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tok {
@@ -16,14 +16,14 @@ pub enum Tok {
 }
 
 impl Localize for Tok {
-    fn fmt_localized(&self, f: &mut fmt::Formatter, lang: &str) -> fmt::Result {
-        match (lang, self) {
+    fn fmt_localized(&self, f: &mut fmt::Formatter, locale: Locale) -> fmt::Result {
+        match (&locale[..], self) {
             ("ko", &Tok::Error)      => write!(f, "잘못된 문자"),
             (_,    &Tok::Error)      => write!(f, "an invalid character"),
             ("ko", &Tok::Comment)    => write!(f, "주석"),
             (_,    &Tok::Comment)    => write!(f, "a comment"),
-            (_,    &Tok::Punct(p))   => write!(f, "{}", Localized::new(&p, lang)),
-            (_,    &Tok::Keyword(w)) => write!(f, "{}", Localized::new(&w, lang)),
+            (_,    &Tok::Punct(p))   => write!(f, "{}", Localized::new(&p, locale)),
+            (_,    &Tok::Keyword(w)) => write!(f, "{}", Localized::new(&w, locale)),
             ("ko", &Tok::Num(_))     => write!(f, "숫자"),
             (_,    &Tok::Num(_))     => write!(f, "a number"),
             ("ko", &Tok::Name(_))    => write!(f, "이름"),
@@ -37,18 +37,18 @@ impl Localize for Tok {
 }
 
 impl<'a> Localize for &'a Tok {
-    fn fmt_localized(&self, f: &mut fmt::Formatter, lang: &str) -> fmt::Result {
-        (**self).fmt_localized(f, lang)
+    fn fmt_localized(&self, f: &mut fmt::Formatter, locale: Locale) -> fmt::Result {
+        (**self).fmt_localized(f, locale)
     }
 }
 
 macro_rules! define_puncts {
-    ($ty:ident |$lang:ident|: $($i:ident $t:expr,)*) => (
+    ($ty:ident |$locale:ident|: $($i:ident $t:expr,)*) => (
         #[derive(Copy, Clone, Debug, PartialEq, Eq)]
         pub enum $ty { $($i,)* }
 
         impl Localize for $ty {
-            fn fmt_localized(&self, f: &mut fmt::Formatter, $lang: &str) -> fmt::Result {
+            fn fmt_localized(&self, f: &mut fmt::Formatter, $locale: Locale) -> fmt::Result {
                 let text = match *self { $($ty::$i => $t,)* };
                 fmt::Display::fmt(text, f)
             }
@@ -56,7 +56,7 @@ macro_rules! define_puncts {
     );
 }
 
-define_puncts! { Punct |lang|:
+define_puncts! { Punct |locale|:
     Plus        "`+`",
     Dash        "`-`",
     Star        "`*`",
@@ -98,7 +98,7 @@ define_puncts! { Punct |lang|:
     DashDashGt      "`-->`",
     Ques            "`?`",
     Bang            "`!`",
-    Newline         match lang { "ko" => "개행문자", _ => "a newline" },
+    Newline         match &locale[..] { "ko" => "개행문자", _ => "a newline" },
 }
 
 macro_rules! define_keywords {
@@ -121,9 +121,9 @@ macro_rules! define_keywords {
         }
 
         impl Localize for $ty {
-            fn fmt_localized(&self, f: &mut fmt::Formatter, lang: &str) -> fmt::Result {
+            fn fmt_localized(&self, f: &mut fmt::Formatter, locale: Locale) -> fmt::Result {
                 let name = str::from_utf8(self.name()).unwrap();
-                match lang {
+                match &locale[..] {
                     "ko" => write!(f, "예약어 `{}`", name),
                     _ => write!(f, "a keyword `{}`", name),
                 }
