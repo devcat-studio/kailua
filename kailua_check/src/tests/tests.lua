@@ -1904,6 +1904,20 @@ else
 end
 --! ok
 
+--8<-- if-warning-varargs-1 -- exact
+--v function() --> (string...)
+function f() end
+if f() then
+end
+--! ok
+
+--8<-- if-warning-varargs-2
+--v function() --> (string, string...)
+function f() end
+if f() then --@< Warning: This condition always evaluates to a truthy value
+end
+--! ok
+
 --8<-- unassigned-local-var-1
 local p --: string!
 --! ok

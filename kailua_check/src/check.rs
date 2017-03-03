@@ -100,10 +100,18 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     // XXX in general reachability checking should continue when the type variable get resolved
-    fn check_bool(&self, ty: &Ty) -> Bool {
-        let (lb, ub) = self.env.get_type_bounds(ty);
+    fn check_bool(&self, seq: TySeq) -> Bool {
+        let empty_seq = seq.head.is_empty();
+        let ty = seq.into_first();
+        let (lb, ub) = self.env.get_type_bounds(&ty);
         if lb.is_truthy() {
-            Bool::Truthy
+            // caveat: an empty sequence _can_ result in nil and should not warn
+            // (into_first does not distinguish this)
+            if empty_seq {
+                Bool::Unknown
+            } else {
+                Bool::Truthy
+            }
         } else if ub == T_NONE || ub.is_falsy() {
             // this is tricky because a resolved implicit nil should also be caught.
             // however we don't want the unresolved type variable to be considered falsy.
@@ -277,7 +285,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     return Ok(Slot::just(Ty::new(T::Dynamic(dyn))));
                 }
 
-                match self.check_bool(&lhs.unlift()) {
+                match self.check_bool(TySeq::from(lhs.unlift().clone())) {
                     // True and T => T
                     Bool::Truthy => Ok(Slot::just(rhs.unlift().clone())),
                     // False and T => False
@@ -296,7 +304,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     return Ok(Slot::just(Ty::new(T::Dynamic(dyn))));
                 }
 
-                match self.check_bool(&lhs.unlift()) {
+                match self.check_bool(TySeq::from(lhs.unlift().clone())) {
                     // True or T => True
                     Bool::Truthy => Ok(Slot::just(lhs.unlift().clone())),
                     // False or T => T
@@ -875,8 +883,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             St::Do(ref block) => self.visit_block(block),
 
             St::While(ref cond, ref block) => {
-                let ty = self.visit_exp(cond)?.into_first();
-                let boolean = self.check_bool(&ty.unlift());
+                let ty = self.visit_exp(cond)?;
+                let boolean = self.check_bool(ty.unspan().unlift());
                 match boolean {
                     Bool::Truthy => { // infinite loop
                         let exit = self.visit_block(block)?;
@@ -895,9 +903,9 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
             St::Repeat(ref block, ref cond) => {
                 let exit = self.visit_block(block)?; // TODO scope merger
-                let ty = self.visit_exp(cond)?.into_first();
+                let ty = self.visit_exp(cond)?;
                 if exit == Exit::None {
-                    match self.check_bool(&ty.unlift()) {
+                    match self.check_bool(ty.unspan().unlift()) {
                         Bool::Truthy => Ok(Exit::Stop),
                         Bool::Falsy => Ok(exit),
                         Bool::Unknown => Ok(Exit::None),
@@ -917,8 +925,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         continue;
                     }
 
-                    let ty = self.visit_exp(cond)?.into_first();
-                    let boolean = self.check_bool(&ty.unlift());
+                    let ty = self.visit_exp(cond)?;
+                    let boolean = self.check_bool(ty.unspan().unlift());
                     match boolean {
                         Bool::Truthy => {
                             ignored_blocks = Some((cond.span, Span::dummy()));

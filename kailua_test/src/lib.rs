@@ -249,6 +249,7 @@ pub struct Test {
     pub output: Vec<String>,
     pub reports: Vec<Expected<'static>>,
     pub ignored: bool,
+    pub exact: bool,
 }
 
 fn extract_tests(path: &Path) -> Result<Vec<Test>, TestError> {
@@ -290,14 +291,23 @@ fn extract_tests(path: &Path) -> Result<Vec<Test>, TestError> {
         let premature_err = || TestError::new(format!("found test spec before the first \
                                                        `--8<--` at line {}", lineno));
 
-        // try to look at the divider (`-*--8<---* <test name> -*`)
+        // try to look at the divider (`-*--8<---* <test name> ---* <options>`)
         if let Some(pos) = line.find("--8<--").or_else(|| line.find("-->8--")) {
             if line[..pos].chars().all(|c| c == '-') {
                 // we've found a divider, flush the current test
                 flush!(lineno);
 
-                let name = line[pos+6..].trim_matches(|c: char| c == '-' || c.is_whitespace());
+                let dash_or_space = |c: char| c == '-' || c.is_whitespace();
+
                 let ignored = &line[pos..pos+6] == "-->8--";
+                let line = line[pos+6..].trim_left_matches(&dash_or_space);
+                let (name, options) = if let Some(pos) = line.find("--") {
+                    (line[..pos].trim_right(), line[pos..].trim_matches(&dash_or_space))
+                } else {
+                    (line.trim_right_matches(&dash_or_space), "")
+                };
+                let options: Vec<_> = options.split_whitespace().collect();
+
                 test = Some(Test {
                     file: path.to_owned(),
                     first_line: next_lineno,
@@ -307,6 +317,7 @@ fn extract_tests(path: &Path) -> Result<Vec<Test>, TestError> {
                     output: Vec::new(),
                     reports: Vec::new(),
                     ignored: ignored,
+                    exact: options.contains(&"exact"),
                 });
                 current_file = None;
                 current_lines = Vec::new();
@@ -584,6 +595,7 @@ impl<T: Testing> Tester<T> {
         // check if test.reports are all included in collected reports (multiset inclusion)
         // do not check if collected reports have some others, though (unless exact_diags is set)
         let mut reportset = HashMap::new(); // # of expected reports - # of collected reports
+        let exact = self.exact_diags || test.exact;
         if success {
             for expected in &test.reports {
                 let pos = expected.pos.as_ref().map(|&(ref p, s, e)| {
@@ -596,12 +608,12 @@ impl<T: Testing> Tester<T> {
                 let key = (translate_span(&source, span), kind, msg.to_owned());
                 if let Some(value) = reportset.get_mut(&key) {
                     *value -= 1;
-                } else if self.exact_diags {
+                } else if exact {
                     success = false; // seen a note we haven't expected
                 }
             }
             if success {
-                success = if self.exact_diags {
+                success = if exact {
                     reportset.values().all(|&v| v == 0)
                 } else {
                     reportset.values().all(|&v| v <= 0)
