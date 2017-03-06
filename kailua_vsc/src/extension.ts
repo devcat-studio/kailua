@@ -77,7 +77,7 @@ function initializeLanguageServer(context: vscode.ExtensionContext) {
             let executablePath, env, mode;
             if (isDebugging()) {
                 executablePath = debugDevPath + extension;
-                env = {RUST_LOG: 'kailua_langsvr=debug'};
+                env = {RUST_LOG: 'kailua_langsvr=debug', RUST_BACKTRACE: '1'};
                 mode = 'debug mode w/ local impl';
             } else {
                 try {
