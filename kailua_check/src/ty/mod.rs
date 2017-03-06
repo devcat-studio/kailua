@@ -1,8 +1,7 @@
 use std::fmt;
-use diag::CheckResult;
-use message as m;
-use kailua_env::{Span, Spanned};
-use kailua_diag::{self, Kind, Report, Reporter, Locale, Localize};
+use diag::{CheckResult, TypeReport, TypeResult, Display};
+use kailua_env::Spanned;
+use kailua_diag::{Locale, Report};
 use kailua_syntax::Name;
 
 pub use self::literals::{Numbers, Strings};
@@ -22,18 +21,6 @@ mod value;
 mod slot;
 mod seq;
 mod tag;
-
-fn error_not_bottom<T: fmt::Debug>(t: T) -> CheckResult<()> {
-    Err(format!("impossible constraint requested: {:?} is bottom", t))
-}
-
-fn error_not_sub<T: fmt::Debug, U: fmt::Debug>(t: T, u: U) -> CheckResult<()> {
-    Err(format!("impossible constraint requested: {:?} <: {:?}", t, u))
-}
-
-fn error_not_eq<T: fmt::Debug, U: fmt::Debug>(t: T, u: U) -> CheckResult<()> {
-    Err(format!("impossible constraint requested: {:?} = {:?}", t, u))
-}
 
 // anonymous, unifiable type variables
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -104,6 +91,8 @@ impl fmt::Debug for Class {
     }
 }
 
+// the type resolver is a superset of more constrained type context
+// and has the name-to-type mapping (which is useless for the type operations themselves)
 pub trait TypeResolver: Report {
     fn context(&mut self) -> &mut TypeContext;
     fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<Ty>;
@@ -118,29 +107,32 @@ impl<'a, R: TypeResolver + ?Sized> TypeResolver for &'a mut R {
     }
 }
 
-pub trait TypeContext: Report {
+// every type-related operations are encapsulated into this trait
+pub trait TypeContext {
+    fn gen_report(&self) -> TypeReport;
+
     // type variable management
     fn last_tvar(&self) -> Option<TVar>;
     fn gen_tvar(&mut self) -> TVar;
-    fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()>;
-    fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()>;
-    fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()>;
-    fn assert_tvar_sub_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()>;
-    fn assert_tvar_eq_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()>;
+    fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &Ty) -> TypeResult<()>;
+    fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &Ty) -> TypeResult<()>;
+    fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &Ty) -> TypeResult<()>;
+    fn assert_tvar_sub_tvar(&mut self, lhs: TVar, rhs: TVar) -> TypeResult<()>;
+    fn assert_tvar_eq_tvar(&mut self, lhs: TVar, rhs: TVar) -> TypeResult<()>;
     fn get_tvar_bounds(&self, tvar: TVar) -> (flags::Flags /*lb*/, flags::Flags /*ub*/);
     fn get_tvar_exact_type(&self, tvar: TVar) -> Option<Ty>;
 
     // row variable management
     fn gen_rvar(&mut self) -> RVar;
-    fn assert_rvar_sub(&mut self, lhs: RVar, rhs: RVar) -> CheckResult<()>;
-    fn assert_rvar_eq(&mut self, lhs: RVar, rhs: RVar) -> CheckResult<()>;
-    fn assert_rvar_includes(&mut self, lhs: RVar, rhs: &[(Key, Slot)]) -> CheckResult<()>;
-    fn assert_rvar_closed(&mut self, rvar: RVar) -> CheckResult<()>;
+    fn assert_rvar_sub(&mut self, lhs: RVar, rhs: RVar) -> TypeResult<()>;
+    fn assert_rvar_eq(&mut self, lhs: RVar, rhs: RVar) -> TypeResult<()>;
+    fn assert_rvar_includes(&mut self, lhs: RVar, rhs: &[(Key, Slot)]) -> TypeResult<()>;
+    fn assert_rvar_closed(&mut self, rvar: RVar) -> TypeResult<()>;
     // should return RVar::any() when the last row variable is yet to be instantiated
     fn list_rvar_fields(&self, rvar: RVar,
-                        f: &mut FnMut(&Key, &Slot) -> CheckResult<bool>) -> CheckResult<RVar>;
+                        f: &mut FnMut(&Key, &Slot) -> TypeResult<bool>) -> TypeResult<RVar>;
 
-    fn get_rvar_fields(&self, rvar: RVar) -> CheckResult<Vec<(Key, Slot)>> {
+    fn get_rvar_fields(&self, rvar: RVar) -> TypeResult<Vec<(Key, Slot)>> {
         let mut fields = Vec::new();
         self.list_rvar_fields(rvar, &mut |k, v| {
             fields.push((k.clone(), v.clone()));
@@ -158,66 +150,33 @@ pub trait Union<Other = Self> {
     type Output;
 
     fn union(&self, other: &Other, explicit: bool,
-             ctx: &mut TypeContext) -> CheckResult<Self::Output>;
+             ctx: &mut TypeContext) -> TypeResult<Self::Output>;
 }
 
 pub trait Lattice<Other = Self> {
     /// Asserts that `self` is a consistent subtype of `other` under the type context.
-    fn assert_sub(&self, other: &Other, ctx: &mut TypeContext) -> CheckResult<()>;
+    fn assert_sub(&self, other: &Other, ctx: &mut TypeContext) -> TypeResult<()>;
 
     /// Asserts that `self` is a consistent type equal to `other` under the type context.
-    fn assert_eq(&self, other: &Other, ctx: &mut TypeContext) -> CheckResult<()>;
+    fn assert_eq(&self, other: &Other, ctx: &mut TypeContext) -> TypeResult<()>;
 }
 
 impl<A: Union<B>, B> Union<Box<B>> for Box<A> {
     type Output = <A as Union<B>>::Output;
 
     fn union(&self, other: &Box<B>, explicit: bool,
-             ctx: &mut TypeContext) -> CheckResult<Self::Output> {
+             ctx: &mut TypeContext) -> TypeResult<Self::Output> {
         (**self).union(other, explicit, ctx)
     }
 }
 
 impl<A: Lattice<B>, B> Lattice<Box<B>> for Box<A> {
-    fn assert_sub(&self, other: &Box<B>, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Box<B>, ctx: &mut TypeContext) -> TypeResult<()> {
         (**self).assert_sub(other, ctx)
     }
 
-    fn assert_eq(&self, other: &Box<B>, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Box<B>, ctx: &mut TypeContext) -> TypeResult<()> {
         (**self).assert_eq(other, ctx)
-    }
-}
-
-impl<T: Union<Output=T> + Clone> Union for Option<T> {
-    type Output = Option<T>;
-
-    fn union(&self, other: &Option<T>, explicit: bool,
-             ctx: &mut TypeContext) -> CheckResult<Option<T>> {
-        match (self, other) {
-            (&Some(ref a), &Some(ref b)) => Ok(Some(a.union(b, explicit, ctx)?)),
-            (&Some(ref a), &None) => Ok(Some(a.clone())),
-            (&None, &Some(ref b)) => Ok(Some(b.clone())),
-            (&None, &None) => Ok(None),
-        }
-    }
-}
-
-impl<T: Lattice + fmt::Debug> Lattice for Option<T> {
-    fn assert_sub(&self, other: &Option<T>, ctx: &mut TypeContext) -> CheckResult<()> {
-        match (self, other) {
-            (&Some(ref a), &Some(ref b)) => a.assert_sub(b, ctx),
-            (&Some(ref a), &None) => error_not_bottom(a),
-            (&None, _) => Ok(())
-        }
-    }
-
-    fn assert_eq(&self, other: &Option<T>, ctx: &mut TypeContext) -> CheckResult<()> {
-        match (self, other) {
-            (&Some(ref a), &Some(ref b)) => a.assert_eq(b, ctx),
-            (&Some(ref a), &None) => error_not_bottom(a),
-            (&None, &Some(ref b)) => error_not_bottom(b),
-            (&None, &None) => Ok(())
-        }
     }
 }
 
@@ -225,78 +184,53 @@ impl<A: Display, B: Display> Union<Spanned<B>> for Spanned<A> where A: Union<B> 
     type Output = <A as Union<B>>::Output;
 
     fn union(&self, other: &Spanned<B>, explicit: bool,
-             ctx: &mut TypeContext) -> CheckResult<Self::Output> {
-        let ret = self.base.union(&other.base, explicit, ctx);
-        if let Err(_) = ret {
-            ctx.error(self.span, m::InvalidUnionType { lhs: self.display(ctx),
-                                                       rhs: other.display(ctx) })
-               .note_if(other.span, m::OtherTypeOrigin {})
-               .done()?;
-            // XXX not sure if we can recover here
-        }
-        ret
+             ctx: &mut TypeContext) -> TypeResult<Self::Output> {
+        self.base.union(&other.base, explicit, ctx).map_err(|r| {
+            r.cannot_union_attach_span(self.span, other.span, explicit)
+        })
     }
 }
 
 impl<A: Display, B: Display> Lattice<Spanned<B>> for Spanned<A> where A: Lattice<B> {
-    fn assert_sub(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> CheckResult<()> {
-        let ret = self.base.assert_sub(&other.base, ctx);
-        if let Err(_) = ret {
-            ctx.error(self.span, m::NotSubtype { sub: self.display(ctx),
-                                                 sup: other.display(ctx) })
-               .note_if(other.span, m::OtherTypeOrigin {})
-               .done()?;
-            // XXX not sure if we can recover here
-        }
-        ret
+    fn assert_sub(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> TypeResult<()> {
+        self.base.assert_sub(&other.base, ctx).map_err(|r| {
+            r.not_sub_attach_span(self.span, other.span)
+        })
     }
 
-    fn assert_eq(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> CheckResult<()> {
-        let ret = self.base.assert_eq(&other.base, ctx);
-        if let Err(_) = ret {
-            ctx.error(self.span, m::NotEqual { lhs: self.display(ctx),
-                                               rhs: other.display(ctx) })
-               .note_if(other.span, m::OtherTypeOrigin {})
-               .done()?;
-            // XXX not sure if we can recover here
-        }
-        ret
+    fn assert_eq(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> TypeResult<()> {
+        self.base.assert_eq(&other.base, ctx).map_err(|r| {
+            r.not_eq_attach_span(self.span, other.span)
+        })
     }
 }
 
 // used when operands should not have any type variables
 struct NoTypeContext;
 
-impl Report for NoTypeContext {
-    fn message_locale(&self) -> Locale {
-        Locale::dummy()
-    }
-
-    fn add_span(&self, _kind: Kind, _span: Span, _msg: &Localize) -> kailua_diag::Result<()> {
-        Ok(()) // ignore any report
-    }
-}
-
 impl TypeContext for NoTypeContext {
+    fn gen_report(&self) -> TypeReport {
+        TypeReport::new(Locale::dummy())
+    }
     fn last_tvar(&self) -> Option<TVar> {
         None
     }
     fn gen_tvar(&mut self) -> TVar {
         panic!("gen_tvar is not supposed to be called here");
     }
-    fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()> {
+    fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &Ty) -> TypeResult<()> {
         panic!("assert_tvar_sub({:?}, {:?}) is not supposed to be called here", lhs, rhs);
     }
-    fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()> {
+    fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &Ty) -> TypeResult<()> {
         panic!("assert_tvar_sup({:?}, {:?}) is not supposed to be called here", lhs, rhs);
     }
-    fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()> {
+    fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &Ty) -> TypeResult<()> {
         panic!("assert_tvar_eq({:?}, {:?}) is not supposed to be called here", lhs, rhs);
     }
-    fn assert_tvar_sub_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()> {
+    fn assert_tvar_sub_tvar(&mut self, lhs: TVar, rhs: TVar) -> TypeResult<()> {
         panic!("assert_tvar_sub_tvar({:?}, {:?}) is not supposed to be called here", lhs, rhs);
     }
-    fn assert_tvar_eq_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()> {
+    fn assert_tvar_eq_tvar(&mut self, lhs: TVar, rhs: TVar) -> TypeResult<()> {
         panic!("assert_tvar_eq_tvar({:?}, {:?}) is not supposed to be called here", lhs, rhs);
     }
     fn get_tvar_bounds(&self, tvar: TVar) -> (flags::Flags /*lb*/, flags::Flags /*ub*/) {
@@ -309,21 +243,21 @@ impl TypeContext for NoTypeContext {
     fn gen_rvar(&mut self) -> RVar {
         panic!("gen_rvar is not supposed to be called here");
     }
-    fn assert_rvar_sub(&mut self, lhs: RVar, rhs: RVar) -> CheckResult<()> {
+    fn assert_rvar_sub(&mut self, lhs: RVar, rhs: RVar) -> TypeResult<()> {
         panic!("assert_rvar_sub({:?}, {:?}) is not supposed to be called here", lhs, rhs);
     }
-    fn assert_rvar_eq(&mut self, lhs: RVar, rhs: RVar) -> CheckResult<()> {
+    fn assert_rvar_eq(&mut self, lhs: RVar, rhs: RVar) -> TypeResult<()> {
         panic!("assert_rvar_eq({:?}, {:?}) is not supposed to be called here", lhs, rhs);
     }
-    fn assert_rvar_includes(&mut self, lhs: RVar, rhs: &[(Key, Slot)]) -> CheckResult<()> {
+    fn assert_rvar_includes(&mut self, lhs: RVar, rhs: &[(Key, Slot)]) -> TypeResult<()> {
         panic!("assert_rvar_includes({:?}, {:?}) is not supposed to be called here", lhs, rhs);
     }
-    fn assert_rvar_closed(&mut self, rvar: RVar) -> CheckResult<()> {
+    fn assert_rvar_closed(&mut self, rvar: RVar) -> TypeResult<()> {
         panic!("assert_rvar_closed({:?}) is not supposed to be called here", rvar);
     }
     fn list_rvar_fields(&self, rvar: RVar,
-                        _f: &mut FnMut(&Key, &Slot) -> CheckResult<bool>) -> CheckResult<RVar> {
-        Err(format!("list_rvar_fields({:?}, ...) is not supposed to be called here", rvar))
+                        _f: &mut FnMut(&Key, &Slot) -> TypeResult<bool>) -> TypeResult<RVar> {
+        panic!("list_rvar_fields({:?}, ...) is not supposed to be called here", rvar)
     }
 
     fn fmt_class(&self, cls: Class, _f: &mut fmt::Formatter) -> fmt::Result {
@@ -335,61 +269,22 @@ impl TypeContext for NoTypeContext {
 }
 
 impl Lattice for TVar {
-    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
         ctx.assert_tvar_sub_tvar(*self, *other)
     }
 
-    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
         ctx.assert_tvar_eq_tvar(*self, *other)
     }
 }
 
 impl Lattice for RVar {
-    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
         ctx.assert_rvar_sub(self.clone(), other.clone())
     }
 
-    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
         ctx.assert_rvar_eq(self.clone(), other.clone())
-    }
-}
-
-// human-readable description of various types requiring the type context.
-// expected to implement fmt::Display.
-pub struct Displayed<'b, 'c, T: Display + 'b> {
-    base: &'b T,
-    ctx: &'c TypeContext,
-}
-
-pub trait Display: fmt::Debug + Sized {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result;
-
-    fn display<'b, 'c>(&'b self, ctx: &'c TypeContext) -> Displayed<'b, 'c, Self> {
-        Displayed { base: self, ctx: ctx }
-    }
-}
-
-impl<T: Display> Display for Spanned<T> {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
-        self.base.fmt_displayed(f, ctx)
-    }
-}
-
-impl<T: Display> Display for Box<T> {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
-        (**self).fmt_displayed(f, ctx)
-    }
-}
-
-impl<'b, 'c, T: Display + 'b> fmt::Display for Displayed<'b, 'c, T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.base.fmt_displayed(f, self.ctx)
-    }
-}
-
-impl<'b, 'c, T: Display + fmt::Debug + 'b> fmt::Debug for Displayed<'b, 'c, T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(&self.base, f)
     }
 }
 

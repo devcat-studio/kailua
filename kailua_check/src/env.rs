@@ -13,8 +13,9 @@ use atomic::Ordering::Relaxed;
 use kailua_env::{self, Span, Spanned, WithLoc, ScopedId, ScopeMap, SpanMap};
 use kailua_diag::{self, Kind, Report, Reporter, Locale, Localize};
 use kailua_syntax::{Name, NameRef};
-use diag::{CheckResult, unquotable_name};
-use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, RVar, Lattice, Union, Tag, Displayed, Display};
+use diag::{CheckResult, Origin, TypeReport, TypeResult, TypeReportHint, TypeReportMore};
+use diag::{Displayed, Display, unquotable_name};
+use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, RVar, Lattice, Union, Tag};
 use ty::{TypeContext, TypeResolver, ClassId, Class, Functions, Function, Key};
 use ty::flags::*;
 use defs::get_defs;
@@ -100,10 +101,34 @@ impl<'a, R: Report> fmt::Display for IdDisplay<'a, R> {
 }
 
 #[derive(Clone, Debug)]
+pub enum Returns<T> {
+    None, // the function does not return and has no rettype spec
+    Implicit(T), // the function returns but has no rettype spec, returns will be unioned
+    Explicit(T), // the function has a rettype spec, cannot be updated
+}
+
+impl<T> Returns<T> {
+    pub fn as_ref(&self) -> Returns<&T> {
+        match *self {
+            Returns::None => Returns::None,
+            Returns::Implicit(ref v) => Returns::Implicit(v),
+            Returns::Explicit(ref v) => Returns::Explicit(v),
+        }
+    }
+
+    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Returns<U> {
+        match self {
+            Returns::None => Returns::None,
+            Returns::Implicit(v) => Returns::Implicit(f(v)),
+            Returns::Explicit(v) => Returns::Explicit(f(v)),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Frame {
     pub vararg: Option<TySeq>,
-    pub returns: Option<TySeq>, // None represents the bottom (TySeq does not have it)
-    pub returns_exact: bool, // if false, returns can be updated
+    pub returns: Returns<TySeq>,
 }
 
 #[derive(Clone, Debug)]
@@ -323,12 +348,12 @@ impl Constraints {
         None
     }
 
-    fn add_relation(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()> {
-        if lhs == rhs { return Ok(()); }
+    fn add_relation(&mut self, lhs: TVar, rhs: TVar) -> bool {
+        if lhs == rhs { return true; }
 
         let lhs_ = self.bounds.find(lhs.0 as usize);
         let rhs_ = self.bounds.find(rhs.0 as usize);
-        if lhs_ == rhs_ { return Ok(()); }
+        if lhs_ == rhs_ { return true; }
 
         fn take_bound(bounds: &mut VecMap<Box<Bound>>, i: usize) -> Option<Ty> {
             if let Some(b) = bounds.get_mut(&i) {
@@ -345,14 +370,13 @@ impl Constraints {
         let bound = match (is_bound_trivial(&lhsbound), is_bound_trivial(&rhsbound)) {
             (false, _) => lhsbound,
             (true, false) => rhsbound,
-            (true, true) =>
-                if lhsbound == rhsbound {
-                    lhsbound
-                } else {
-                    return Err(format!("variables {:?}/{:?} cannot have multiple bounds \
-                                        (left {} {:?}, right {} {:?})",
-                                       lhs, rhs, self.op, lhsbound, self.op, rhsbound));
-                },
+            (true, true) if lhsbound == rhsbound => lhsbound,
+            (true, true) => {
+                info!("variables {:?}/{:?} cannot have multiple bounds \
+                       (left {} {:?}, right {} {:?})",
+                      lhs, rhs, self.op, lhsbound, self.op, rhsbound);
+                return false;
+            },
         };
 
         // update the shared bound to the merged representative
@@ -362,7 +386,7 @@ impl Constraints {
             self.bounds.get_mut(&new).unwrap().bound = bound;
         }
 
-        Ok(())
+        true
     }
 }
 
@@ -451,7 +475,7 @@ impl<R: Report> Context<R> {
         };
 
         // it is fine to return from the top-level, so we treat it as like a function frame
-        let global_frame = Frame { vararg: None, returns: None, returns_exact: false };
+        let global_frame = Frame { vararg: None, returns: Returns::None };
         ctx.global_scope.frame = Some(global_frame);
         ctx
     }
@@ -462,8 +486,7 @@ impl<R: Report> Context<R> {
 
     pub fn open_library(&mut self, name: &Spanned<Name>,
                         opts: Rc<RefCell<Options>>) -> CheckResult<()> {
-        let name_ = str::from_utf8(&name.base).map_err(|e| e.to_string())?;
-        if let Some(defs) = get_defs(name_) {
+        if let Some(defs) = str::from_utf8(&name.base).ok().and_then(get_defs) {
             // one library may consist of multiple files, so we defer duplicate check
             for def in defs {
                 if self.opened.insert(def.name.to_owned()) {
@@ -474,10 +497,10 @@ impl<R: Report> Context<R> {
                     checker.visit(&chunk.block)?
                 }
             }
-            Ok(())
         } else {
-            Err(format!("cannot open an unknown library {:?}", name.base))
+            self.error(name, m::CannotOpenLibrary {}).done()?;
         }
+        Ok(())
     }
 
     pub fn get_loaded_module(&self, name: &[u8], span: Span) -> CheckResult<Option<Slot>> {
@@ -526,7 +549,7 @@ impl<R: Report> Context<R> {
         Ok(())
     }
 
-    fn assert_rvar_rel(&mut self, lhs: RVar, rhs: RVar, is_sub: bool) -> CheckResult<()> {
+    fn assert_rvar_rel(&mut self, lhs: RVar, rhs: RVar, is_sub: bool) -> TypeResult<()> {
         // simulate a tail recursion
         let mut lhs = lhs;
         let mut rhs = rhs;
@@ -541,8 +564,14 @@ impl<R: Report> Context<R> {
             // an empty row is special and does not equal to any other "normal" rows
             match (lhs == RVar::empty(), rhs == RVar::empty()) {
                 (false, false) | (true, true) => {}
-                (false, true) => { return Err(format!("{:?} is not empty", lhs)); }
-                (true, false) => { return Err(format!("{:?} is not empty", rhs)); }
+                (false, true) => {
+                    return Err(self.gen_report().put(Origin::RVar,
+                                                     format!("lhs record is not empty")));
+                }
+                (true, false) => {
+                    return Err(self.gen_report().put(Origin::RVar,
+                                                     format!("rhs record is not empty")));
+                }
             }
 
             let lhs_ = lhs.to_usize();
@@ -565,12 +594,14 @@ impl<R: Report> Context<R> {
                 let lfields = if let Some(ref fields) = lrow.fields {
                     fields
                 } else {
-                    return Err("recursive row instantiation".to_string());
+                    return Err(self.gen_report().put(Origin::RVar,
+                                                     format!("recursive record")));
                 };
                 let rfields = if let Some(ref fields) = rrow.fields {
                     fields
                 } else {
-                    return Err("recursive row instantiation".to_string());
+                    return Err(self.gen_report().put(Origin::RVar,
+                                                     format!("recursive record")));
                 };
 
                 // collect missing fields from rhs and also remaining matching fields
@@ -596,10 +627,14 @@ impl<R: Report> Context<R> {
 
                         // otherwise unification fails
                         (&None, Some(&Some(_))) => {
-                            return Err(format!("{:?} cannot have a field {:?}", lhs, k));
+                            return Err(self.gen_report().put(Origin::RVar,
+                                                             format!("lhs cannot have a field {:?}",
+                                                                     k)));
                         }
                         (&Some(_), Some(&None)) => {
-                            return Err(format!("{:?} cannot have a field {:?}", rhs, k));
+                            return Err(self.gen_report().put(Origin::RVar,
+                                                             format!("rhs cannot have a field {:?}",
+                                                                     k)));
                         }
                     }
                 }
@@ -616,10 +651,14 @@ impl<R: Report> Context<R> {
                             labsent.push(k.clone());
                         }
                         (Some(&None), &Some(_)) => {
-                            return Err(format!("{:?} cannot have a field {:?}", lhs, k));
+                            return Err(self.gen_report().put(Origin::RVar,
+                                                             format!("lhs cannot have a field {:?}",
+                                                                     k)));
                         }
                         (Some(&Some(_)), &None) => {
-                            return Err(format!("{:?} cannot have a field {:?}", rhs, k));
+                            return Err(self.gen_report().put(Origin::RVar,
+                                                             format!("rhs cannot have a field {:?}",
+                                                                     k)));
                         }
                     }
                 }
@@ -718,7 +757,7 @@ impl<R: Report> Context<R> {
     }
 
     fn assert_rvar_includes_and_excludes(&mut self, lhs: RVar, includes: &[(Key, Slot)],
-                                         excludes: &[Key]) -> CheckResult<()> {
+                                         excludes: &[Key]) -> TypeResult<()> {
         trace!("{:?} should include {:?} and exclude {:?}", lhs, includes, excludes);
 
         // optimize a no-op just in case
@@ -729,23 +768,24 @@ impl<R: Report> Context<R> {
         let lhs_ = lhs.to_usize();
 
         // take fields out, so that we can detect an infinite recursion
-        let (mut fields, next) = {
+        let fields_and_next = {
             let row = self.row_infos.entry(lhs_).or_insert_with(|| Box::new(RowInfo::new()));
-            if let Some(fields) = row.fields.take() {
-                (fields, row.next.clone())
-            } else {
-                return Err("recursive row instantiation".to_string());
-            }
+            row.fields.take().map(|fields| (fields, row.next.clone()))
+        };
+        let (mut fields, next) = if let Some(fields_and_next) = fields_and_next {
+            fields_and_next
+        } else {
+            return Err(self.gen_report().put(Origin::RVar, format!("recursive record")));
         };
 
-        let e = inner(self, lhs, includes, excludes, &mut fields, next);
+        let e = inner(self, includes, excludes, &mut fields, next);
         self.row_infos.get_mut(&lhs_).unwrap().fields = Some(fields);
         return e;
 
-        fn inner<R: Report>(ctx: &mut Context<R>, lhs: RVar,
+        fn inner<R: Report>(ctx: &mut Context<R>,
                             includes: &[(Key, Slot)], excludes: &[Key],
                             fields: &mut HashMap<Key, Option<Slot>>,
-                            next: Option<RVar>) -> CheckResult<()> {
+                            next: Option<RVar>) -> TypeResult<()> {
             // collect missing fields, whether positive or negative, and
             // check if other matching fields are compatible
             let mut missing = Vec::new();
@@ -758,7 +798,9 @@ impl<R: Report> Context<R> {
                     }
                     Some(&None) => {
                         // the field is excluded, immediately fail
-                        return Err(format!("{:?} cannot have a field {:?}", lhs, k));
+                        return Err(ctx.gen_report().put(Origin::RVar,
+                                                        format!("record cannot have a field {:?}",
+                                                                k)));
                     }
                     None => {
                         // the field should be added to the next row variable (if any)
@@ -769,8 +811,10 @@ impl<R: Report> Context<R> {
             for k in excludes {
                 match fields.get(k) {
                     Some(&Some(ref lv)) => {
-                        return Err(format!("{:?} should not have a field {:?} \
-                                            but already had {:?}", lhs, k, lv));
+                        return Err(ctx.gen_report().put(Origin::RVar,
+                                                        format!("record should not have a field \
+                                                                 {:?} but already had {:?}",
+                                                                k, lv)));
                     }
                     Some(&None) => {}
                     None => {
@@ -977,6 +1021,10 @@ impl<R: Report> Report for Context<R> {
 }
 
 impl<R: Report> TypeContext for Context<R> {
+    fn gen_report(&self) -> TypeReport {
+        TypeReport::new(self.report.message_locale())
+    }
+
     fn last_tvar(&self) -> Option<TVar> {
         self.output.last_tvar()
     }
@@ -986,7 +1034,7 @@ impl<R: Report> TypeContext for Context<R> {
         self.next_tvar
     }
 
-    fn assert_tvar_sub(&mut self, lhs: TVar, rhs0: &Ty) -> CheckResult<()> {
+    fn assert_tvar_sub(&mut self, lhs: TVar, rhs0: &Ty) -> TypeResult<()> {
         let rhs = rhs0.clone().coerce();
         debug!("adding a constraint {:?} <: {:?} (coerced to {:?})", lhs, rhs0, rhs);
         if let Some(eb) = self.tvar_eq.get_bound(lhs).and_then(|b| b.bound.clone()) {
@@ -996,7 +1044,7 @@ impl<R: Report> TypeContext for Context<R> {
                 // the original bound is not consistent, bound <: rhs still has to hold
                 if let Err(e) = ub.assert_sub(&rhs, self) {
                     info!("variable {:?} cannot have multiple possibly disjoint \
-                           bounds (original <: {:?}, later <: {:?}): {}", lhs, ub, rhs, e);
+                           bounds (original <: {:?}, later <: {:?}): {:?}", lhs, ub, rhs, e);
                     return Err(e);
                 }
             }
@@ -1007,7 +1055,7 @@ impl<R: Report> TypeContext for Context<R> {
         Ok(())
     }
 
-    fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &Ty) -> CheckResult<()> {
+    fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &Ty) -> TypeResult<()> {
         // no coercion here, as type coercion will always expand the type
         debug!("adding a constraint {:?} :> {:?}", lhs, rhs);
         if let Some(eb) = self.tvar_eq.get_bound(lhs).and_then(|b| b.bound.clone()) {
@@ -1017,7 +1065,7 @@ impl<R: Report> TypeContext for Context<R> {
                 // the original bound is not consistent, bound :> rhs still has to hold
                 if let Err(e) = rhs.assert_sub(&lb, self) {
                     info!("variable {:?} cannot have multiple possibly disjoint \
-                           bounds (original :> {:?}, later :> {:?}): {}", lhs, lb, rhs, e);
+                           bounds (original :> {:?}, later :> {:?}): {:?}", lhs, lb, rhs, e);
                     return Err(e);
                 }
             }
@@ -1028,14 +1076,14 @@ impl<R: Report> TypeContext for Context<R> {
         Ok(())
     }
 
-    fn assert_tvar_eq(&mut self, lhs: TVar, rhs0: &Ty) -> CheckResult<()> {
+    fn assert_tvar_eq(&mut self, lhs: TVar, rhs0: &Ty) -> TypeResult<()> {
         let rhs = rhs0.clone().coerce();
         debug!("adding a constraint {:?} = {:?} (coerced to {:?})", lhs, rhs0, rhs);
         if let Some(eb) = self.tvar_eq.add_bound(lhs, &rhs).map(|b| b.clone()) {
             // the original bound is not consistent, bound = rhs still has to hold
             if let Err(e) = eb.assert_eq(&rhs, self) {
                 info!("variable {:?} cannot have multiple possibly disjoint \
-                       bounds (original = {:?}, later = {:?}): {}", lhs, eb, rhs, e);
+                       bounds (original = {:?}, later = {:?}): {:?}", lhs, eb, rhs, e);
                 return Err(e);
             }
         } else {
@@ -1049,19 +1097,29 @@ impl<R: Report> TypeContext for Context<R> {
         Ok(())
     }
 
-    fn assert_tvar_sub_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()> {
+    fn assert_tvar_sub_tvar(&mut self, lhs: TVar, rhs: TVar) -> TypeResult<()> {
         debug!("adding a constraint {:?} <: {:?}", lhs, rhs);
         if !self.tvar_eq.is(lhs, rhs) {
-            self.tvar_sub.add_relation(lhs, rhs)?;
-            self.tvar_sup.add_relation(rhs, lhs)?;
+            if !self.tvar_sub.add_relation(lhs, rhs) {
+                // TODO
+                return Err(self.gen_report().not_sub(Origin::TVar, "<tvar>", "<tvar>", self));
+            }
+            if !self.tvar_sup.add_relation(rhs, lhs) {
+                // TODO
+                return Err(self.gen_report().not_sub(Origin::TVar, "<tvar>", "<tvar>", self));
+            }
         }
         Ok(())
     }
 
-    fn assert_tvar_eq_tvar(&mut self, lhs: TVar, rhs: TVar) -> CheckResult<()> {
+    fn assert_tvar_eq_tvar(&mut self, lhs: TVar, rhs: TVar) -> TypeResult<()> {
         debug!("adding a constraint {:?} = {:?}", lhs, rhs);
         // do not update tvar_sub & tvar_sup, tvar_eq will be consulted first
-        self.tvar_eq.add_relation(lhs, rhs)
+        if !self.tvar_eq.add_relation(lhs, rhs) {
+            // TODO
+            return Err(self.gen_report().not_eq(Origin::TVar, "<tvar>", "<tvar>", self));
+        }
+        Ok(())
     }
 
     fn get_tvar_bounds(&self, tvar: TVar) -> (Flags /*lb*/, Flags /*ub*/) {
@@ -1078,19 +1136,27 @@ impl<R: Report> TypeContext for Context<R> {
         rvar
     }
 
-    fn assert_rvar_sub(&mut self, lhs: RVar, rhs: RVar) -> CheckResult<()> {
-        self.assert_rvar_rel(lhs, rhs, true)
+    fn assert_rvar_sub(&mut self, lhs: RVar, rhs: RVar) -> TypeResult<()> {
+        // TODO
+        self.assert_rvar_rel(lhs.clone(), rhs.clone(), true).map_err(|r| {
+            r.not_sub(Origin::RVar, "<rvar>", "<rvar>", self)
+        })
     }
 
-    fn assert_rvar_eq(&mut self, lhs: RVar, rhs: RVar) -> CheckResult<()> {
-        self.assert_rvar_rel(lhs, rhs, false)
+    fn assert_rvar_eq(&mut self, lhs: RVar, rhs: RVar) -> TypeResult<()> {
+        // TODO
+        self.assert_rvar_rel(lhs.clone(), rhs.clone(), false).map_err(|r| {
+            r.not_eq(Origin::RVar, "<rvar>", "<rvar>", self)
+        })
     }
 
-    fn assert_rvar_includes(&mut self, lhs: RVar, rhs: &[(Key, Slot)]) -> CheckResult<()> {
-        self.assert_rvar_includes_and_excludes(lhs, rhs, &[])
+    fn assert_rvar_includes(&mut self, lhs: RVar, rhs: &[(Key, Slot)]) -> TypeResult<()> {
+        self.assert_rvar_includes_and_excludes(lhs.clone(), rhs, &[]).map_err(|r| {
+            r.put(Origin::RVar, format!("the record should include {:?} but didn't", rhs))
+        })
     }
 
-    fn assert_rvar_closed(&mut self, mut rvar: RVar) -> CheckResult<()> {
+    fn assert_rvar_closed(&mut self, mut rvar: RVar) -> TypeResult<()> {
         // detect a cycle by advancing slowrvar 1/2x slower than rvar;
         // if rvar == slowrvar is true after the initial loop, it's a cycle
         let mut slowrvar = rvar.clone();
@@ -1120,7 +1186,9 @@ impl<R: Report> TypeContext for Context<R> {
             } else {
                 slowrvar = self.row_infos.get(&slowrvar.to_usize()).unwrap().next.clone().unwrap();
                 if slowrvar == rvar {
-                    return Err("recursive row instantiation".to_string());
+                    return Err(self.gen_report().put(Origin::RVar,
+                                                     "recursive record detected \
+                                                      while closing the record".into()));
                 }
                 slowtick = true;
             }
@@ -1128,7 +1196,7 @@ impl<R: Report> TypeContext for Context<R> {
     }
 
     fn list_rvar_fields(&self, rvar: RVar,
-                        f: &mut FnMut(&Key, &Slot) -> CheckResult<bool>) -> CheckResult<RVar> {
+                        f: &mut FnMut(&Key, &Slot) -> TypeResult<bool>) -> TypeResult<RVar> {
         self.output.list_rvar_fields(rvar, f)
     }
 
@@ -1154,7 +1222,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
                map: ScopeMap<Name>) -> Env<'ctx, R> {
         let map_index = context.scope_maps.len();
         context.scope_maps.push(map);
-        let global_frame = Frame { vararg: None, returns: None, returns_exact: false };
+        let global_frame = Frame { vararg: None, returns: Returns::None };
         Env {
             context: context,
             opts: opts,
@@ -1174,8 +1242,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
     }
 
     // convenience function to avoid mutable references
-    pub fn display<'a, 'c, T: Display>(&'c self, x: &'a T) -> Displayed<'a, 'c, T>
-            where Displayed<'a, 'c, T>: fmt::Display {
+    pub fn display<'a, 'c, T: Display>(&'c self, x: &'a T) -> Displayed<'a, 'c, T> {
         x.display(self.context)
     }
 
@@ -1210,10 +1277,9 @@ impl<'ctx, R: Report> Env<'ctx, R> {
     pub fn return_from_module(mut self, modname: &[u8], span: Span) -> CheckResult<Slot> {
         // note that this scope is distinct from the global scope
         let top_scope = self.scopes.drain(..).next().unwrap();
-        let returns = if let Some(returns) = top_scope.frame.unwrap().returns {
-            returns.into_first()
-        } else {
-            Ty::noisy_nil()
+        let returns = match top_scope.frame.unwrap().returns {
+            Returns::Implicit(returns) | Returns::Explicit(returns) => returns.into_first(),
+            Returns::None => Ty::noisy_nil(), // chunk implicitly returns nil at the end
         };
 
         if let Some(ty) = self.resolve_exact_type(&returns) {
@@ -1227,7 +1293,11 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
             // simulate `require` behavior, i.e. nil translates to true
             let ty = if ty.nil() == Nil::Noisy {
-                ty.without_nil().with_loc(span).union(&T::True.without_loc(), false, self.context)?
+                let tywithoutnil = ty.without_nil().with_loc(span);
+                tywithoutnil.union(&T::True.without_loc(), false, self.context).expect(
+                    "failed to union the module return type with True, this should be \
+                     always possible because we know the return type doesn't have a tvar!"
+                )
             } else {
                 ty
             };
@@ -1370,10 +1440,22 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             Some(b @ Tag::PackageCpath) => {
                 if let Some(s) = self.resolve_exact_type(&rhs.unlift())
                                      .and_then(|t| t.as_string().map(|s| s.to_owned())) {
-                    if b == Tag::PackagePath {
-                        self.opts.borrow_mut().set_package_path(&s)?;
+                    let ret = if b == Tag::PackagePath {
+                        self.opts.borrow_mut().set_package_path(&s)
                     } else {
-                        self.opts.borrow_mut().set_package_cpath(&s)?;
+                        self.opts.borrow_mut().set_package_cpath(&s)
+                    };
+
+                    // the implementation may have reported by its own
+                    match ret {
+                        Ok(()) => {}
+                        Err(None) => {
+                            self.warn(rhs, m::CannotAssignToPackagePath { name: b.name() }).done()?;
+                            return Ok(false);
+                        }
+                        Err(Some(stop)) => {
+                            return Err(stop);
+                        }
                     }
                 } else {
                     self.warn(rhs, m::UnknownAssignToPackagePath { name: b.name() }).done()?;
@@ -1424,8 +1506,14 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
         // first assignment of initrhs to specrhs, if any
         let specrhs = if let Some(specrhs) = specrhs {
-            if !self.assign_special(initrhs, specrhs)? { return Ok(()); }
-            specrhs.accept(initrhs, self.context, true)?;
+            if !self.assign_special(specrhs, initrhs)? { return Ok(()); }
+            if let Err(r) = specrhs.accept(initrhs, self.context, true) {
+                self.error(specrhs, m::CannotAssign { lhs: self.display(specrhs),
+                                                      rhs: self.display(initrhs) })
+                    .note_if(initrhs, m::OtherTypeOrigin {})
+                    .report_types(r, TypeReportHint::None)
+                    .done()?;
+            }
             Cow::Borrowed(specrhs)
         } else {
             Cow::Owned(initrhs.clone().map(|s| s.coerce()))
@@ -1434,7 +1522,14 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         // second assignment of specrhs (or initrhs) to lhs
         specrhs.adapt(lhs.flex(), self.context);
         if !self.assign_special(lhs, &specrhs)? { return Ok(()); }
-        lhs.assert_eq(&*specrhs, self.context)
+        if let Err(r) = lhs.assert_eq(&*specrhs, self.context) {
+            self.error(lhs, m::CannotAssign { lhs: self.display(lhs),
+                                              rhs: self.display(&specrhs) })
+                .note_if(&*specrhs, m::OtherTypeOrigin {})
+                .report_types(r, TypeReportHint::None)
+                .done()?;
+        }
+        Ok(())
     }
 
     pub fn ensure_var(&mut self, nameref: &Spanned<NameRef>) -> CheckResult<Slot> {
@@ -1471,8 +1566,8 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             } else {
                 // won't alter the set flag, so subsequent uses are still errors
                 self.error(&id, m::UseOfUnassignedVar {})
-                         .note_if(&defslot, m::UnassignedVarOrigin { var: self.display(&defslot) })
-                         .done()?;
+                    .note_if(&defslot, m::UnassignedVarOrigin { var: self.display(&defslot) })
+                    .done()?;
             }
         }
 
@@ -1707,58 +1802,58 @@ fn test_context_tvar() {
 
     { // idempotency of bounds
         let v1 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::Integer)), Ok(()));
-        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::Integer)), Ok(()));
+        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::Integer)).is_ok());
+        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::Integer)).is_ok());
         assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::String)).is_err());
     }
 
     { // empty bounds (lb & ub = bottom)
         let v1 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::Integer)), Ok(()));
+        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::Integer)).is_ok());
         assert!(ctx.assert_tvar_sup(v1, &Ty::new(T::String)).is_err());
 
         let v2 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sup(v2, &Ty::new(T::Integer)), Ok(()));
+        assert!(ctx.assert_tvar_sup(v2, &Ty::new(T::Integer)).is_ok());
         assert!(ctx.assert_tvar_sub(v2, &Ty::new(T::String)).is_err());
     }
 
     { // empty bounds (lb & ub != bottom)
         let v1 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::ints(vec![3, 4, 5]))), Ok(()));
+        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::ints(vec![3, 4, 5]))).is_ok());
         assert!(ctx.assert_tvar_sup(v1, &Ty::new(T::ints(vec![1, 2, 3]))).is_err());
 
         let v2 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sup(v2, &Ty::new(T::ints(vec![3, 4, 5]))), Ok(()));
+        assert!(ctx.assert_tvar_sup(v2, &Ty::new(T::ints(vec![3, 4, 5]))).is_ok());
         assert!(ctx.assert_tvar_sub(v2, &Ty::new(T::ints(vec![1, 2, 3]))).is_err());
     }
 
     { // implicitly disjoint bounds
         let v1 = ctx.gen_tvar();
         let v2 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub_tvar(v1, v2), Ok(()));
-        assert_eq!(ctx.assert_tvar_sub(v2, &Ty::new(T::String)), Ok(()));
+        assert!(ctx.assert_tvar_sub_tvar(v1, v2).is_ok());
+        assert!(ctx.assert_tvar_sub(v2, &Ty::new(T::String)).is_ok());
         assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::Integer)).is_err());
 
         let v3 = ctx.gen_tvar();
         let v4 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub_tvar(v3, v4), Ok(()));
-        assert_eq!(ctx.assert_tvar_sup(v3, &Ty::new(T::String)), Ok(()));
+        assert!(ctx.assert_tvar_sub_tvar(v3, v4).is_ok());
+        assert!(ctx.assert_tvar_sup(v3, &Ty::new(T::String)).is_ok());
         assert!(ctx.assert_tvar_sup(v4, &Ty::new(T::Integer)).is_err());
     }
 
     { // equality propagation
         let v1 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_eq(v1, &Ty::new(T::Integer)), Ok(()));
-        assert_eq!(ctx.assert_tvar_sub(v1, &Ty::new(T::Number)), Ok(()));
+        assert!(ctx.assert_tvar_eq(v1, &Ty::new(T::Integer)).is_ok());
+        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::Number)).is_ok());
         assert!(ctx.assert_tvar_sup(v1, &Ty::new(T::String)).is_err());
 
         let v2 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub(v2, &Ty::new(T::Number)), Ok(()));
-        assert_eq!(ctx.assert_tvar_eq(v2, &Ty::new(T::Integer)), Ok(()));
+        assert!(ctx.assert_tvar_sub(v2, &Ty::new(T::Number)).is_ok());
+        assert!(ctx.assert_tvar_eq(v2, &Ty::new(T::Integer)).is_ok());
         assert!(ctx.assert_tvar_sup(v2, &Ty::new(T::String)).is_err());
 
         let v3 = ctx.gen_tvar();
-        assert_eq!(ctx.assert_tvar_sub(v3, &Ty::new(T::Number)), Ok(()));
+        assert!(ctx.assert_tvar_sub(v3, &Ty::new(T::Number)).is_ok());
         assert!(ctx.assert_tvar_eq(v3, &Ty::new(T::String)).is_err());
     }
 }

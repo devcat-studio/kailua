@@ -12,6 +12,7 @@ use kailua_diag::{self, Locale, Localize, Localized, Kind, Report, Stop};
 pub enum VSReportKind {
     Note = 0,
     Info = 1,
+    Cause = 5,
     Warning = 2,
     Error = 3,
     Fatal = 4,
@@ -22,6 +23,7 @@ impl VSReportKind {
         match kind {
             Kind::Note => VSReportKind::Note,
             Kind::Info => VSReportKind::Info,
+            Kind::Cause => VSReportKind::Cause,
             Kind::Warning => VSReportKind::Warning,
             Kind::Error => VSReportKind::Error,
             Kind::Fatal => VSReportKind::Fatal,

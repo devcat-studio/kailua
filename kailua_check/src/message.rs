@@ -1,7 +1,9 @@
-use ty::{self, Key, Display, Displayed};
+use diag::{Ordinal, Displayed};
+use ty::{self, Key};
 use kailua_syntax::Name;
 
 pub type Ty<'a> = Displayed<'a, 'a, ty::Ty>;
+pub type SpannedTySeq<'a> = Displayed<'a, 'a, ty::SpannedTySeq>;
 pub type Slot<'a> = Displayed<'a, 'a, ty::Slot>;
 
 define_msg! { pub NoVar<'a> { name: &'a Name }:
@@ -19,25 +21,49 @@ define_msg! { pub NoType<'a> { name: &'a Name }:
     _    => "Type {name} is not defined",
 }
 
-define_msg! { pub NotSubtype<'a, Sub: 'a + Display,
-                                 Sup: 'a + Display> { sub: Displayed<'a, 'a, Sub>,
-                                                      sup: Displayed<'a, 'a, Sup> }:
+define_msg! { pub NotSubtype<'a> { sub: &'a str, sup: &'a str }:
     "ko" => "`{sub}`이(가) `{sup}`의 서브타입이 아닙니다",
     _    => "`{sub}` is not a subtype of `{sup}`",
 }
 
-define_msg! { pub NotEqual<'a, Lhs: 'a + Display,
-                               Rhs: 'a + Display> { lhs: Displayed<'a, 'a, Lhs>,
-                                                    rhs: Displayed<'a, 'a, Rhs> }:
+define_msg! { pub NotSubtypeInFuncArgs<'a> { sub: &'a str, sup: &'a str, index: Ordinal }:
+    "ko" => "함수의 {index} 인자 `{sub}`이(가) `{sup}`의 서브타입이 아닙니다",
+    _    => "{index:+} function argument `{sub}` is not a subtype of `{sup}`",
+}
+
+define_msg! { pub NotSubtypeInFuncReturns<'a> { sub: &'a str, sup: &'a str, index: Ordinal }:
+    "ko" => "함수의 {index} 반환값인 `{sub}`이(가) `{sup}`의 서브타입이 아닙니다",
+    _    => "{index:+} return type `{sub}` is not a subtype of `{sup}`",
+}
+
+define_msg! { pub NotEqual<'a> { lhs: &'a str, rhs: &'a str }:
     "ko" => "`{lhs}`와(과) `{rhs}`이(가) 같은 타입이 아닙니다",
     _    => "`{lhs}` does not equal to `{rhs}`",
 }
 
-define_msg! { pub InvalidUnionType<'a, Lhs: 'a + Display,
-                                       Rhs: 'a + Display> { lhs: Displayed<'a, 'a, Lhs>,
-                                                            rhs: Displayed<'a, 'a, Rhs> }:
+define_msg! { pub NotEqualInFuncArgs<'a> { lhs: &'a str, rhs: &'a str, index: Ordinal }:
+    "ko" => "함수의 {index} 인자 `{lhs}`와(과) `{rhs}`이(가) 같은 타입이 아닙니다",
+    _    => "{index:+} function argument `{lhs}` does not equal to `{rhs}`",
+}
+
+define_msg! { pub NotEqualInFuncReturns<'a> { lhs: &'a str, rhs: &'a str, index: Ordinal }:
+    "ko" => "함수의 {index} 반환값인 `{lhs}`와(과) `{rhs}`이(가) 같은 타입이 아닙니다",
+    _    => "{index:+} return type `{lhs}` does not equal to `{rhs}`",
+}
+
+define_msg! { pub InvalidUnionType<'a> { lhs: &'a str, rhs: &'a str }:
     "ko" => "`{lhs}`와(과) `{rhs}`의 합 타입을 만들 수 없습니다",
     _    => "Cannot create a union type of `{lhs}` and `{rhs}`",
+}
+
+define_msg! { pub InvalidUnionTypeInFuncArgs<'a> { lhs: &'a str, rhs: &'a str, index: Ordinal }:
+    "ko" => "함수의 {index} 인자에서 `{lhs}`와(과) `{rhs}`의 합 타입을 만들 수 없습니다",
+    _    => "Cannot create a union type of `{lhs}` and `{rhs}` in the {index} function argument",
+}
+
+define_msg! { pub InvalidUnionTypeInFuncReturns<'a> { lhs: &'a str, rhs: &'a str, index: Ordinal }:
+    "ko" => "함수의 {index} 반환값에서 `{lhs}`와(과) `{rhs}`의 합 타입을 만들 수 없습니다",
+    _    => "Cannot create a union type of `{lhs}` and `{rhs}` in the {index} return type",
 }
 
 define_msg! { pub OtherTypeOrigin:
@@ -75,7 +101,12 @@ define_msg! { pub AlreadyDefinedType:
     _    => "The type was originally defined here",
 }
 
-define_msg! { pub WrongOperand<'a> { op: &'static str, lhs: Slot<'a>, rhs: Slot<'a> }:
+define_msg! { pub WrongUnaryOperand<'a> { op: &'static str, ty: Slot<'a> }:
+    "ko" => "{op} 연산자를 `{ty}`에 적용할 수 없습니다",
+    _    => "Cannot apply {op} operator to `{ty}`",
+}
+
+define_msg! { pub WrongBinaryOperands<'a> { op: &'static str, lhs: Slot<'a>, rhs: Slot<'a> }:
     "ko" => "{op} 연산자를 `{lhs}`와(과) `{rhs}`에 적용할 수 없습니다",
     _    => "Cannot apply {op} operator to `{lhs}` and `{rhs}`",
 }
@@ -108,6 +139,11 @@ define_msg! { pub CallToNonFunc<'a> { func: Ty<'a> }:
 define_msg! { pub CallToInexactType<'a> { func: Ty<'a> }:
     "ko" => "`{func}` 타입은 호출 가능하지만 아직 덜 추론되었습니다",
     _    => "The type `{func}` is callable but not known enough to call",
+}
+
+define_msg! { pub CallToWrongType<'a> { func: Ty<'a> }:
+    "ko" => "`{func}` 타입을 호출할 수 없습니다",
+    _    => "The type `{func}` cannot be called",
 }
 
 define_msg! { pub CallToAnyFunc<'a> { func: Ty<'a> }:
@@ -196,14 +232,45 @@ define_msg! { pub CannotAssign<'a> { lhs: Slot<'a>, rhs: Slot<'a> }:
     _    => "Cannot assign `{rhs}` into `{lhs}`",
 }
 
+define_msg! { pub NonNumericFor:
+    "ko" => "`for` 문의 인자로 숫자가 아닌 타입(들)이 쓰였습니다",
+    _    => "`for` statement was given non-numeric type(s)",
+}
+
 define_msg! { pub NonFuncIterator<'a> { iter: Ty<'a> }:
     "ko" => "`for`-`in` 문에 주어진 반복자가 함수가 아닌 `{iter}` 타입을 반환했습니다",
-    _    => "The iterator given to `for`-`in` statement returned a non-function `{iter}`",
+    _    => "The iterator given to `for`-`in` statement returned a non-function type `{iter}`",
+}
+
+define_msg! { pub BadFuncIterator<'a> { iter: Ty<'a> }:
+    "ko" => "`for`-`in` 문에 주어진 반복자가 예상치 못한 `{iter}` 타입을 반환했습니다",
+    _    => "The iterator given to `for`-`in` statement returned an unexpected type `{iter}`",
+}
+
+define_msg! { pub CannotExtendImplicitReturnType:
+    "ko" => "이 함수의 반환 타입을 암묵적으로 확장할 수 없습니다",
+    _    => "Cannot extend the implicit return type of this function",
+}
+
+define_msg! { pub CannotReturn<'a> { returns: SpannedTySeq<'a>, ty: SpannedTySeq<'a> }:
+    "ko" => "지정된 `{returns}` 타입과 호환되지 않는 `{ty}`을(를) 반환하려 했습니다",
+    _    => "Attempted to return a type `{ty}` which is incompatible to \
+             given return type `{returns}`",
+}
+
+define_msg! { pub BadRecursiveCall:
+    "ko" => "재귀호출되는 함수가 필요로 하는 타입과 실제 타입이 호환되지 않습니다",
+    _    => "A required type and the actual type of the recursive function is not compatible",
 }
 
 define_msg! { pub BuiltinGivenLessArgs<'a> { name: &'a str, nargs: usize }:
     "ko" => "`{name}` 내장 함수는 인자가 적어도 {nargs}개 필요합니다",
     _    => "`{name}` needs at least {nargs} argument(s)",
+}
+
+define_msg! { pub CannotOpenLibrary:
+    "ko" => "`--# open` 명령에 주어진 내장 라이브러리 이름을 찾을 수 없습니다",
+    _    => "Cannot find the built-in library name given to `--# open` directive",
 }
 
 define_msg! { pub CannotResolveModName:
@@ -241,6 +308,13 @@ define_msg! { pub UnknownLiteralTypeName:
 define_msg! { pub UnknownAttrName<'a> { name: &'a Name }:
     "ko" => "{name} 타입 속성을 알 수 없어서 무시합니다",
     _    => "{name} is an unknown type attribute and ignored",
+}
+
+define_msg! { pub CannotAssignToPackagePath<'a> { name: &'a str }:
+    "ko" => "`{name}` 내장 변수에 값을 저장하다 문제가 생겨서 \
+             `require` 경로를 찾는데 문제가 있을 수 있습니다",
+    _    => "Cannot assignto the `{name}` built-in variable; \
+             subsequent `require` may be unable to find the module path",
 }
 
 define_msg! { pub UnknownAssignToPackagePath<'a> { name: &'a str }:
@@ -391,5 +465,20 @@ define_msg! { pub NoCheckRequiresTypedReturns:
 define_msg! { pub UnsupportedErrorType:
     "ko" => "`error \"메시지\"` 타입은 아직 지원되지 않습니다",
     _    => "`error \"message\"` type is not yet supported",
+}
+
+define_msg! { pub DuplicateFieldNameInRec<'a> { name: &'a Name }:
+    "ko" => "타입에서 레코드 이름 {name}이 중복됩니다",
+    _    => "Duplicate record field {name} in the type specification",
+}
+
+define_msg! { pub FirstFieldNameInRec:
+    "ko" => "여기서 처음 나왔습니다",
+    _    => "The first duplicate appeared here",
+}
+
+define_msg! { pub UnsupportedUnionTypeSpec:
+    "ko" => "이 합 타입은 타입 명세에서 지원되지 않습니다",
+    _    => "This union type is not supported in the specification",
 }
 

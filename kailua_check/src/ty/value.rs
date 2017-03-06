@@ -2,15 +2,16 @@ use std::fmt;
 use std::ops;
 use std::mem;
 use std::borrow::Cow;
+use std::result;
+use std::collections::{hash_map, HashMap};
 
 use kailua_env::{Spanned, WithLoc};
-use kailua_syntax::{K, Kind, SlotKind, Str};
-use kailua_diag::Reporter;
-use diag::CheckResult;
+use kailua_syntax::{K, Kind, SlotKind, Str, Name};
+use kailua_diag::{Reporter, Locale};
+use diag::{CheckResult, Origin, TypeReport, TypeResult, TypeReportHint, TypeReportMore, Display};
 use super::{F, Slot};
-use super::{TypeContext, NoTypeContext, TypeResolver, Lattice, Union, TySeq, Display};
+use super::{TypeContext, NoTypeContext, TypeResolver, Lattice, Union, TySeq};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, Tag, Class};
-use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 use message as m;
 
@@ -337,7 +338,7 @@ impl<'a> T<'a> {
         }
     }
 
-    pub fn filter_by_flags(self, flags: Flags, ctx: &mut TypeContext) -> CheckResult<T<'a>> {
+    pub fn filter_by_flags(self, flags: Flags, ctx: &mut TypeContext) -> TypeResult<T<'a>> {
         fn flags_to_ubound(flags: Flags) -> T<'static> {
             assert!(!flags.intersects(T_DYNAMIC));
 
@@ -364,7 +365,7 @@ impl<'a> T<'a> {
             }
         }
 
-        fn narrow_tvar(tvar: TVar, flags: Flags, ctx: &mut TypeContext) -> CheckResult<TVar> {
+        fn narrow_tvar(tvar: TVar, flags: Flags, ctx: &mut TypeContext) -> TypeResult<TVar> {
             let ubound = flags_to_ubound(flags);
 
             // make a type variable i such that i <: ubound and i <: tvar
@@ -432,87 +433,105 @@ impl<'a> Union<Unioned> for T<'a> {
     type Output = Unioned;
 
     fn union(&self, other: &Unioned, explicit: bool,
-             ctx: &mut TypeContext) -> CheckResult<Unioned> {
-        Unioned::from(self)?.union(other, explicit, ctx)
+             ctx: &mut TypeContext) -> TypeResult<Unioned> {
+        let lhs = Unioned::from(self, ctx)?;
+        lhs.union(other, explicit, ctx)
     }
 }
 
 impl<'a> Lattice<Unioned> for T<'a> {
     // assumes that the Unioned itself has been simplified.
-    fn assert_sub(&self, other: &Unioned, ctx: &mut TypeContext) -> CheckResult<()> {
-        // try to match each component
-        match *self {
-            T::Dynamic(_) | T::None => return Ok(()),
+    fn assert_sub(&self, other: &Unioned, ctx: &mut TypeContext) -> TypeResult<()> {
+        (|| {
+            // try to match each component
+            let ok = match *self {
+                T::Dynamic(_) | T::None => true,
 
-            T::Boolean  => if other.simple.contains(U_BOOLEAN)  { return Ok(()); },
-            T::True     => if other.simple.contains(U_TRUE)     { return Ok(()); },
-            T::False    => if other.simple.contains(U_FALSE)    { return Ok(()); },
-            T::Thread   => if other.simple.contains(U_THREAD)   { return Ok(()); },
-            T::UserData => if other.simple.contains(U_USERDATA) { return Ok(()); },
+                T::Boolean  => other.simple.contains(U_BOOLEAN),
+                T::True     => other.simple.contains(U_TRUE),
+                T::False    => other.simple.contains(U_FALSE),
+                T::Thread   => other.simple.contains(U_THREAD),
+                T::UserData => other.simple.contains(U_USERDATA),
 
-            T::Number => match other.numbers {
-                Some(Numbers::All) => { return Ok(()); }
-                _ => {}
-            },
-            T::Integer => match other.numbers {
-                Some(Numbers::All) | Some(Numbers::Int) => { return Ok(()); }
-                _ => {}
-            },
-            T::Int(lhs) => match other.numbers {
-                Some(Numbers::All) | Some(Numbers::Int) => { return Ok(()); }
-                Some(Numbers::Some(ref rhs)) if rhs.contains(&lhs) => { return Ok(()); }
-                Some(Numbers::One(rhs)) if lhs == rhs => { return Ok(()); }
-                _ => {}
-            },
+                T::Number => match other.numbers {
+                    Some(Numbers::All) => true,
+                    _ => false,
+                },
+                T::Integer => match other.numbers {
+                    Some(Numbers::All) | Some(Numbers::Int) => true,
+                    _ => false,
+                },
+                T::Int(lhs) => match other.numbers {
+                    Some(Numbers::All) | Some(Numbers::Int) => true,
+                    Some(Numbers::Some(ref rhs)) => rhs.contains(&lhs),
+                    Some(Numbers::One(rhs)) => lhs == rhs,
+                    _ => false,
+                },
 
-            T::String => match other.strings {
-                Some(Strings::All) => { return Ok(()); }
-                _ => {}
-            },
-            T::Str(ref lhs) => match other.strings {
-                Some(Strings::All) => { return Ok(()); }
-                Some(Strings::Some(ref rhs)) if rhs.contains(lhs) => { return Ok(()); }
-                Some(Strings::One(ref rhs)) if **lhs == *rhs => { return Ok(()); }
-                _ => {}
-            },
+                T::String => match other.strings {
+                    Some(Strings::All) => true,
+                    _ => false,
+                },
+                T::Str(ref lhs) => match other.strings {
+                    Some(Strings::All) => true,
+                    Some(Strings::Some(ref rhs)) => rhs.contains(lhs),
+                    Some(Strings::One(ref rhs)) => **lhs == *rhs,
+                    _ => false,
+                },
 
-            T::Tables(ref lhs) =>
-                if let Some(ref num) = other.tables { return lhs.assert_sub(num, ctx); },
-            T::Functions(ref lhs) =>
-                if let Some(ref num) = other.functions { return lhs.assert_sub(num, ctx); },
-            T::Class(c) => if other.classes.contains(&c) { return Ok(()); },
+                T::Tables(ref lhs) => {
+                    if let Some(ref num) = other.tables {
+                        return lhs.assert_sub(num, ctx);
+                    }
+                    false
+                }
+                T::Functions(ref lhs) => {
+                    if let Some(ref num) = other.functions {
+                        return lhs.assert_sub(num, ctx);
+                    }
+                    false
+                },
+                T::Class(c) => other.classes.contains(&c),
 
-            T::TVar(lhs) => {
-                return ctx.assert_tvar_sub(lhs, &Ty::new(T::Union(Cow::Owned(other.clone()))));
-            },
+                T::TVar(lhs) => {
+                    let otherty = &Ty::new(T::Union(Cow::Owned(other.clone())));
+                    return ctx.assert_tvar_sub(lhs, otherty);
+                },
 
-            T::Union(ref lhs) => return lhs.assert_sub(other, ctx),
+                T::Union(ref lhs) => {
+                    return lhs.assert_sub(other, ctx);
+                },
 
-            _ => {}
-        }
+                _ => false,
+            };
 
-        // the union sans type variable is not a subtype of self.
-        // XXX we can try asserting an additional constraint to the union's type variable if any,
-        // but for now we bail out
-        error_not_sub(self, other)
+            if ok {
+                Ok(())
+            } else {
+                // the union sans type variable is not a subtype of self.
+                // XXX we can try asserting an additional constraint to the union's type variable
+                // if any, but for now we bail out
+                Err(ctx.gen_report())
+            }
+        })().map_err(|r: TypeReport| r.not_sub(Origin::TUnion, self, other, ctx))
     }
 
     // assumes that the Unioned itself has been simplified.
-    fn assert_eq(&self, other: &Unioned, ctx: &mut TypeContext) -> CheckResult<()> {
-        match *self {
-            T::Dynamic(_) => return Ok(()),
-            T::Union(ref lhs) => return lhs.assert_eq(other, ctx),
-            _ => {}
-        }
-
-        error_not_eq(self, other)
+    fn assert_eq(&self, other: &Unioned, ctx: &mut TypeContext) -> TypeResult<()> {
+        (|| {
+            match *self {
+                T::Dynamic(_) => Ok(()),
+                T::Union(ref lhs) => lhs.assert_eq(other, ctx),
+                _ => Err(ctx.gen_report()),
+            }
+        })().map_err(|r: TypeReport| r.not_eq(Origin::TUnion, self, other, ctx))
     }
 }
 
 impl<'a> T<'a> {
     // not intended to be used in public, because it can result in either T or Ty
     fn union<'b>(&self, other: &T<'b>, explicit: bool,
-                 ctx: &mut TypeContext) -> CheckResult<Result<T<'static>, Ty>> {
+                 ctx: &mut TypeContext) -> TypeResult<result::Result<T<'static>, Ty>> {
         fn resolve<'t, 'u>(t: &'t T<'u>,
                            ctx: &mut TypeContext) -> (Cow<'t, T<'u>>, Option<(Nil, Option<Tag>)>) {
             if let &T::TVar(tv) = t {
@@ -525,206 +544,214 @@ impl<'a> T<'a> {
             (Cow::Borrowed(t), None)
         }
 
-        // resolve type variables, which may result in Ty
-        let (t1, niltag1) = resolve(self, ctx);
-        let (t2, niltag2) = resolve(other, ctx);
+        (|| {
+            // resolve type variables, which may result in Ty
+            let (t1, niltag1) = resolve(self, ctx);
+            let (t2, niltag2) = resolve(other, ctx);
 
-        let t = match (&*t1, &*t2) {
-            // dynamic eclipses everything else
-            (&T::Dynamic(dyn1), &T::Dynamic(dyn2)) => T::Dynamic(dyn1.union(dyn2)),
-            (&T::Dynamic(dyn), _) => T::Dynamic(dyn),
-            (_, &T::Dynamic(dyn)) => T::Dynamic(dyn),
+            let t = match (&*t1, &*t2) {
+                // dynamic eclipses everything else
+                (&T::Dynamic(dyn1), &T::Dynamic(dyn2)) => T::Dynamic(dyn1.union(dyn2)),
+                (&T::Dynamic(dyn), _) => T::Dynamic(dyn),
+                (_, &T::Dynamic(dyn)) => T::Dynamic(dyn),
 
-            // top eclipses everything else except for dynamic and oops
-            (&T::All, _) => T::All,
-            (_, &T::All) => T::All,
+                // top eclipses everything else except for dynamic and oops
+                (&T::All, _) => T::All,
+                (_, &T::All) => T::All,
 
-            (&T::None, ty) => ty.clone().into_send(),
-            (ty, &T::None) => ty.clone().into_send(),
+                (&T::None, ty) => ty.clone().into_send(),
+                (ty, &T::None) => ty.clone().into_send(),
 
-            (&T::Boolean,  &T::Boolean)  => T::Boolean,
-            (&T::Boolean,  &T::True)     => T::Boolean,
-            (&T::Boolean,  &T::False)    => T::Boolean,
-            (&T::True,     &T::Boolean)  => T::Boolean,
-            (&T::False,    &T::Boolean)  => T::Boolean,
-            (&T::True,     &T::True)     => T::True,
-            (&T::True,     &T::False)    => T::Boolean,
-            (&T::False,    &T::True)     => T::Boolean,
-            (&T::False,    &T::False)    => T::False,
-            (&T::Thread,   &T::Thread)   => T::Thread,
-            (&T::UserData, &T::UserData) => T::UserData,
+                (&T::Boolean,  &T::Boolean)  => T::Boolean,
+                (&T::Boolean,  &T::True)     => T::Boolean,
+                (&T::Boolean,  &T::False)    => T::Boolean,
+                (&T::True,     &T::Boolean)  => T::Boolean,
+                (&T::False,    &T::Boolean)  => T::Boolean,
+                (&T::True,     &T::True)     => T::True,
+                (&T::True,     &T::False)    => T::Boolean,
+                (&T::False,    &T::True)     => T::Boolean,
+                (&T::False,    &T::False)    => T::False,
+                (&T::Thread,   &T::Thread)   => T::Thread,
+                (&T::UserData, &T::UserData) => T::UserData,
 
-            (&T::Number,     &T::Number)     => T::Number,
-            (&T::Integer,    &T::Number)     => T::Number,
-            (&T::Int(_),     &T::Number)     => T::Number,
-            (&T::Number,     &T::Integer)    => T::Number,
-            (&T::Number,     &T::Int(_))     => T::Number,
-            (&T::Integer,    &T::Integer)    => T::Integer,
-            (&T::Int(_),     &T::Integer)    => T::Integer,
-            (&T::Integer,    &T::Int(_))     => T::Integer,
-            (&T::String,     &T::String)     => T::String,
-            (&T::Str(_),     &T::String)     => T::String,
-            (&T::String,     &T::Str(_))     => T::String,
+                (&T::Number,     &T::Number)     => T::Number,
+                (&T::Integer,    &T::Number)     => T::Number,
+                (&T::Int(_),     &T::Number)     => T::Number,
+                (&T::Number,     &T::Integer)    => T::Number,
+                (&T::Number,     &T::Int(_))     => T::Number,
+                (&T::Integer,    &T::Integer)    => T::Integer,
+                (&T::Int(_),     &T::Integer)    => T::Integer,
+                (&T::Integer,    &T::Int(_))     => T::Integer,
+                (&T::String,     &T::String)     => T::String,
+                (&T::Str(_),     &T::String)     => T::String,
+                (&T::String,     &T::Str(_))     => T::String,
 
-            (&T::Int(a), &T::Int(b)) if a == b => T::Int(a),
-            (&T::Int(_), &T::Int(_)) if !explicit => T::Integer,
+                (&T::Int(a), &T::Int(b)) if a == b => T::Int(a),
+                (&T::Int(_), &T::Int(_)) if !explicit => T::Integer,
 
-            (&T::Str(ref a), &T::Str(ref b)) if a == b => T::Str(Cow::Owned((**a).to_owned())),
-            (&T::Str(_),     &T::Str(_))     if !explicit => T::String,
+                (&T::Str(ref a), &T::Str(ref b)) if a == b => T::Str(Cow::Owned((**a).to_owned())),
+                (&T::Str(_),     &T::Str(_))     if !explicit => T::String,
 
-            (&T::Class(a), &T::Class(b)) if a == b => T::Class(a),
-            (&T::Class(_), &T::Class(_)) if !explicit => {
-                return Err("invalid implicit union".into());
-            },
+                (&T::Class(a), &T::Class(b)) if a == b => T::Class(a),
+                (&T::Class(_), &T::Class(_)) if !explicit => return Err(ctx.gen_report()),
 
-            // tables and functions cannot be `union`ed in any way and
-            // any attempt to union different types of those kinds is an error
-            (&T::Tables(ref a), &T::Tables(ref b)) => {
-                a.assert_eq(b, ctx)?;
-                T::Tables(Cow::Owned(a.clone().into_owned()))
-            },
-            (&T::Functions(ref a), &T::Functions(ref b)) => {
-                a.assert_eq(b, ctx)?;
-                T::Functions(Cow::Owned(a.clone().into_owned()))
-            },
+                // tables and functions cannot be `union`ed in any way and
+                // any attempt to union different types of those kinds is an error
+                (&T::Tables(ref a), &T::Tables(ref b)) => {
+                    a.assert_eq(b, ctx)?;
+                    T::Tables(Cow::Owned(a.clone().into_owned()))
+                },
+                (&T::Functions(ref a), &T::Functions(ref b)) => {
+                    a.assert_eq(b, ctx)?;
+                    T::Functions(Cow::Owned(a.clone().into_owned()))
+                },
 
-            // unresolved type variables should be equal to each other to be unioned
-            (&T::TVar(a), &T::TVar(b)) => {
-                ctx.assert_tvar_eq_tvar(a, b)?;
-                T::TVar(a)
-            },
-            (&T::TVar(a), b) => {
-                ctx.assert_tvar_eq(a, &Ty::new(b.clone().into_send()))?;
-                T::TVar(a)
-            },
-            (a, &T::TVar(b)) => {
-                ctx.assert_tvar_eq(b, &Ty::new(a.clone().into_send()))?;
-                T::TVar(b)
-            },
+                // unresolved type variables should be equal to each other to be unioned
+                (&T::TVar(a), &T::TVar(b)) => {
+                    ctx.assert_tvar_eq_tvar(a, b)?;
+                    T::TVar(a)
+                },
+                (&T::TVar(a), b) => {
+                    ctx.assert_tvar_eq(a, &Ty::new(b.clone().into_send()))?;
+                    T::TVar(a)
+                },
+                (a, &T::TVar(b)) => {
+                    ctx.assert_tvar_eq(b, &Ty::new(a.clone().into_send()))?;
+                    T::TVar(b)
+                },
 
-            (a, b) => Unioned::from(&a)?.union(&Unioned::from(&b)?, explicit, ctx)?.simplify(),
-        };
+                (a, b) => {
+                    let a = Unioned::from(&a, ctx)?;
+                    let b = Unioned::from(&b, ctx)?;
+                    a.union(&b, explicit, ctx)?.simplify()
+                },
+            };
 
-        match (niltag1, niltag2) {
-            (Some((nil1, tag1)), Some((nil2, tag2))) => {
-                let nil = nil1.union(nil2);
-                let tag = if tag1 == tag2 { tag1 } else { None };
-                Ok(Err(Ty { inner: Box::new(TyInner::new(t, nil, tag)) }))
-            },
-            (Some((nil, tag)), None) | (None, Some((nil, tag))) => {
-                Ok(Err(Ty { inner: Box::new(TyInner::new(t, nil, tag)) }))
-            },
-            (None, None) => Ok(Ok(t)),
-        }
+            match (niltag1, niltag2) {
+                (Some((nil1, tag1)), Some((nil2, tag2))) => {
+                    let nil = nil1.union(nil2);
+                    let tag = if tag1 == tag2 { tag1 } else { None };
+                    Ok(Err(Ty { inner: Box::new(TyInner::new(t, nil, tag)) }))
+                },
+                (Some((nil, tag)), None) | (None, Some((nil, tag))) => {
+                    Ok(Err(Ty { inner: Box::new(TyInner::new(t, nil, tag)) }))
+                },
+                (None, None) => Ok(Ok(t)),
+            }
+        })().map_err(|r: TypeReport| r.cannot_union(Origin::T, self, other, explicit, ctx))
     }
 }
 
 impl<'a, 'b> Lattice<T<'b>> for T<'a> {
-    fn assert_sub(&self, other: &T<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &T<'b>, ctx: &mut TypeContext) -> TypeResult<()> {
         debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
-        let ok = match (self, other) {
-            (&T::Dynamic(_), _) | (_, &T::Dynamic(_)) => true,
+        (|| {
+            let ok = match (self, other) {
+                (&T::Dynamic(_), _) | (_, &T::Dynamic(_)) => true,
 
-            (_, &T::All) => true,
+                (_, &T::All) => true,
 
-            (&T::None, _) => true,
-            (_, &T::None) => false,
+                (&T::None, _) => true,
+                (_, &T::None) => false,
 
-            (&T::Boolean,  &T::Boolean)  => true,
-            (&T::True,     &T::Boolean)  => true,
-            (&T::True,     &T::True)     => true,
-            (&T::False,    &T::Boolean)  => true,
-            (&T::False,    &T::False)    => true,
-            (&T::Thread,   &T::Thread)   => true,
-            (&T::UserData, &T::UserData) => true,
+                (&T::Boolean,  &T::Boolean)  => true,
+                (&T::True,     &T::Boolean)  => true,
+                (&T::True,     &T::True)     => true,
+                (&T::False,    &T::Boolean)  => true,
+                (&T::False,    &T::False)    => true,
+                (&T::Thread,   &T::Thread)   => true,
+                (&T::UserData, &T::UserData) => true,
 
-            (&T::Number,     &T::Number)     => true,
-            (&T::Integer,    &T::Number)     => true,
-            (&T::Int(_),     &T::Number)     => true,
-            (&T::Integer,    &T::Integer)    => true,
-            (&T::Int(_),     &T::Integer)    => true,
-            (&T::Int(a),     &T::Int(b))     => a == b,
-            (&T::String,     &T::String)     => true,
-            (&T::Str(_),     &T::String)     => true,
-            (&T::Str(ref a), &T::Str(ref b)) => *a == *b,
+                (&T::Number,     &T::Number)     => true,
+                (&T::Integer,    &T::Number)     => true,
+                (&T::Int(_),     &T::Number)     => true,
+                (&T::Integer,    &T::Integer)    => true,
+                (&T::Int(_),     &T::Integer)    => true,
+                (&T::Int(a),     &T::Int(b))     => a == b,
+                (&T::String,     &T::String)     => true,
+                (&T::Str(_),     &T::String)     => true,
+                (&T::Str(ref a), &T::Str(ref b)) => *a == *b,
 
-            (&T::Tables(ref a),    &T::Tables(ref b))    => return a.assert_sub(b, ctx),
-            (&T::Functions(ref a), &T::Functions(ref b)) => return a.assert_sub(b, ctx),
+                (&T::Tables(ref a),    &T::Tables(ref b))    => return a.assert_sub(b, ctx),
+                (&T::Functions(ref a), &T::Functions(ref b)) => return a.assert_sub(b, ctx),
 
-            (&T::Class(Class::Prototype(a)), &T::Class(Class::Prototype(b))) => {
-                a == b // prototypes are NOT compatible to each other!
-            },
-            (&T::Class(Class::Instance(a)), &T::Class(Class::Instance(b))) => {
-                ctx.is_subclass_of(a, b)
-            },
+                (&T::Class(Class::Prototype(a)), &T::Class(Class::Prototype(b))) => {
+                    a == b // prototypes are NOT compatible to each other!
+                },
+                (&T::Class(Class::Instance(a)), &T::Class(Class::Instance(b))) => {
+                    ctx.is_subclass_of(a, b)
+                },
 
-            (&T::Union(ref a), &T::Union(ref b)) => return a.assert_sub(b, ctx),
-            (&T::Union(_), &T::TVar(b)) => {
-                // do NOT try to split `T|U <: x` into `T <: x AND U <: x` if possible
-                return ctx.assert_tvar_sup(b, &Ty::new(self.clone().into_send()));
-            },
-            (&T::Union(ref a), b) => {
-                // a1 \/ a2 <: b === a1 <: b AND a2 <: b
-                return a.visit(|i| i.assert_sub(b, ctx));
-            },
+                (&T::Union(ref a), &T::Union(ref b)) => return a.assert_sub(b, ctx),
+                (&T::Union(_), &T::TVar(b)) => {
+                    // do NOT try to split `T|U <: x` into `T <: x AND U <: x` if possible
+                    return ctx.assert_tvar_sup(b, &Ty::new(self.clone().into_send()));
+                },
+                (&T::Union(ref a), b) => {
+                    // a1 \/ a2 <: b === a1 <: b AND a2 <: b
+                    return a.visit(|i| i.assert_sub(b, ctx));
+                },
 
-            (a, &T::Union(ref b)) => return a.assert_sub(&**b, ctx),
+                (a, &T::Union(ref b)) => return a.assert_sub(&**b, ctx),
 
-            (&T::TVar(a), &T::TVar(b)) => return a.assert_sub(&b, ctx),
-            (a, &T::TVar(b)) => return ctx.assert_tvar_sup(b, &Ty::new(a.clone().into_send())),
-            (&T::TVar(a), b) => return ctx.assert_tvar_sub(a, &Ty::new(b.clone().into_send())),
+                (&T::TVar(a), &T::TVar(b)) => return a.assert_sub(&b, ctx),
+                (a, &T::TVar(b)) => return ctx.assert_tvar_sup(b, &Ty::new(a.clone().into_send())),
+                (&T::TVar(a), b) => return ctx.assert_tvar_sub(a, &Ty::new(b.clone().into_send())),
 
-            (_, _) => false,
-        };
+                (_, _) => false,
+            };
 
-        if ok { Ok(()) } else { error_not_sub(self, other) }
+            if ok { Ok(()) } else { Err(ctx.gen_report()) }
+        })().map_err(|r: TypeReport| r.not_sub(Origin::T, self, other, ctx))
     }
 
-    fn assert_eq(&self, other: &T<'b>, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &T<'b>, ctx: &mut TypeContext) -> TypeResult<()> {
         debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
-        let ok = match (self, other) {
-            (&T::Dynamic(_), _) | (_, &T::Dynamic(_)) => true,
+        (|| {
+            let ok = match (self, other) {
+                (&T::Dynamic(_), _) | (_, &T::Dynamic(_)) => true,
 
-            (&T::All,  &T::All)  => true,
-            (&T::None, &T::None) => true,
+                (&T::All,  &T::All)  => true,
+                (&T::None, &T::None) => true,
 
-            (&T::Boolean,  &T::Boolean)  => true,
-            (&T::True,     &T::True)     => true,
-            (&T::False,    &T::False)    => true,
-            (&T::Thread,   &T::Thread)   => true,
-            (&T::UserData, &T::UserData) => true,
+                (&T::Boolean,  &T::Boolean)  => true,
+                (&T::True,     &T::True)     => true,
+                (&T::False,    &T::False)    => true,
+                (&T::Thread,   &T::Thread)   => true,
+                (&T::UserData, &T::UserData) => true,
 
-            (&T::Number,     &T::Number)     => true,
-            (&T::Integer,    &T::Integer)    => true,
-            (&T::Int(a),     &T::Int(b))     => a == b,
-            (&T::String,     &T::String)     => true,
-            (&T::Str(ref a), &T::Str(ref b)) => *a == *b,
+                (&T::Number,     &T::Number)     => true,
+                (&T::Integer,    &T::Integer)    => true,
+                (&T::Int(a),     &T::Int(b))     => a == b,
+                (&T::String,     &T::String)     => true,
+                (&T::Str(ref a), &T::Str(ref b)) => *a == *b,
 
-            (&T::Tables(ref a),    &T::Tables(ref b))    => return a.assert_eq(b, ctx),
-            (&T::Functions(ref a), &T::Functions(ref b)) => return a.assert_eq(b, ctx),
-            (&T::Class(a),         &T::Class(b))         => a == b,
+                (&T::Tables(ref a),    &T::Tables(ref b))    => return a.assert_eq(b, ctx),
+                (&T::Functions(ref a), &T::Functions(ref b)) => return a.assert_eq(b, ctx),
+                (&T::Class(a),         &T::Class(b))         => a == b,
 
-            (&T::TVar(a), &T::TVar(b)) => return a.assert_eq(&b, ctx),
-            (a, &T::TVar(b)) => return ctx.assert_tvar_eq(b, &Ty::new(a.clone().into_send())),
-            (&T::TVar(a), b) => return ctx.assert_tvar_eq(a, &Ty::new(b.clone().into_send())),
+                (&T::TVar(a), &T::TVar(b)) => return a.assert_eq(&b, ctx),
+                (a, &T::TVar(b)) => return ctx.assert_tvar_eq(b, &Ty::new(a.clone().into_send())),
+                (&T::TVar(a), b) => return ctx.assert_tvar_eq(a, &Ty::new(b.clone().into_send())),
 
-            (a, &T::Union(ref b)) => return a.assert_eq(&**b, ctx),
-            (&T::Union(ref _a), _b) => false, // XXX for now
+                (a, &T::Union(ref b)) => return a.assert_eq(&**b, ctx),
+                (&T::Union(ref _a), _b) => false, // XXX for now
 
-            (_, _) => false,
-        };
+                (_, _) => false,
+            };
 
-        if ok { Ok(()) } else { error_not_eq(self, other) }
+            if ok { Ok(()) } else { Err(ctx.gen_report()) }
+        })().map_err(|r: TypeReport| r.not_eq(Origin::T, self, other, ctx))
     }
 }
 
 impl<'a, 'b> ops::BitOr<T<'b>> for T<'a> {
     type Output = T<'static>;
     fn bitor(self, rhs: T<'b>) -> T<'static> {
-        let ty: CheckResult<_> = self.union(&rhs, false, &mut NoTypeContext);
-        let ty: Result<T<'static>, Ty> = ty.expect("T | T failed");
+        let ty: TypeResult<_> = self.union(&rhs, false, &mut NoTypeContext);
+        let ty: result::Result<T<'static>, Ty> = ty.expect("T | T failed");
         ty.expect("type variable should not exist in T | T")
     }
 }
@@ -761,13 +788,24 @@ impl<'a, 'b> PartialEq<T<'b>> for T<'a> {
 }
 
 impl<'a> Display for T<'a> {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter,
+                     locale: Locale, ctx: &TypeContext) -> fmt::Result {
         match *self {
             T::Dynamic(Dyn::User) => write!(f, "WHATEVER"),
-            T::Dynamic(Dyn::Oops) => write!(f, "<error type>"),
+            T::Dynamic(Dyn::Oops) => {
+                match &locale[..] {
+                    "ko" => write!(f, "<오류>"),
+                    _    => write!(f, "<error>"),
+                }
+            },
 
             T::All      => write!(f, "any"),
-            T::None     => write!(f, "<impossible type>"),
+            T::None     => {
+                match &locale[..] {
+                    "ko" => write!(f, "<불가능한 타입>"),
+                    _    => write!(f, "<impossible type>"),
+                }
+            },
             T::Boolean  => write!(f, "boolean"),
             T::True     => write!(f, "true"),
             T::False    => write!(f, "false"),
@@ -782,16 +820,19 @@ impl<'a> Display for T<'a> {
 
             T::TVar(tv) => {
                 if let Some(t) = ctx.get_tvar_exact_type(tv) {
-                    fmt::Display::fmt(&t.display(ctx), f)
+                    fmt::Display::fmt(&t.display(ctx).localized(locale), f)
                 } else {
-                    write!(f, "<unknown type>")
+                    match &locale[..] {
+                        "ko" => write!(f, "<알 수 없는 타입>"),
+                        _    => write!(f, "<unknown type>"),
+                    }
                 }
             },
 
-            T::Tables(ref tab)     => fmt::Display::fmt(&tab.display(ctx), f),
-            T::Functions(ref func) => fmt::Display::fmt(&func.display(ctx), f),
+            T::Tables(ref tab)     => fmt::Display::fmt(&tab.display(ctx).localized(locale), f),
+            T::Functions(ref func) => fmt::Display::fmt(&func.display(ctx).localized(locale), f),
             T::Class(c)            => ctx.fmt_class(c, f),
-            T::Union(ref u)        => fmt::Display::fmt(&u.display(ctx), f),
+            T::Union(ref u)        => fmt::Display::fmt(&u.display(ctx).localized(locale), f),
         }
     }
 }
@@ -897,8 +938,8 @@ impl TyInner {
         self.ty = f(ty);
     }
 
-    fn remap_ty_res<E, F>(&mut self, f: F) -> Result<(), E>
-            where F: FnOnce(T<'static>) -> Result<T<'static>, E> {
+    fn remap_ty_res<E, F>(&mut self, f: F) -> result::Result<(), E>
+            where F: FnOnce(T<'static>) -> result::Result<T<'static>, E> {
         let ty = mem::replace(&mut self.ty, T::None);
         self.ty = f(ty)?;
         Ok(())
@@ -985,13 +1026,30 @@ impl Ty {
             },
 
             K::Record(ref fields) => {
+                // while the parser checks for duplicates, AST does not actually prevent them
                 let mut newfields = Vec::new();
+                let mut seen = HashMap::new(); // value denotes the first span
                 for &(ref name, ref slotkind) in fields {
                     let slot = slot_from_slotkind(&slotkind.base, resolv)?;
-                    newfields.push((name.base.clone().into(), slot));
+                    match seen.entry(name.base.clone()) {
+                        hash_map::Entry::Occupied(e) => {
+                            resolv.error(name.span,
+                                         m::DuplicateFieldNameInRec {
+                                             name: &Name::from(name.base.clone())
+                                         })
+                                  .note(*e.get(), m::FirstFieldNameInRec {})
+                                  .done()?;
+                        }
+                        hash_map::Entry::Vacant(e) => {
+                            e.insert(name.span);
+                            newfields.push((name.base.clone().into(), slot));
+                        }
+                    }
                 }
                 let rvar = resolv.context().gen_rvar();
-                resolv.context().assert_rvar_includes(rvar.clone(), &newfields)?;
+                resolv.context().assert_rvar_includes(rvar.clone(), &newfields).expect(
+                    "cannot insert disjoint fields into a fresh row variable"
+                );
                 Ty::new(T::Tables(Cow::Owned(Tables::Fields(rvar))))
             }
 
@@ -1003,7 +1061,9 @@ impl Ty {
                     newfields.push((key, slot));
                 }
                 let rvar = resolv.context().gen_rvar();
-                resolv.context().assert_rvar_includes(rvar.clone(), &newfields)?;
+                resolv.context().assert_rvar_includes(rvar.clone(), &newfields).expect(
+                    "cannot insert disjoint fields into a fresh row variable"
+                );
                 Ty::new(T::Tables(Cow::Owned(Tables::Fields(rvar))))
             },
 
@@ -1032,7 +1092,17 @@ impl Ty {
                 let mut ty = Ty::from_kind(&kinds[0], resolv)?.with_loc(kind);
                 for k in &kinds[1..] {
                     let t = Ty::from_kind(k, resolv)?.with_loc(k);
-                    ty = ty.union(&t, true, resolv.context())?.with_loc(kind);
+                    match ty.union(&t, true, resolv.context()) {
+                        Ok(t) => {
+                            ty = t.with_loc(kind);
+                        }
+                        Err(r) => {
+                            resolv.error(kind, m::UnsupportedUnionTypeSpec {})
+                                  .report_types(r, TypeReportHint::None)
+                                  .done()?;
+                            return Ok(Ty::dummy());
+                        }
+                    }
                 }
                 ty.base
             }
@@ -1119,7 +1189,7 @@ impl Ty {
         flags
     }
 
-    pub fn filter_by_flags(mut self, flags: Flags, ctx: &mut TypeContext) -> CheckResult<Ty> {
+    pub fn filter_by_flags(mut self, flags: Flags, ctx: &mut TypeContext) -> TypeResult<Ty> {
         self.inner.remap_ty_res(|t| t.filter_by_flags(flags, ctx))?;
         if !flags.contains(T_NOISY_NIL) {
             let nil = self.inner.nil().without_nil();
@@ -1178,6 +1248,7 @@ fn tag_is_eq(lhs: Option<Tag>, rhs: Option<Tag>) -> bool {
 
 macro_rules! define_ty_impls {
     ($(impl[$($param:tt)*] $l:ident: $lhs:ty, $r:ident: $rhs:ty {
+        origin = $origin:expr;
         text = $ltext:expr, $rtext:expr;
         ty = $lty:expr, $rty:expr;
         tag = $ltag:expr, $rtag:expr;
@@ -1191,12 +1262,13 @@ macro_rules! define_ty_impls {
             type Output = Ty;
 
             fn union(&self, other: &$rhs, explicit: bool,
-                     ctx: &mut TypeContext) -> CheckResult<Ty> {
+                     ctx: &mut TypeContext) -> TypeResult<Ty> {
                 let $l = self;
                 let $r = other;
-                let mut ty = match $lty.union($rty, explicit, ctx)? {
-                    Ok(t) => Ty { inner: Box::new(TyInner::new(t, Nil::Absent, None)) },
-                    Err(ty) => ty,
+                let mut ty = match $lty.union($rty, explicit, ctx) {
+                    Ok(Ok(t)) => Ty { inner: Box::new(TyInner::new(t, Nil::Absent, None)) },
+                    Ok(Err(ty)) => ty,
+                    Err(r) => return Err(r.cannot_union($origin, self, other, explicit, ctx)),
                 };
                 ty.inner.union_nil($union_nil);
                 ty.inner.union_tag($union_tag);
@@ -1205,143 +1277,149 @@ macro_rules! define_ty_impls {
         }
 
         impl<$($param)*> Lattice<$rhs> for $lhs {
-            fn assert_sub(&self, other: &$rhs, ctx: &mut TypeContext) -> CheckResult<()> {
+            fn assert_sub(&self, other: &$rhs, ctx: &mut TypeContext) -> TypeResult<()> {
                 debug!(concat!("asserting a constraint {:?} (", $ltext, ") <: {:?} (", $rtext, ")"),
                        self, other);
 
-                let $l = self;
-                let $r = other;
+                (|| {
+                    let $l = self;
+                    let $r = other;
 
-                if !tag_is_sub($ltag, $rtag) {
-                    return error_not_sub(self, other);
-                }
+                    if !tag_is_sub($ltag, $rtag) {
+                        return Err(ctx.gen_report());
+                    }
 
-                match ($lty, $rty) {
-                    // Dynamic and All always contain nil, so handled separately here
-                    (&T::Dynamic(_), _) | (_, &T::Dynamic(_)) | (_, &T::All) => Ok(()),
+                    match ($lty, $rty) {
+                        // Dynamic and All always contain nil, so handled separately here
+                        (&T::Dynamic(_), _) | (_, &T::Dynamic(_)) | (_, &T::All) => Ok(()),
 
-                    // for remaining cases handle nils as follows:
-                    //
-                    // ty1 | nil1 <: ty2 | nil2
-                    // ==> (ty1 <: ty2 | nil2) AND (nil1 <: ty2 | nil2)
-                    // ==> ((ty1 <: ty2) OR (ty1 <: nil2)) AND ((nil1 <: ty2) OR (nil1 <: nil2))
-                    //
-                    // it should be noted that `ty <: nil` is false unless ty is bottom
-                    // (ignored here because we don't make use of bottom type in general),
-                    // and `nil <: ty` is equivalent to `nil <: Nil::Absent`, which translate to
-                    // `nil != Nil::Noisy` because it's the only case that <: on nils can fail.
+                        // for remaining cases handle nils as follows:
+                        //
+                        // ty1 | nil1 <: ty2 | nil2
+                        // ==> (ty1 <: ty2 | nil2) AND (nil1 <: ty2 | nil2)
+                        // ==> ((ty1 <: ty2) OR (ty1 <: nil2)) AND ((nil1 <: ty2) OR (nil1 <: nil2))
+                        //
+                        // it should be noted that `ty <: nil` is false unless ty is bottom
+                        // (ignored here because we don't make use of bottom type in general),
+                        // and `nil <: ty` is equivalent to `nil <: Nil::Absent`, which translate to
+                        // `nil != Nil::Noisy` because it's the only case that <: on nils can fail.
 
-                    // if both ty1 and ty2 are type variables v1 and v2, we have two conditions:
-                    // - `(v1 <: v2) AND (nil1 <: v2)`
-                    // - `(v1 <: v2) AND (nil1 <: nil2)`
-                    // (as noted above, `ty1 <: nil2` is ignored as it is same to `ty1 = bottom`.)
-                    //
-                    // unlike other cases, `nil1 <: v2` cannot be combined to `v1 <: v2`.
-                    // so we add a constraint `v1 <: v2` first, and depending on `nil1 <: nil2`,
-                    // we conditionally add another constraint `nil1 <: v2`.
-                    //
-                    // the second constraint is currently not easy to satisfy due to the lack of
-                    // proper constraint solver, but it is correct per se because an inability to
-                    // solve constraints does not make a wrong code checked anyway.
-                    (&T::TVar(v1), &T::TVar(v2)) => {
-                        ctx.assert_tvar_sub_tvar(v1, v2)?;
-                        let lnil = $lnil;
-                        if !lnil.is_sub($rnil) {
-                            ctx.assert_tvar_sup(v2, &Ty::new(T::None).or_nil(lnil))?;
-                        }
-                        Ok(())
-                    },
+                        // if both ty1 and ty2 are type variables v1 and v2, we have two conditions:
+                        // - `(v1 <: v2) AND (nil1 <: v2)`
+                        // - `(v1 <: v2) AND (nil1 <: nil2)`
+                        // (as noted above `ty1 <: nil2` is ignored as it's same to `ty1 = bottom`.)
+                        //
+                        // unlike other cases, `nil1 <: v2` cannot be combined to `v1 <: v2`.
+                        // so we add a constraint `v1 <: v2` first, and depending on `nil1 <: nil2`,
+                        // we conditionally add another constraint `nil1 <: v2`.
+                        //
+                        // the second constraint is currently not easy to satisfy due to the lack of
+                        // proper constraint solver, but it is correct per se because an inability
+                        // to solve constraints does not make a wrong code checked anyway.
+                        (&T::TVar(v1), &T::TVar(v2)) => {
+                            ctx.assert_tvar_sub_tvar(v1, v2)?;
+                            let lnil = $lnil;
+                            if !lnil.is_sub($rnil) {
+                                ctx.assert_tvar_sup(v2, &Ty::new(T::None).or_nil(lnil))?;
+                            }
+                            Ok(())
+                        },
 
-                    // if ty2 is a type variable v2 and ty1 is not, first check for `nil1 <: nil2`
-                    // and if true `ty1 <: v2` is a sufficient condition and added to constraints.
-                    // otherwise `nil1 <: v2` is also required, so a combined condition
-                    // `ty1 | nil1 <: v2` is added to constraints instead (easier to solve).
-                    (_, &T::TVar(v2)) => {
-                        if $lnil.is_sub($rnil) {
-                            // nil can be removed from the constraint
-                            ctx.assert_tvar_sup(v2, $lhs_without_nil)
-                        } else {
-                            ctx.assert_tvar_sup(v2, $lhs_as_is)
-                        }
-                    },
+                        // if ty2 is a type variable v2 and ty1 is not,
+                        // first check for `nil1 <: nil2` and if true `ty1 <: v2` is
+                        // a sufficient condition and added to constraints.
+                        // otherwise `nil1 <: v2` is also required, so a combined condition
+                        // `ty1 | nil1 <: v2` is added to constraints instead (easier to solve).
+                        (_, &T::TVar(v2)) => {
+                            if $lnil.is_sub($rnil) {
+                                // nil can be removed from the constraint
+                                ctx.assert_tvar_sup(v2, $lhs_without_nil)
+                            } else {
+                                ctx.assert_tvar_sup(v2, $lhs_as_is)
+                            }
+                        },
 
-                    // if ty1 is a type variable v1 and ty2 is not, `v1 <: ty2 | nil2` is added to
-                    // constraints and `nil1 <: nil2` gets checked. `nil1 <: ty2` is ignored as
-                    // when `nil1 != Nil::Noisy` the condition `nil1 <: nil2` is always true.
-                    (&T::TVar(v1), _) => {
-                        if $lnil.is_sub($rnil) {
-                            ctx.assert_tvar_sub(v1, $rhs_as_is)
-                        } else {
-                            error_not_sub(self, other)
-                        }
-                    },
+                        // if ty1 is a type variable v1 and ty2 is not,
+                        // `v1 <: ty2 | nil2` is added to constraints and
+                        // `nil1 <: nil2` gets checked. `nil1 <: ty2` is ignored as
+                        // when `nil1 != Nil::Noisy` the condition `nil1 <: nil2` is always true.
+                        (&T::TVar(v1), _) => {
+                            if $lnil.is_sub($rnil) {
+                                ctx.assert_tvar_sub(v1, $rhs_as_is)
+                            } else {
+                                Err(ctx.gen_report())
+                            }
+                        },
 
-                    // finally, unless ty1 or ty2 are type variables, any condition involving
-                    // both tyX and nilY cannot be true (see above) so just check for
-                    // `ty1 <: ty2` and `nil1 <: nil2`.
-                    (ty1, ty2) => {
-                        if $lnil.is_sub($rnil) {
-                            ty1.assert_sub(ty2, ctx)
-                        } else {
-                            error_not_sub(self, other)
-                        }
-                    },
-                }
+                        // finally, unless ty1 or ty2 are type variables, any condition involving
+                        // both tyX and nilY cannot be true (see above) so just check for
+                        // `ty1 <: ty2` and `nil1 <: nil2`.
+                        (ty1, ty2) => {
+                            if $lnil.is_sub($rnil) {
+                                ty1.assert_sub(ty2, ctx)
+                            } else {
+                                Err(ctx.gen_report())
+                            }
+                        },
+                    }
+                })().map_err(|r: TypeReport| r.not_sub($origin, self, other, ctx))
             }
 
-            fn assert_eq(&self, other: &$rhs, ctx: &mut TypeContext) -> CheckResult<()> {
+            fn assert_eq(&self, other: &$rhs, ctx: &mut TypeContext) -> TypeResult<()> {
                 debug!(concat!("asserting a constraint {:?} (", $ltext, ") = {:?} (", $rtext, ")"),
                        self, other);
 
-                let $l = self;
-                let $r = other;
+                (|| {
+                    let $l = self;
+                    let $r = other;
 
-                if !tag_is_eq($ltag, $rtag) {
-                    return error_not_eq(self, other);
-                }
+                    if !tag_is_eq($ltag, $rtag) {
+                        return Err(ctx.gen_report());
+                    }
 
-                match ($lty, $rty) {
-                    // Dynamic and All always contain nil, so handled separately here
-                    (&T::Dynamic(_), _) | (_, &T::Dynamic(_)) | (&T::All, &T::All) => Ok(()),
+                    match ($lty, $rty) {
+                        // Dynamic and All always contain nil, so handled separately here
+                        (&T::Dynamic(_), _) | (_, &T::Dynamic(_)) | (&T::All, &T::All) => Ok(()),
 
-                    // conditions here are derived from the conditions of assert_sub,
-                    // applied twice (as T <: U and U <: T implies T = U)
+                        // conditions here are derived from the conditions of assert_sub,
+                        // applied twice (as T <: U and U <: T implies T = U)
 
-                    (&T::TVar(v1), &T::TVar(v2)) => {
-                        // unlike assert_sub, if nil differs we cannot easily derive
-                        // constraints for variables, so we require nils to be equal
-                        if $lnil.is_eq($rnil) {
-                            ctx.assert_tvar_eq_tvar(v1, v2)
-                        } else {
-                            error_not_eq(self, other)
-                        }
-                    },
+                        (&T::TVar(v1), &T::TVar(v2)) => {
+                            // unlike assert_sub, if nil differs we cannot easily derive
+                            // constraints for variables, so we require nils to be equal
+                            if $lnil.is_eq($rnil) {
+                                ctx.assert_tvar_eq_tvar(v1, v2)
+                            } else {
+                                Err(ctx.gen_report())
+                            }
+                        },
 
-                    (_, &T::TVar(v2)) => {
-                        if $lnil.is_eq($rnil) {
-                            // nil can be removed from the constraint
-                            ctx.assert_tvar_eq(v2, $lhs_without_nil)
-                        } else {
-                            ctx.assert_tvar_eq(v2, $lhs_as_is)
-                        }
-                    },
+                        (_, &T::TVar(v2)) => {
+                            if $lnil.is_eq($rnil) {
+                                // nil can be removed from the constraint
+                                ctx.assert_tvar_eq(v2, $lhs_without_nil)
+                            } else {
+                                ctx.assert_tvar_eq(v2, $lhs_as_is)
+                            }
+                        },
 
-                    (&T::TVar(v1), _) => {
-                        if $lnil.is_eq($rnil) {
-                            ctx.assert_tvar_eq(v1, $rhs_as_is)
-                        } else {
-                            error_not_eq(self, other)
-                        }
-                    },
+                        (&T::TVar(v1), _) => {
+                            if $lnil.is_eq($rnil) {
+                                ctx.assert_tvar_eq(v1, $rhs_as_is)
+                            } else {
+                                Err(ctx.gen_report())
+                            }
+                        },
 
-                    (ty1, ty2) => {
-                        if $lnil.is_eq($rnil) {
-                            ty1.assert_eq(ty2, ctx)
-                        } else {
-                            error_not_eq(self, other)
-                        }
-                    },
-                }
+                        (ty1, ty2) => {
+                            if $lnil.is_eq($rnil) {
+                                ty1.assert_eq(ty2, ctx)
+                            } else {
+                                Err(ctx.gen_report())
+                            }
+                        },
+                    }
+                })().map_err(|r: TypeReport| r.not_eq($origin, self, other, ctx))
             }
         }
     )*)
@@ -1349,6 +1427,7 @@ macro_rules! define_ty_impls {
 
 define_ty_impls! {
     impl['a] lhs: T<'a>, rhs: Ty {
+        origin = Origin::TTy;
         text = "T w/o nil", "Ty";
         ty  = lhs,         rhs.inner.ty();
         tag = None,        rhs.inner.tag();
@@ -1360,6 +1439,7 @@ define_ty_impls! {
     }
 
     impl['a] lhs: Ty, rhs: T<'a> {
+        origin = Origin::TTy;
         text = "Ty", "T w/o nil";
         ty  = lhs.inner.ty(),  rhs;
         tag = lhs.inner.tag(), None;
@@ -1371,6 +1451,7 @@ define_ty_impls! {
     }
 
     impl[] lhs: Ty, rhs: Ty {
+        origin = Origin::Ty;
         text = "Ty", "Ty";
         ty  = lhs.inner.ty(),  rhs.inner.ty();
         tag = lhs.inner.tag(), rhs.inner.tag();
@@ -1386,7 +1467,8 @@ define_ty_impls! {
 }
 
 impl Display for Ty {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter,
+                     locale: Locale, ctx: &TypeContext) -> fmt::Result {
         if let Some(tag) = self.tag() {
             write!(f, "[{}] ", tag.name())?;
         }
@@ -1400,7 +1482,7 @@ impl Display for Ty {
             (&T::None, Nil::Silent) => return write!(f, "nil"),
             (&T::None, Nil::Noisy) => return write!(f, "nil"),
 
-            (_, _) => ty.fmt_displayed(f, ctx)?,
+            (_, _) => ty.fmt_displayed(f, locale, ctx)?,
         }
 
         match nil {
@@ -1472,11 +1554,11 @@ mod tests {
         });
 
         ($l:expr, $r:expr; [$e:tt]=$u:expr) => ({
-            let union = Ok($u);
+            let union = $u;
             let mut ctx = Context::new(NoReport);
             let actualunion = $l.union(&$r, check_base!(@explicitness $e), &mut ctx);
-            if actualunion != union {
-                panic!("{:?} | {:?} ({}) = expected {:?}, actual {:?}",
+            if actualunion.is_err() || *actualunion.as_ref().unwrap() != union {
+                panic!("{:?} | {:?} ({}) = expected Ok({:?}), actual {:?}",
                        $l, $r, stringify!($e), union, actualunion);
             }
             actualunion.unwrap()
@@ -1748,9 +1830,9 @@ mod tests {
         {
             let v1 = ctx.gen_tvar();
             // v1 <: integer
-            assert_eq!(T::TVar(v1).assert_sub(&T::Integer, &mut ctx), Ok(()));
+            assert!(T::TVar(v1).assert_sub(&T::Integer, &mut ctx).is_ok());
             // v1 <: integer
-            assert_eq!(T::TVar(v1).assert_sub(&T::Integer, &mut ctx), Ok(()));
+            assert!(T::TVar(v1).assert_sub(&T::Integer, &mut ctx).is_ok());
             // v1 <: integer AND v1 <: string (!)
             assert!(T::TVar(v1).assert_sub(&T::String, &mut ctx).is_err());
         }
@@ -1759,9 +1841,9 @@ mod tests {
             let v1 = ctx.gen_tvar();
             let v2 = ctx.gen_tvar();
             // v1 <: v2
-            assert_eq!(T::TVar(v1).assert_sub(&T::TVar(v2), &mut ctx), Ok(()));
+            assert!(T::TVar(v1).assert_sub(&T::TVar(v2), &mut ctx).is_ok());
             // v1 <: v2 <: string
-            assert_eq!(T::TVar(v2).assert_sub(&T::String, &mut ctx), Ok(()));
+            assert!(T::TVar(v2).assert_sub(&T::String, &mut ctx).is_ok());
             // v1 <: v2 <: string AND v1 <: integer (!)
             assert!(T::TVar(v1).assert_sub(&T::Integer, &mut ctx).is_err());
         }
@@ -1773,11 +1855,11 @@ mod tests {
             let t1 = T::record(hash![a=just(T::Integer), b=just(T::TVar(v1))]);
             let t2 = T::record(hash![a=just(T::TVar(v2)), b=just(T::String), c=just(T::Boolean)]);
             // {a=just integer, b=just v1} <: {a=just v2, b=just string, c=just boolean}
-            assert_eq!(t1.assert_sub(&t2, &mut ctx), Ok(()));
+            assert!(t1.assert_sub(&t2, &mut ctx).is_ok());
             // ... AND v1 <: string
-            assert_eq!(T::TVar(v1).assert_sub(&T::String, &mut ctx), Ok(()));
+            assert!(T::TVar(v1).assert_sub(&T::String, &mut ctx).is_ok());
             // ... AND v1 <: string AND v2 :> integer
-            assert_eq!(T::Integer.assert_sub(&T::TVar(v2), &mut ctx), Ok(()));
+            assert!(T::Integer.assert_sub(&T::TVar(v2), &mut ctx).is_ok());
             // {a=just integer, b=just v1} = {a=just v2, b=just string, c=just boolean} (!)
             assert!(t1.assert_eq(&t2, &mut ctx).is_err());
         }
@@ -1789,11 +1871,11 @@ mod tests {
             let tv1nil = Ty::new(T::TVar(v1)).or_nil(Nil::Noisy);
             let intnil = Ty::new(T::Integer).or_nil(Nil::Noisy);
             // v1? <: nil?
-            assert_eq!(tv1nil.assert_sub(&intnil, &mut ctx), Ok(()));
+            assert!(tv1nil.assert_sub(&intnil, &mut ctx).is_ok());
             // v1 <: nil?
-            assert_eq!(tv1.assert_sub(&intnil, &mut ctx), Ok(()));
+            assert!(tv1.assert_sub(&intnil, &mut ctx).is_ok());
             // v1 :> nil?
-            assert_eq!(intnil.assert_sub(&tv1, &mut ctx), Ok(()));
+            assert!(intnil.assert_sub(&tv1, &mut ctx).is_ok());
         }
     }
 

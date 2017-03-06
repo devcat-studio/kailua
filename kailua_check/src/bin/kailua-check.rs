@@ -13,7 +13,7 @@ use std::rc::Rc;
 use std::path::Path;
 
 use kailua_env::{Source, SourceFile};
-use kailua_diag::{Report, ConsoleReport, TrackMaxKind};
+use kailua_diag::{Stop, Report, ConsoleReport, TrackMaxKind};
 use kailua_syntax::{parse_chunk, Chunk};
 use kailua_check::{FsSource, FsOptions, Context, check_from_chunk};
 
@@ -23,21 +23,21 @@ struct LocalFsSource {
 }
 
 impl FsSource for LocalFsSource {
-    fn chunk_from_path(&self, resolved_path: &Path) -> Result<Option<Chunk>, String> {
+    fn chunk_from_path(&self, resolved_path: &Path) -> Result<Option<Chunk>, Option<Stop>> {
         match SourceFile::from_file(resolved_path) {
             Ok(file) => {
                 let span = self.source.borrow_mut().add(file);
                 if let Ok(chunk) = parse_chunk(&self.source.borrow(), span, &*self.report) {
                     Ok(Some(chunk))
                 } else {
-                    Err(format!("parse error"))
+                    Err(Some(Stop)) // we have already reported parsing errors
                 }
             }
             Err(e) => {
                 if e.kind() == io::ErrorKind::NotFound {
                     Ok(None)
                 } else {
-                    Err(e.to_string())
+                    Err(None)
                 }
             }
         }
@@ -50,7 +50,7 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
     let mut context = Context::new(report.clone());
 
     let fssource = LocalFsSource { source: source, report: report.clone() };
-    let filechunk = fssource.chunk_from_path(mainpath)?;
+    let filechunk = fssource.chunk_from_path(mainpath).map_err(|_| format!("error while loading"))?;
     let filechunk = filechunk.ok_or_else(|| format!("cannot found the main path"))?;
 
     let root = mainpath.parent().unwrap_or(&Path::new(".."));

@@ -10,7 +10,7 @@ use report::VSReport;
 use parse::VSParseTree;
 use widestring::{WideStr, WideString};
 use kailua_env::{Pos, Span, Spanned};
-use kailua_diag::Report;
+use kailua_diag::{Report, Stop};
 use kailua_syntax::Chunk;
 use kailua_check::{self, FsSource, FsOptions, Id, Context, Slot, Tables, Key};
 use kailua_check::flags::T_STRING;
@@ -39,13 +39,13 @@ impl Clone for VSFsSource {
 }
 
 impl FsSource for VSFsSource {
-    fn chunk_from_path(&self, resolved_path: &Path) -> Result<Option<Chunk>, String> {
+    fn chunk_from_path(&self, resolved_path: &Path) -> Result<Option<Chunk>, Option<Stop>> {
         let path = WideString::from_str(resolved_path.as_os_str());
         let mut tree = ptr::null();
         let ret = (self.callback)(path.as_ptr(), path.len() as i32,
                                   self.callback_data, &mut tree as *mut _);
         if ret != 0 {
-            Err(format!("callback returned an error"))
+            Err(Some(Stop))
         } else {
             unsafe { Ok(tree.as_ref().map(|tree: &VSParseTree| tree.chunk().to_owned())) }
         }
@@ -125,14 +125,17 @@ impl VSCheckerOutput {
                     }
                 }
 
-                if let Some(&Tables::Fields(ref fields)) = ty.get_tables() {
-                    let fields = fields.keys().filter_map(|key| {
-                        match *key {
-                            Key::Str(ref s) => Some(VSNameEntry::new(s[..].to_owned(), -1)),
-                            Key::Int(_) => None,
+                if let Some(&Tables::Fields(ref rvar)) = ty.get_tables() {
+                    let mut fields = Vec::new();
+                    let _: Result<_, ()> = self.context.list_rvar_fields(rvar.clone(),
+                                                                         &mut |k: &Key, _v: &Slot| {
+                        match *k {
+                            Key::Str(ref s) => fields.push(VSNameEntry::new(s[..].to_owned(), -1)),
+                            Key::Int(_) => {}
                         }
-                    }).collect();
-                    return Some(fields);
+                        Ok(true)
+                    });
+                    return Some(VSNameEntries::from(fields));
                 }
             }
         }

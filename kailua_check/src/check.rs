@@ -1,21 +1,20 @@
 use std::i32;
 use std::cmp;
-use std::fmt;
 use std::ops::{Deref, DerefMut};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use take_mut::take;
 
 use kailua_env::{Span, Spanned, WithLoc};
-use kailua_diag::{Report, Reporter};
+use kailua_diag::{self, Report, Reporter};
 use kailua_syntax::{Str, NameRef, Var, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
 use kailua_syntax::{SelfParam, Args, St, Stmt, Block};
-use diag::CheckResult;
-use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, Displayed, Display, TypeContext};
+use diag::{CheckResult, TypeReport, TypeReportHint, TypeReportMore, Displayed, Display};
+use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, TypeContext};
 use ty::{Key, Tables, Function, Functions};
 use ty::{F, Slot, SlotSeq, SpannedSlotSeq, Tag, Class};
 use ty::flags::*;
-use env::{Env, Frame, Scope, Context};
+use env::{Env, Returns, Frame, Scope, Context};
 use message as m;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -89,8 +88,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         self.env.context()
     }
 
-    fn display<'a, 'c, T: Display>(&'c self, x: &'a T) -> Displayed<'a, 'c, T>
-            where Displayed<'a, 'c, T>: fmt::Display {
+    fn display<'a, 'c, T: Display>(&'c self, x: &'a T) -> Displayed<'a, 'c, T> {
         self.env.display(x)
     }
 
@@ -122,19 +120,27 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     fn check_un_op(&mut self, op: UnOp, info: &Spanned<Slot>,
-                   _expspan: Span) -> CheckResult<Slot> {
-        macro_rules! check_op {
-            ($sub:expr) => {
-                if let Err(e) = $sub {
-                    return Err(format!("tried to apply {} operator to {:-?}: {}",
-                                       op.symbol(), info, e));
+                   expspan: Span) -> CheckResult<Slot> {
+        let finalize = |r: TypeReport, checker: &mut Checker<R>| {
+            checker.env.error(expspan,
+                              m::WrongUnaryOperand { op: op.symbol(),
+                                                     ty: checker.display(info) })
+                       .report_types(r, TypeReportHint::None)
+                       .done()
+        };
+
+        macro_rules! assert_sub {
+            ($lhs:expr, $rhs:expr) => {
+                match $lhs.assert_sub($rhs, self.context()) {
+                    Ok(()) => {}
+                    Err(r) => { finalize(r, self)?; }
                 }
             }
         }
 
         match op {
             UnOp::Neg => {
-                check_op!(info.assert_sub(&T::Number, self.context()));
+                assert_sub!(&info, &T::Number);
 
                 // it is possible to be more accurate here.
                 // e.g. if ty = `v1 \/ integer` and it is known that `v1 <: integer`,
@@ -152,7 +158,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             }
 
             UnOp::Len => {
-                check_op!(info.assert_sub(&(T::table() | T::String), self.context()));
+                assert_sub!(&info, &(T::table() | T::String));
                 Ok(Slot::just(Ty::new(T::Integer)))
             }
         }
@@ -160,11 +166,44 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
     fn check_bin_op(&mut self, lhs: &Spanned<Slot>, op: BinOp, rhs: &Spanned<Slot>,
                     expspan: Span) -> CheckResult<Slot> {
-        macro_rules! check_op {
-            ($sub:expr) => {
-                if let Err(e) = $sub {
-                    return Err(format!("tried to apply {} operator to {:-?} and {:-?}: {}",
-                                       op.symbol(), lhs, rhs, e));
+        let finalize = |r: TypeReport, checker: &mut Checker<R>| {
+            checker.env.error(expspan,
+                              m::WrongBinaryOperands { op: op.symbol(),
+                                                       lhs: checker.display(lhs),
+                                                       rhs: checker.display(lhs) })
+                       .report_types(r, TypeReportHint::None)
+                       .done()
+        };
+
+        let finalize2 = |r1: Option<TypeReport>, r2: Option<TypeReport>, checker: &mut Checker<R>| {
+            let mut more = checker.env.error(expspan,
+                                             m::WrongBinaryOperands { op: op.symbol(),
+                                                                      lhs: checker.display(lhs),
+                                                                      rhs: checker.display(lhs) });
+            if let Some(r) = r1 {
+                more = more.report_types(r, TypeReportHint::None);
+            }
+            if let Some(r) = r2 {
+                more = more.report_types(r, TypeReportHint::None);
+            }
+            more.done()
+        };
+
+        macro_rules! assert_sub_both {
+            ($lhs1:expr, $lhs2:expr, $rhs:expr) => {
+                match ($lhs1.assert_sub($rhs, self.context()),
+                       $lhs2.assert_sub($rhs, self.context())) {
+                    (Ok(()), Ok(())) => {}
+                    (r1, r2) => { finalize2(r1.err(), r2.err(), self)?; }
+                }
+            }
+        }
+
+        macro_rules! union {
+            ($lhs:expr, $rhs:expr, $explicit:expr) => {
+                match $lhs.union($rhs, $explicit, self.context()) {
+                    Ok(out) => out,
+                    Err(r) => { finalize(r, self)?; Ty::dummy() },
                 }
             }
         }
@@ -175,31 +214,27 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 // see UnOp::Neg comment for the rationale
                 let lflags = self.env.get_type_bounds(&lhs.unlift()).1;
                 let rflags = self.env.get_type_bounds(&rhs.unlift()).1;
+                let numty;
                 if lflags.is_integral() && rflags.is_integral() &&
                    !(lflags.is_dynamic() && rflags.is_dynamic()) {
                     // we are definitely sure that it will be an integer
-                    check_op!(lhs.assert_sub(&T::Integer, self.context()));
-                    check_op!(rhs.assert_sub(&T::Integer, self.context()));
-                    Ok(Slot::just(Ty::new(T::Integer)))
+                    numty = T::Integer;
                 } else {
                     // technically speaking they coerce strings to numbers,
                     // but that's probably not what you want
-                    check_op!(lhs.assert_sub(&T::Number, self.context()));
-                    check_op!(rhs.assert_sub(&T::Number, self.context()));
-                    Ok(Slot::just(Ty::new(T::Number)))
+                    numty = T::Number;
                 }
+                assert_sub_both!(lhs, rhs, &numty);
+                Ok(Slot::just(Ty::new(numty)))
             }
 
             BinOp::Div | BinOp::Pow => {
-                check_op!(lhs.assert_sub(&T::Number, self.context()));
-                check_op!(rhs.assert_sub(&T::Number, self.context()));
+                assert_sub_both!(lhs, rhs, &T::Number);
                 Ok(Slot::just(Ty::new(T::Number)))
             }
 
             BinOp::Cat => {
-                let stringy = T::Number | T::String;
-                check_op!(lhs.assert_sub(&stringy, self.context()));
-                check_op!(rhs.assert_sub(&stringy, self.context()));
+                assert_sub_both!(lhs, rhs, &(T::Number | T::String));
 
                 // try to narrow them further. this operation is frequently used for
                 // constructing larger (otherwise constant) literals.
@@ -230,9 +265,9 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 // filter any non-strings and non-numbers
                 // avoid using assert_sub here, it is not accurate enough
                 if !lflags.is_stringy() || !rflags.is_stringy() {
-                    self.env.error(expspan, m::WrongOperand { op: op.symbol(),
-                                                              lhs: self.display(lhs),
-                                                              rhs: self.display(rhs) })
+                    self.env.error(expspan, m::WrongBinaryOperands { op: op.symbol(),
+                                                                     lhs: self.display(lhs),
+                                                                     rhs: self.display(rhs) })
                             .done()?;
                     return Ok(Slot::just(Ty::new(T::Boolean)));
                 }
@@ -261,11 +296,9 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                                                                    rhs: self.display(rhs) })
                             .done()?;
                 } else if lnum || rnum { // operands are definitely numbers
-                    check_op!(lhs.assert_sub(&T::Number, self.context()));
-                    check_op!(rhs.assert_sub(&T::Number, self.context()));
+                    assert_sub_both!(lhs, rhs, &T::Number);
                 } else if lstr || rstr { // operands are definitely strings
-                    check_op!(lhs.assert_sub(&T::String, self.context()));
-                    check_op!(rhs.assert_sub(&T::String, self.context()));
+                    assert_sub_both!(lhs, rhs, &T::String);
                 } else { // XXX
                     self.env.error(expspan,
                                    m::CannotDeduceBothNumOrStr { op: op.symbol(),
@@ -294,7 +327,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     Bool::Unknown => {
                         let falsy_lhs = lhs.as_ref().map(|t| t.unlift().clone().falsy());
                         let rhs = rhs.as_ref().map(|t| t.unlift().clone());
-                        Ok(Slot::just(falsy_lhs.union(&rhs, false, self.context())?))
+                        Ok(Slot::just(union!(&falsy_lhs, &rhs, false)))
                     }
                 }
             }
@@ -313,7 +346,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     Bool::Unknown => {
                         let truthy_lhs = lhs.as_ref().map(|t| t.unlift().clone().truthy());
                         let rhs = rhs.as_ref().map(|t| t.unlift().clone());
-                        Ok(Slot::just(truthy_lhs.union(&rhs, false, self.context())?))
+                        Ok(Slot::just(union!(&truthy_lhs, &rhs, false)))
                     }
                 }
             }
@@ -341,8 +374,11 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         let mut returns = match *functy.get_functions().unwrap() {
             Functions::Simple(ref f) => {
                 let funcargs = f.args.clone().all_without_loc();
-                if let Err(e) = args.assert_sub(&funcargs, self.context()) {
-                    return Err(format!("failed to call {:?}: {}", func, e));
+                if let Err(r) = args.assert_sub(&funcargs, self.context()) {
+                    self.env.error(func, m::CallToWrongType { func: self.display(func) })
+                            .report_types(r, TypeReportHint::FuncArgs)
+                            .done()?;
+                    return Ok(TySeq::dummy());
                 }
                 f.returns.clone()
             }
@@ -969,30 +1005,43 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             }
 
             St::For(ref localname, ref start, ref end, ref step, _blockscope, ref block) => {
-                let start = self.visit_exp(start)?.into_first();
-                let end = self.visit_exp(end)?.into_first();
+                let start = self.visit_exp(start)?.into_first().map(|s| s.unlift().clone());
+                let end = self.visit_exp(end)?.into_first().map(|s| s.unlift().clone());
                 let step = if let &Some(ref step) = step {
-                    self.visit_exp(step)?.into_first()
+                    self.visit_exp(step)?.into_first().map(|s| s.unlift().clone())
                 } else {
-                    Slot::just(Ty::new(T::Integer)).without_loc() // to simplify the matter
+                    Ty::new(T::Integer).without_loc() // to simplify the matter
                 };
 
                 // the similar logic is also present in check_bin_op
-                let startflags = self.env.get_type_bounds(&start.unlift()).1;
-                let endflags = self.env.get_type_bounds(&end.unlift()).1;
-                let stepflags = self.env.get_type_bounds(&step.unlift()).1;
+                let startflags = self.env.get_type_bounds(&start).1;
+                let endflags = self.env.get_type_bounds(&end).1;
+                let stepflags = self.env.get_type_bounds(&step).1;
                 let indty;
                 if startflags.is_integral() && endflags.is_integral() && stepflags.is_integral() &&
                    !(startflags.is_dynamic() && endflags.is_dynamic() && stepflags.is_dynamic()) {
-                    start.assert_sub(&T::Integer, self.context())?;
-                    end.assert_sub(&T::Integer, self.context())?;
-                    step.assert_sub(&T::Integer, self.context())?;
                     indty = T::Integer;
                 } else {
-                    start.assert_sub(&T::Number, self.context())?;
-                    end.assert_sub(&T::Number, self.context())?;
-                    step.assert_sub(&T::Number, self.context())?;
                     indty = T::Number;
+                }
+                match (start.assert_sub(&indty.clone().without_loc(), self.context()),
+                       end.assert_sub(&indty.clone().without_loc(), self.context()),
+                       step.assert_sub(&indty.clone().without_loc(), self.context())) {
+                    (Ok(()), Ok(()), Ok(())) => {}
+                    (r1, r2, r3) => {
+                        let span = start.span | end.span | step.span;
+                        let mut more = self.env.error(span, m::NonNumericFor {});
+                        if let Err(r) = r1 {
+                            more = more.report_types(r, TypeReportHint::None);
+                        }
+                        if let Err(r) = r2 {
+                            more = more.report_types(r, TypeReportHint::None);
+                        }
+                        if let Err(r) = r3 {
+                            more = more.report_types(r, TypeReportHint::None);
+                        }
+                        more.done()?;
+                    }
                 }
 
                 let mut scope = self.scoped(Scope::new());
@@ -1040,8 +1089,14 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     let args = SpannedTySeq { head: vec![state, indvarty.without_loc()],
                                               tail: None,
                                               span: Span::dummy() };
-                    let mut returns = self.check_callable(&func.with_loc(expspan), &args)?;
-                    last.assert_sub(&indvar, self.context())?;
+                    let mut returns = self.check_callable(&func.clone().with_loc(expspan), &args)?;
+                    if let Err(r) = last.assert_sub(&indvar, self.context()) {
+                        // it is very hard to describe, but it is conceptually
+                        // an extension of check_callable
+                        self.env.error(expspan, m::BadFuncIterator { iter: self.display(&func) })
+                                .report_types(r, TypeReportHint::None)
+                                .done()?;
+                    }
 
                     // note that we ignore indvar here. it is only kept internally and
                     // not visible outside; returns is what we should assign to variables!
@@ -1075,7 +1130,11 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     self.env.add_var(name, None, Some(info))?;
                 }
                 let functy = self.visit_func_body(None, sig, block, stmt.span)?;
-                T::TVar(funcv).assert_eq(&*functy.unlift(), self.context())?;
+                if let Err(r) = T::TVar(funcv).assert_eq(&*functy.unlift(), self.context()) {
+                    self.env.error(stmt, m::BadRecursiveCall {})
+                        .report_types(r, TypeReportHint::FuncArgs)
+                        .done()?;
+                }
                 Ok(Exit::None)
             }
 
@@ -1197,18 +1256,39 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
             St::Return(ref exps) => {
                 let seq = self.visit_explist(exps)?;
-                let seq = seq.unlift(); // XXX wait, is it safe?
-                let (returns, returns_exact) = {
-                    let frame = self.env.get_frame();
-                    let returns = frame.returns.as_ref().map(|seq| seq.clone().all_without_loc());
-                    (returns, frame.returns_exact)
-                };
-                if returns_exact {
-                    Some(seq).assert_sub(&returns, self.context())?;
-                } else {
-                    // need to infer the return type, but not _that_ much
-                    let returns = Some(seq).union(&returns, false, self.context())?;
-                    self.env.get_frame_mut().returns = returns.map(|seq| seq.unspan());
+                // function types destroy flexibility, primarily because the return type is
+                // a slot only in the inside view. in the outside it's always Var,
+                // which should be ensured by `visit_func_call`.
+                let seq = seq.unlift();
+                let returns =
+                    self.env.get_frame().returns.as_ref().map(|seq| seq.clone().all_without_loc());
+                // TODO should really report spans correctly
+                match returns {
+                    Returns::None => {
+                        self.env.get_frame_mut().returns = Returns::Implicit(seq.unspan());
+                    }
+                    Returns::Implicit(returns) => {
+                        // need to infer the return type, but not _that_ much
+                        match seq.union(&returns, false, self.context()) {
+                            Ok(returns) => {
+                                self.env.get_frame_mut().returns =
+                                    Returns::Implicit(returns.unspan());
+                            }
+                            Err(r) => {
+                                self.env.error(stmt, m::CannotExtendImplicitReturnType {})
+                                        .report_types(r, TypeReportHint::FuncReturns)
+                                        .done()?;
+                            }
+                        };
+                    }
+                    Returns::Explicit(returns) => {
+                        if let Err(r) = seq.assert_sub(&returns, self.context()) {
+                            self.env.error(stmt, m::CannotReturn { returns: self.display(&returns),
+                                                                   ty: self.display(&seq) })
+                                    .report_types(r, TypeReportHint::FuncReturns)
+                                    .done()?;
+                        }
+                    }
                 }
                 Ok(Exit::Return)
             }
@@ -1261,12 +1341,12 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         // we probably need to put a type variable that is later equated to the actual returns
         let frame = if let Some(ref returns) = sig.returns {
             let returns = TySeq::from_kind_seq(returns, &mut self.env)?;
-            Frame { vararg: vainfo, returns: Some(returns), returns_exact: true }
+            Frame { vararg: vainfo, returns: Returns::Explicit(returns) }
         } else if no_check {
             self.env.error(declspan, m::NoCheckRequiresTypedReturns {}).done()?;
             return Ok(Slot::dummy());
         } else {
-            Frame { vararg: vainfo, returns: None, returns_exact: false }
+            Frame { vararg: vainfo, returns: Returns::None }
         };
 
         let mut argshead = Vec::new();
@@ -1308,7 +1388,15 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             }
         }
 
-        let returns = scope.env.get_frame_mut().returns.take().unwrap();
+        let returns = match scope.env.get_frame().returns {
+            Returns::Implicit(ref returns) | Returns::Explicit(ref returns) => returns.clone(),
+            Returns::None => {
+                // the function is diverging. we don't have the exact bottom type
+                // (`nil!` can be coerced to `nil`) but we at least try.
+                let bottom = Ty::new(T::None).or_nil(Nil::Absent);
+                TySeq { head: Vec::new(), tail: Some(bottom) }
+            },
+        };
         Ok(Slot::just(Ty::new(T::func(Function { args: args, returns: returns }))))
     }
 
@@ -1438,6 +1526,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             argtys.head.insert(0, selfinfo);
         }
         let returns = self.check_callable(funcinfo, &argtys.unlift())?;
+        // TODO this should be Var instead of Just!!!!!
         Ok(SlotSeq::from_seq(returns))
     }
 
@@ -1511,7 +1600,9 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         let rvar = self.context().gen_rvar();
         if !newfields.is_empty() {
             // really should not fail...
-            self.context().assert_rvar_includes(rvar.clone(), &newfields)?;
+            self.context().assert_rvar_includes(rvar.clone(), &newfields).expect(
+                "cannot insert disjoint fields into a fresh row variable"
+            );
         }
         Ok(T::Tables(Cow::Owned(Tables::Fields(rvar))))
     }
@@ -1818,7 +1909,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         match cond {
             Cond::Flags(info, flags) => {
                 let flags = if negated { !flags } else { flags };
-                info.filter_by_flags(flags, self.context())?;
+                // XXX this is temporary, the entire condition assertion should be changed!
+                info.filter_by_flags(flags, self.context()).map_err(|_| kailua_diag::Stop)?;
                 debug!("resulted in {:?}", info);
             }
 

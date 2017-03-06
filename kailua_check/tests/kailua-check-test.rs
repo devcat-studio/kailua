@@ -14,9 +14,9 @@ use std::rc::Rc;
 use std::collections::HashMap;
 use clap::{App, Arg, ArgMatches};
 use kailua_env::{Source, Span};
-use kailua_diag::{Report, Reporter, TrackMaxKind};
+use kailua_diag::{Stop, Locale, Report, Reporter, TrackMaxKind};
 use kailua_syntax::{Chunk, parse_chunk};
-use kailua_check::{Options, Context, CheckResult, Display, check_from_chunk};
+use kailua_check::{Options, Context, Display, check_from_chunk};
 
 struct Testing {
     note_spanned_infos: bool,
@@ -56,12 +56,10 @@ impl kailua_test::Testing for Testing {
         }
 
         impl Options for Opts {
-            fn require_chunk(&mut self, path: &[u8]) -> CheckResult<Chunk> {
-                let path = str::from_utf8(path).map_err(|_| format!("bad require name"))?;
-                let span = *self.filespans.get(path).ok_or_else(|| format!("no such module"))?;
-                let chunk = parse_chunk(&self.source.borrow(), span, &*self.report)
-                                     .map_err(|_| format!("parse error"))?;
-                Ok(chunk)
+            fn require_chunk(&mut self, path: &[u8]) -> Result<Chunk, Option<Stop>> {
+                let path = str::from_utf8(path).map_err(|_| None)?;
+                let span = *self.filespans.get(path).ok_or(None)?;
+                parse_chunk(&self.source.borrow(), span, &*self.report).map_err(|_| None)
             }
         }
 
@@ -79,7 +77,7 @@ impl kailua_test::Testing for Testing {
                  usize::MAX - slot.span.begin().to_usize())
             });
             for slot in slots {
-                let msg = format!("slot: {}", slot.display(&context));
+                let msg = format!("slot: {}", slot.display(&context).localized(Locale::dummy()));
                 report.info(slot.span, &msg).done().unwrap();
             }
         }

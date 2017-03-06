@@ -3,10 +3,10 @@ use std::i32;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
+use kailua_diag::Locale;
 use kailua_syntax::Str;
-use diag::{CheckResult, unquotable_name};
-use super::{T, Ty, Slot, TypeContext, Lattice, Display, RVar};
-use super::{error_not_sub, error_not_eq};
+use diag::{Origin, TypeReport, TypeResult, Display, unquotable_name};
+use super::{T, Ty, Slot, TypeContext, Lattice, RVar};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Key {
@@ -181,90 +181,96 @@ impl Tables {
 }
 
 impl Lattice for Tables {
-    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
-        let ok = match (self, other) {
-            (_, &Tables::All) => true,
-            (&Tables::All, _) => false,
+    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
+        (|| {
+            let ok = match (self, other) {
+                (_, &Tables::All) => true,
+                (&Tables::All, _) => false,
 
-            (&Tables::Fields(ref ar), &Tables::Fields(ref br)) => {
-                return ar.assert_sub(&br, ctx);
-            },
+                (&Tables::Fields(ref ar), &Tables::Fields(ref br)) => {
+                    return ar.assert_sub(&br, ctx);
+                },
 
-            (&Tables::Fields(ref rvar), &Tables::Map(ref key, ref value)) => {
-                // subtyping should hold for existing fields
-                for (k, v) in ctx.get_rvar_fields(rvar.clone())? {
-                    k.to_type().assert_sub(&**key, ctx)?;
-                    v.assert_sub(&value.clone().with_nil(), ctx)?;
-                }
-
-                // since an extensible row can result in soundness error,
-                // we disable the extensibility once we need subtyping
-                return ctx.assert_rvar_closed(rvar.clone());
-            },
-
-            (&Tables::Fields(ref rvar), &Tables::Array(ref value)) => {
-                // the fields should have consecutive integer keys.
-                // since the fields listing is unordered, we check them by
-                // counting the number of integer keys and determining min and max key.
-                //
-                // this obviously assumes that we have no duplicate keys throughout the chain,
-                // which is the checker's responsibility.
-                let mut min = i32::MAX;
-                let mut max = i32::MIN;
-                let mut count = 0;
-                for (k, v) in ctx.get_rvar_fields(rvar.clone())? {
-                    if let Key::Int(k) = k {
-                        count += 1;
-                        if min > k { min = k; }
-                        if max < k { max = k; }
+                (&Tables::Fields(ref rvar), &Tables::Map(ref key, ref value)) => {
+                    // subtyping should hold for existing fields
+                    for (k, v) in ctx.get_rvar_fields(rvar.clone())? {
+                        k.to_type().assert_sub(&**key, ctx)?;
                         v.assert_sub(&value.clone().with_nil(), ctx)?;
-                    } else {
-                        return error_not_sub(k.to_type(), &T::Integer);
                     }
-                }
 
-                ctx.assert_rvar_closed(rvar.clone())?;
-                count == 0 || (min == 1 && max == count)
-            },
+                    // since an extensible row can result in soundness error,
+                    // we disable the extensibility once we need subtyping
+                    return ctx.assert_rvar_closed(rvar.clone());
+                },
 
-            (_, &Tables::Fields(..)) => false,
+                (&Tables::Fields(ref rvar), &Tables::Array(ref value)) => {
+                    // the fields should have consecutive integer keys.
+                    // since the fields listing is unordered, we check them by
+                    // counting the number of integer keys and determining min and max key.
+                    //
+                    // this obviously assumes that we have no duplicate keys throughout the chain,
+                    // which is the checker's responsibility.
+                    let mut min = i32::MAX;
+                    let mut max = i32::MIN;
+                    let mut count = 0;
+                    for (k, v) in ctx.get_rvar_fields(rvar.clone())? {
+                        if let Key::Int(k) = k {
+                            count += 1;
+                            if min > k { min = k; }
+                            if max < k { max = k; }
+                            v.assert_sub(&value.clone().with_nil(), ctx)?;
+                        } else {
+                            // regenerate an appropriate error
+                            k.to_type().assert_sub(&T::Integer, ctx)?;
+                            panic!("non-integral {:?} is typed as integral {:?}", k, k.to_type());
+                        }
+                    }
 
-            (&Tables::Array(ref value1), &Tables::Array(ref value2)) => {
-                value1.assert_sub(value2, ctx)?;
-                true
-            },
+                    ctx.assert_rvar_closed(rvar.clone())?;
+                    count == 0 || (min == 1 && max == count)
+                },
 
-            (&Tables::Map(ref key1, ref value1), &Tables::Map(ref key2, ref value2)) => {
-                key1.assert_sub(key2, ctx)?;
-                value1.assert_sub(value2, ctx)?;
-                true
-            },
+                (_, &Tables::Fields(..)) => false,
 
-            (&Tables::Array(ref value1), &Tables::Map(ref key2, ref value2)) => {
-                T::Integer.assert_sub(&**key2, ctx)?;
-                value1.assert_sub(value2, ctx)?;
-                true
-            },
-            (&Tables::Map(..), &Tables::Array(..)) => false,
-        };
+                (&Tables::Array(ref value1), &Tables::Array(ref value2)) => {
+                    value1.assert_sub(value2, ctx)?;
+                    true
+                },
 
-        if ok { Ok(()) } else { error_not_sub(self, other) }
+                (&Tables::Map(ref key1, ref value1), &Tables::Map(ref key2, ref value2)) => {
+                    key1.assert_sub(key2, ctx)?;
+                    value1.assert_sub(value2, ctx)?;
+                    true
+                },
+
+                (&Tables::Array(ref value1), &Tables::Map(ref key2, ref value2)) => {
+                    T::Integer.assert_sub(&**key2, ctx)?;
+                    value1.assert_sub(value2, ctx)?;
+                    true
+                },
+                (&Tables::Map(..), &Tables::Array(..)) => false,
+            };
+
+            if ok { Ok(()) } else { Err(ctx.gen_report()) }
+        })().map_err(|r: TypeReport| r.not_sub(Origin::Tables, self, other, ctx))
     }
 
-    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
-        let ok = match (self, other) {
-            (&Tables::All, &Tables::All) => true,
-            (&Tables::Array(ref a), &Tables::Array(ref b)) => return a.assert_eq(b, ctx),
-            (&Tables::Map(ref ak, ref av), &Tables::Map(ref bk, ref bv)) => {
-                ak.assert_eq(bk, ctx)?;
-                av.assert_eq(bv, ctx)?;
-                true
-            }
-            (&Tables::Fields(ref ar), &Tables::Fields(ref br)) => return ar.assert_eq(&br, ctx),
-            (_, _) => false,
-        };
+    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
+        (|| {
+            let ok = match (self, other) {
+                (&Tables::All, &Tables::All) => true,
+                (&Tables::Array(ref a), &Tables::Array(ref b)) => return a.assert_eq(b, ctx),
+                (&Tables::Map(ref ak, ref av), &Tables::Map(ref bk, ref bv)) => {
+                    ak.assert_eq(bk, ctx)?;
+                    av.assert_eq(bv, ctx)?;
+                    true
+                }
+                (&Tables::Fields(ref ar), &Tables::Fields(ref br)) => return ar.assert_eq(&br, ctx),
+                (_, _) => false,
+            };
 
-        if ok { Ok(()) } else { error_not_eq(self, other) }
+            if ok { Ok(()) } else { Err(ctx.gen_report()) }
+        })().map_err(|r: TypeReport| r.not_eq(Origin::Tables, self, other, ctx))
     }
 }
 
@@ -282,12 +288,14 @@ impl PartialEq for Tables {
 }
 
 impl Display for Tables {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter,
+                     locale: Locale, ctx: &TypeContext) -> fmt::Result {
         self.fmt_generic(
             f, Some(ctx),
-            |t, f| fmt::Display::fmt(&t.display(ctx), f),
+            |t, f| fmt::Display::fmt(&t.display(ctx).localized(locale), f),
             |s, f, without_nil| {
                 let s = s.display(ctx);
+                let s = s.localized(locale);
                 if without_nil { write!(f, "{:#}", s) } else { write!(f, "{}", s) }
             },
             false

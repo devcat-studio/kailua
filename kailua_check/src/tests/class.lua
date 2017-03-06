@@ -8,14 +8,16 @@ Hello = class()
 --8<-- make-class-unnamed
 --# assume `class`: [make_class] function() --> table
 local x = class() + 3
---@^ Error: `<prototype for unnamed class #0>` is not a subtype of `number`
+--@^ Error: Cannot apply + operator to `<prototype for unnamed class #0>` and `<prototype for unnamed class #0>`
+--@^^ Cause: `<prototype for unnamed class #0>` is not a subtype of `number`
 --! error
 
 --8<-- make-class-named
 --# assume `class`: [make_class] function() --> table
 Hello = class()
 local x = Hello + 3
---@^ Error: `<prototype for Hello>` is not a subtype of `number`
+--@^ Error: Cannot apply + operator to `<prototype for Hello>` and `<prototype for Hello>`
+--@^^ Cause: `<prototype for Hello>` is not a subtype of `number`
 --! error
 
 --8<-- make-class-named-local
@@ -23,7 +25,8 @@ local x = Hello + 3
 local function f()
     local Hello = class()
     local x = Hello + 3
-    --@^ Error: `<prototype for Hello>` is not a subtype of `number`
+    --@^ Error: Cannot apply + operator to `<prototype for Hello>` and `<prototype for Hello>`
+    --@^^ Cause: `<prototype for Hello>` is not a subtype of `number`
 end
 --! error
 
@@ -32,7 +35,8 @@ end
 Hello = class() --@< Note: The class was previously named here
 Goodbye = Hello --@< Warning: A new name for the previously named class is ignored
 local x = Goodbye + 3
---@^ Error: `<prototype for Hello>` is not a subtype of `number`
+--@^ Error: Cannot apply + operator to `<prototype for Hello>` and `<prototype for Hello>`
+--@^^ Cause: `<prototype for Hello>` is not a subtype of `number`
 --! error
 
 --8<-- make-class-renamed-2
@@ -41,7 +45,8 @@ Hello = class() --@< Note: The class was previously named here
 local x
 x = Hello --@< Warning: A new name for the previously named class is ignored
 local x = x + 3
---@^ Error: `<prototype for Hello>` is not a subtype of `number`
+--@^ Error: Cannot apply + operator to `<prototype for Hello>` and `<prototype for Hello>`
+--@^^ Cause: `<prototype for Hello>` is not a subtype of `number`
 --! error
 
 --8<-- make-class-global-name-collision-with-local
@@ -67,7 +72,8 @@ Hello = class()
 function Hello:init(x, y, z)
 end
 local h = Hello.new(3, 4, 5, 6)
---@^ Error: `6` is not a subtype of `nil`
+--@^ Error: The type `function(integer, integer, integer) --> Hello` cannot be called
+--@^^ Cause: Fourth function argument `6` is not a subtype of `nil`
 --! error
 
 --8<-- class-init-fields
@@ -96,7 +102,8 @@ end
 local h = Hello.new(3, 4, 5)
 local a = h.y + h.z --: integer
 local b = h.x .. 'hello' --: string
-local c = h.x + 42 --@< Error: `(integer|string)` is not a subtype of `number`
+local c = h.x + 42 --@< Error: Cannot apply + operator to `(integer|string)` and `(integer|string)`
+                   --@^ Cause: `(integer|string)` is not a subtype of `number`
 --! error
 
 --8<-- class-init-fields-3

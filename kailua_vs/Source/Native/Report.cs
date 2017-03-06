@@ -35,6 +35,7 @@ namespace Kailua.Native
     {
         Note = 0,
         Info = 1,
+        Cause = 5,
         Warning = 2,
         Error = 3,
         Fatal = 4,

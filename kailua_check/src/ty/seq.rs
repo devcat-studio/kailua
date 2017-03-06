@@ -5,9 +5,10 @@ use std::usize;
 use std::iter;
 
 use kailua_env::{Span, Spanned, WithLoc};
+use kailua_diag::Locale;
 use kailua_syntax::{Seq, Kind};
-use diag::CheckResult;
-use super::{T, Ty, Slot, Lattice, Union, Display};
+use diag::{CheckResult, Origin, TypeReport, TypeResult, Display};
+use super::{T, Ty, Slot, Lattice, Union};
 use super::{TypeContext, TypeResolver};
 
 pub struct SeqIter<Item: Clone> {
@@ -178,75 +179,97 @@ macro_rules! define_tyseq {
             type Output = $tyseq;
 
             fn union(&self, other: &$tyseq, explicit: bool,
-                     ctx: &mut TypeContext) -> CheckResult<$tyseq> {
-                let selftail = self.tail_to_type();
-                let othertail = other.tail_to_type();
+                     ctx: &mut TypeContext) -> TypeResult<$tyseq> {
+                (|| {
+                    let selftail = self.tail_to_type();
+                    let othertail = other.tail_to_type();
 
-                let mut head = Vec::new();
-                let n = cmp::min(self.head.len(), other.head.len());
-                for (l, r) in self.head[..n].iter().zip(other.head[..n].iter()) {
-                    head.push($ty_union(l, r, explicit, ctx)?);
-                }
-                for l in &self.head[n..] {
-                    head.push($ty_union(l, &othertail, explicit, ctx)?);
-                }
-                for r in &other.head[n..] {
-                    head.push($ty_union(&selftail, r, explicit, ctx)?);
-                }
+                    let mut head = Vec::new();
+                    let n = cmp::min(self.head.len(), other.head.len());
+                    for (i, (l, r)) in self.head[..n].iter().zip(other.head[..n].iter())
+                                                            .enumerate() {
+                        head.push($ty_union(l, r, explicit, ctx).map_err(|r| (r, i))?);
+                    }
+                    for (i, l) in self.head[n..].iter().enumerate() {
+                        head.push($ty_union(l, &othertail, explicit, ctx).map_err(|r| (r, i + n))?);
+                    }
+                    for (i, r) in other.head[n..].iter().enumerate() {
+                        head.push($ty_union(&selftail, r, explicit, ctx).map_err(|r| (r, i + n))?);
+                    }
 
-                let tail = if self.tail.is_some() || other.tail.is_some() {
-                    Some($ty_union(&selftail, &othertail, explicit, ctx)?)
-                } else {
-                    None
-                };
+                    let tail = if self.tail.is_some() || other.tail.is_some() {
+                        let i = cmp::max(self.head.len(), other.head.len());
+                        Some($ty_union(&selftail, &othertail, explicit, ctx).map_err(|r| (r, i))?)
+                    } else {
+                        None
+                    };
 
-                Ok($tyseq {
-                    head: head, tail: tail,
-                    $($span: $span_union(self.$span, other.$span),)*
+                    Ok($tyseq {
+                        head: head, tail: tail,
+                        $($span: $span_union(self.$span, other.$span),)*
+                    })
+                })().map_err(|(r, idx): (TypeReport, usize)| {
+                    r.cannot_union_attach_index(Origin::Ty, idx, explicit)
                 })
             }
         }
 
         impl Lattice for $tyseq {
-            fn assert_sub(&self, other: &$tyseq, ctx: &mut TypeContext) -> CheckResult<()> {
+            fn assert_sub(&self, other: &$tyseq, ctx: &mut TypeContext) -> TypeResult<()> {
                 debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
-                let mut selfhead = self.head.iter().fuse();
-                let mut otherhead = other.head.iter().fuse();
-                let selftail = self.tail_to_type();
-                let othertail = other.tail_to_type();
-                loop {
-                    match (selfhead.next(), otherhead.next()) {
-                        (Some(a), Some(b)) => a.assert_sub(b, ctx)?,
-                        (Some(a), None) => a.assert_sub(&othertail, ctx)?,
-                        (None, Some(b)) => selftail.assert_sub(b, ctx)?,
-                        (None, None) => return selftail.assert_sub(&othertail, ctx),
+                (|| {
+                    let mut i = 0;
+                    let mut selfhead = self.head.iter().fuse();
+                    let mut otherhead = other.head.iter().fuse();
+                    let selftail = self.tail_to_type();
+                    let othertail = other.tail_to_type();
+                    loop {
+                        match (selfhead.next(), otherhead.next()) {
+                            (Some(a), Some(b)) => a.assert_sub(b, ctx).map_err(|r| (r, i))?,
+                            (Some(a), None) => a.assert_sub(&othertail, ctx).map_err(|r| (r, i))?,
+                            (None, Some(b)) => selftail.assert_sub(b, ctx).map_err(|r| (r, i))?,
+                            (None, None) =>
+                                return selftail.assert_sub(&othertail, ctx).map_err(|r| (r, i)),
+                        }
+                        i += 1;
                     }
-                }
+                })().map_err(|(r, idx): (TypeReport, usize)| {
+                    r.not_sub_attach_index(Origin::Ty, idx)
+                })
             }
 
-            fn assert_eq(&self, other: &$tyseq, ctx: &mut TypeContext) -> CheckResult<()> {
+            fn assert_eq(&self, other: &$tyseq, ctx: &mut TypeContext) -> TypeResult<()> {
                 debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
-                let mut selfhead = self.head.iter().fuse();
-                let mut otherhead = other.head.iter().fuse();
-                let selftail = self.tail_to_type();
-                let othertail = other.tail_to_type();
-                loop {
-                    match (selfhead.next(), otherhead.next()) {
-                        (Some(a), Some(b)) => a.assert_eq(b, ctx)?,
-                        (Some(a), None) => a.assert_eq(&othertail, ctx)?,
-                        (None, Some(b)) => selftail.assert_eq(b, ctx)?,
-                        (None, None) => return selftail.assert_eq(&othertail, ctx),
+                (|| {
+                    let mut i = 0;
+                    let mut selfhead = self.head.iter().fuse();
+                    let mut otherhead = other.head.iter().fuse();
+                    let selftail = self.tail_to_type();
+                    let othertail = other.tail_to_type();
+                    loop {
+                        match (selfhead.next(), otherhead.next()) {
+                            (Some(a), Some(b)) => a.assert_eq(b, ctx).map_err(|r| (r, i))?,
+                            (Some(a), None) => a.assert_eq(&othertail, ctx).map_err(|r| (r, i))?,
+                            (None, Some(b)) => selftail.assert_eq(b, ctx).map_err(|r| (r, i))?,
+                            (None, None) =>
+                                return selftail.assert_eq(&othertail, ctx).map_err(|r| (r, i)),
+                        }
+                        i += 1;
                     }
-                }
+                })().map_err(|(r, idx): (TypeReport, usize)| {
+                    r.not_eq_attach_index(Origin::Ty, idx)
+                })
             }
         }
 
         impl Display for $tyseq {
-            fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
+            fn fmt_displayed(&self, f: &mut fmt::Formatter,
+                             locale: Locale, ctx: &TypeContext) -> fmt::Result {
                 self.fmt_generic(f, |t, f, without_nil| {
                     let t = t.display(ctx);
+                    let t = t.localized(locale);
                     if without_nil { write!(f, "{:#}", t) } else { write!(f, "{}", t) }
                 })
             }
@@ -399,75 +422,101 @@ macro_rules! define_slotseq {
             type Output = $slotseq;
 
             fn union(&self, other: &$slotseq, explicit: bool,
-                     ctx: &mut TypeContext) -> CheckResult<$slotseq> {
-                let selftail = self.tail_to_slot();
-                let othertail = other.tail_to_slot();
+                     ctx: &mut TypeContext) -> TypeResult<$slotseq> {
+                (|| {
+                    let selftail = self.tail_to_slot();
+                    let othertail = other.tail_to_slot();
 
-                let mut head = Vec::new();
-                let n = cmp::min(self.head.len(), other.head.len());
-                for (l, r) in self.head[..n].iter().zip(other.head[..n].iter()) {
-                    head.push($slot_union(l, r, explicit, ctx)?);
-                }
-                for l in &self.head[n..] {
-                    head.push($slot_union(l, &othertail, explicit, ctx)?);
-                }
-                for r in &other.head[n..] {
-                    head.push($slot_union(&selftail, r, explicit, ctx)?);
-                }
+                    let mut head = Vec::new();
+                    let n = cmp::min(self.head.len(), other.head.len());
+                    for (i, (l, r)) in self.head[..n].iter().zip(other.head[..n].iter())
+                                                            .enumerate(){
+                        let u = $slot_union(l, r, explicit, ctx);
+                        head.push(u.map_err(|r| (r, i))?);
+                    }
+                    for (i, l) in self.head[n..].iter().enumerate() {
+                        let u = $slot_union(l, &othertail, explicit, ctx);
+                        head.push(u.map_err(|r| (r, i + n))?);
+                    }
+                    for (i, r) in other.head[n..].iter().enumerate() {
+                        let u = $slot_union(&selftail, r, explicit, ctx);
+                        head.push(u.map_err(|r| (r, i + n))?);
+                    }
 
-                let tail = if self.tail.is_some() || other.tail.is_some() {
-                    Some($slot_union(&selftail, &othertail, explicit, ctx)?)
-                } else {
-                    None
-                };
+                    let tail = if self.tail.is_some() || other.tail.is_some() {
+                        let i = cmp::max(self.head.len(), other.head.len());
+                        let u = $slot_union(&selftail, &othertail, explicit, ctx);
+                        Some(u.map_err(|r| (r, i))?)
+                    } else {
+                        None
+                    };
 
-                Ok($slotseq {
-                    head: head, tail: tail,
-                    $($span: $span_union(self.$span, other.$span),)*
+                    Ok($slotseq {
+                        head: head, tail: tail,
+                        $($span: $span_union(self.$span, other.$span),)*
+                    })
+                })().map_err(|(r, idx): (TypeReport, usize)| {
+                    r.cannot_union_attach_index(Origin::Slot, idx, explicit)
                 })
             }
         }
 
         impl Lattice for $slotseq {
-            fn assert_sub(&self, other: &$slotseq, ctx: &mut TypeContext) -> CheckResult<()> {
+            fn assert_sub(&self, other: &$slotseq, ctx: &mut TypeContext) -> TypeResult<()> {
                 debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
-                let mut selfhead = self.head.iter().fuse();
-                let mut otherhead = other.head.iter().fuse();
-                let selftail = self.tail_to_slot();
-                let othertail = other.tail_to_slot();
-                loop {
-                    match (selfhead.next(), otherhead.next()) {
-                        (Some(a), Some(b)) => a.assert_sub(b, ctx)?,
-                        (Some(a), None) => a.assert_sub(&othertail, ctx)?,
-                        (None, Some(b)) => selftail.assert_sub(b, ctx)?,
-                        (None, None) => return selftail.assert_sub(&othertail, ctx),
+                (|| {
+                    let mut i = 0;
+                    let mut selfhead = self.head.iter().fuse();
+                    let mut otherhead = other.head.iter().fuse();
+                    let selftail = self.tail_to_slot();
+                    let othertail = other.tail_to_slot();
+                    loop {
+                        match (selfhead.next(), otherhead.next()) {
+                            (Some(a), Some(b)) => a.assert_sub(b, ctx).map_err(|r| (r, i))?,
+                            (Some(a), None) => a.assert_sub(&othertail, ctx).map_err(|r| (r, i))?,
+                            (None, Some(b)) => selftail.assert_sub(b, ctx).map_err(|r| (r, i))?,
+                            (None, None) =>
+                                return selftail.assert_sub(&othertail, ctx).map_err(|r| (r, i)),
+                        }
+                        i += 1;
                     }
-                }
+                })().map_err(|(r, idx): (TypeReport, usize)| {
+                    r.not_sub_attach_index(Origin::Slot, idx)
+                })
             }
 
-            fn assert_eq(&self, other: &$slotseq, ctx: &mut TypeContext) -> CheckResult<()> {
+            fn assert_eq(&self, other: &$slotseq, ctx: &mut TypeContext) -> TypeResult<()> {
                 debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
-                let mut selfhead = self.head.iter().fuse();
-                let mut otherhead = other.head.iter().fuse();
-                let selftail = self.tail_to_slot();
-                let othertail = other.tail_to_slot();
-                loop {
-                    match (selfhead.next(), otherhead.next()) {
-                        (Some(a), Some(b)) => a.assert_eq(b, ctx)?,
-                        (Some(a), None) => a.assert_eq(&othertail, ctx)?,
-                        (None, Some(b)) => selftail.assert_eq(b, ctx)?,
-                        (None, None) => return selftail.assert_eq(&othertail, ctx),
+                (|| {
+                    let mut i = 0;
+                    let mut selfhead = self.head.iter().fuse();
+                    let mut otherhead = other.head.iter().fuse();
+                    let selftail = self.tail_to_slot();
+                    let othertail = other.tail_to_slot();
+                    loop {
+                        match (selfhead.next(), otherhead.next()) {
+                            (Some(a), Some(b)) => a.assert_eq(b, ctx).map_err(|r| (r, i))?,
+                            (Some(a), None) => a.assert_eq(&othertail, ctx).map_err(|r| (r, i))?,
+                            (None, Some(b)) => selftail.assert_eq(b, ctx).map_err(|r| (r, i))?,
+                            (None, None) =>
+                                return selftail.assert_eq(&othertail, ctx).map_err(|r| (r, i)),
+                        }
+                        i += 1;
                     }
-                }
+                })().map_err(|(r, idx): (TypeReport, usize)| {
+                    r.not_eq_attach_index(Origin::Slot, idx)
+                })
             }
         }
 
         impl Display for $slotseq {
-            fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
+            fn fmt_displayed(&self, f: &mut fmt::Formatter,
+                             locale: Locale, ctx: &TypeContext) -> fmt::Result {
                 self.fmt_generic(f, |s, f, without_nil| {
                     let s = s.display(ctx);
+                    let s = s.localized(locale);
                     if without_nil { write!(f, "{:#}", s) } else { write!(f, "{}", s) }
                 })
             }
@@ -503,7 +552,7 @@ define_tyseq! {
         make_nil_ty = |span: Span| Ty::noisy_nil().with_loc(span.end());
         dummy_ty = Ty::dummy().without_loc();
         ty_union = |lhs: &Spanned<Ty>, rhs: &Spanned<Ty>,
-                    explicit, ctx| -> CheckResult<Spanned<Ty>> {
+                    explicit, ctx| -> TypeResult<Spanned<Ty>> {
             Ok(lhs.base.union(&rhs.base, explicit, ctx)?.without_loc())
         };
         t_to_ty = |t: Spanned<T>| t.map(|t| Ty::new(t.into_send()));
@@ -543,7 +592,7 @@ define_slotseq! {
         make_nil_slot = |span: Span| Slot::just(Ty::noisy_nil()).with_loc(span.end());
         dummy_slot = Slot::dummy().without_loc();
         slot_union = |lhs: &Spanned<Slot>, rhs: &Spanned<Slot>,
-                      explicit, ctx| -> CheckResult<Spanned<Slot>> {
+                      explicit, ctx| -> TypeResult<Spanned<Slot>> {
             Ok(lhs.base.union(&rhs.base, explicit, ctx)?.without_loc())
         };
         t_to_slot = |t: Spanned<T>| t.map(|t| Slot::just(Ty::new(t.into_send())));

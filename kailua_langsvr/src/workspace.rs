@@ -17,7 +17,7 @@ use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use walkdir::WalkDir;
 
 use kailua_env::{Unit, Pos, Span, Source, SourceFile, SourceSlice};
-use kailua_diag::{self, Report, Locale, Localize, Localized};
+use kailua_diag::{self, Stop, Report, Locale, Localize, Localized};
 use kailua_syntax::{Lexer, Nest, NestedToken, Parser, Chunk};
 use kailua_check::{self, FsSource, FsOptions, Context, Output};
 
@@ -483,10 +483,10 @@ struct WorkspaceFsSource {
 }
 
 impl FsSource for WorkspaceFsSource {
-    fn chunk_from_path(&self, path: &Path) -> Result<Option<Chunk>, String> {
+    fn chunk_from_path(&self, path: &Path) -> Result<Option<Chunk>, Option<Stop>> {
         let mut fssource = self.inner.borrow_mut();
 
-        fssource.cancel_token.keep_going::<()>().map_err(|_| "cancel requested".to_string())?;
+        fssource.cancel_token.keep_going::<()>().map_err(|_| Stop)?;
 
         // try to use the client-maintained text as a source code
         let files = fssource.files.clone();
@@ -498,7 +498,7 @@ impl FsSource for WorkspaceFsSource {
                     (Some((**chunk).clone()), diags.clone())
                 },
                 Err(res) => match *res {
-                    CancelError::Canceled => return Err("cancel requested".to_string()),
+                    CancelError::Canceled => return Err(Some(Stop)),
                     CancelError::Error(ref diags) => (None, diags.clone())
                 },
             };
@@ -519,7 +519,7 @@ impl FsSource for WorkspaceFsSource {
         let sourcefile = match SourceFile::from_file(path) {
             Ok(f) => f,
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(e.to_string()),
+            Err(_) => return Err(None),
         };
         let span = fssource.source.write().add(sourcefile);
         fssource.temp_units.push(span.unit());
@@ -538,7 +538,7 @@ impl FsSource for WorkspaceFsSource {
                 fssource.temp_files.insert(path.to_owned(), chunk.clone());
                 Ok(Some(chunk))
             },
-            Err(_) => Err("failed to parse chunk".to_string()),
+            Err(Stop) => Err(Some(Stop)), // we have already reported parsing errors
         }
     }
 }

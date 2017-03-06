@@ -4,14 +4,13 @@ use std::ops::Deref;
 use std::sync::Arc;
 use parking_lot::{RwLock, RwLockReadGuard};
 
-use kailua_env::Spanned;
-use kailua_diag::Reporter;
+use kailua_env::{Span, Spanned};
+use kailua_diag::Locale;
 use kailua_syntax::M;
-use diag::CheckResult;
-use super::{Dyn, Nil, T, Ty, TypeContext, Lattice, Union, Display, TVar, Tag};
-use super::{error_not_sub, error_not_eq};
+use diag::{Origin, Display};
+use super::{Dyn, Nil, T, Ty, TypeContext, Lattice, Union, TVar, Tag};
+use super::{TypeReport, TypeResult};
 use super::flags::Flags;
-use message as m;
 
 // slot type flexibility (a superset of type mutability)
 #[derive(Copy, Clone, PartialEq)]
@@ -88,66 +87,92 @@ impl S {
     // self and other may be possibly different slots and being merged by union
     // mainly used by `and`/`or` operators and table lifting
     pub fn union(&mut self, other: &mut S, explicit: bool,
-                 ctx: &mut TypeContext) -> CheckResult<S> {
-        let (flex, ty) = match (self.flex, other.flex) {
-            (F::Dynamic(dyn1), F::Dynamic(dyn2)) => {
-                let dyn = dyn1.union(dyn2);
-                (F::Dynamic(dyn), Ty::new(T::Dynamic(dyn)))
-            },
-            (F::Dynamic(dyn), _) | (_, F::Dynamic(dyn)) =>
-                (F::Dynamic(dyn), Ty::new(T::Dynamic(dyn))),
-            (F::Any, _) | (_, F::Any) => (F::Any, Ty::new(T::None)),
+                 ctx: &mut TypeContext) -> TypeResult<S> {
+        (|| {
+            let (flex, ty) = match (self.flex, other.flex) {
+                (F::Dynamic(dyn1), F::Dynamic(dyn2)) => {
+                    let dyn = dyn1.union(dyn2);
+                    (F::Dynamic(dyn), Ty::new(T::Dynamic(dyn)))
+                },
+                (F::Dynamic(dyn), _) | (_, F::Dynamic(dyn)) =>
+                    (F::Dynamic(dyn), Ty::new(T::Dynamic(dyn))),
+                (F::Any, _) | (_, F::Any) => (F::Any, Ty::new(T::None)),
 
-            // it's fine to merge r-values
-            (F::Just, F::Just) => (F::Just, self.ty.union(&other.ty, explicit, ctx)?),
+                // it's fine to merge r-values
+                (F::Just, F::Just) => (F::Just, self.ty.union(&other.ty, explicit, ctx)?),
 
-            // merging Var requires a and b are identical
-            // (the user is expected to annotate a and b if it's not the case)
-            (F::Var, F::Var) |
-            (F::Var, F::Just) |
-            (F::Just, F::Var) => {
-                self.ty.assert_eq(&other.ty, ctx)?;
-                (F::Var, self.ty.clone())
-            },
+                // merging Var requires a and b are identical
+                // (the user is expected to annotate a and b if it's not the case)
+                (F::Var, F::Var) |
+                (F::Var, F::Just) |
+                (F::Just, F::Var) => {
+                    self.ty.assert_eq(&other.ty, ctx)?;
+                    (F::Var, self.ty.clone())
+                },
 
-            // Var and Just are lifted to Const otherwise
-            (F::Const, F::Just) |
-            (F::Const, F::Const) |
-            (F::Const, F::Var) |
-            (F::Just, F::Const) |
-            (F::Var, F::Const) =>
-                (F::Const, self.ty.union(&other.ty, explicit, ctx)?),
-        };
+                // Var and Just are lifted to Const otherwise
+                (F::Const, F::Just) |
+                (F::Const, F::Const) |
+                (F::Const, F::Var) |
+                (F::Just, F::Const) |
+                (F::Var, F::Const) =>
+                    (F::Const, self.ty.union(&other.ty, explicit, ctx)?),
+            };
 
-        Ok(S { flex: flex, ty: ty })
+            Ok(S { flex: flex, ty: ty })
+        })().map_err(|r: TypeReport| r.cannot_union(Origin::Slot, self, other, explicit, ctx))
     }
 
-    pub fn assert_sub(&self, other: &S, ctx: &mut TypeContext) -> CheckResult<()> {
+    pub fn assert_sub(&self, other: &S, ctx: &mut TypeContext) -> TypeResult<()> {
         debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
-        match (self.flex, other.flex) {
-            (_, F::Any) => Ok(()),
-            (_, F::Dynamic(_)) | (F::Dynamic(_), _) => Ok(()),
+        (|| {
+            match (self.flex, other.flex) {
+                (_, F::Any) => Ok(()),
+                (_, F::Dynamic(_)) | (F::Dynamic(_), _) => Ok(()),
 
-            (F::Just, _) | (_, F::Const) => self.ty.assert_sub(&other.ty, ctx),
-            (F::Var, F::Var) => self.ty.assert_eq(&other.ty, ctx),
+                (F::Just, _) | (_, F::Const) => self.ty.assert_sub(&other.ty, ctx),
+                (F::Var, F::Var) => self.ty.assert_eq(&other.ty, ctx),
 
-            (_, _) => error_not_sub(self, other),
-        }
+                (_, _) => Err(ctx.gen_report()),
+            }
+        })().map_err(|r: TypeReport| r.not_sub(Origin::Slot, self, other, ctx))
     }
 
-    pub fn assert_eq(&self, other: &S, ctx: &mut TypeContext) -> CheckResult<()> {
+    pub fn assert_eq(&self, other: &S, ctx: &mut TypeContext) -> TypeResult<()> {
         debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
-        match (self.flex, other.flex) {
-            (F::Any, F::Any) => Ok(()),
-            (_, F::Dynamic(_)) | (F::Dynamic(_), _) => Ok(()),
+        (|| {
+            match (self.flex, other.flex) {
+                (F::Any, F::Any) => Ok(()),
+                (_, F::Dynamic(_)) | (F::Dynamic(_), _) => Ok(()),
 
-            (F::Just, F::Just) | (F::Const, F::Const) | (F::Var, F::Var) =>
-                self.ty.assert_eq(&other.ty, ctx),
+                (F::Just, F::Just) | (F::Const, F::Const) | (F::Var, F::Var) =>
+                    self.ty.assert_eq(&other.ty, ctx),
 
-            (_, _) => error_not_eq(self, other),
-        }
+                (_, _) => Err(ctx.gen_report()),
+            }
+        })().map_err(|r: TypeReport| r.not_eq(Origin::Slot, self, other, ctx))
+    }
+}
+
+impl Display for S {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter,
+                     locale: Locale, ctx: &TypeContext) -> fmt::Result {
+        let prefix = match (self.flex, &locale[..]) {
+            (F::Any, "ko") => return write!(f, "<접근 불가능한 타입>"),
+            (F::Any, _)    => return write!(f, "<inaccessible type>"),
+
+            (F::Dynamic(Dyn::User), _)    => return write!(f, "WHATEVER"),
+            (F::Dynamic(Dyn::Oops), "ko") => return write!(f, "<오류>"),
+            (F::Dynamic(Dyn::Oops), _)    => return write!(f, "<error>"),
+
+            (F::Just,  _) => "", // can be seen as a mutable value yet to be assigned
+            (F::Const, _) => "const ",
+            (F::Var,   _) => "",
+        };
+
+        write!(f, "{}{}", prefix, self.ty.display(ctx).localized(locale))
     }
 }
 
@@ -207,7 +232,7 @@ impl Slot {
     // one tries to assign `rhs` to `self`. is it *accepted*, and if so how should they change?
     // if `init` is true, this is the first time assignment with lax requirements.
     // (in this case `self` is the type derived from the specification.)
-    pub fn accept(&self, rhs: &Slot, ctx: &mut TypeContext, init: bool) -> CheckResult<()> {
+    pub fn accept(&self, rhs: &Slot, ctx: &mut TypeContext, init: bool) -> TypeResult<()> {
         // accepting itself is always fine and has no effect,
         // but it has to be filtered since it will borrow twice otherwise
         if self.0.deref() as *const _ == rhs.0.deref() as *const _ { return Ok(()); }
@@ -217,28 +242,30 @@ impl Slot {
         let mut lhs = self.0.write();
         let rhs = rhs.0.read();
 
-        match (lhs.flex, rhs.flex, init) {
-            (F::Dynamic(_), _, _) => Ok(()),
+        (|| {
+            match (lhs.flex, rhs.flex, init) {
+                (F::Dynamic(_), _, _) => Ok(()),
 
-            (_, F::Any, _) |
-            (F::Any, _, _) |
-            (F::Const, _, false) => Err(format!("impossible to assign {:?} to {:?}", *rhs, *lhs)),
+                (_, F::Any, _) |
+                (F::Any, _, _) |
+                (F::Const, _, false) => Err(ctx.gen_report()),
 
-            (_, F::Dynamic(_), _) => Ok(()),
+                (_, F::Dynamic(_), _) => Ok(()),
 
-            // as long as the type is in agreement, Var can be assigned
-            (F::Var, _, _) => rhs.ty.assert_sub(&lhs.ty, ctx),
+                // as long as the type is in agreement, Var can be assigned
+                (F::Var, _, _) => rhs.ty.assert_sub(&lhs.ty, ctx),
 
-            // assignment to Const slot is for initialization only
-            (F::Const, _, true) => rhs.ty.assert_sub(&lhs.ty, ctx),
+                // assignment to Const slot is for initialization only
+                (F::Const, _, true) => rhs.ty.assert_sub(&lhs.ty, ctx),
 
-            // Just becomes Var when assignment happens
-            (F::Just, _, _) => {
-                rhs.ty.assert_sub(&lhs.ty, ctx)?;
-                lhs.flex = F::Var;
-                Ok(())
+                // Just becomes Var when assignment happens
+                (F::Just, _, _) => {
+                    rhs.ty.assert_sub(&lhs.ty, ctx)?;
+                    lhs.flex = F::Var;
+                    Ok(())
+                }
             }
-        }
+        })().map_err(|r: TypeReport| r.cannot_assign(Origin::Slot, &*lhs, &*rhs, ctx))
     }
 
     // one tries to modify `self` in place. the new value, when expressed as a type, is
@@ -247,11 +274,13 @@ impl Slot {
     //
     // conceptually this is same to `accept`, but some special types (notably nominal types)
     // have a representation that is hard to express with `accept` only.
-    pub fn accept_in_place(&self, _ctx: &mut TypeContext) -> CheckResult<()> {
+    pub fn accept_in_place(&self, ctx: &mut TypeContext) -> TypeResult<()> {
         let mut s = self.0.write();
         match s.flex {
             F::Dynamic(_) => Ok(()),
-            F::Any | F::Const => Err(format!("impossible to update {:?}", *s)),
+            F::Any | F::Const => {
+                Err(ctx.gen_report().cannot_assign_in_place(Origin::Slot, &*s, ctx))
+            },
             F::Var => Ok(()),
             F::Just => {
                 s.flex = F::Var;
@@ -260,11 +289,13 @@ impl Slot {
         }
     }
 
-    pub fn filter_by_flags(&self, flags: Flags, ctx: &mut TypeContext) -> CheckResult<()> {
+    pub fn filter_by_flags(&self, flags: Flags, ctx: &mut TypeContext) -> TypeResult<()> {
         // when filter_by_flags fails, the slot itself has no valid type
         let mut s = self.0.write();
         let t = mem::replace(&mut s.ty, Ty::new(T::None).or_nil(Nil::Absent));
-        s.ty = t.filter_by_flags(flags, ctx)?;
+        s.ty = t.filter_by_flags(flags, ctx).map_err(|r| {
+            r.cannot_filter_by_flags(Origin::Slot, &*s, ctx)
+        })?;
         Ok(())
     }
 
@@ -304,7 +335,7 @@ impl Slot {
 impl Union for Slot {
     type Output = Slot;
 
-    fn union(&self, other: &Slot, explicit: bool, ctx: &mut TypeContext) -> CheckResult<Slot> {
+    fn union(&self, other: &Slot, explicit: bool, ctx: &mut TypeContext) -> TypeResult<Slot> {
         // if self and other point to the same slot, do not try to borrow mutably
         if self.0.deref() as *const _ == other.0.deref() as *const _ { return Ok(self.clone()); }
 
@@ -314,11 +345,11 @@ impl Union for Slot {
 }
 
 impl Lattice for Slot {
-    fn assert_sub(&self, other: &Slot, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Slot, ctx: &mut TypeContext) -> TypeResult<()> {
         self.0.read().assert_sub(&other.0.read(), ctx)
     }
 
-    fn assert_eq(&self, other: &Slot, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Slot, ctx: &mut TypeContext) -> TypeResult<()> {
         self.0.read().assert_eq(&other.0.read(), ctx)
     }
 }
@@ -328,54 +359,30 @@ impl Lattice for Slot {
 // also, for the convenience, this does NOT print the LHS with the flexibility
 // (which doesn't matter here).
 impl<'a> Lattice<T<'a>> for Spanned<Slot> {
-    fn assert_sub(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
-        let unlifted = self.unlift();
-        if let Err(e) = unlifted.assert_sub(other, ctx) {
-            ctx.error(self.span, m::NotSubtype { sub: unlifted.display(ctx),
-                                                 sup: other.display(ctx) })
-               .done()?;
-            Err(e) // XXX not sure if we can recover here
-        } else {
-            Ok(())
-        }
+    fn assert_sub(&self, other: &T<'a>, ctx: &mut TypeContext) -> TypeResult<()> {
+        self.unlift().assert_sub(other, ctx).map_err(|r| {
+            r.not_sub_attach_span(self.span, Span::dummy())
+        })
     }
 
-    fn assert_eq(&self, other: &T<'a>, ctx: &mut TypeContext) -> CheckResult<()> {
-        let unlifted = self.unlift();
-        if let Err(e) = unlifted.assert_eq(other, ctx) {
-            ctx.error(self.span, m::NotEqual { lhs: unlifted.display(ctx),
-                                               rhs: other.display(ctx) })
-               .done()?;
-            Err(e) // XXX not sure if we can recover here
-        } else {
-            Ok(())
-        }
+    fn assert_eq(&self, other: &T<'a>, ctx: &mut TypeContext) -> TypeResult<()> {
+        self.unlift().assert_eq(other, ctx).map_err(|r| {
+            r.not_eq_attach_span(self.span, Span::dummy())
+        })
     }
 }
 
 impl<'a> Lattice<Ty> for Spanned<Slot> {
-    fn assert_sub(&self, other: &Ty, ctx: &mut TypeContext) -> CheckResult<()> {
-        let unlifted = self.unlift();
-        if let Err(e) = unlifted.assert_sub(other, ctx) {
-            ctx.error(self.span, m::NotSubtype { sub: unlifted.display(ctx),
-                                                 sup: other.display(ctx) })
-               .done()?;
-            Err(e) // XXX not sure if we can recover here
-        } else {
-            Ok(())
-        }
+    fn assert_sub(&self, other: &Ty, ctx: &mut TypeContext) -> TypeResult<()> {
+        self.unlift().assert_sub(other, ctx).map_err(|r| {
+            r.not_sub_attach_span(self.span, Span::dummy())
+        })
     }
 
-    fn assert_eq(&self, other: &Ty, ctx: &mut TypeContext) -> CheckResult<()> {
-        let unlifted = self.unlift();
-        if let Err(e) = unlifted.assert_eq(other, ctx) {
-            ctx.error(self.span, m::NotEqual { lhs: unlifted.display(ctx),
-                                               rhs: other.display(ctx) })
-               .done()?;
-            Err(e) // XXX not sure if we can recover here
-        } else {
-            Ok(())
-        }
+    fn assert_eq(&self, other: &Ty, ctx: &mut TypeContext) -> TypeResult<()> {
+        self.unlift().assert_eq(other, ctx).map_err(|r| {
+            r.not_eq_attach_span(self.span, Span::dummy())
+        })
     }
 }
 
@@ -386,19 +393,9 @@ impl PartialEq for Slot {
 }
 
 impl Display for Slot {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
-        let s = &*self.0.read();
-
-        let prefix = match s.flex {
-            F::Any                => return write!(f, "<inaccessible type>"),
-            F::Dynamic(Dyn::User) => return write!(f, "WHATEVER"),
-            F::Dynamic(Dyn::Oops) => return write!(f, "<error type>"),
-            F::Just               => "", // can be seen as a mutable value yet to be assigned
-            F::Const              => "const ",
-            F::Var                => "",
-        };
-
-        write!(f, "{}{}", prefix, s.ty.display(ctx))
+    fn fmt_displayed(&self, f: &mut fmt::Formatter,
+                     locale: Locale, ctx: &TypeContext) -> fmt::Result {
+        self.0.read().fmt_displayed(f, locale, ctx)
     }
 }
 
@@ -424,16 +421,16 @@ mod tests {
         let cnst = |t| Slot::new(F::Const, Ty::new(t));
         let var = |t| Slot::new(F::Var, Ty::new(t));
 
-        assert_eq!(just(T::Integer).assert_sub(&just(T::Integer), &mut NoTypeContext), Ok(()));
-        assert_eq!(just(T::Integer).assert_sub(&just(T::Number), &mut NoTypeContext), Ok(()));
+        assert!(just(T::Integer).assert_sub(&just(T::Integer), &mut NoTypeContext).is_ok());
+        assert!(just(T::Integer).assert_sub(&just(T::Number), &mut NoTypeContext).is_ok());
         assert!(just(T::Number).assert_sub(&just(T::Integer), &mut NoTypeContext).is_err());
 
-        assert_eq!(var(T::Integer).assert_sub(&var(T::Integer), &mut NoTypeContext), Ok(()));
+        assert!(var(T::Integer).assert_sub(&var(T::Integer), &mut NoTypeContext).is_ok());
         assert!(var(T::Integer).assert_sub(&var(T::Number), &mut NoTypeContext).is_err());
         assert!(var(T::Number).assert_sub(&var(T::Integer), &mut NoTypeContext).is_err());
 
-        assert_eq!(cnst(T::Integer).assert_sub(&cnst(T::Integer), &mut NoTypeContext), Ok(()));
-        assert_eq!(cnst(T::Integer).assert_sub(&cnst(T::Number), &mut NoTypeContext), Ok(()));
+        assert!(cnst(T::Integer).assert_sub(&cnst(T::Integer), &mut NoTypeContext).is_ok());
+        assert!(cnst(T::Integer).assert_sub(&cnst(T::Number), &mut NoTypeContext).is_ok());
         assert!(cnst(T::Number).assert_sub(&cnst(T::Integer), &mut NoTypeContext).is_err());
     }
 }

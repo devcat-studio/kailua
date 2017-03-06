@@ -2,11 +2,11 @@ use std::fmt;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 
+use kailua_diag::Locale;
 use kailua_syntax::Str;
-use diag::CheckResult;
-use super::{T, TypeContext, NoTypeContext, Lattice, Union, Display};
+use diag::{TypeReport, TypeResult, Origin, Display};
+use super::{T, TypeContext, Lattice, Union};
 use super::{Numbers, Strings, Tables, Functions, Class};
-use super::{error_not_sub, error_not_eq};
 use super::flags::*;
 
 // expanded value types for unions
@@ -42,12 +42,18 @@ impl Unioned {
         }
     }
 
-    pub fn from<'a>(ty: &T<'a>) -> CheckResult<Unioned> {
+    pub fn from<'a>(ty: &T<'a>, ctx: &mut TypeContext) -> TypeResult<Unioned> {
         let mut u = Unioned::empty();
 
         match ty {
-            &T::Dynamic(_) | &T::All => panic!("Unioned::from called with T::Dynamic or T::All"),
-            &T::TVar(_) => return Err("a type not yet fully resolved cannot be unioned".into()),
+            &T::Dynamic(_) | &T::All => {
+                panic!("Unioned::from called with T::Dynamic or T::All");
+            }
+            &T::TVar(_) => {
+                return Err(ctx.gen_report().put(Origin::Union,
+                                                "a type not yet fully resolved \
+                                                 cannot be unioned".into()));
+            }
 
             &T::None     => {}
             &T::Boolean  => { u.simple = U_BOOLEAN; }
@@ -178,84 +184,116 @@ impl Union for Unioned {
     type Output = Unioned;
 
     fn union(&self, other: &Unioned, explicit: bool,
-             ctx: &mut TypeContext) -> CheckResult<Unioned> {
-        let simple = self.simple | other.simple;
+             ctx: &mut TypeContext) -> TypeResult<Unioned> {
+        (|| {
+            let simple = self.simple | other.simple;
 
-        // numbers and strings can be unioned, though only the explicitly constructed
-        // literal types can use unions; implicit unions always resolve to integer or number
-        let numbers = self.numbers.union(&other.numbers, explicit, ctx)?;
-        let strings = self.strings.union(&other.strings, explicit, ctx)?;
+            macro_rules! union_options {
+                ($lhs:expr, $rhs:expr, |$l:ident, $r:ident| $merge:expr) => (
+                    match ($lhs, $rhs) {
+                        (&Some(ref $l), &Some(ref $r)) => Some($merge),
+                        (&Some(ref lhs), &None) => Some(lhs.clone()),
+                        (&None, &Some(ref rhs)) => Some(rhs.clone()),
+                        (&None, &None) => None,
+                    }
+                )
+            }
 
-        // tables and functions cannot be unioned in any case;
-        // unequal table and function components always results in an error
-        let tables = match (&self.tables, &other.tables) {
-            (&Some(ref lhs), &Some(ref rhs)) => {
+            // numbers and strings can be unioned, though only the explicitly constructed
+            // literal types can use unions; implicit unions always resolve to integer or number
+            let numbers = union_options!(&self.numbers, &other.numbers, |lhs, rhs| {
+                lhs.union(rhs, explicit, ctx)?
+            });
+            let strings = union_options!(&self.strings, &other.strings, |lhs, rhs| {
+                lhs.union(rhs, explicit, ctx)?
+            });
+
+            // tables and functions cannot be unioned in any case;
+            // unequal table and function components always results in an error
+            let tables = union_options!(&self.tables, &other.tables, |lhs, rhs| {
                 lhs.assert_eq(rhs, ctx)?;
-                Some(lhs.clone())
-            },
-            (&Some(ref lhs), &None) => Some(lhs.clone()),
-            (&None, &Some(ref rhs)) => Some(rhs.clone()),
-            (&None, &None) => None,
-        };
-        let functions = match (&self.functions, &other.functions) {
-            (&Some(ref lhs), &Some(ref rhs)) => {
+                lhs.clone()
+            });
+            let functions = union_options!(&self.functions, &other.functions, |lhs, rhs| {
                 lhs.assert_eq(rhs, ctx)?;
-                Some(lhs.clone())
-            },
-            (&Some(ref lhs), &None) => Some(lhs.clone()),
-            (&None, &Some(ref rhs)) => Some(rhs.clone()),
-            (&None, &None) => None,
-        };
+                lhs.clone()
+            });
 
-        let mut classes = self.classes.clone();
-        classes.extend(other.classes.iter().cloned());
+            let mut classes = self.classes.clone();
+            classes.extend(other.classes.iter().cloned());
 
-        Ok(Unioned {
-            simple: simple, numbers: numbers, strings: strings,
-            tables: tables, functions: functions, classes: classes,
-        })
+            Ok(Unioned {
+                simple: simple, numbers: numbers, strings: strings,
+                tables: tables, functions: functions, classes: classes,
+            })
+        })().map_err(|r: TypeReport| r.cannot_union(Origin::Union, self, other, explicit, ctx))
     }
 }
 
 impl Lattice for Unioned {
-    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
-        if self.simple.intersects(!other.simple) {
-            return error_not_sub(self, other);
-        }
+    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
+        (|| {
+            macro_rules! assert_sub_options {
+                ($lhs:expr, $rhs:expr) => (
+                    match ($lhs, $rhs) {
+                        (&Some(ref lhs), &Some(ref rhs)) => lhs.assert_sub(rhs, ctx)?,
+                        (&Some(_), &None) => return Err(ctx.gen_report()),
+                        (&None, _) => {}
+                    }
+                )
+            }
 
-        self.numbers.assert_sub(&other.numbers, &mut NoTypeContext)?;
-        self.strings.assert_sub(&other.strings, &mut NoTypeContext)?;
-        self.tables.assert_sub(&other.tables, ctx)?;
-        self.functions.assert_sub(&other.functions, ctx)?;
+            if self.simple.intersects(!other.simple) {
+                return Err(ctx.gen_report());
+            }
 
-        if !self.classes.is_subset(&other.classes) {
-            return error_not_sub(self, other);
-        }
+            assert_sub_options!(&self.numbers, &other.numbers);
+            assert_sub_options!(&self.strings, &other.strings);
+            assert_sub_options!(&self.tables, &other.tables);
+            assert_sub_options!(&self.functions, &other.functions);
 
-        Ok(())
+            if !self.classes.is_subset(&other.classes) {
+                return Err(ctx.gen_report());
+            }
+
+            Ok(())
+        })().map_err(|r: TypeReport| r.not_sub(Origin::Union, self, other, ctx))
     }
 
-    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
-        if self.simple != other.simple {
-            return error_not_eq(self, other);
-        }
+    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
+        (|| {
+            if self.simple != other.simple {
+                return Err(ctx.gen_report());
+            }
 
-        self.numbers.assert_eq(&other.numbers, &mut NoTypeContext)?;
-        self.strings.assert_eq(&other.strings, &mut NoTypeContext)?;
-        self.tables.assert_eq(&other.tables, ctx)?;
-        self.functions.assert_eq(&other.functions, ctx)?;
+            macro_rules! assert_eq_options {
+                ($lhs:expr, $rhs:expr) => (
+                    match ($lhs, $rhs) {
+                        (&Some(ref lhs), &Some(ref rhs)) => lhs.assert_eq(rhs, ctx)?,
+                        (&None, &None) => {}
+                        (_, _) => return Err(ctx.gen_report()),
+                    }
+                )
+            }
 
-        if self.classes != other.classes {
-            return error_not_eq(self, other);
-        }
+            assert_eq_options!(&self.numbers, &other.numbers);
+            assert_eq_options!(&self.strings, &other.strings);
+            assert_eq_options!(&self.tables, &other.tables);
+            assert_eq_options!(&self.functions, &other.functions);
 
-        Ok(())
+            if self.classes != other.classes {
+                return Err(ctx.gen_report());
+            }
+
+            Ok(())
+        })().map_err(|r: TypeReport| r.not_eq(Origin::Union, self, other, ctx))
     }
 }
 
 impl Display for Unioned {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
-        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(ctx), f))
+    fn fmt_displayed(&self, f: &mut fmt::Formatter,
+                     locale: Locale, ctx: &TypeContext) -> fmt::Result {
+        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(ctx).localized(locale), f))
     }
 }
 

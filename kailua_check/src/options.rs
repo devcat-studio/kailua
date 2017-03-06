@@ -1,27 +1,44 @@
 use std::str;
+use std::ascii::AsciiExt;
 use std::path::{Path, PathBuf};
 
+use kailua_diag::Stop;
 use kailua_syntax::Chunk;
-use diag::CheckResult;
 
 pub trait Options {
-    fn set_package_path(&mut self, _path: &[u8]) -> CheckResult<()> { Ok(()) }
-    fn set_package_cpath(&mut self, _path: &[u8]) -> CheckResult<()> { Ok(()) }
+    // all of those methods return `Err(None)` if the error occurred and has not been reported,
+    // or `Err(Some(Stop))` if the error occurred and the caller wants to bail out.
+    // if the implementation has a handle to the reporter and wants to do its own reporting,
+    // it can report and return `Ok` (recovery) or `Err(Some(Stop))` (error propagation).
 
-    fn require_chunk(&mut self, _path: &[u8]) -> CheckResult<Chunk> {
-        Err("not implemented".into())
+    fn set_package_path(&mut self, _path: &[u8]) -> Result<(), Option<Stop>> { Ok(()) }
+    fn set_package_cpath(&mut self, _path: &[u8]) -> Result<(), Option<Stop>> { Ok(()) }
+
+    fn require_chunk(&mut self, _path: &[u8]) -> Result<Chunk, Option<Stop>> {
+        Err(None)
     }
 }
 
 pub trait FsSource {
-    fn chunk_from_path(&self, resolved_path: &Path) -> CheckResult<Option<Chunk>>;
+    // `Ok(Some(chunk))` normally; `Ok(None)` if path doesn't exist and search should continue;
+    // `Err(None)` and `Err(Some(Stop))` follow the convention of `Options`.
+    fn chunk_from_path(&self, resolved_path: &Path) -> Result<Option<Chunk>, Option<Stop>>;
+
+    fn to_path_buf(&self, path: &[u8]) -> Result<PathBuf, Option<Stop>> {
+        // by default we avoid parsing multibyte paths as it depends on the system encoding
+        if path.is_ascii() {
+            Ok(Path::new(str::from_utf8(path).unwrap()).to_owned())
+        } else {
+            Err(None)
+        }
+    }
 }
 
 pub struct FsOptions<S> {
     source: S,
     root: PathBuf,
-    package_path: Vec<String>,
-    package_cpath: Vec<String>,
+    package_path: Vec<Vec<u8>>,
+    package_cpath: Vec<Vec<u8>>,
 }
 
 impl<S: FsSource> FsOptions<S> {
@@ -31,19 +48,25 @@ impl<S: FsSource> FsOptions<S> {
             root: root,
 
             // by default, local files only
-            package_path: vec!["?.lua".into()],
+            package_path: vec![b"?.lua".to_vec()],
             package_cpath: vec![],
         }
     }
 
-    fn search_file(&self, path: &str, search_paths: &[String],
-                   suffix: &str) -> CheckResult<Option<Chunk>> {
+    fn search_file(&self, path: &[u8], search_paths: &[Vec<u8>],
+                   suffix: &[u8]) -> Result<Option<Chunk>, Option<Stop>> {
         for template in search_paths {
-            let path = template.replace('?', &path) + suffix;
-            let path = self.root.join(path);
+            let mut newpath = Vec::new();
+            for (i, e) in template.split(|&b| b == b'?').enumerate() {
+                if i > 0 { newpath.extend_from_slice(path); }
+                newpath.extend_from_slice(e);
+            }
+            newpath.extend_from_slice(suffix);
+
+            let resolved_path = self.root.join(self.source.to_path_buf(&newpath)?);
             debug!("trying to load {:?}", path);
 
-            if let Some(chunk) = self.source.chunk_from_path(&path)? {
+            if let Some(chunk) = self.source.chunk_from_path(&resolved_path)? {
                 return Ok(Some(chunk));
             }
         }
@@ -52,33 +75,29 @@ impl<S: FsSource> FsOptions<S> {
 }
 
 impl<S: FsSource> Options for FsOptions<S> {
-    fn set_package_path(&mut self, path: &[u8]) -> Result<(), String> {
-        let path = str::from_utf8(path).map_err(|e| e.to_string())?;
-        self.package_path = path.split(";").map(|s| s.to_owned()).collect();
+    fn set_package_path(&mut self, path: &[u8]) -> Result<(), Option<Stop>> {
+        self.package_path = path.split(|&b| b == b';').map(|s| s.to_owned()).collect();
         Ok(())
     }
 
-    fn set_package_cpath(&mut self, path: &[u8]) -> Result<(), String> {
-        let path = str::from_utf8(path).map_err(|e| e.to_string())?;
-        self.package_cpath = path.split(";").map(|s| s.to_owned()).collect();
+    fn set_package_cpath(&mut self, path: &[u8]) -> Result<(), Option<Stop>> {
+        self.package_cpath = path.split(|&b| b == b';').map(|s| s.to_owned()).collect();
         Ok(())
     }
 
-    fn require_chunk(&mut self, path: &[u8]) -> Result<Chunk, String> {
-        let path = str::from_utf8(path).map_err(|e| e.to_string())?;
-
-        if let Some(chunk) = self.search_file(&path, &self.package_path, ".kailua")? {
+    fn require_chunk(&mut self, path: &[u8]) -> Result<Chunk, Option<Stop>> {
+        if let Some(chunk) = self.search_file(&path, &self.package_path, b".kailua")? {
             return Ok(chunk);
         }
-        if let Some(chunk) = self.search_file(&path, &self.package_path, "")? {
+        if let Some(chunk) = self.search_file(&path, &self.package_path, b"")? {
             return Ok(chunk);
         }
-        if let Some(chunk) = self.search_file(&path, &self.package_cpath, ".kailua")? {
+        if let Some(chunk) = self.search_file(&path, &self.package_cpath, b".kailua")? {
             return Ok(chunk);
         }
         // avoid loading the native libraries as is
 
-        Err(format!("module not found"))
+        Err(None)
     }
 }
 

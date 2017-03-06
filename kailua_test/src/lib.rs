@@ -110,6 +110,7 @@ fn split_line<'a>(s: &'a str, file: Option<&'a str>,
         match &s.to_ascii_lowercase()[..] {
             "note" => Some(Kind::Note),
             "warn" | "warning" => Some(Kind::Warning),
+            "cause" | "because" => Some(Kind::Cause),
             "error" => Some(Kind::Error),
             "fatal" => Some(Kind::Fatal),
             _ => None,

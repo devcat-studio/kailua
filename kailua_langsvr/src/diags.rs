@@ -59,7 +59,7 @@ pub fn translate_diag((kind, span, msg): (Kind, Span, String),
     let severity = match kind {
         Kind::Fatal | Kind::Error => DiagnosticSeverity::Error,
         Kind::Warning => DiagnosticSeverity::Warning,
-        Kind::Info => DiagnosticSeverity::Information,
+        Kind::Info | Kind::Cause => DiagnosticSeverity::Information,
         Kind::Note => DiagnosticSeverity::Hint,
     };
     let diag = Diagnostic {

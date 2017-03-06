@@ -1,8 +1,8 @@
 use std::fmt;
 
-use diag::CheckResult;
-use super::{T, TySeq, TypeContext, Lattice, Display};
-use super::{error_not_sub, error_not_eq};
+use kailua_diag::Locale;
+use diag::{Origin, TypeReport, TypeResult, Display};
+use super::{T, TySeq, TypeContext, Lattice};
 
 #[derive(Clone, PartialEq)]
 pub struct Function {
@@ -11,13 +11,13 @@ pub struct Function {
 }
 
 impl Function {
-    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
         other.args.assert_sub(&self.args, ctx)?; // contravariant
         self.returns.assert_sub(&other.returns, ctx)?; // covariant
         Ok(())
     }
 
-    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
+    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
         self.args.assert_eq(&other.args, ctx)?;
         self.returns.assert_eq(&other.returns, ctx)?;
         Ok(())
@@ -45,9 +45,10 @@ impl Function {
 }
 
 impl Display for Function {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
-        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(ctx), f),
-                            |s, f| fmt::Display::fmt(&s.display(ctx), f))
+    fn fmt_displayed(&self, f: &mut fmt::Formatter,
+                     locale: Locale, ctx: &TypeContext) -> fmt::Result {
+        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(ctx).localized(locale), f),
+                            |s, f| fmt::Display::fmt(&s.display(ctx).localized(locale), f))
     }
 }
 
@@ -75,23 +76,25 @@ impl Functions {
 }
 
 impl Lattice for Functions {
-    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
-        let ok = match (self, other) {
-            (_, &Functions::All) => true,
-            (&Functions::All, _) => false,
+    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
+        (|| {
+            match (self, other) {
+                (_, &Functions::All) => Ok(()),
+                (&Functions::All, _) => Err(ctx.gen_report()),
 
-            (&Functions::Simple(ref a), &Functions::Simple(ref b)) => return a.assert_sub(b, ctx),
-        };
-
-        if ok { Ok(()) } else { error_not_sub(self, other) }
+                (&Functions::Simple(ref a), &Functions::Simple(ref b)) => a.assert_sub(b, ctx),
+            }
+        })().map_err(|r: TypeReport| r.not_sub(Origin::Functions, self, other, ctx))
     }
 
-    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> CheckResult<()> {
-        match (self, other) {
-            (&Functions::All, &Functions::All) => Ok(()),
-            (&Functions::Simple(ref a), &Functions::Simple(ref b)) => a.assert_eq(b, ctx),
-            (_, _) => error_not_eq(self, other),
-        }
+    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
+        (|| {
+            match (self, other) {
+                (&Functions::All, &Functions::All) => Ok(()),
+                (&Functions::Simple(ref a), &Functions::Simple(ref b)) => a.assert_eq(b, ctx),
+                (_, _) => Err(ctx.gen_report()),
+            }
+        })().map_err(|r: TypeReport| r.not_eq(Origin::Functions, self, other, ctx))
     }
 }
 
@@ -106,8 +109,9 @@ impl PartialEq for Functions {
 }
 
 impl Display for Functions {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter, ctx: &TypeContext) -> fmt::Result {
-        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(ctx), f))
+    fn fmt_displayed(&self, f: &mut fmt::Formatter,
+                     locale: Locale, ctx: &TypeContext) -> fmt::Result {
+        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(ctx).localized(locale), f))
     }
 }
 

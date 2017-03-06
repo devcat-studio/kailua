@@ -1,10 +1,10 @@
 use std::fmt;
 use std::collections::BTreeSet;
 
+use kailua_diag::Locale;
 use kailua_syntax::Str;
-use diag::CheckResult;
+use diag::{Origin, TypeResult, Display};
 use super::{TypeContext, Lattice, Union};
-use super::{error_not_sub, error_not_eq};
 
 #[derive(Clone)]
 pub enum Numbers {
@@ -18,7 +18,7 @@ impl Union for Numbers {
     type Output = Numbers;
 
     fn union(&self, other: &Numbers, explicit: bool,
-             _ctx: &mut TypeContext) -> CheckResult<Numbers> {
+             _ctx: &mut TypeContext) -> TypeResult<Numbers> {
         match (self, other) {
             (&Numbers::All, _) => Ok(Numbers::All),
             (_, &Numbers::All) => Ok(Numbers::All),
@@ -79,7 +79,7 @@ impl Union for Numbers {
 }
 
 impl Lattice for Numbers {
-    fn assert_sub(&self, other: &Self, _: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
         let ok = match (self, other) {
             (&Numbers::One(a), &Numbers::One(b)) => a == b,
             (&Numbers::One(a), &Numbers::Some(ref b)) => b.contains(&a),
@@ -98,11 +98,19 @@ impl Lattice for Numbers {
             (&Numbers::All, &Numbers::All) => true,
         };
 
-        if ok { Ok(()) } else { error_not_sub(self, other) }
+        if ok {
+            Ok(())
+        } else {
+            Err(ctx.gen_report().not_sub(Origin::Numbers, self, other, ctx))
+        }
     }
 
-    fn assert_eq(&self, other: &Self, _ctx: &mut TypeContext) -> CheckResult<()> {
-        if *self == *other { Ok(()) } else { error_not_eq(self, other) }
+    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
+        if *self == *other {
+            Ok(())
+        } else {
+            Err(ctx.gen_report().not_eq(Origin::Numbers, self, other, ctx))
+        }
     }
 }
 
@@ -120,8 +128,9 @@ impl PartialEq for Numbers {
     }
 }
 
-impl fmt::Display for Numbers {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Display for Numbers {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter,
+                     _locale: Locale, _ctx: &TypeContext) -> fmt::Result {
         fmt::Debug::fmt(self, f)
     }
 }
@@ -156,7 +165,7 @@ impl Union for Strings {
     type Output = Strings;
 
     fn union(&self, other: &Strings, explicit: bool,
-             _ctx: &mut TypeContext) -> CheckResult<Strings> {
+             _ctx: &mut TypeContext) -> TypeResult<Strings> {
         match (self, other) {
             (&Strings::All, _) => Ok(Strings::All),
             (_, &Strings::All) => Ok(Strings::All),
@@ -214,7 +223,7 @@ impl Union for Strings {
 }
 
 impl Lattice for Strings {
-    fn assert_sub(&self, other: &Self, _: &mut TypeContext) -> CheckResult<()> {
+    fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
         let ok = match (self, other) {
             (&Strings::One(ref a), &Strings::One(ref b)) => *a == *b,
             (&Strings::One(ref a), &Strings::Some(ref b)) => b.contains(a),
@@ -230,11 +239,19 @@ impl Lattice for Strings {
             (&Strings::All, &Strings::All) => true,
         };
 
-        if ok { Ok(()) } else { error_not_sub(self, other) }
+        if ok {
+            Ok(())
+        } else {
+            Err(ctx.gen_report().not_sub(Origin::Strings, self, other, ctx))
+        }
     }
 
-    fn assert_eq(&self, other: &Self, _ctx: &mut TypeContext) -> CheckResult<()> {
-        if *self == *other { Ok(()) } else { error_not_eq(self, other) }
+    fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
+        if *self == *other {
+            Ok(())
+        } else {
+            Err(ctx.gen_report().not_eq(Origin::Strings, self, other, ctx))
+        }
     }
 }
 
@@ -251,8 +268,9 @@ impl PartialEq for Strings {
     }
 }
 
-impl fmt::Display for Strings {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Display for Strings {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter,
+                     _locale: Locale, _ctx: &TypeContext) -> fmt::Result {
         fmt::Debug::fmt(self, f)
     }
 }

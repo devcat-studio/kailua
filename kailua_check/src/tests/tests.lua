@@ -12,7 +12,8 @@ p()
 
 --8<-- funccall-func-too-many-args
 local function p() end
-p(3) --@< Error: `3` is not a subtype of `nil`
+p(3) --@< Error: The type `function() --> ()` cannot be called
+     --@^ Cause: First function argument `3` is not a subtype of `nil`
 --! error
 
 --8<-- funccall-func-too-less-args-1
@@ -31,7 +32,10 @@ p()
 
 --8<-- funccall-func-too-less-args-3
 local function p(x) --: integer?
-    x = x + 1 --@< Error: `integer?` is not a subtype of `number`
+    x = x + 1 --@< Error: Cannot apply + operator to `integer?` and `integer?`
+              --@^ Cause: `integer?` is not a subtype of `number`
+              --@^^ Error: Cannot assign `number` into `integer?`
+              --@^^^ Note: The other type originates here
 end
 p()
 --! error
@@ -40,7 +44,8 @@ p()
 local function p(x) --: integer!
     x = x + 1
 end
-p() --@< Error: `nil` is not a subtype of `integer!`
+p() --@< Error: The type `function(integer!) --> ()` cannot be called
+    --@^ Cause: First function argument `nil` is not a subtype of `integer!`
 --! error
 
 --8<-- funccall-var-outside-of-scope-1
@@ -112,12 +117,15 @@ local x = p + 3
 
 --8<-- add-number-string
 --# assume p: number
-local x = p + 'foo' --@< Error: `"foo"` is not a subtype of `number`
+local x = p + 'foo' --@< Error: Cannot apply + operator to `number` and `number`
+                    --@^ Cause: `"foo"` is not a subtype of `number`
 --! error
 
 --8<-- add-number-func
 local function p() end
-local x = p + 'foo' --@< Error: `function() --> ()` is not a subtype of `number`
+local x = p + 'foo' --@< Error: Cannot apply + operator to `function() --> ()` and `function() --> ()`
+                    --@^ Cause: `function() --> ()` is not a subtype of `number`
+                    --@^^ Cause: `"foo"` is not a subtype of `number`
 --! error
 
 --8<-- arith-integer
@@ -132,7 +140,11 @@ local q = p + p --: integer!
 
 --8<-- arith-integer-explicit-nil
 --# assume p: integer?
-local p = p + p --: integer! --@< Error: `integer?` is not a subtype of `number`
+local p = p + p --: integer! --@< Error: Cannot apply + operator to `integer?` and `integer?`
+                             --@^ Cause: `integer?` is not a subtype of `number`
+                             --@^^ Cause: `integer?` is not a subtype of `number`
+                             --@^^^ Error: Cannot assign `number` into `integer!`
+                             --@^^^^ Note: The other type originates here
 --! error
 
 --8<-- arith-integer-no-nil
@@ -196,11 +208,13 @@ local p = 3 + 4
 --! ok
 
 --8<-- add-integer-string
-local p = 3 + 'foo' --@< Error: `"foo"` is not a subtype of `number`
+local p = 3 + 'foo' --@< Error: Cannot apply + operator to `3` and `3`
+                    --@^ Cause: `"foo"` is not a subtype of `number`
 --! error
 
 --8<-- add-boolean-integer
-local p = true + 7 --@< Error: `true` is not a subtype of `number`
+local p = true + 7 --@< Error: Cannot apply + operator to `true` and `true`
+                   --@^ Cause: `true` is not a subtype of `number`
 --! error
 
 --8<-- index-empty-with-integer
@@ -222,7 +236,8 @@ local p = t[3]
 
 --8<-- index-map-with-integer-type
 local t = {[3] = 'four', [8] = 'five'} --: map<integer, string>
-local p = t[3] + 3 --@< Error: `string` is not a subtype of `number`
+local p = t[3] + 3 --@< Error: Cannot apply + operator to `string` and `string`
+                   --@^ Cause: `string` is not a subtype of `number`
 --! error
 
 --8<-- index-map-with-integer-no-key
@@ -287,7 +302,8 @@ local p = x:hello()
 --8<-- methodcall-rec-2
 local x = {hello = --v function(a: table!, b: integer!)
                    function(a, b) end}
-local p = x:hello() --@< Error: `nil` is not a subtype of `integer!`
+local p = x:hello() --@< Error: The type `function(table!, integer!) --> ()` cannot be called
+                    --@^ Cause: Second function argument `nil` is not a subtype of `integer!`
 --! error
 
 --8<-- methodcall-rec-3
@@ -299,13 +315,14 @@ local p = x:hello(4)
 --8<-- methodcall-rec-4
 local x = {hello = --v function(a: table!, b: integer!)
                    function(a, b) end}
-local p = x:hello('string') --@< Error: `"string"` is not a subtype of `integer!`
+local p = x:hello('string') --@< Error: The type `function(table!, integer!) --> ()` cannot be called
+                            --@^ Cause: Second function argument `"string"` is not a subtype of `integer!`
 --! error
 
 --8<-- methodcall-rec-5
 local x = {hello = function() end}
-local p = x:hello() --@< Error: `{hello = function() --> ()}` is not a subtype of `nil`
--- XXX error is bad, should mention about the method call
+local p = x:hello() --@< Error: The type `function() --> ()` cannot be called
+                    --@^ Cause: First function argument `{hello = function() --> ()}` is not a subtype of `nil`
 --! error
 
 --8<-- methodcall-integer
@@ -378,15 +395,18 @@ local a = ('string' and 53) + 42
 --! ok
 
 --8<-- conjunctive-lhs-1
-local a = (53 and 'string') + 42 --@< Error: `"string"` is not a subtype of `number`
+local a = (53 and 'string') + 42 --@< Error: Cannot apply + operator to `"string"` and `"string"`
+                                 --@^ Cause: `"string"` is not a subtype of `number`
 --! error
 
 --8<-- conjunctive-rhs-1
-local a = (false and 'string') + 42 --@< Error: `false` is not a subtype of `number`
+local a = (false and 'string') + 42 --@< Error: Cannot apply + operator to `false` and `false`
+                                    --@^ Cause: `false` is not a subtype of `number`
 --! error
 
 --8<-- conjunctive-rhs-2
-local a = (false and 53) + 42 --@< Error: `false` is not a subtype of `number`
+local a = (false and 53) + 42 --@< Error: Cannot apply + operator to `false` and `false`
+                              --@^ Cause: `false` is not a subtype of `number`
 --! error
 
 --8<-- conjunctive-type-erasure
@@ -403,7 +423,8 @@ local a = (53 or nil) + 42
 --! ok
 
 --8<-- disjunctive-rhs-1
-local a = (nil or 'string') + 42 --@< Error: `"string"` is not a subtype of `number`
+local a = (nil or 'string') + 42 --@< Error: Cannot apply + operator to `"string"` and `"string"`
+                                 --@^ Cause: `"string"` is not a subtype of `number`
 --! error
 
 --8<-- disjunctive-rhs-2
@@ -454,12 +475,14 @@ local q = p .. 3
 
 --8<-- add-string-or-number
 --# assume p: string | number
-local q = p + 3 --@< Error: `(number|string)` is not a subtype of `number`
+local q = p + 3 --@< Error: Cannot apply + operator to `(number|string)` and `(number|string)`
+                --@^ Cause: `(number|string)` is not a subtype of `number`
 --! error
 
 --8<-- cat-string-or-boolean
 --# assume p: string | boolean
-local q = p .. 3 --@< Error: `(boolean|string)` is not a subtype of `(number|string)`
+local q = p .. 3 --@< Error: Cannot apply .. operator to `(boolean|string)` and `(boolean|string)`
+                 --@^ Cause: `(boolean|string)` is not a subtype of `(number|string)`
 --! error
 
 --8<-- cat-string-lit-1
@@ -579,7 +602,8 @@ local a = 3 + #'heck'
 --! ok
 
 --8<-- len-integer
-local a = 3 + #4 --@< Error: `4` is not a subtype of `(string|table)`
+local a = 3 + #4 --@< Error: Cannot apply # operator to `4`
+                 --@^ Cause: `4` is not a subtype of `(string|table)`
 --! error
 
 --8<-- for
@@ -607,6 +631,12 @@ for i = 1, 9, 2.1 do
           --@^ Note: The other type originates here
 end
 --! error
+
+--8<-- func-never-returns
+function f()
+    while true do end
+end
+--! ok
 
 --8<-- func-varargs
 function a(...)
@@ -669,7 +699,8 @@ local x = p(4.5)
 
 --8<-- func-number-arg-implicit
 function p(a) return a + 3 end
-local x = p('what') --@< Error: `"what"` is not a subtype of `<unknown type>`
+local x = p('what') --@< Error: The type `function(<unknown type>) --> integer` cannot be called
+                    --@^ Cause: First function argument `"what"` is not a subtype of `<unknown type>`
 --! error
 
 --8<-- capture-and-return-1
@@ -702,7 +733,8 @@ local a = p('foo') .. 'bar'
 function p(x) --: string --> string
     return x
 end
-local a = p('foo') + 3 --@< Error: `string` is not a subtype of `number`
+local a = p('foo') + 3 --@< Error: Cannot apply + operator to `string` and `string`
+                       --@^ Cause: `string` is not a subtype of `number`
 --! error
 
 --8<-- table-update-with-integer-1
@@ -792,7 +824,8 @@ a = 42
 --8<-- var-any-update-and-add
 local a --: any
 a = 42
-local b = a + 5 --@< Error: `any` is not a subtype of `number`
+local b = a + 5 --@< Error: Cannot apply + operator to `any` and `any`
+                --@^ Cause: `any` is not a subtype of `number`
 --! error
 
 --8<-- var-typed-error-1
@@ -927,7 +960,9 @@ end
 --8<-- func-returns-seq-error
 --v function() --> (integer, string)
 local function p()
-    return 3, 4 --@< Error: `4` is not a subtype of `string`
+    return 3, 4
+    --@^ Error: Attempted to return a type `(3, 4)` which is incompatible to given return type `(integer, string)`
+    --@^^ Cause: Second return type `4` is not a subtype of `string`
 end
 --! error
 
@@ -956,8 +991,8 @@ end
 --v function()
 local function f()
     return 'foo'
-    --@^ Error: `"foo"` is not a subtype of `nil`
-    -- TODO it should also note that `nil` is a return type
+    --@^ Error: Attempted to return a type `("foo")` which is incompatible to given return type `()`
+    --@^^ Cause: First return type `"foo"` is not a subtype of `nil`
 end
 --! error
 
@@ -1044,7 +1079,8 @@ p(1, 2, 3)
 --8<-- func-varargs-type-2
 --v function(...: integer)
 local function p(...) end
-p(1, false, 3) --@< Error: `false` is not a subtype of `integer`
+p(1, false, 3) --@< Error: The type `function(integer...) --> ()` cannot be called
+               --@^ Cause: Second function argument `false` is not a subtype of `integer`
 --! error
 
 --8<-- func-varargs-type-with-nil
@@ -1102,6 +1138,16 @@ local q = p * 3
 --# type another_type = integer -- this is intentional
 --! error
 
+--8<-- invalid-open
+--# open lua40 --@< Error: Cannot find the built-in library name given to `--# open` directive
+--! error
+
+--8<-- duplicate-open
+--# open lua51
+--# open lua51
+print('hello')
+--! ok
+
 --8<-- lua51-no-implicit
 print('hello') --@< Error: Global or local variable `print` is not defined
 --! error
@@ -1123,7 +1169,8 @@ print(p + 5)
 --# assume p: integer?
 --# assume q: integer?
 assert(p or q)
-print(p + 5) --@< Error: `integer?` is not a subtype of `number`
+print(p + 5) --@< Error: Cannot apply + operator to `integer?` and `integer?`
+             --@^ Cause: `integer?` is not a subtype of `number`
 --! error
 
 --8<-- assert-conjunctive
@@ -1147,7 +1194,8 @@ print(p + 5)
 --# assume p: integer?
 --# assume q: integer?
 assert(p and not q)
-print(q + 5) --@< Error: `nil` is not a subtype of `number`
+print(q + 5) --@< Error: Cannot apply + operator to `nil` and `nil`
+             --@^ Cause: `nil` is not a subtype of `number`
 --! error
 
 --8<-- assert-conjunctive-partial-dynamic
@@ -1200,7 +1248,8 @@ print(q + 5)
 --# assume p: integer?
 --# assume q: integer?
 assert_not(p or not q) -- i.e. assert(not p and q)
-print(p + 5) --@< Error: `nil` is not a subtype of `number`
+print(p + 5) --@< Error: Cannot apply + operator to `nil` and `nil`
+             --@^ Cause: `nil` is not a subtype of `number`
 --! error
 
 --8<-- assert-type
@@ -1353,7 +1402,8 @@ x = require 'a' --@< Warning: Cannot resolve the module name given to `require`
 --8<-- require-unknown-returns-1
 --# open lua51
 x = require 'a' --@< Warning: Cannot resolve the module name given to `require`
-print(x + 4) --@< Error: `any` is not a subtype of `number`
+print(x + 4) --@< Error: Cannot apply + operator to `any` and `any`
+             --@^ Cause: `any` is not a subtype of `number`
 --! error
 
 --8<-- require-unknown-returns-2
@@ -1521,7 +1571,8 @@ end
 --8<-- for-in-simple-iter-3
 --# assume func: const function() --> number|string
 for x in func do
-    local a = x * 3 --@< Error: `(number|string)` is not a subtype of `number`
+    local a = x * 3 --@< Error: Cannot apply * operator to `(number|string)` and `(number|string)`
+                    --@^ Cause: `(number|string)` is not a subtype of `number`
 end
 --! error
 
@@ -1554,13 +1605,13 @@ end
 --! ok
 
 --8<-- for-in-non-func
---@v Error: The iterator given to `for`-`in` statement returned a non-function `"hello"`
+--@v Error: The iterator given to `for`-`in` statement returned a non-function type `"hello"`
 for x in 'hello' do
 end
 --! error
 
 --8<-- for-in-non-func-recover
---@v Error: The iterator given to `for`-`in` statement returned a non-function `"hello"`
+--@v Error: The iterator given to `for`-`in` statement returned a non-function type `"hello"`
 for x in 'hello' do
     x()
     y() --@< Error: Global or local variable `y` is not defined
@@ -1589,7 +1640,8 @@ end
 --# open lua51
 --# assume p: vector<string>
 for x, y in ipairs(p) do
-    local b = y * 4 --@< Error: `string` is not a subtype of `number`
+    local b = y * 4 --@< Error: Cannot apply * operator to `string` and `string`
+                    --@^ Cause: `string` is not a subtype of `number`
 end
 --! error
 
@@ -1597,7 +1649,8 @@ end
 --# open lua51
 --# assume p: map<integer, string>
 for x, y in ipairs(p) do
-    --@^ Error: `map<integer, string>` is not a subtype of `vector<const WHATEVER>`
+    --@^ Error: The type `[generic_pairs] function(vector<const WHATEVER>) --> (function(vector<const WHATEVER>, integer) --> (integer?, any), vector<const WHATEVER>, integer)` cannot be called
+    --@^^ Cause: First function argument `map<integer, string>` is not a subtype of `vector<const WHATEVER>`
     -- XXX WHATEVER is temporary
 end
 --! error
@@ -1606,7 +1659,8 @@ end
 --# open lua51
 --# assume p: table
 for x, y in ipairs(p) do
-    --@^ Error: `table` is not a subtype of `vector<const WHATEVER>`
+    --@^ Error: The type `[generic_pairs] function(vector<const WHATEVER>) --> (function(vector<const WHATEVER>, integer) --> (integer?, any), vector<const WHATEVER>, integer)` cannot be called
+    --@^^ Cause: First function argument `table` is not a subtype of `vector<const WHATEVER>`
     -- XXX WHATEVER is temporary
 end
 --! error
@@ -1615,7 +1669,8 @@ end
 --# open lua51
 --# assume p: string
 for x, y in ipairs(p) do
-    --@^ Error: `string` is not a subtype of `vector<const WHATEVER>`
+    --@^ Error: The type `[generic_pairs] function(vector<const WHATEVER>) --> (function(vector<const WHATEVER>, integer) --> (integer?, any), vector<const WHATEVER>, integer)` cannot be called
+    --@^^ Cause: First function argument `string` is not a subtype of `vector<const WHATEVER>`
     -- XXX WHATEVER is temporary
 end
 --! error
@@ -1642,7 +1697,8 @@ end
 --# open lua51
 --# assume p: vector<string>
 for x, y in pairs(p) do
-    local b = y * 4 --@< Error: `string` is not a subtype of `number`
+    local b = y * 4 --@< Error: Cannot apply * operator to `string` and `string`
+                    --@^ Cause: `string` is not a subtype of `number`
 end
 --! error
 
@@ -1668,7 +1724,8 @@ end
 --# open lua51
 --# assume p: map<integer, string>
 for x, y in pairs(p) do
-    local b = y * 4 --@< Error: `string` is not a subtype of `number`
+    local b = y * 4 --@< Error: Cannot apply * operator to `string` and `string`
+                    --@^ Cause: `string` is not a subtype of `number`
 end
 --! error
 
@@ -1685,7 +1742,8 @@ end
 --# open lua51
 --# assume p: map<string, integer>
 for x, y in pairs(p) do
-    local a = x * 3 --@< Error: `string` is not a subtype of `number`
+    local a = x * 3 --@< Error: Cannot apply * operator to `string` and `string`
+                    --@^ Cause: `string` is not a subtype of `number`
 end
 --! error
 
@@ -1700,14 +1758,17 @@ end
 --# open lua51
 --# assume p: table
 for x, y in pairs(p) do
-    print(p .. 3) --@< Error: `table` is not a subtype of `(number|string)`
+    print(p .. 3) --@< Error: Cannot apply .. operator to `table` and `table`
+                  --@^ Cause: `table` is not a subtype of `(number|string)`
 end
 --! error
 
 --8<-- lua51-pairs-no-non-table
 --# open lua51
 --# assume p: string
-for x, y in pairs(p) do --@< Error: `string` is not a subtype of `table`
+for x, y in pairs(p) do
+    --@^ Error: The type `[generic_pairs] function(table) --> (function(table, any) --> (any?, any), table, any)` cannot be called
+    --@^^ Cause: First function argument `string` is not a subtype of `table`
 end
 --! error
 
@@ -2121,7 +2182,8 @@ local b = foo(4) --: string
 --@^^ Note: The other type originates here
 
 local c = foo('hi') --: integer
---@^ Error: `"hi"` is not a subtype of `integer`
+--@^ Error: The type `function(integer) --> integer` cannot be called
+--@^^ Cause: First function argument `"hi"` is not a subtype of `integer`
 
 --! error
 
@@ -2147,7 +2209,8 @@ function foo:bar(x)
 end
 
 -- this is an error because `self` type is not affected by [no_check]
---@v Error: `{bar = function(integer, integer) --> integer}` is not a subtype of `integer`
+--@vv Error: The type `function(integer, integer) --> integer` cannot be called
+--@v Cause: First function argument `{bar = function(integer, integer) --> integer}` is not a subtype of `integer`
 local a = foo:bar(3) --: integer
 
 --! error
@@ -2213,7 +2276,8 @@ x = 42
 y = "foo"
 -- the first is a parsing error, and the second is a type error from the recovered AST
 x + y --@< Error: Only function calls are allowed as statement-level expressions
-      --@^ Error: `"foo"` is not a subtype of `number`
+      --@^ Error: Cannot apply + operator to `42` and `42`
+      --@^^ Cause: `"foo"` is not a subtype of `number`
 --! error
 
 --8<-- assign-empty-rhs
@@ -2239,7 +2303,8 @@ end
 --v function(a: integer, b: integer)
 local function g(a, b)
 end
-g(0, f()) --@< Error: `2` is not a subtype of `nil`
+g(0, f()) --@< Error: The type `function(integer, integer) --> ()` cannot be called
+          --@^ Cause: Third function argument `2` is not a subtype of `nil`
 --! error
 
 --8<-- seq-type-with-paren
@@ -2335,14 +2400,16 @@ local z = {1, 2, 3, string = 4} --: map<integer, integer>
 
 --8<-- no-table-union
 local a --: {string} | {integer}
---@^ Error: Cannot create a union type of `{string}` and `{integer}`
---@^^ Note: The other type originates here
+--@^ Error: This union type is not supported in the specification
+--@^^ Cause: Cannot create a union type of `{string}` and `{integer}`
+--@^^^ Note: The other type originates here
 --! error
 
 --8<-- no-function-union
 local a --: (function(string)) | (function(integer))
---@^ Error: Cannot create a union type of `function(string) --> ()` and `function(integer) --> ()`
---@^^ Note: The other type originates here
+--@^ Error: This union type is not supported in the specification
+--@^^ Cause: Cannot create a union type of `function(string) --> ()` and `function(integer) --> ()`
+--@^^^ Note: The other type originates here
 --! error
 
 --8<-- maximally-disjoint-union
@@ -2384,7 +2451,8 @@ function x(q, a)
     end
 end
 local y = x(true, false)
---@^ Error: `false` is not a subtype of `true`
+--@^ Error: The type `function(<unknown type>, true) --> true` cannot be called
+--@^^ Cause: Second function argument `false` is not a subtype of `true`
 --! error
 
 --8<-- table-assign-just
@@ -2457,7 +2525,8 @@ local function f(x, y)
     y = 'another string' --@< Error: Cannot assign `"another string"` into `<unknown type>`
                          --@^ Note: The other type originates here
 end
-f(0, '') --@< Error: `0` is not a subtype of `<unknown type>`
+f(0, '') --@< Error: The type `function(<unknown type>, <unknown type>) --> ()` cannot be called
+         --@^ Cause: First function argument `0` is not a subtype of `<unknown type>`
 --! error
 
 --8<-- explicit-literal-type
@@ -2489,7 +2558,8 @@ local function f(x, y)
     y = 'another string' --@< Error: Cannot assign `"another string"` into `"string"`
                          --@^ Note: The other type originates here
 end
-f(0, '') --@< Error: `0` is not a subtype of `42`
+f(0, '') --@< Error: The type `function(42, "string") --> ()` cannot be called
+         --@^ Cause: First function argument `0` is not a subtype of `42`
 --! error
 
 --8<-- explicit-literal-type-in-func-args-2
@@ -2500,7 +2570,8 @@ local function f(x, y)
     y = 'string'
     y = 'another string'
 end
-f(0, '') --@< Error: `0` is not a subtype of `(42|54)`
+f(0, '') --@< Error: The type `function((42|54), ("another string"|"string")) --> ()` cannot be called
+         --@^ Cause: First function argument `0` is not a subtype of `(42|54)`
 --! error
 
 --8<-- explicit-literal-type-in-func-args-3
