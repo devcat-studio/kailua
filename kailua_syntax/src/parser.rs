@@ -2604,23 +2604,44 @@ impl<'a> Parser<'a> {
 
                 let mut sibling_scope = None;
                 let stmt = match parser.read() {
-                    // assume [global] NAME ":" MODF KIND
+                    // assume [global] NAME {"." NAME} ":" MODF KIND
                     (_, Spanned { base: Tok::Keyword(Keyword::Assume), .. }) => {
+                        let globalbegin = parser.pos();
                         let global = parser.may_expect(Keyword::Global);
-                        let name = parser.parse_name()?;
+                        let globalend = parser.last_pos();
+
+                        let namesbegin = parser.pos();
+                        let rootname = parser.parse_name()?;
+                        let mut names = Vec::new();
+                        while parser.may_expect(Punct::Dot) {
+                            names.push(parser.parse_name()?);
+                        }
+                        let namesend = parser.last_pos();
+
                         parser.expect(Punct::Colon)?;
                         let modf = parser.parse_kailua_mod();
                         let kind = parser.recover_upto(Self::parse_kailua_kind)?;
 
-                        let name = if global {
-                            parser.global_scope.insert(name.base.clone(), name.span);
-                            name.map(NameRef::Global)
+                        let rootname = if names.is_empty() {
+                            if global {
+                                parser.global_scope.insert(rootname.base.clone(), rootname.span);
+                                rootname.map(NameRef::Global)
+                            } else {
+                                let scope = parser.generate_sibling_scope();
+                                sibling_scope = Some(scope);
+                                parser.add_spanned_local_name(scope, rootname).map(NameRef::Local)
+                            }
                         } else {
-                            let scope = parser.generate_sibling_scope();
-                            sibling_scope = Some(scope);
-                            parser.add_spanned_local_name(scope, name).map(NameRef::Local)
+                            if global { // issue an error and ignore `global`
+                                parser.error(globalbegin..globalend, m::AssumeFieldGlobal {})
+                                      .done()?;
+                            }
+                            rootname.map(|name| parser.resolve_name(name))
                         };
-                        Some(Box::new(St::KailuaAssume(name, modf, kind, sibling_scope)))
+                        Some(Box::new(St::KailuaAssume(
+                            (rootname, names).with_loc(namesbegin..namesend),
+                            modf, kind, sibling_scope,
+                        )))
                     }
 
                     // open NAME

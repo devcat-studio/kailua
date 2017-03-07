@@ -508,22 +508,22 @@ do end
 
 --8<-- assume
 --# assume a: string
---! [KailuaAssume(`a`$1, _, String)$1]
+--! [KailuaAssume((`a`$1), _, String)$1]
 
 --8<-- assume-and-empty
 --# assume a: string
 --#
---! [KailuaAssume(`a`$1, _, String)$1]
+--! [KailuaAssume((`a`$1), _, String)$1]
 
 --8<-- assume-multiline
 --# assume a:
 --#   string
---! [KailuaAssume(`a`$1, _, String)$1]
+--! [KailuaAssume((`a`$1), _, String)$1]
 
 --8<-- assume-global-multiline
 --# assume global a:
 --#   string
---! [KailuaAssume(`a`_, _, String)]
+--! [KailuaAssume((`a`_), _, String)]
 
 --8<-- assume-global-global
 --# assume global global --@< Error: Expected a name, got a keyword `global`
@@ -533,13 +533,13 @@ f()
 --8<-- assume-incomplete
 --# assume a:
 --# assume b: string --@< Error: Expected a single type, got a keyword `assume`
---! [KailuaAssume(`a`$1, _, Oops)$1, KailuaAssume(`b`$2, _, String)$2]
+--! [KailuaAssume((`a`$1), _, Oops)$1, KailuaAssume((`b`$2), _, String)$2]
 
 --8<-- assume-global-local
 --# assume global a: {x=string}
 --# assume b: {y=string}
---! [KailuaAssume(`a`_, _, Record(["x": _ String])), \
---!  KailuaAssume(`b`$1, _, Record(["y": _ String]))$1]
+--! [KailuaAssume((`a`_), _, Record(["x": _ String])), \
+--!  KailuaAssume((`b`$1), _, Record(["y": _ String]))$1]
 
 --8<-- assume-assume
 --# assume assume: WHATEVER --@< Error: Expected a name, got a keyword `assume`
@@ -548,7 +548,7 @@ f()
 
 --8<-- assume-quoted-assume
 --# assume `assume`: WHATEVER
---! [KailuaAssume(`assume`$1, _, Dynamic)$1]
+--! [KailuaAssume((`assume`$1), _, Dynamic)$1]
 
 --8<-- quoted-assume-assume
 --# `assume` `assume`: WHATEVER --@< Error: Expected a newline, got a name
@@ -557,7 +557,39 @@ f()
 --8<-- assume-builtin-rejected
 --# assume a: WHATEVER = "foo" --@< Error: Expected a newline, got `=`
 --# assume b: WHATEVER
---! [KailuaAssume(`a`$1, _, Dynamic)$1]
+--! [KailuaAssume((`a`$1), _, Dynamic)$1]
+
+--8<-- assume-field
+--# assume a.b: WHATEVER
+--# assume a.b.c: WHATEVER
+--# assume a.b.c
+--#           .d: WHATEVER
+--# assume a.b.c.
+--#            d.e: const WHATEVER
+--! [KailuaAssume((`a`_.`b`), _, Dynamic), \
+--!  KailuaAssume((`a`_.`b`.`c`), _, Dynamic), \
+--!  KailuaAssume((`a`_.`b`.`c`.`d`), _, Dynamic), \
+--!  KailuaAssume((`a`_.`b`.`c`.`d`.`e`), Const, Dynamic)]
+
+--8<-- assume-field-scope
+--# assume a: WHATEVER
+--# assume a.b: WHATEVER
+--# assume a.b.c: WHATEVER
+--# assume a.b.c
+--#           .d: WHATEVER
+--# assume a.b.c.
+--#            d.e: const WHATEVER
+--! [KailuaAssume((`a`$1), _, Dynamic)$1, \
+--!  KailuaAssume((`a`$1.`b`), _, Dynamic), \
+--!  KailuaAssume((`a`$1.`b`.`c`), _, Dynamic), \
+--!  KailuaAssume((`a`$1.`b`.`c`.`d`), _, Dynamic), \
+--!  KailuaAssume((`a`$1.`b`.`c`.`d`.`e`), Const, Dynamic)]
+
+--8<-- assume-field-global
+--# assume global a.b: WHATEVER --@< Error: `global` cannot be used when `--# assume` directive updates a field in the table
+--# assume a.c: WHATEVER
+--! [KailuaAssume((`a`_.`b`), _, Dynamic), \
+--!  KailuaAssume((`a`_.`c`), _, Dynamic)]
 
 --8<-- kind-table
 local x --: {b=string, a=integer, c=const {d=const {}}}
@@ -1011,7 +1043,7 @@ local v = 42
 --8<-- funcspec-before-assume
 --v function() --@< Error: No function declaration after the function specification
 --# assume x: integer
---! [KailuaAssume(`x`$1, _, Integer)$1]
+--! [KailuaAssume((`x`$1), _, Integer)$1]
 
 --8<-- funcspec-before-for
 --v function() --@< Error: No function declaration after the function specification
@@ -1122,7 +1154,7 @@ function foo.bar(self, x) end
 --8<-- assume-multiline-recover
 --# assume a: { integer, string
 --#                      boolean --@< Error: Expected `,`, `;` or `}`, got a name
---! [KailuaAssume(`a`$1, _, Tuple([_ Integer, _ String]))$1]
+--! [KailuaAssume((`a`$1), _, Tuple([_ Integer, _ String]))$1]
 
 --8<-- long-string-incomplete-1
 f([==== [ --@< Error: Opening long bracket in a string should end with `[`
@@ -1202,21 +1234,21 @@ f(--[====[foo]
 --@v Error: Expected a single type, got a newline
 --# assume p:
 --&
---! [KailuaAssume(`p`$1, _, Oops)$1]
+--! [KailuaAssume((`p`$1), _, Oops)$1]
 
 --8<-- meta-long-string
 --# assume p: [[xxx   --@< Error: A newline is disallowed in a long string inside the meta block
 --#             yyy]] --@^ Note: The meta block started here
                       --@^ Error: Expected a newline, got a name
 f()
---! [KailuaAssume(`p`$1, _, String("xxx   "))$1, Void(`f`_())]
+--! [KailuaAssume((`p`$1), _, String("xxx   "))$1, Void(`f`_())]
 
 --8<-- meta-long-comment-1
 --# assume p: --[[xxx   --@< Error: A newline is disallowed in a long comment inside the meta block
 --#               yyy]] --@^ Note: The meta block started here
                         --@^ Error: Expected a newline, got `]`
 f()
---! [KailuaAssume(`p`$1, _, `yyy`)$1, Void(`f`_())]
+--! [KailuaAssume((`p`$1), _, `yyy`)$1, Void(`f`_())]
 
 --8<-- meta-long-comment-2
 --# assume p: --[[xxx   --@< Error: A newline is disallowed in a long comment inside the meta block
@@ -1225,7 +1257,7 @@ f()
                         --@^^ Error: Only function calls are allowed as statement-level expressions
                         --@^^^ Error: Expected a statement, got `]`
                         --@^^^^ Error: Expected a statement, got `]`
---! [KailuaAssume(`p`$1, _, Oops)$1, Void(`yyy`_), Oops, Oops]
+--! [KailuaAssume((`p`$1), _, Oops)$1, Void(`yyy`_), Oops, Oops]
 
 --8<-- string-multi-line
 f('foo\
@@ -1307,7 +1339,7 @@ f(@3) --@< Error: Unexpected character
 --# assume p: integer f --@< Error: Expected a newline, got a name
 f()
 --# assume q: integer g --@< Error: Expected a newline, got a name
---! [KailuaAssume(`p`$1, _, Integer)$1, Void(`f`_()), KailuaAssume(`q`$2, _, Integer)$2]
+--! [KailuaAssume((`p`$1), _, Integer)$1, Void(`f`_()), KailuaAssume((`q`$2), _, Integer)$2]
 
 --8<-- for-of
 for a of x --@< Error: Expected `=`, `,`, `in` or `--:` after `for NAME`, got a name
@@ -1489,66 +1521,66 @@ f()
 --8<-- assume-invalid-char
 --# assume x: #foo --@< Error: Expected a single type, got `#`
 f()
---! [KailuaAssume(`x`$1, _, Oops)$1, Void(`f`_())]
+--! [KailuaAssume((`x`$1), _, Oops)$1, Void(`f`_())]
 
 --8<-- assume-seq-varargs-1
 --# assume x: (...) --@< Error: `...` should be preceded with a kind in the ordinary kinds
                     --@^ Error: Expected a single type, not type sequence
 f()
---! [KailuaAssume(`x`$1, _, Oops)$1, Void(`f`_())]
+--! [KailuaAssume((`x`$1), _, Oops)$1, Void(`f`_())]
 
 --8<-- assume-seq-1
 --# assume x: (string...) --@< Error: Expected a single type, not type sequence
 f()
---! [KailuaAssume(`x`$1, _, Oops)$1, Void(`f`_())]
+--! [KailuaAssume((`x`$1), _, Oops)$1, Void(`f`_())]
 
 --8<-- assume-seq-varargs-2
 --# assume x: (integer, ...) --@< Error: `...` should be preceded with a kind in the ordinary kinds
                              --@^ Error: Expected a single type, not type sequence
 f()
---! [KailuaAssume(`x`$1, _, Oops)$1, Void(`f`_())]
+--! [KailuaAssume((`x`$1), _, Oops)$1, Void(`f`_())]
 
 --8<-- assume-seq-2
 --# assume x: (integer, string) --@< Error: Expected a single type, not type sequence
 f()
---! [KailuaAssume(`x`$1, _, Oops)$1, Void(`f`_())]
+--! [KailuaAssume((`x`$1), _, Oops)$1, Void(`f`_())]
 
 --8<-- assume-seq-varargs-3
 --# assume x: (integer, string...) --@< Error: Expected a single type, not type sequence
 f()
---! [KailuaAssume(`x`$1, _, Oops)$1, Void(`f`_())]
+--! [KailuaAssume((`x`$1), _, Oops)$1, Void(`f`_())]
 
 --8<-- assume-seq-invalid-char
 --# assume x: (integer, #) --@< Error: Expected a type, got `#`
                            --@^ Error: Expected `)`, got `#`
 f()
---! [KailuaAssume(`x`$1, _, Oops)$1, Void(`f`_())]
+--! [KailuaAssume((`x`$1), _, Oops)$1, Void(`f`_())]
 
 --8<-- assume-func-invalid-char
 --# assume x: function () --> #foo --@< Error: Expected a single type or type sequence, got `#`
                                    --@^ Error: Expected a newline, got a name
---! [KailuaAssume(`x`$1, _, Func(() --> Oops))$1]
+--! [KailuaAssume((`x`$1), _, Func(() --> Oops))$1]
 
 --8<-- assume-named
 --# assume x: whatever
---! [KailuaAssume(`x`$1, _, `whatever`)$1]
+--! [KailuaAssume((`x`$1), _, `whatever`)$1]
 
 --8<-- assume-rec-invalid-char
 --# assume x: {x = integer #} --@< Error: Expected `,`, `;` or `}`, got `#`
 --# assume y: {y = integer #} --@< Error: Expected `,`, `;` or `}`, got `#`
---! [KailuaAssume(`x`$1, _, Record(["x": _ Integer]))$1, \
---!  KailuaAssume(`y`$2, _, Record(["y": _ Integer]))$2]
+--! [KailuaAssume((`x`$1), _, Record(["x": _ Integer]))$1, \
+--!  KailuaAssume((`y`$2), _, Record(["y": _ Integer]))$2]
 
 --8<-- assume-tuple-invalid-char
 --# assume x: {integer, integer #} --@< Error: Expected `,`, `;` or `}`, got `#`
 --# assume y: {integer, integer #} --@< Error: Expected `,`, `;` or `}`, got `#`
---! [KailuaAssume(`x`$1, _, Tuple([_ Integer, _ Integer]))$1, \
---!  KailuaAssume(`y`$2, _, Tuple([_ Integer, _ Integer]))$2]
+--! [KailuaAssume((`x`$1), _, Tuple([_ Integer, _ Integer]))$1, \
+--!  KailuaAssume((`y`$2), _, Tuple([_ Integer, _ Integer]))$2]
 
 --8<-- assume-rec-duplicate-name
 --# assume x: {x = integer, x = string} --@< Error: Duplicate record field `x` in the type specification
                                         --@^ Note: The first duplicate appeared here
---! [KailuaAssume(`x`$1, _, Record(["x": _ Integer, "x": _ String]))$1]
+--! [KailuaAssume((`x`$1), _, Record(["x": _ Integer, "x": _ String]))$1]
 
 --8<-- assume-rec-duplicate-name-recover
 --# assume x: {x = integer,
@@ -1559,7 +1591,7 @@ f()
 --#                         --@^^^^^ Note: The first duplicate appeared here
 --#            y = number}  --@< Error: Duplicate record field `y` in the type specification
                             --@^^^^ Note: The first duplicate appeared here
---! [KailuaAssume(`x`$1, _, Record(["x": _ Integer, \
+--! [KailuaAssume((`x`$1), _, Record(["x": _ Integer, \
 --!                                 "x": _ String, \
 --!                                 "y": _ Table, \
 --!                                 "x": _ Boolean, \
@@ -1569,7 +1601,7 @@ f()
 --# assume x: WHATEVER = hello --@< Error: Expected a newline, got `=`
 --# assume y: "bo\gus"         --@< Error: Unrecognized escape sequence in a string
 f(                             --@< Error: Expected `)`, got the end of file
---! [KailuaAssume(`x`$1, _, Dynamic)$1, Void(`f`_())]
+--! [KailuaAssume((`x`$1), _, Dynamic)$1, Void(`f`_())]
 
 --&
 ) -- highlighting fix
@@ -1577,12 +1609,12 @@ f(                             --@< Error: Expected `)`, got the end of file
 --8<-- assume-or-invalid-char
 --# assume x: integer | # --@< Error: Expected a type, got `#`
 f()
---! [KailuaAssume(`x`$1, _, Union([Integer]))$1, Void(`f`_())]
+--! [KailuaAssume((`x`$1), _, Union([Integer]))$1, Void(`f`_())]
 
 --8<-- assume-or-seq-1
 --# assume x: integer | () | nil --@< Error: A sequence of types cannot be inside a union
 f(                               --@< Error: Expected `)`, got the end of file
---! [KailuaAssume(`x`$1, _, Union([Integer, Oops, Nil]))$1, Void(`f`_())]
+--! [KailuaAssume((`x`$1), _, Union([Integer, Oops, Nil]))$1, Void(`f`_())]
 
 --&
 ) -- highlighting fix
@@ -1591,7 +1623,7 @@ f(                               --@< Error: Expected `)`, got the end of file
 --# assume x: integer | (string,
 --#                      boolean) | nil --@^-< Error: A sequence of types cannot be inside a union
 f(                                      --@< Error: Expected `)`, got the end of file
---! [KailuaAssume(`x`$1, _, Union([Integer, Oops, Nil]))$1, Void(`f`_())]
+--! [KailuaAssume((`x`$1), _, Union([Integer, Oops, Nil]))$1, Void(`f`_())]
 
 --&
 ) -- highlighting fix
@@ -1610,17 +1642,17 @@ f()
 --# type int = integer
 --# assume x: vector<int>
 --! [KailuaType(`int`, Integer), \
---!  KailuaAssume(`x`$1, _, Array(_ `int`))$1]
+--!  KailuaAssume((`x`$1), _, Array(_ `int`))$1]
 
 --8<-- alias-builtin
 --# type any = integer --@< Error: Cannot redefine a builtin type
 --# assume x: vector<any>
---! [KailuaType(`any`, Integer), KailuaAssume(`x`$1, _, Array(_ Any))$1]
+--! [KailuaType(`any`, Integer), KailuaAssume((`x`$1), _, Array(_ Any))$1]
 
 --8<-- alias-incomplete
 --# type int =
 --# assume x: vector<int> --@< Error: Expected a single type, got a keyword `assume`
---! [KailuaType(`int`, Oops), KailuaAssume(`x`$1, _, Array(_ `int`))$1]
+--! [KailuaType(`int`, Oops), KailuaAssume((`x`$1), _, Array(_ `int`))$1]
 
 --8<-- kind-error
 --# type x = error
@@ -1768,9 +1800,9 @@ f:
 f:g
 --# assume f: WHATEVER --@< Error: Expected argument(s) after `<expression> : <name>`, got `--#`
                        --@^^ Error: Only function calls are allowed as statement-level expressions
---! [Void(`f`_), KailuaAssume(`f`$1, _, Dynamic)$1, \
---!  Void(`f`$1), KailuaAssume(`f`$2, _, Dynamic)$2, \
---!  Void(`f`$2.`g`), KailuaAssume(`f`$3, _, Dynamic)$3]
+--! [Void(`f`_), KailuaAssume((`f`$1), _, Dynamic)$1, \
+--!  Void(`f`$1), KailuaAssume((`f`$2), _, Dynamic)$2, \
+--!  Void(`f`$2.`g`), KailuaAssume((`f`$3), _, Dynamic)$3]
 
 --8<-- index-name-recover-do-end
 do

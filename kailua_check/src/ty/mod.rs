@@ -130,15 +130,15 @@ pub trait TypeContext {
     fn assert_rvar_closed(&mut self, rvar: RVar) -> TypeResult<()>;
     // should return RVar::any() when the last row variable is yet to be instantiated
     fn list_rvar_fields(&self, rvar: RVar,
-                        f: &mut FnMut(&Key, &Slot) -> TypeResult<bool>) -> TypeResult<RVar>;
+                        f: &mut FnMut(&Key, &Slot) -> Result<(), ()>) -> Result<RVar, ()>;
 
-    fn get_rvar_fields(&self, rvar: RVar) -> TypeResult<Vec<(Key, Slot)>> {
+    fn get_rvar_fields(&self, rvar: RVar) -> Vec<(Key, Slot)> {
         let mut fields = Vec::new();
         self.list_rvar_fields(rvar, &mut |k, v| {
             fields.push((k.clone(), v.clone()));
-            Ok(true)
-        })?;
-        Ok(fields) // do not return the last rvar, to which operations are no-ops
+            Ok(())
+        }).expect("list_rvar_fields exited early while we haven't break");
+        fields // do not return the last rvar, to which operations are no-ops
     }
 
     // nominal type management
@@ -256,7 +256,7 @@ impl TypeContext for NoTypeContext {
         panic!("assert_rvar_closed({:?}) is not supposed to be called here", rvar);
     }
     fn list_rvar_fields(&self, rvar: RVar,
-                        _f: &mut FnMut(&Key, &Slot) -> TypeResult<bool>) -> TypeResult<RVar> {
+                        _f: &mut FnMut(&Key, &Slot) -> Result<(), ()>) -> Result<RVar, ()> {
         panic!("list_rvar_fields({:?}, ...) is not supposed to be called here", rvar)
     }
 

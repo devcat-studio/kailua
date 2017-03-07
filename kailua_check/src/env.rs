@@ -931,7 +931,7 @@ impl Output {
 
     // differs from the trait version because we cannot use generics in trait objects
     pub fn list_rvar_fields<E, F>(&self, mut rvar: RVar, mut f: F) -> Result<RVar, E>
-        where F: FnMut(&Key, &Slot) -> Result<bool, E>
+        where F: FnMut(&Key, &Slot) -> Result<(), E>
     {
         loop {
             if let Some(info) = self.row_infos.get(&rvar.to_usize()) {
@@ -939,9 +939,7 @@ impl Output {
                     trace!("{:?} contains {:?}", rvar, fields);
                     for (k, v) in fields.iter() {
                         if let Some(ref v) = *v { // skip negative fields
-                            if !f(k, v)? { // user requested break
-                                return Ok(rvar);
-                            }
+                            f(k, v)?; // handle user requested break
                         }
                     }
                 }
@@ -1196,7 +1194,7 @@ impl<R: Report> TypeContext for Context<R> {
     }
 
     fn list_rvar_fields(&self, rvar: RVar,
-                        f: &mut FnMut(&Key, &Slot) -> TypeResult<bool>) -> TypeResult<RVar> {
+                        f: &mut FnMut(&Key, &Slot) -> Result<(), ()>) -> Result<RVar, ()> {
         self.output.list_rvar_fields(rvar, f)
     }
 

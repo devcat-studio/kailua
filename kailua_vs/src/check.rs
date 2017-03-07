@@ -127,13 +127,12 @@ impl VSCheckerOutput {
 
                 if let Some(&Tables::Fields(ref rvar)) = ty.get_tables() {
                     let mut fields = Vec::new();
-                    let _: Result<_, ()> = self.context.list_rvar_fields(rvar.clone(),
-                                                                         &mut |k: &Key, _v: &Slot| {
+                    let _ = self.context.list_rvar_fields(rvar.clone(), &mut |k: &Key, _v: &Slot| {
                         match *k {
                             Key::Str(ref s) => fields.push(VSNameEntry::new(s[..].to_owned(), -1)),
                             Key::Int(_) => {}
                         }
-                        Ok(true)
+                        Ok::<_, ()>(())
                     });
                     return Some(VSNameEntries::from(fields));
                 }

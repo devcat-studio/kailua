@@ -482,3 +482,23 @@ define_msg! { pub UnsupportedUnionTypeSpec:
     _    => "This union type is not supported in the specification",
 }
 
+define_msg! { pub AssumeFieldToUnknownType:
+    "ko" => "`--# assume` 명령이 아직 완전히 추론되지 않은 타입에서 필드를 접근하려 했습니다",
+    _    => "`--# assume` directive tried to access a field from a type not yet known enough",
+}
+
+define_msg! { pub AssumeFieldToNonTable<'a> { slot: Slot<'a> }:
+    "ko" => "`--# assume` 명령이 테이블이 아닌 `{slot}` 타입에서 필드를 접근하려 했습니다",
+    _    => "`--# assume` directive tried to access a field from a non-table type `{slot}`",
+}
+
+define_msg! { pub AssumeFieldToMissing:
+    "ko" => "`--# assume` 명령이 존재하지 않는 필드를 접근하려 했습니다",
+    _    => "`--# assume` directive tried to access a missing field",
+}
+
+define_msg! { pub NotTVar<'a> { slot: Slot<'a> }:
+    "ko" => "내부 오류: `{slot}` 타입이 타입 변수가 아닙니다",
+    _    => "Internal Error: A type `{slot}` is not a type variable",
+}
+

@@ -383,3 +383,8 @@ define_msg! { pub FutureKeyword<'a> { read: &'a Tok, current: Lua, future: Lua }
              but it became a keyword since {future}",
 }
 
+define_msg! { pub AssumeFieldGlobal:
+    "ko" => "`--# assume` 명령이 테이블의 필드를 갱신할 경우 `global`을 쓸 수 없습니다",
+    _    => "`global` cannot be used when `--# assume` directive updates a field in the table",
+}
+

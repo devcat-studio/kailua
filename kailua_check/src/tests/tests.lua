@@ -2585,3 +2585,77 @@ end
 f(0, '')
 --! ok
 
+--8<-- kailua-test-assert-tvar
+--# open `internal kailua_test`
+
+-- concrete type
+kailua_test.assert_tvar('string')
+--@^ Error: Internal Error: A type `"string"` is not a type variable
+
+-- type variable (that is later inferred to a concrete type, which doesn't matter)
+function p(a, b) --: integer
+    a = 'string'
+    kailua_test.assert_tvar(a)
+    kailua_test.assert_tvar(b)
+    --@^ Error: Internal Error: A type `integer` is not a type variable
+end
+--! error
+
+--8<-- assume-field
+local x = {}
+--# assume x.y: integer
+local z = x.y + 42 --: integer
+--! ok
+
+--8<-- assume-field-overwrite
+local x = {y = 'string'}
+--# assume x.y: integer
+local z = x.y + 42 --: integer
+--! ok
+
+--8<-- assume-field-nested
+local x = {}
+--# assume x.y: {}
+--# assume x.y.z: {}
+--# assume x.y.z.u: integer
+local v = x.y.z.u + 42 --: integer
+--! ok
+
+--8<-- assume-field-inferred
+--# open `internal kailua_test`
+local x = {}
+x.y = {}
+kailua_test.assert_tvar(x.y)
+--# assume x.y.z: integer
+local q = x.y.z + 3 --: integer
+--! ok
+
+--8<-- assume-field-whatever
+--# assume x: WHATEVER
+--# assume x.y: integer -- unlike most cases, WHATEVER is an error here
+--@^ Error: `--# assume` directive tried to access a field from a non-table type `WHATEVER`
+local z = x.y + 42 --: integer
+--! error
+
+--8<-- assume-field-missing-1
+local x = 54
+--# assume x.y: integer
+--@^ Error: `--# assume` directive tried to access a field from a non-table type `integer`
+local z = x.y + 42 --: integer --@< Error: Tried to index a non-table type `integer`
+--! error
+
+--8<-- assume-field-missing-2
+local x = {}
+--# assume x.y.z: integer
+--@^ Error: `--# assume` directive tried to access a missing field
+local z = x.y.z + 42 --: integer --@< Error: Cannot index `{}` with `"y"`
+--! error
+
+--8<-- assume-field-unknown
+function f(x)
+    --# assume x.y.z: integer
+    --@^ Error: `--# assume` directive tried to access a field from a type not yet known enough
+    local z = x.y.z + 42 --: integer --@< Error: The type `<unknown type>` is tabular but not known enough to index
+end
+--! error
+

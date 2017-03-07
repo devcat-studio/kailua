@@ -7,7 +7,7 @@ use take_mut::take;
 
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag::{self, Report, Reporter};
-use kailua_syntax::{Str, NameRef, Var, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
+use kailua_syntax::{Str, Name, NameRef, Var, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
 use kailua_syntax::{SelfParam, Args, St, Stmt, Block};
 use diag::{CheckResult, TypeReport, TypeReportHint, TypeReportMore, Displayed, Display};
 use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, TypeContext};
@@ -665,14 +665,14 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 (Some(&Tables::Fields(ref rvar)), lval) => {
                     // find a field in the rvar
                     let mut vslot = None;
-                    check!(self.context().list_rvar_fields(rvar.clone(), &mut |k, v| {
+                    let _ = self.context().list_rvar_fields(rvar.clone(), &mut |k, v| {
                         if *k == litkey {
                             vslot = Some(v.clone());
-                            Ok(false)
+                            Err(())
                         } else {
-                            Ok(true)
+                            Ok(())
                         }
-                    }));
+                    });
 
                     let (vslot, new) = match (vslot, lval) {
                         // the field already exists
@@ -792,6 +792,95 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         .done()?;
             }
         }
+        Ok(())
+    }
+
+    fn assume_field(&mut self, rootname: &Spanned<NameRef>, names: &[Spanned<Name>],
+                    _namespan: Span, slot: Slot) -> CheckResult<()> {
+        assert!(!names.is_empty());
+
+        // if we are updating a table, we need to sever any row variable connections
+        // between the new table and the old table (otherwise we may be silently
+        // updating a row variable).
+
+        // extracts a table from given slot and returns the flexibility,
+        // nilability (both for reconstruction), all fields except `next_key` and
+        // the slot for `next_key` if any.
+        let extract_table = |prev: &Slot, next_key: &Name, span: Span, env: &mut Env<R>| {
+            if let Some(ty) = env.resolve_exact_type(&prev.unlift()) {
+                if let Some(&Tables::Fields(ref rvar)) = ty.get_tables() {
+                    let mut fields = env.context().get_rvar_fields(rvar.clone());
+                    let pos = fields.iter().position(|&(ref k, _)| {
+                        match *k {
+                            Key::Str(ref k) => **k == **next_key,
+                            Key::Int(_) => false,
+                        }
+                    });
+                    let popped = pos.map(|i| fields.remove(i).1);
+                    Ok(Some((prev.flex(), ty.nil(), fields, popped)))
+                } else {
+                    env.error(span, m::AssumeFieldToNonTable { slot: env.display(prev) }).done()?;
+                    Ok(None)
+                }
+            } else {
+                env.error(span, m::AssumeFieldToUnknownType {}).done()?;
+                Ok(None)
+            }
+        };
+
+        // resolve rootname
+        let mut table = if self.env.get_var(rootname).is_some() {
+            self.env.ensure_var(rootname)?
+        } else {
+            self.env.error(rootname, m::NoVar { name: self.env.get_name(rootname) }).done()?;
+            return Ok(());
+        };
+
+        // extract the prior table and continue to index fields except for the last one
+        let mut span = rootname.span; // `a`, `a.b`, `a.b.c`, ...
+        let mut tables = Vec::new();
+        for name in &names[..names.len()-1] {
+            span |= name.span;
+            if let Some((flex, nil, fields, next)) = extract_table(&table, name, span, self.env)? {
+                tables.push((flex, nil, fields));
+                if let Some(next) = next {
+                    table = next;
+                } else {
+                    self.env.error(span, m::AssumeFieldToMissing {}).done()?;
+                    return Ok(());
+                }
+            } else { // the error occurred and already reported
+                return Ok(());
+            }
+        }
+
+        // index the last table and put the new slot to it
+        let lastname = names.last().unwrap();
+        span |= lastname.span;
+        if let Some((flex, nil, fields, _)) = extract_table(&table, lastname, span, self.env)? {
+            tables.push((flex, nil, fields));
+            // drop the last item popped, we will replace it with our own
+        } else { // the error occurred and already reported
+            return Ok(());
+        }
+
+        assert_eq!(names.len(), tables.len());
+
+        // put the last table to the second-to-last table and so on
+        let mut slot = slot;
+        for (name, (flex, nil, mut fields)) in names.iter().rev().zip(tables.into_iter()) {
+            fields.push((Key::Str(name.base.clone().into()), slot));
+            let rvar = self.context().gen_rvar();
+            self.context().assert_rvar_includes(rvar.clone(), &fields).expect(
+                "cannot insert updated disjoint fields into a fresh row variable"
+            );
+            slot = Slot::new(flex,
+                             Ty::new(T::Tables(Cow::Owned(Tables::Fields(rvar)))).or_nil(nil));
+        }
+
+        // the final table should be assumed back to the current scope
+        self.env.assume_var(rootname, slot.with_loc(rootname))?;
+
         Ok(())
     }
 
@@ -1307,9 +1396,14 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 Ok(Exit::None)
             }
 
-            St::KailuaAssume(ref name, kindm, ref kind, _nextscope) => {
+            St::KailuaAssume(Spanned { base: (ref rootname, ref names), span },
+                             kindm, ref kind, _nextscope) => {
                 let slot = self.visit_kind(F::from(kindm), kind)?;
-                self.env.assume_var(name, slot)?;
+                if names.is_empty() {
+                    self.env.assume_var(rootname, slot)?;
+                } else {
+                    self.assume_field(rootname, names, span, slot.base)?;
+                }
                 Ok(Exit::None)
             }
         }
@@ -1517,6 +1611,29 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             Some(Tag::MakeClass) => {
                 let cid = self.context().make_class(None, expspan); // TODO parent
                 return Ok(SlotSeq::from(T::Class(Class::Prototype(cid))));
+            }
+
+            // kailua_test.assert_tvar()
+            Some(Tag::KailuaAssertTvar) => {
+                if nargs < 1 {
+                    // TODO should display the true name
+                    self.env.error(expspan,
+                                   m::BuiltinGivenLessArgs { name: "kailua-assert-tvar", nargs: 1 })
+                            .done()?;
+                    return Ok(SlotSeq::dummy());
+                }
+
+                if let Args::List(_) = args.base {
+                    match **argtys.head[0].unlift() {
+                        T::TVar(_) => {}
+                        _ => {
+                            self.env.error(&argtys.head[0],
+                                           m::NotTVar { slot: self.display(&argtys.head[0]) })
+                                    .done()?;
+                        }
+                    }
+                }
+                return Ok(SlotSeq::new());
             }
 
             _ => {}

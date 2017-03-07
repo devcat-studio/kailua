@@ -119,6 +119,13 @@ pub enum Tag {
     //
     // this is internally created and cannot be constructed in normal ways.
     Constructor,
+
+    // function(any)
+    //
+    // fails when given type is not a type variable (no matter it is bounded or not).
+    // this is used for tests requiring a type variable to be resolved;
+    // by using this function we can ensure that we are indeed testing against a type variable.
+    KailuaAssertTvar,
 }
 
 impl Tag {
@@ -140,6 +147,8 @@ impl Tag {
             b"package_cpath" => Ok(Some(Tag::PackageCpath)),
             b"string_meta"   => Ok(Some(Tag::StringMeta)),
             b"make_class"    => Ok(Some(Tag::MakeClass)),
+
+            b"internal kailua_assert_tvar" => Ok(Some(Tag::KailuaAssertTvar)),
 
             _ => {
                 resolv.warn(&attr.name, m::UnknownAttrName { name: &attr.name.base }).done()?;
@@ -164,10 +173,11 @@ impl Tag {
             Tag::StringMeta   => "string_meta",
             Tag::MakeClass    => "make_class",
 
-            Tag::_Subtype      => "internal subtype",
-            Tag::_NoSubtype    => "internal no_subtype",
-            Tag::Constructible => "internal constructible",
-            Tag::Constructor   => "internal constructor",
+            Tag::_Subtype         => "internal subtype",
+            Tag::_NoSubtype       => "internal no_subtype",
+            Tag::Constructible    => "internal constructible",
+            Tag::Constructor      => "internal constructor",
+            Tag::KailuaAssertTvar => "internal kailua_assert_tvar",
         }
     }
 
@@ -184,7 +194,8 @@ impl Tag {
             Tag::GenericPairs |
             Tag::MakeClass |
             Tag::Constructible |
-            Tag::Constructor => true,
+            Tag::Constructor |
+            Tag::KailuaAssertTvar => true,
             _ => false,
         }
     }

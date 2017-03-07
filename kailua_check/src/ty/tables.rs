@@ -113,8 +113,8 @@ impl Tables {
                         } else {
                             morefields += 1;
                         }
-                        Ok(true)
-                    }).map_err(|_| fmt::Error)?
+                        Ok(())
+                    }).expect("list_rvar_fields exited early while we haven't break")
                 } else {
                     rvar.clone()
                 };
@@ -193,7 +193,7 @@ impl Lattice for Tables {
 
                 (&Tables::Fields(ref rvar), &Tables::Map(ref key, ref value)) => {
                     // subtyping should hold for existing fields
-                    for (k, v) in ctx.get_rvar_fields(rvar.clone())? {
+                    for (k, v) in ctx.get_rvar_fields(rvar.clone()) {
                         k.to_type().assert_sub(&**key, ctx)?;
                         v.assert_sub(&value.clone().with_nil(), ctx)?;
                     }
@@ -213,7 +213,7 @@ impl Lattice for Tables {
                     let mut min = i32::MAX;
                     let mut max = i32::MIN;
                     let mut count = 0;
-                    for (k, v) in ctx.get_rvar_fields(rvar.clone())? {
+                    for (k, v) in ctx.get_rvar_fields(rvar.clone()) {
                         if let Key::Int(k) = k {
                             count += 1;
                             if min > k { min = k; }
