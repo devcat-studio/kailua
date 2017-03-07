@@ -32,7 +32,7 @@ p()
 
 --8<-- funccall-func-too-less-args-3
 local function p(x) --: integer?
-    x = x + 1 --@< Error: Cannot apply + operator to `integer?` and `integer?`
+    x = x + 1 --@< Error: Cannot apply + operator to `integer?` and `1`
               --@^ Cause: `integer?` is not a subtype of `number`
               --@^^ Error: Cannot assign `number` into `integer?`
               --@^^^ Note: The other type originates here
@@ -114,13 +114,13 @@ local x = p + 3
 
 --8<-- add-number-string
 --# assume p: number
-local x = p + 'foo' --@< Error: Cannot apply + operator to `number` and `number`
+local x = p + 'foo' --@< Error: Cannot apply + operator to `number` and `"foo"`
                     --@^ Cause: `"foo"` is not a subtype of `number`
 --! error
 
 --8<-- add-number-func
 local function p() end
-local x = p + 'foo' --@< Error: Cannot apply + operator to `function() --> ()` and `function() --> ()`
+local x = p + 'foo' --@< Error: Cannot apply + operator to `function() --> ()` and `"foo"`
                     --@^ Cause: `function() --> ()` is not a subtype of `number`
                     --@^^ Cause: `"foo"` is not a subtype of `number`
 --! error
@@ -205,12 +205,12 @@ local p = 3 + 4
 --! ok
 
 --8<-- add-integer-string
-local p = 3 + 'foo' --@< Error: Cannot apply + operator to `3` and `3`
+local p = 3 + 'foo' --@< Error: Cannot apply + operator to `3` and `"foo"`
                     --@^ Cause: `"foo"` is not a subtype of `number`
 --! error
 
 --8<-- add-boolean-integer
-local p = true + 7 --@< Error: Cannot apply + operator to `true` and `true`
+local p = true + 7 --@< Error: Cannot apply + operator to `true` and `7`
                    --@^ Cause: `true` is not a subtype of `number`
 --! error
 
@@ -233,7 +233,7 @@ local p = t[3]
 
 --8<-- index-map-with-integer-type
 local t = {[3] = 'four', [8] = 'five'} --: map<integer, string>
-local p = t[3] + 3 --@< Error: Cannot apply + operator to `string` and `string`
+local p = t[3] + 3 --@< Error: Cannot apply + operator to `string` and `3`
                    --@^ Cause: `string` is not a subtype of `number`
 --! error
 
@@ -392,17 +392,17 @@ local a = ('string' and 53) + 42
 --! ok
 
 --8<-- conjunctive-lhs-1
-local a = (53 and 'string') + 42 --@< Error: Cannot apply + operator to `"string"` and `"string"`
+local a = (53 and 'string') + 42 --@< Error: Cannot apply + operator to `"string"` and `42`
                                  --@^ Cause: `"string"` is not a subtype of `number`
 --! error
 
 --8<-- conjunctive-rhs-1
-local a = (false and 'string') + 42 --@< Error: Cannot apply + operator to `false` and `false`
+local a = (false and 'string') + 42 --@< Error: Cannot apply + operator to `false` and `42`
                                     --@^ Cause: `false` is not a subtype of `number`
 --! error
 
 --8<-- conjunctive-rhs-2
-local a = (false and 53) + 42 --@< Error: Cannot apply + operator to `false` and `false`
+local a = (false and 53) + 42 --@< Error: Cannot apply + operator to `false` and `42`
                               --@^ Cause: `false` is not a subtype of `number`
 --! error
 
@@ -420,7 +420,7 @@ local a = (53 or nil) + 42
 --! ok
 
 --8<-- disjunctive-rhs-1
-local a = (nil or 'string') + 42 --@< Error: Cannot apply + operator to `"string"` and `"string"`
+local a = (nil or 'string') + 42 --@< Error: Cannot apply + operator to `"string"` and `42`
                                  --@^ Cause: `"string"` is not a subtype of `number`
 --! error
 
@@ -472,13 +472,13 @@ local q = p .. 3
 
 --8<-- add-string-or-number
 --# assume p: string | number
-local q = p + 3 --@< Error: Cannot apply + operator to `(number|string)` and `(number|string)`
+local q = p + 3 --@< Error: Cannot apply + operator to `(number|string)` and `3`
                 --@^ Cause: `(number|string)` is not a subtype of `number`
 --! error
 
 --8<-- cat-string-or-boolean
 --# assume p: string | boolean
-local q = p .. 3 --@< Error: Cannot apply .. operator to `(boolean|string)` and `(boolean|string)`
+local q = p .. 3 --@< Error: Cannot apply .. operator to `(boolean|string)` and `3`
                  --@^ Cause: `(boolean|string)` is not a subtype of `(number|string)`
 --! error
 
@@ -730,7 +730,7 @@ local a = p('foo') .. 'bar'
 function p(x) --: string --> string
     return x
 end
-local a = p('foo') + 3 --@< Error: Cannot apply + operator to `string` and `string`
+local a = p('foo') + 3 --@< Error: Cannot apply + operator to `string` and `3`
                        --@^ Cause: `string` is not a subtype of `number`
 --! error
 
@@ -821,7 +821,7 @@ a = 42
 --8<-- var-any-update-and-add
 local a --: any
 a = 42
-local b = a + 5 --@< Error: Cannot apply + operator to `any` and `any`
+local b = a + 5 --@< Error: Cannot apply + operator to `any` and `5`
                 --@^ Cause: `any` is not a subtype of `number`
 --! error
 
@@ -1166,7 +1166,7 @@ print(p + 5)
 --# assume p: integer?
 --# assume q: integer?
 assert(p or q)
-print(p + 5) --@< Error: Cannot apply + operator to `integer?` and `integer?`
+print(p + 5) --@< Error: Cannot apply + operator to `integer?` and `5`
              --@^ Cause: `integer?` is not a subtype of `number`
 --! error
 
@@ -1191,7 +1191,7 @@ print(p + 5)
 --# assume p: integer?
 --# assume q: integer?
 assert(p and not q)
-print(q + 5) --@< Error: Cannot apply + operator to `nil` and `nil`
+print(q + 5) --@< Error: Cannot apply + operator to `nil` and `5`
              --@^ Cause: `nil` is not a subtype of `number`
 --! error
 
@@ -1245,7 +1245,7 @@ print(q + 5)
 --# assume p: integer?
 --# assume q: integer?
 assert_not(p or not q) -- i.e. assert(not p and q)
-print(p + 5) --@< Error: Cannot apply + operator to `nil` and `nil`
+print(p + 5) --@< Error: Cannot apply + operator to `nil` and `5`
              --@^ Cause: `nil` is not a subtype of `number`
 --! error
 
@@ -1399,7 +1399,7 @@ x = require 'a' --@< Warning: Cannot resolve the module name given to `require`
 --8<-- require-unknown-returns-1
 --# open lua51
 x = require 'a' --@< Warning: Cannot resolve the module name given to `require`
-print(x + 4) --@< Error: Cannot apply + operator to `any` and `any`
+print(x + 4) --@< Error: Cannot apply + operator to `any` and `4`
              --@^ Cause: `any` is not a subtype of `number`
 --! error
 
@@ -1568,7 +1568,7 @@ end
 --8<-- for-in-simple-iter-3
 --# assume func: const function() --> number|string
 for x in func do
-    local a = x * 3 --@< Error: Cannot apply * operator to `(number|string)` and `(number|string)`
+    local a = x * 3 --@< Error: Cannot apply * operator to `(number|string)` and `3`
                     --@^ Cause: `(number|string)` is not a subtype of `number`
 end
 --! error
@@ -1637,7 +1637,7 @@ end
 --# open lua51
 --# assume p: vector<string>
 for x, y in ipairs(p) do
-    local b = y * 4 --@< Error: Cannot apply * operator to `string` and `string`
+    local b = y * 4 --@< Error: Cannot apply * operator to `string` and `4`
                     --@^ Cause: `string` is not a subtype of `number`
 end
 --! error
@@ -1694,7 +1694,7 @@ end
 --# open lua51
 --# assume p: vector<string>
 for x, y in pairs(p) do
-    local b = y * 4 --@< Error: Cannot apply * operator to `string` and `string`
+    local b = y * 4 --@< Error: Cannot apply * operator to `string` and `4`
                     --@^ Cause: `string` is not a subtype of `number`
 end
 --! error
@@ -1721,7 +1721,7 @@ end
 --# open lua51
 --# assume p: map<integer, string>
 for x, y in pairs(p) do
-    local b = y * 4 --@< Error: Cannot apply * operator to `string` and `string`
+    local b = y * 4 --@< Error: Cannot apply * operator to `string` and `4`
                     --@^ Cause: `string` is not a subtype of `number`
 end
 --! error
@@ -1739,7 +1739,7 @@ end
 --# open lua51
 --# assume p: map<string, integer>
 for x, y in pairs(p) do
-    local a = x * 3 --@< Error: Cannot apply * operator to `string` and `string`
+    local a = x * 3 --@< Error: Cannot apply * operator to `string` and `3`
                     --@^ Cause: `string` is not a subtype of `number`
 end
 --! error
@@ -1755,7 +1755,7 @@ end
 --# open lua51
 --# assume p: table
 for x, y in pairs(p) do
-    print(p .. 3) --@< Error: Cannot apply .. operator to `table` and `table`
+    print(p .. 3) --@< Error: Cannot apply .. operator to `table` and `3`
                   --@^ Cause: `table` is not a subtype of `(number|string)`
 end
 --! error
@@ -2273,7 +2273,7 @@ x = 42
 y = "foo"
 -- the first is a parsing error, and the second is a type error from the recovered AST
 x + y --@< Error: Only function calls are allowed as statement-level expressions
-      --@^ Error: Cannot apply + operator to `42` and `42`
+      --@^ Error: Cannot apply + operator to `42` and `"foo"`
       --@^^ Cause: `"foo"` is not a subtype of `number`
 --! error
 

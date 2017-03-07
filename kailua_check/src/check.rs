@@ -170,7 +170,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             checker.env.error(expspan,
                               m::WrongBinaryOperands { op: op.symbol(),
                                                        lhs: checker.display(lhs),
-                                                       rhs: checker.display(lhs) })
+                                                       rhs: checker.display(rhs) })
                        .report_types(r, TypeReportHint::None)
                        .done()
         };
@@ -179,7 +179,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             let mut more = checker.env.error(expspan,
                                              m::WrongBinaryOperands { op: op.symbol(),
                                                                       lhs: checker.display(lhs),
-                                                                      rhs: checker.display(lhs) });
+                                                                      rhs: checker.display(rhs) });
             if let Some(r) = r1 {
                 more = more.report_types(r, TypeReportHint::None);
             }

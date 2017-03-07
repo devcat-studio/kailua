@@ -8,7 +8,7 @@ Hello = class()
 --8<-- make-class-unnamed
 --# assume `class`: [make_class] function() --> table
 local x = class() + 3
---@^ Error: Cannot apply + operator to `<prototype for unnamed class #0>` and `<prototype for unnamed class #0>`
+--@^ Error: Cannot apply + operator to `<prototype for unnamed class #0>` and `3`
 --@^^ Cause: `<prototype for unnamed class #0>` is not a subtype of `number`
 --! error
 
@@ -16,7 +16,7 @@ local x = class() + 3
 --# assume `class`: [make_class] function() --> table
 Hello = class()
 local x = Hello + 3
---@^ Error: Cannot apply + operator to `<prototype for Hello>` and `<prototype for Hello>`
+--@^ Error: Cannot apply + operator to `<prototype for Hello>` and `3`
 --@^^ Cause: `<prototype for Hello>` is not a subtype of `number`
 --! error
 
@@ -25,7 +25,7 @@ local x = Hello + 3
 local function f()
     local Hello = class()
     local x = Hello + 3
-    --@^ Error: Cannot apply + operator to `<prototype for Hello>` and `<prototype for Hello>`
+    --@^ Error: Cannot apply + operator to `<prototype for Hello>` and `3`
     --@^^ Cause: `<prototype for Hello>` is not a subtype of `number`
 end
 --! error
@@ -35,7 +35,7 @@ end
 Hello = class() --@< Note: The class was previously named here
 Goodbye = Hello --@< Warning: A new name for the previously named class is ignored
 local x = Goodbye + 3
---@^ Error: Cannot apply + operator to `<prototype for Hello>` and `<prototype for Hello>`
+--@^ Error: Cannot apply + operator to `<prototype for Hello>` and `3`
 --@^^ Cause: `<prototype for Hello>` is not a subtype of `number`
 --! error
 
@@ -45,7 +45,7 @@ Hello = class() --@< Note: The class was previously named here
 local x
 x = Hello --@< Warning: A new name for the previously named class is ignored
 local x = x + 3
---@^ Error: Cannot apply + operator to `<prototype for Hello>` and `<prototype for Hello>`
+--@^ Error: Cannot apply + operator to `<prototype for Hello>` and `3`
 --@^^ Cause: `<prototype for Hello>` is not a subtype of `number`
 --! error
 
@@ -102,7 +102,7 @@ end
 local h = Hello.new(3, 4, 5)
 local a = h.y + h.z --: integer
 local b = h.x .. 'hello' --: string
-local c = h.x + 42 --@< Error: Cannot apply + operator to `(integer|string)` and `(integer|string)`
+local c = h.x + 42 --@< Error: Cannot apply + operator to `(integer|string)` and `42`
                    --@^ Cause: `(integer|string)` is not a subtype of `number`
 --! error
 
