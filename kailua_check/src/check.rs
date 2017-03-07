@@ -892,12 +892,20 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     fn visit_block(&mut self, block: &Spanned<Block>) -> CheckResult<Exit> {
         let mut scope = self.scoped(Scope::new());
         let mut exit = Exit::None;
+        let mut ignored_stmts: Option<Span> = None;
         for stmt in &block.base {
             if exit != Exit::None {
-                // TODO warning
-                continue;
+                ignored_stmts = Some(ignored_stmts.unwrap_or(Span::dummy()) | stmt.span);
+                // the exit return can no longer affect this block's return
+                scope.visit_stmt(stmt)?;
+            } else {
+                exit = scope.visit_stmt(stmt)?;
             }
-            exit = scope.visit_stmt(stmt)?;
+        }
+        #[cfg(feature = "warn_on_dead_code")] {
+            if let Some(span) = ignored_stmts {
+                scope.env.warn(span, m::DeadCode {}).done()?;
+            }
         }
         Ok(exit)
     }
@@ -1016,18 +1024,17 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         if exit >= Exit::Return { Ok(exit) } else { Ok(Exit::Stop) }
                     },
                     Bool::Falsy => {
-                        // TODO warning
                         Ok(Exit::None)
                     },
                     Bool::Unknown => {
-                        self.visit_block(block)?; // TODO scope merger
+                        self.visit_block(block)?;
                         Ok(Exit::None)
                     },
                 }
             }
 
             St::Repeat(ref block, ref cond) => {
-                let exit = self.visit_block(block)?; // TODO scope merger
+                let exit = self.visit_block(block)?;
                 let ty = self.visit_exp(cond)?;
                 if exit == Exit::None {
                     match self.check_bool(ty.unspan().unlift()) {
@@ -1036,7 +1043,6 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         Bool::Unknown => Ok(Exit::None),
                     }
                 } else {
-                    // TODO warning?
                     if exit <= Exit::Break { Ok(Exit::None) } else { Ok(exit) }
                 }
             }
@@ -1058,12 +1064,14 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                             exit = exit.or(self.visit_block(block)?);
                         }
                         Bool::Falsy => {
-                            self.env.warn(span, m::IgnoredIfCase {})
-                                    .note(cond, m::IfCaseWithFalsyCond {})
-                                    .done()?;
+                            #[cfg(feature = "warn_on_useless_conds")] {
+                                self.env.warn(span, m::IgnoredIfCase {})
+                                        .note(cond, m::IfCaseWithFalsyCond {})
+                                        .done()?;
+                            }
                         }
                         Bool::Unknown => {
-                            exit = exit.or(self.visit_block(block)?); // TODO scope merger
+                            exit = exit.or(self.visit_block(block)?);
                         }
                     }
                 }
@@ -1072,7 +1080,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     if let Some((_, ref mut blocks_span)) = ignored_blocks {
                         *blocks_span |= block.span;
                     } else {
-                        exit = exit.or(self.visit_block(block)?); // TODO scope merger
+                        exit = exit.or(self.visit_block(block)?);
                     }
                 } else {
                     if ignored_blocks.is_none() {
@@ -1080,13 +1088,15 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     }
                 }
 
-                if let Some((truthy_span, blocks_span)) = ignored_blocks {
-                    if blocks_span.is_dummy() {
-                        self.env.warn(truthy_span, m::IfCaseWithTruthyCond {}).done()?;
-                    } else {
-                        self.env.warn(blocks_span, m::IgnoredIfCase {})
-                                .note(truthy_span, m::IfCaseWithTruthyCond {})
-                                .done()?;
+                #[cfg(feature = "warn_on_useless_conds")] {
+                    if let Some((truthy_span, blocks_span)) = ignored_blocks {
+                        if blocks_span.is_dummy() {
+                            self.env.warn(truthy_span, m::IfCaseWithTruthyCond {}).done()?;
+                        } else {
+                            self.env.warn(blocks_span, m::IgnoredIfCase {})
+                                    .note(truthy_span, m::IfCaseWithTruthyCond {})
+                                    .done()?;
+                        }
                     }
                 }
 
@@ -1351,7 +1361,6 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 let seq = seq.unlift();
                 let returns =
                     self.env.get_frame().returns.as_ref().map(|seq| seq.clone().all_without_loc());
-                // TODO should really report spans correctly
                 match returns {
                     Returns::None => {
                         self.env.get_frame_mut().returns = Returns::Implicit(seq.unspan());

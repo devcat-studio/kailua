@@ -22,7 +22,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::fs::File;
 use std::error::Error;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use regex::Regex;
 use term::StderrTerminal;
 use clap::{App, Arg, ArgMatches};
@@ -251,6 +251,7 @@ pub struct Test {
     pub reports: Vec<Expected<'static>>,
     pub ignored: bool,
     pub exact: bool,
+    pub features: HashSet<String>,
 }
 
 fn extract_tests(path: &Path) -> Result<Vec<Test>, TestError> {
@@ -319,6 +320,9 @@ fn extract_tests(path: &Path) -> Result<Vec<Test>, TestError> {
                     reports: Vec::new(),
                     ignored: ignored,
                     exact: options.contains(&"exact"),
+                    features: options.iter().filter_map(|s| {
+                        if s.starts_with("feature:") { Some(s[8..].to_owned()) } else { None }
+                    }).collect(),
                 });
                 current_file = None;
                 current_lines = Vec::new();
@@ -410,6 +414,7 @@ struct TestLog {
 #[must_use]
 pub struct Tester<T> {
     testing: T,
+    features: HashSet<String>,
     filter: Option<Regex>,
     term: Box<StderrTerminal>,
     verbose: bool,
@@ -419,6 +424,7 @@ pub struct Tester<T> {
     displayed_logs: Vec<TestLog>,
     num_tested: usize,
     num_passed: usize,
+    num_ignored: usize,
 }
 
 const MAIN_PATH: &'static str = "<test main>";
@@ -477,12 +483,19 @@ impl<T: Testing> Tester<T> {
 
         let term = term::stderr().unwrap();
         Tester {
-            testing: testing, filter: filter, term: term,
+            testing: testing, features: HashSet::new(), filter: filter, term: term,
             verbose: verbose,
             exact_diags: exact_diags, message_locale: message_locale,
             stop_on_panic: stop_on_panic,
-            displayed_logs: Vec::new(), num_tested: 0, num_passed: 0,
+            displayed_logs: Vec::new(), num_tested: 0, num_passed: 0, num_ignored: 0,
         }
+    }
+
+    pub fn feature(mut self, name: &str, value: bool) -> Tester<T> {
+        if value {
+            self.features.insert(name.to_owned());
+        }
+        self
     }
 
     pub fn scan<P: AsRef<Path>>(mut self, dir: P) -> Tester<T> {
@@ -503,7 +516,10 @@ impl<T: Testing> Tester<T> {
                     self.note_file(&path);
                     file_noted = true;
                 }
-                if test.ignored {
+                let ignored = test.ignored || (!test.features.is_empty() &&
+                                               !test.features.is_subset(&self.features));
+                if ignored {
+                    self.num_ignored += 1;
                     self.note_test(&test, TestResult::Ignored);
                 } else {
                     self.test(test);
@@ -516,8 +532,8 @@ impl<T: Testing> Tester<T> {
 
     pub fn done(mut self) {
         let _ = writeln!(self.term, "");
-        let _ = writeln!(self.term, "{} passed, {} failed",
-                         self.num_passed, self.num_tested - self.num_passed);
+        let _ = writeln!(self.term, "{} passed, {} ignored, {} failed",
+                         self.num_passed, self.num_ignored, self.num_tested - self.num_passed);
         for log in mem::replace(&mut self.displayed_logs, Vec::new()) {
             self.note_test_output(log);
         }

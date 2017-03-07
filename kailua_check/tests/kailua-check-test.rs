@@ -101,6 +101,10 @@ impl kailua_test::Testing for Testing {
 
 fn main() {
     env_logger::init().unwrap();
-    kailua_test::Tester::new("kailua-check-test", Testing::new()).scan("src/tests").done();
+    kailua_test::Tester::new("kailua-check-test", Testing::new())
+        .feature("warn_on_useless_conds", cfg!(feature = "warn_on_useless_conds"))
+        .feature("warn_on_dead_code", cfg!(feature = "warn_on_dead_code"))
+        .scan("src/tests")
+        .done();
 }
 

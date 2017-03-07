@@ -50,8 +50,7 @@ p() --@< Error: The type `function(integer!) --> ()` cannot be called
 
 --8<-- funccall-var-outside-of-scope-1
 local c
---@v-vvv Warning: These `if` case(s) are never executed
-if c then --@< Note: This condition always evaluates to a falsy value
+if c then
     local p
 end
 p() --@< Error: Global or local variable `p` is not defined
@@ -59,7 +58,7 @@ p() --@< Error: Global or local variable `p` is not defined
 
 --8<-- funccall-var-outside-of-scope-2
 local c = true
-if c then --@< Warning: This condition always evaluates to a truthy value
+if c then
     local p
 end
 p() --@< Error: Global or local variable `p` is not defined
@@ -67,8 +66,7 @@ p() --@< Error: Global or local variable `p` is not defined
 
 --8<-- funccall-var-outside-of-scope-3
 local c = false
---@v-vvv Warning: These `if` case(s) are never executed
-if c then --@< Note: This condition always evaluates to a falsy value
+if c then
     local p
 end
 p() --@< Error: Global or local variable `p` is not defined
@@ -84,8 +82,7 @@ p() --@< Error: Global or local variable `p` is not defined
 
 --8<-- funccall-integer-or-nil-1
 local c, p
---@v Warning: These `if` case(s) are never executed
-if c then p = 4 end --@< Note: This condition always evaluates to a falsy value
+if c then p = 4 end
 p() --@< Error: Tried to call a non-function `nil`
 --! error
 
@@ -1888,7 +1885,7 @@ p, q = x, x --: [package_path] string, [package_cpath] string
 --@^^ Warning: Cannot infer the values assigned to the `package_cpath` built-in variable; subsequent `require` may be unable to find the module path
 --! ok
 
---8<-- if-false-warning-1
+--8<-- if-false-warning-1 -- feature:warn_on_useless_conds
 --@v-vvvvv Warning: These `if` case(s) are never executed
 if false then --@< Note: This condition always evaluates to a falsy value
     local a
@@ -1897,7 +1894,7 @@ if false then --@< Note: This condition always evaluates to a falsy value
 end
 --! ok
 
---8<-- if-false-warning-2
+--8<-- if-false-warning-2 -- feature:warn_on_useless_conds
 --@v-vv Warning: These `if` case(s) are never executed
 if false then --@< Note: This condition always evaluates to a falsy value
     local a
@@ -1907,7 +1904,7 @@ else
 end
 --! ok
 
---8<-- if-false-warning-3
+--8<-- if-false-warning-3 -- feature:warn_on_useless_conds
 --# assume x: boolean
 if x then
     local a
@@ -1922,7 +1919,7 @@ else
 end
 --! ok
 
---8<-- if-true-warning-1
+--8<-- if-true-warning-1 -- feature:warn_on_useless_conds
 if true then --@< Warning: This condition always evaluates to a truthy value
     local a
     local b
@@ -1930,7 +1927,7 @@ if true then --@< Warning: This condition always evaluates to a truthy value
 end
 --! ok
 
---8<-- if-true-warning-2
+--8<-- if-true-warning-2 -- feature:warn_on_useless_conds
 --# assume x: boolean
 if x then
     local a
@@ -1939,7 +1936,7 @@ elseif true then --@< Warning: This condition always evaluates to a truthy value
 end
 --! ok
 
---8<-- if-true-warning-3
+--8<-- if-true-warning-3 -- feature:warn_on_useless_conds
 --# assume x: boolean
 if true then --@< Note: This condition always evaluates to a truthy value
     local a
@@ -1950,7 +1947,7 @@ else
 end
 --! ok
 
---8<-- if-true-warning-4
+--8<-- if-true-warning-4 -- feature:warn_on_useless_conds
 --# assume x: boolean
 if x then
     local a
@@ -1965,14 +1962,14 @@ else
 end
 --! ok
 
---8<-- if-warning-varargs-1 -- exact
+--8<-- if-warning-varargs-1 -- feature:warn_on_useless_conds exact
 --v function() --> (string...)
 function f() end
 if f() then
 end
 --! ok
 
---8<-- if-warning-varargs-2
+--8<-- if-warning-varargs-2 -- feature:warn_on_useless_conds
 --v function() --> (string, string...)
 function f() end
 if f() then --@< Warning: This condition always evaluates to a truthy value
@@ -2412,6 +2409,13 @@ local a --: (function(string)) | (function(integer))
 --@^^^ Note: The other type originates here
 --! error
 
+--8<-- no-true-false-union
+local a --: true | false -- should be written as `boolean`
+--@^ Error: This union type is not supported in the specification
+--@^^ Cause: Cannot create a union type of `true` and `false`
+--@^^^ Note: The other type originates here
+--! error
+
 --8<-- maximally-disjoint-union
 local a --: true | 42 | 'foobar' | thread | userdata | (function()) | {string}
 --! ok
@@ -2444,15 +2448,15 @@ end
 --8<-- union-assert-return
 function x(q, a)
     if q then
-        return true
+        return 42
     else
         -- a is forced to have the same type to the previous return type `true`
         return a
     end
 end
 local y = x(true, false)
---@^ Error: The type `function(<unknown type>, true) --> true` cannot be called
---@^^ Cause: Second function argument `false` is not a subtype of `true`
+--@^ Error: The type `function(<unknown type>, integer) --> integer` cannot be called
+--@^^ Cause: Second function argument `false` is not a subtype of `integer`
 --! error
 
 --8<-- table-assign-just
@@ -2504,6 +2508,8 @@ local x = 42
 x = 54
 local y = 'string'
 y = 'another string'
+local z = true
+z = false
 --! ok
 
 --8<-- implicit-literal-type-in-record
@@ -2512,21 +2518,26 @@ a.x = 42
 a.x = 54
 a.y = 'string'
 a.y = 'another string'
+a.z = true
+a.z = false
 --! ok
 
 --8<-- implicit-literal-type-in-func-args
 -- XXX this essentially depends on the accuracy of constraint solver,
 -- which we chose not to concern when we are not explicit about types
-local function f(x, y)
+local function f(x, y, z)
     x = 42
     x = 54 --@< Error: Cannot assign `54` into `<unknown type>`
            --@^ Note: The other type originates here
     y = 'string'
     y = 'another string' --@< Error: Cannot assign `"another string"` into `<unknown type>`
                          --@^ Note: The other type originates here
+    z = true
+    z = false  --@< Error: Cannot assign `false` into `<unknown type>`
+               --@^ Note: The other type originates here
 end
-f(0, '') --@< Error: The type `function(<unknown type>, <unknown type>) --> ()` cannot be called
-         --@^ Cause: First function argument `0` is not a subtype of `<unknown type>`
+f(0, '', false) --@< Error: The type `function(<unknown type>, <unknown type>, <unknown type>) --> ()` cannot be called
+                --@^ Cause: First function argument `0` is not a subtype of `<unknown type>`
 --! error
 
 --8<-- explicit-literal-type
@@ -2536,6 +2547,9 @@ x = 54 --@< Error: Cannot assign `54` into `42`
 local y = 'string' --: 'string'
 y = 'another string' --@< Error: Cannot assign `"another string"` into `"string"`
                      --@^ Note: The other type originates here
+local z = true --: true
+z = false --@< Error: Cannot assign `false` into `true`
+          --@^ Note: The other type originates here
 --! error
 
 --8<-- explicit-literal-type-in-record
@@ -2546,43 +2560,53 @@ a.x = 54 --@< Error: Cannot assign `54` into `42`
 a.y = 'string' --: 'string'
 a.y = 'another string' --@< Error: Cannot assign `"another string"` into `"string"`
                        --@^ Note: The other type originates here
+a.z = true --: true
+a.z = false --@< Error: Cannot assign `false` into `true`
+            --@^ Note: The other type originates here
 --! error
 
 --8<-- explicit-literal-type-in-func-args-1
---v function(x: 42, y: 'string')
-local function f(x, y)
+--v function(x: 42, y: 'string', z: true)
+local function f(x, y, z)
     x = 42
     x = 54 --@< Error: Cannot assign `54` into `42`
            --@^ Note: The other type originates here
     y = 'string'
     y = 'another string' --@< Error: Cannot assign `"another string"` into `"string"`
                          --@^ Note: The other type originates here
+    z = true
+    z = false --@< Error: Cannot assign `false` into `true`
+              --@^ Note: The other type originates here
 end
-f(0, '') --@< Error: The type `function(42, "string") --> ()` cannot be called
-         --@^ Cause: First function argument `0` is not a subtype of `42`
+f(0, '', false) --@< Error: The type `function(42, "string", true) --> ()` cannot be called
+                --@^ Cause: First function argument `0` is not a subtype of `42`
 --! error
 
 --8<-- explicit-literal-type-in-func-args-2
---v function(x: 42|54, y: 'string'|'another string')
-local function f(x, y)
+--v function(x: 42|54, y: 'string'|'another string', z: boolean)
+local function f(x, y, z)
     x = 42
     x = 54
     y = 'string'
     y = 'another string'
+    z = true
+    z = false
 end
-f(0, '') --@< Error: The type `function((42|54), ("another string"|"string")) --> ()` cannot be called
-         --@^ Cause: First function argument `0` is not a subtype of `(42|54)`
+f(0, '', false) --@< Error: The type `function((42|54), ("another string"|"string"), boolean) --> ()` cannot be called
+                --@^ Cause: First function argument `0` is not a subtype of `(42|54)`
 --! error
 
 --8<-- explicit-literal-type-in-func-args-3
---v function(x: integer, y: string)
-local function f(x, y)
+--v function(x: integer, y: string, z: boolean)
+local function f(x, y, z)
     x = 42
     x = 54
     y = 'string'
     y = 'another string'
+    z = true
+    z = false
 end
-f(0, '')
+f(0, '', false)
 --! ok
 
 --8<-- kailua-test-assert-tvar
@@ -2657,5 +2681,38 @@ function f(x)
     --@^ Error: `--# assume` directive tried to access a field from a type not yet known enough
     local z = x.y.z + 42 --: integer --@< Error: The type `<unknown type>` is tabular but not known enough to index
 end
+--! error
+
+--8<-- dead-code -- feature:warn_on_dead_code
+function f()
+    local a = 42
+    do
+        do
+            local b = 42
+            for i = 1, 10 do
+                if i < 5 then
+                    break
+                end
+                do
+                    break
+                end
+                local c --@< Warning: This code will never execute
+            end
+            return
+        end
+        local d --@< Warning: This code will never execute
+    end
+    --@v-vvvv Warning: This code will never execute
+    local e = a --: string --@< Error: Cannot assign `integer` into `string`
+                           --@^ Note: The other type originates here
+    local f = a
+    local g = a
+end
+do
+    f()
+    f()
+    return
+end
+local z --@< Warning: This code will never execute
 --! error
 

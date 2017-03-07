@@ -50,8 +50,8 @@ pub enum T<'a> {
     All,                                // any (top)
     None,                               // (bottom); possibly nil or nil!
     Boolean,                            // boolean
-    True,                               // true
-    False,                              // false
+    True,                               // true (implicit)
+    False,                              // false (implicit)
     Integer,                            // integer
     Number,                             // number
     String,                             // string
@@ -277,12 +277,10 @@ impl<'a> T<'a> {
         match self {
             T::Dynamic(dyn) => T::Dynamic(dyn),
 
-            T::All      => T::All,
-            T::None     => T::None,
-            T::Boolean  => T::Boolean,
-            T::True     => T::True,
-            T::False    => T::False,
-            T::Thread   => T::Thread,
+            T::All => T::All,
+            T::None => T::None,
+            T::Boolean | T::True | T::False => T::Boolean,
+            T::Thread => T::Thread,
             T::UserData => T::UserData,
 
             T::Number => T::Number,
@@ -434,6 +432,9 @@ impl<'a> Union<Unioned> for T<'a> {
 
     fn union(&self, other: &Unioned, explicit: bool,
              ctx: &mut TypeContext) -> TypeResult<Unioned> {
+        trace!("calculating an {} union of {:?} (T) and {:?} (Union)",
+               if explicit { "explicit" } else { "implicit" }, *self, *other);
+
         let lhs = Unioned::from(self, ctx)?;
         lhs.union(other, explicit, ctx)
     }
@@ -442,6 +443,8 @@ impl<'a> Union<Unioned> for T<'a> {
 impl<'a> Lattice<Unioned> for T<'a> {
     // assumes that the Unioned itself has been simplified.
     fn assert_sub(&self, other: &Unioned, ctx: &mut TypeContext) -> TypeResult<()> {
+        trace!("asserting a constraint {:?} (T) <: {:?} (Unioned)", *self, *other);
+
         (|| {
             // try to match each component
             let ok = match *self {
@@ -518,6 +521,8 @@ impl<'a> Lattice<Unioned> for T<'a> {
 
     // assumes that the Unioned itself has been simplified.
     fn assert_eq(&self, other: &Unioned, ctx: &mut TypeContext) -> TypeResult<()> {
+        trace!("asserting a constraint {:?} (T) = {:?} (Unioned)", *self, *other);
+
         (|| {
             match *self {
                 T::Dynamic(_) => Ok(()),
@@ -568,8 +573,8 @@ impl<'a> T<'a> {
                 (&T::True,     &T::Boolean)  => T::Boolean,
                 (&T::False,    &T::Boolean)  => T::Boolean,
                 (&T::True,     &T::True)     => T::True,
-                (&T::True,     &T::False)    => T::Boolean,
-                (&T::False,    &T::True)     => T::Boolean,
+                (&T::True,     &T::False)    if !explicit => T::Boolean,
+                (&T::False,    &T::True)     if !explicit => T::Boolean,
                 (&T::False,    &T::False)    => T::False,
                 (&T::Thread,   &T::Thread)   => T::Thread,
                 (&T::UserData, &T::UserData) => T::UserData,
@@ -644,7 +649,7 @@ impl<'a> T<'a> {
 
 impl<'a, 'b> Lattice<T<'b>> for T<'a> {
     fn assert_sub(&self, other: &T<'b>, ctx: &mut TypeContext) -> TypeResult<()> {
-        debug!("asserting a constraint {:?} <: {:?}", *self, *other);
+        debug!("asserting a constraint {:?} (T) <: {:?} (T)", *self, *other);
 
         (|| {
             let ok = match (self, other) {
@@ -707,7 +712,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
     }
 
     fn assert_eq(&self, other: &T<'b>, ctx: &mut TypeContext) -> TypeResult<()> {
-        debug!("asserting a constraint {:?} = {:?}", *self, *other);
+        debug!("asserting a constraint {:?} (T) = {:?} (T)", *self, *other);
 
         (|| {
             let ok = match (self, other) {
@@ -995,8 +1000,6 @@ impl Ty {
             K::Any               => Ty::new(T::All),
             K::Nil               => Ty::new(T::None),
             K::Boolean           => Ty::new(T::Boolean),
-            K::BooleanLit(true)  => Ty::new(T::True),
-            K::BooleanLit(false) => Ty::new(T::False),
             K::Number            => Ty::new(T::Number),
             K::Integer           => Ty::new(T::Integer),
             K::String            => Ty::new(T::String),
@@ -1014,6 +1017,9 @@ impl Ty {
                 Ty::new(T::Dynamic(Dyn::Oops))
             },
 
+            K::BooleanLit(b) => {
+                Ty::new(T::Union(Cow::Owned(Unioned::explicit_bool(b))))
+            },
             K::IntegerLit(v) => {
                 Ty::new(T::Union(Cow::Owned(Unioned::explicit_int(v))))
             },
@@ -1263,6 +1269,10 @@ macro_rules! define_ty_impls {
 
             fn union(&self, other: &$rhs, explicit: bool,
                      ctx: &mut TypeContext) -> TypeResult<Ty> {
+                trace!(concat!("calculating an {} union of {:?} (", $ltext, ") and {:?} (",
+                               $rtext, ")"),
+                       if explicit { "explicit" } else { "implicit" }, *self, *other);
+
                 let $l = self;
                 let $r = other;
                 let mut ty = match $lty.union($rty, explicit, ctx) {
@@ -1760,7 +1770,9 @@ mod tests {
         check!(T::Thread, T::Dynamic(Dyn::User); T::Dynamic(Dyn::User));
 
         // general unions
-        check!(T::True, T::False; T::Boolean);
+        check!(T::True, T::True; T::True);
+        check!(T::False, T::False; T::False);
+        check!(T::True, T::False; explicit=_, implicit=T::Boolean);
         check!(T::Int(3) | T::String, T::Str(os("wat")) | T::Int(4);
                explicit = T::ints(vec![3, 4]) | T::String,
                implicit = T::Integer | T::String);

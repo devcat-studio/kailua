@@ -352,19 +352,28 @@ define_msg! { pub PreviousStringMeta:
     _    => "A metatable for `string` type has been previously defined here",
 }
 
+#[cfg(feature = "warn_on_useless_conds")]
 define_msg! { pub IgnoredIfCase:
     "ko" => "`if` 문의 이 조건(들)은 실행되지 않습니다",
     _    => "These `if` case(s) are never executed",
 }
 
+#[cfg(feature = "warn_on_useless_conds")]
 define_msg! { pub IfCaseWithTruthyCond:
     "ko" => "이 조건이 항상 참인 값으로 평가됩니다",
     _    => "This condition always evaluates to a truthy value",
 }
 
+#[cfg(feature = "warn_on_useless_conds")]
 define_msg! { pub IfCaseWithFalsyCond:
     "ko" => "이 조건이 항상 거짓인 값으로 평가됩니다",
     _    => "This condition always evaluates to a falsy value",
+}
+
+#[cfg(feature = "warn_on_dead_code")]
+define_msg! { pub DeadCode:
+    "ko" => "이 코드는 실행되지 않을 것입니다",
+    _    => "This code will never execute",
 }
 
 define_msg! { pub RedefinedClassName:

@@ -12,6 +12,10 @@ doc = false
 name = "kailua-check-test"
 harness = false
 
+[features]
+warn_on_useless_conds = []
+warn_on_dead_code = []
+
 [dependencies]
 log = "0.3"
 env_logger = "0.3"

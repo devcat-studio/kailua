@@ -28,6 +28,14 @@ impl Unioned {
         }
     }
 
+    pub fn explicit_bool(b: bool) -> Unioned {
+        let simple = if b { U_TRUE } else { U_FALSE };
+        Unioned {
+            simple: simple, numbers: None, strings: None, tables: None,
+            functions: None, classes: BTreeSet::new(),
+        }
+    }
+
     pub fn explicit_int(v: i32) -> Unioned {
         Unioned {
             simple: U_NONE, numbers: Some(Numbers::One(v)), strings: None, tables: None,
@@ -132,7 +140,7 @@ impl Unioned {
 
                 // avoid simplifying explicitly written literal types
                 match ty {
-                    T::Int(_) | T::Str(_) => return Err(()),
+                    T::Int(_) | T::Str(_) | T::True | T::False => return Err(()),
                     _ => {}
                 }
 
@@ -185,8 +193,21 @@ impl Union for Unioned {
 
     fn union(&self, other: &Unioned, explicit: bool,
              ctx: &mut TypeContext) -> TypeResult<Unioned> {
+        trace!("calculating an {} union of {:?} (Unioned) and {:?} (Unioned)",
+               if explicit { "explicit" } else { "implicit" }, *self, *other);
+
         (|| {
             let simple = self.simple | other.simple;
+
+            // in the explicit case `true | false` is not allowed
+            if explicit {
+                let llit = self.simple.intersects(U_BOOLEAN) && !self.simple.contains(U_BOOLEAN);
+                let rlit = other.simple.intersects(U_BOOLEAN) && !other.simple.contains(U_BOOLEAN);
+                let ubool = simple.contains(U_BOOLEAN);
+                if llit && rlit && ubool {
+                    return Err(ctx.gen_report());
+                }
+            }
 
             macro_rules! union_options {
                 ($lhs:expr, $rhs:expr, |$l:ident, $r:ident| $merge:expr) => (
@@ -232,6 +253,8 @@ impl Union for Unioned {
 
 impl Lattice for Unioned {
     fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
+        trace!("asserting a constraint {:?} (Unioned) <: {:?} (Unioned)", *self, *other);
+
         (|| {
             macro_rules! assert_sub_options {
                 ($lhs:expr, $rhs:expr) => (
@@ -261,6 +284,8 @@ impl Lattice for Unioned {
     }
 
     fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
+        trace!("asserting a constraint {:?} (Unioned) = {:?} (Unioned)", *self, *other);
+
         (|| {
             if self.simple != other.simple {
                 return Err(ctx.gen_report());
@@ -306,6 +331,8 @@ impl fmt::Debug for Unioned {
 #[test]
 fn test_unioned_simplify() {
     assert_eq!(Unioned::empty().simplify(), T::None);
+    assert_eq!(Unioned::explicit_bool(true).simplify(),
+               T::Union(Cow::Owned(Unioned::explicit_bool(true))));
     assert_eq!(Unioned::explicit_int(42).simplify(),
                T::Union(Cow::Owned(Unioned::explicit_int(42))));
     assert_eq!(Unioned::explicit_str(b"foo"[..].into()).simplify(),
