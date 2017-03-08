@@ -697,14 +697,15 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn resolve_local_name(&mut self, name: &Name) -> Option<ScopedId> {
+        self.scope_stack.last().and_then(|&(scope, _)| {
+            self.scope_map.find_name_in_scope(scope, name).map(|(_, scoped_id)| scoped_id)
+        })
+    }
+
     // resolve the name referenced in the current scope (might be global) into a reference
     fn resolve_name(&mut self, name: Name) -> NameRef {
-        let local = if let Some(&(scope, _)) = self.scope_stack.last() {
-            self.scope_map.find_name_in_scope(scope, &name)
-        } else {
-            None
-        };
-        if let Some((_, scoped_id)) = local {
+        if let Some(scoped_id) = self.resolve_local_name(&name) {
             NameRef::Local(scoped_id)
         } else {
             NameRef::Global(name)
@@ -2604,11 +2605,23 @@ impl<'a> Parser<'a> {
 
                 let mut sibling_scope = None;
                 let stmt = match parser.read() {
-                    // assume [global] NAME {"." NAME} ":" MODF KIND
+                    // assume [global | local] NAME {"." NAME} ":" MODF KIND
                     (_, Spanned { base: Tok::Keyword(Keyword::Assume), .. }) => {
-                        let globalbegin = parser.pos();
-                        let global = parser.may_expect(Keyword::Global);
-                        let globalend = parser.last_pos();
+                        #[derive(Copy, Clone, PartialEq)]
+                        enum AssumeScope { Auto, Local, Global }
+
+                        // `--# assume` without a scope specifier can either create a local binding
+                        // or a global variable depending on whether a local variable exist or not;
+                        // the scope specifier will force one case and error on another case.
+                        let scopebegin = parser.pos();
+                        let scope = if parser.may_expect(Keyword::Global) {
+                            AssumeScope::Global
+                        } else if parser.may_expect(Keyword::Local) {
+                            AssumeScope::Local
+                        } else {
+                            AssumeScope::Auto
+                        };
+                        let scope = scope.with_loc(scopebegin..parser.last_pos());
 
                         let namesbegin = parser.pos();
                         let rootname = parser.parse_name()?;
@@ -2623,17 +2636,42 @@ impl<'a> Parser<'a> {
                         let kind = parser.recover_upto(Self::parse_kailua_kind)?;
 
                         let rootname = if names.is_empty() {
-                            if global {
-                                parser.global_scope.insert(rootname.base.clone(), rootname.span);
-                                rootname.map(NameRef::Global)
-                            } else {
+                            let local = parser.resolve_local_name(&rootname).is_some();
+
+                            // issue an error if the scope specifier mismatches
+                            match (scope.base, local) {
+                                (AssumeScope::Local, false) => {
+                                    parser.error(&rootname,
+                                                 m::AssumeMissingLocal { name: &rootname.base })
+                                          .done()?;
+                                }
+                                (AssumeScope::Global, true) => {
+                                    parser.error(&rootname,
+                                                 m::AssumeShadowedGlobal { name: &rootname.base })
+                                          .done()?;
+                                }
+                                (_, _) => {}
+                            }
+
+                            if local {
+                                // if a local variable exists, create a _new_ local binding
+                                // that shadows the prior variable in the current block
                                 let scope = parser.generate_sibling_scope();
                                 sibling_scope = Some(scope);
                                 parser.add_spanned_local_name(scope, rootname).map(NameRef::Local)
+                            } else {
+                                parser.global_scope.insert(rootname.base.clone(), rootname.span);
+                                rootname.map(NameRef::Global)
                             }
                         } else {
-                            if global { // issue an error and ignore `global`
-                                parser.error(globalbegin..globalend, m::AssumeFieldGlobal {})
+                            let scopename = match scope.base {
+                                AssumeScope::Auto => None,
+                                AssumeScope::Local => Some("local"),
+                                AssumeScope::Global => Some("global"),
+                            };
+                            if let Some(scopename) = scopename {
+                                // issue an error and ignore the scope
+                                parser.error(&scope, m::AssumeFieldScope { scope: scopename })
                                       .done()?;
                             }
                             rootname.map(|name| parser.resolve_name(name))

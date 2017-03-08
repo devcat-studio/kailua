@@ -2663,10 +2663,29 @@ function p(a, b) --: integer
 end
 --! error
 
+--8<-- assume-scope
+local x --: string
+do
+    --# assume x: integer
+    x = 42
+end
+local y = x + 42 --@< Error: Cannot apply + operator to `string` and `42`
+                 --@^ Cause: `string` is not a subtype of `number`
+--! error
+
 --8<-- assume-field
 local x = {}
 --# assume x.y: integer
 local z = x.y + 42 --: integer
+--! ok
+
+--8<-- assume-field-scope
+local x = {}
+do
+    --# assume x.y: integer
+    x.y = 42
+end
+local y = x.y + 42 --: integer
 --! ok
 
 --8<-- assume-field-overwrite

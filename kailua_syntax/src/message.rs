@@ -383,8 +383,20 @@ define_msg! { pub FutureKeyword<'a> { read: &'a Tok, current: Lua, future: Lua }
              but it became a keyword since {future}",
 }
 
-define_msg! { pub AssumeFieldGlobal:
-    "ko" => "`--# assume` 명령이 테이블의 필드를 갱신할 경우 `global`을 쓸 수 없습니다",
-    _    => "`global` cannot be used when `--# assume` directive updates a field in the table",
+define_msg! { pub AssumeShadowedGlobal<'a> { name: &'a Name }:
+    "ko" => "`--# assume` 명령이 전역 변수 {name}를 설정하려 했으나, \
+             같은 이름의 지역 변수가 전역 변수를 감추었습니다",
+    _    => "`--# assume` directive tried to set a global variable {name}, \
+             but it was shadowed by a local variable of the same name",
+}
+
+define_msg! { pub AssumeMissingLocal<'a> { name: &'a Name }:
+    "ko" => "`--# assume` 명령이 존재하지 않는 지역 변수 {name}를 갱신하려 합니다",
+    _    => "`--# assume` directive tried to update a missing local variable {name}",
+}
+
+define_msg! { pub AssumeFieldScope<'a> { scope: &'a str }:
+    "ko" => "`--# assume` 명령이 테이블의 필드를 갱신할 경우 `{scope}`을 쓸 수 없습니다",
+    _    => "`{scope}` cannot be used when `--# assume` directive updates a field in the table",
 }
 
