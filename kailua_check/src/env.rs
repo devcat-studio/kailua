@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::borrow::Cow;
 use std::collections::{hash_map, HashMap, HashSet};
-use vec_map::VecMap;
+use vec_map::{self, VecMap};
 use atomic::Atomic;
 use atomic::Ordering::Relaxed;
 
@@ -550,218 +550,152 @@ impl<R: Report> Context<R> {
     }
 
     fn assert_rvar_rel(&mut self, lhs: RVar, rhs: RVar, is_sub: bool) -> TypeResult<()> {
-        // simulate a tail recursion
-        let mut lhs = lhs;
-        let mut rhs = rhs;
+        trace!("{:?} should be {} {:?}", lhs, if is_sub { "<:" } else { "=" }, rhs);
 
-        loop {
-            trace!("{:?} should be {} {:?}", lhs, if is_sub { "<:" } else { "=" }, rhs);
+        // we want to avoid modifying shared row variables (which we cannot distinguish,
+        // therefore we can only modify a row variable which next var is not yet instantiated),
+        // while making sure that all fields known to be present or absent in both operands
+        // are common to each other as well. we therefore have to go through a chain of
+        // row variables for each operand, collect positive and negative fields respectively,
+        // set the bounds from mismatching fields to the last row variable in the chain
+        // _and_ finally set the next row variables for both to the same row variable.
+        //
+        // this is going to be tough.
 
-            if lhs == rhs {
-                return Ok(());
-            }
+        fn collect_fields<R: Report>(mut r: RVar, ctx: &mut Context<R>)
+                -> TypeResult<(HashMap<Key, Slot>, RVar)> {
+            let mut present = HashMap::new();
+            let mut absent = HashSet::new(); // only used for filling the last row if none
 
-            // an empty row is special and does not equal to any other "normal" rows
-            match (lhs == RVar::empty(), rhs == RVar::empty()) {
-                (false, false) | (true, true) => {}
-                (false, true) => {
-                    return Err(self.gen_report().put(Origin::RVar,
-                                                     format!("lhs record is not empty")));
+            let err;
+            'err: loop {
+                if r == RVar::empty() {
+                    return Ok((present, r));
                 }
-                (true, false) => {
-                    return Err(self.gen_report().put(Origin::RVar,
-                                                     format!("rhs record is not empty")));
-                }
-            }
 
-            let lhs_ = lhs.to_usize();
-            let rhs_ = rhs.to_usize();
+                match ctx.row_infos.entry(r.to_usize()) {
+                    vec_map::Entry::Occupied(row) => {
+                        let row = row.get();
 
-            // populate the row infos if needed
-            self.row_infos.entry(lhs_).or_insert_with(|| Box::new(RowInfo::new()));
-            self.row_infos.entry(rhs_).or_insert_with(|| Box::new(RowInfo::new()));
+                        let fields = if let Some(ref fields) = row.fields {
+                            fields
+                        } else {
+                            err = format!("recursive record");
+                            break 'err;
+                        };
 
-            let mut matching = Vec::new();
-            let mut lmissing = Vec::new(); // positive fields missing in lfields
-            let mut rmissing = Vec::new(); // positive fields missing in rfields
-            let mut labsent = Vec::new(); // negative fields missing in lfields
-            let mut rabsent = Vec::new(); // negative fields missing in rfields
-
-            let (lnext, rnext) = {
-                // get the row infos, and bail out if recursion is detected
-                let lrow = self.row_infos.get(&lhs_).unwrap();
-                let rrow = self.row_infos.get(&rhs_).unwrap();
-                let lfields = if let Some(ref fields) = lrow.fields {
-                    fields
-                } else {
-                    return Err(self.gen_report().put(Origin::RVar,
-                                                     format!("recursive record")));
-                };
-                let rfields = if let Some(ref fields) = rrow.fields {
-                    fields
-                } else {
-                    return Err(self.gen_report().put(Origin::RVar,
-                                                     format!("recursive record")));
-                };
-
-                // collect missing fields from rhs and also remaining matching fields
-                // (we cannot immediately check for them due to borrowing)
-                for (k, lv) in lfields.iter() {
-                    match (lv, rfields.get(k)) {
-                        // both lhs and rhs has the same positive field, check the relation
-                        (&Some(ref lv), Some(&Some(ref rv))) => {
-                            matching.push((k.clone(), lv.clone(), rv.clone()));
+                        for (k, v) in fields {
+                            if let Some(ref v) = *v {
+                                // positive field should be unique
+                                if present.insert(k.clone(), v.clone()).is_some() {
+                                    err = format!("internally duplicate field {:?}", k);
+                                    break 'err;
+                                }
+                            } else {
+                                // negative field will *not* be unique
+                                absent.insert(k.clone());
+                            }
                         }
 
-                        // lhs has a field and rhs does not, rhs' next row variable should have it
-                        (&Some(ref lv), None) => {
-                            rmissing.push((k.clone(), lv.clone()));
-                        }
-
-                        // lhs has a negative field which should be also in rhs
-                        // if the field is missing in rhs it should be in rhs' next row variable
-                        (&None, Some(&None)) => {}
-                        (&None, None) => {
-                            rabsent.push(k.clone());
-                        }
-
-                        // otherwise unification fails
-                        (&None, Some(&Some(_))) => {
-                            return Err(self.gen_report().put(Origin::RVar,
-                                                             format!("lhs cannot have a field {:?}",
-                                                                     k)));
-                        }
-                        (&Some(_), Some(&None)) => {
-                            return Err(self.gen_report().put(Origin::RVar,
-                                                             format!("rhs cannot have a field {:?}",
-                                                                     k)));
+                        if let Some(ref next) = row.next {
+                            r = next.clone();
+                        } else {
+                            return Ok((present, r));
                         }
                     }
-                }
 
-                // collect missing fields from lhs (matches have been already checked)
-                for (k, rv) in rfields.iter() {
-                    match (lfields.get(k), rv) {
-                        (Some(&Some(_)), &Some(_)) => {}
-                        (None, &Some(ref rv)) => {
-                            lmissing.push((k.clone(), rv.clone()));
-                        }
-                        (Some(&None), &None) => {}
-                        (None, &None) => {
-                            labsent.push(k.clone());
-                        }
-                        (Some(&None), &Some(_)) => {
-                            return Err(self.gen_report().put(Origin::RVar,
-                                                             format!("lhs cannot have a field {:?}",
-                                                                     k)));
-                        }
-                        (Some(&Some(_)), &None) => {
-                            return Err(self.gen_report().put(Origin::RVar,
-                                                             format!("rhs cannot have a field {:?}",
-                                                                     k)));
-                        }
+                    vec_map::Entry::Vacant(e) => {
+                        // instantiate the row and implicitly fill negative fields
+                        let mut fields = HashMap::new();
+                        fields.extend(present.iter().map(|(k, _)| (k.clone(), None)));
+                        fields.extend(absent.into_iter().map(|k| (k, None)));
+                        e.insert(Box::new(RowInfo { fields: Some(fields), next: None }));
+                        return Ok((present, r));
                     }
-                }
-
-                (lrow.next.clone(), rrow.next.clone())
-            };
-
-            // now check for the matching fields
-            if is_sub {
-                for (_k, lv, rv) in matching {
-                    lv.assert_sub(&rv, self)?;
-                }
-            } else {
-                for (_k, lv, rv) in matching {
-                    lv.assert_eq(&rv, self)?;
                 }
             }
 
-            // ensure that two next row variables are identical (w.r.t. given relation).
-            // this is primarily done by instantiating them as needed and recursing later.
-            let (lnext, rnext) = match (lnext, rnext) {
-                // if both have been already instantiated we can simply unify them,
-                // i.e. do the tail recursion with next variables.
-                (Some(lnext), Some(rnext)) => (lnext, rnext),
+            Err(ctx.gen_report().put(Origin::RVar, err))
+        };
 
-                // if only one of them has been instantiated, another should be newly instantiated.
-                // it will have an exclusion set of all keys in corresponding fields.
-                // then do the tail recursion with instantiated variables.
-                (Some(lnext), None) => {
-                    let rnext = self.gen_rvar();
-
-                    let mut row = Box::new(RowInfo::new());
-                    {
-                        let rfields = self.row_infos.get(&rhs_).unwrap().fields.as_ref().unwrap();
-                        let mut fields = row.fields.as_mut().unwrap();
-                        fields.extend(rfields.keys().map(|k| (k.clone(), None)));
-                    }
-                    self.row_infos.insert(rnext.to_usize(), row);
-
-                    self.row_infos.get_mut(&rhs_).unwrap().next = Some(rnext.clone());
-                    (lnext, rnext)
-                },
-
-                (None, Some(rnext)) => {
-                    let lnext = self.gen_rvar();
-
-                    let mut row = Box::new(RowInfo::new());
-                    {
-                        let lfields = self.row_infos.get(&lhs_).unwrap().fields.as_ref().unwrap();
-                        let mut fields = row.fields.as_mut().unwrap();
-                        fields.extend(lfields.keys().map(|k| (k.clone(), None)));
-                    }
-                    self.row_infos.insert(lnext.to_usize(), row);
-
-                    self.row_infos.get_mut(&lhs_).unwrap().next = Some(lnext.clone());
-                    (lnext, rnext)
-                },
-
-                // if none has been instantiated, only one row variable gets newly instantiated,
-                // and it will have an exclusion set of all keys _in both fields_.
-                //
-                // this is same to instantiating two variables, setting exclusion sets and
-                // immediately unifying them, but avoids an infinite loop because
-                // unifying one variable with itself trivially ends the recursion.
-                (None, None) => {
-                    let next = self.gen_rvar();
-
-                    let mut row = Box::new(RowInfo::new());
-                    {
-                        let lfields = self.row_infos.get(&lhs_).unwrap().fields.as_ref().unwrap();
-                        let rfields = self.row_infos.get(&rhs_).unwrap().fields.as_ref().unwrap();
-                        let mut fields = row.fields.as_mut().unwrap();
-                        fields.extend(lfields.keys().map(|k| (k.clone(), None)));
-                        fields.extend(rfields.keys().map(|k| (k.clone(), None)));
-                    }
-                    self.row_infos.insert(next.to_usize(), row);
-
-                    self.row_infos.get_mut(&lhs_).unwrap().next = Some(next.clone());
-                    self.row_infos.get_mut(&rhs_).unwrap().next = Some(next.clone());
-                    (next.clone(), next)
-                },
-            };
-
-            // finally, fill any positive or negative fields to the *next* row variable.
-            // at this point we have instantiated both next variables so no check is needed.
-            //
-            // it might be possible that any of them is empty,
-            // or has been already included or excluded when lnext = rnext;
-            // assert_rvar_includes_and_excludes should handle such cases correctly.
-            self.assert_rvar_includes_and_excludes(lnext.clone(), &lmissing, &labsent)?;
-            self.assert_rvar_includes_and_excludes(rnext.clone(), &rmissing, &rabsent)?;
-
-            lhs = lnext;
-            rhs = rnext;
+        if lhs == rhs {
+            return Ok(());
         }
+
+        let (lfields, lnext) = collect_fields(lhs.clone(), self)?;
+        let (rfields, rnext) = collect_fields(rhs.clone(), self)?;
+
+        let mut matching = Vec::new();
+        let mut lmissing = Vec::new();
+        let mut rmissing = Vec::new();
+
+        // collect missing fields and matching fields
+        // (we cannot immediately check for them due to borrowing)
+        for (k, lv) in lfields.iter() {
+            if let Some(rv) = rfields.get(k) {
+                matching.push((k.clone(), lv.clone(), rv.clone()));
+            } else {
+                rmissing.push((k.clone(), lv.clone()));
+            }
+        }
+        for (k, rv) in rfields.iter() {
+            if !lfields.contains_key(k) {
+                lmissing.push((k.clone(), rv.clone()));
+            }
+        }
+
+        // check for the matching fields
+        if is_sub {
+            for (_k, lv, rv) in matching {
+                lv.assert_sub(&rv, self)?;
+            }
+        } else {
+            for (_k, lv, rv) in matching {
+                lv.assert_eq(&rv, self)?;
+            }
+        }
+
+        // remaining fields should be in the relevant updatable row variable
+        // (also check for the empty rows if any; we cannot update them)
+        if !lmissing.is_empty() {
+            if lnext == RVar::empty() {
+                return Err(self.gen_report().put(Origin::RVar,
+                                                 format!("lhs is no longer extensible")));
+            }
+            self.assert_rvar_includes_(lnext.clone(), &lmissing)?;
+        }
+        if !rmissing.is_empty() {
+            if rnext == RVar::empty() {
+                return Err(self.gen_report().put(Origin::RVar,
+                                                 format!("rhs is no longer extensible")));
+            }
+            self.assert_rvar_includes_(rnext.clone(), &rmissing)?;
+        }
+
+        // finally two row variables should be linked by setting the common last row variable
+        let last = self.gen_rvar();
+        if lnext != RVar::empty() {
+            let mut row =
+                self.row_infos.entry(lnext.to_usize()).or_insert_with(|| Box::new(RowInfo::new()));
+            assert_eq!(row.next, None);
+            row.next = Some(last.clone());
+        }
+        if rnext != RVar::empty() && rnext != lnext {
+            // avoid setting the next twice, which breaks the assertion
+            let mut row =
+                self.row_infos.entry(rnext.to_usize()).or_insert_with(|| Box::new(RowInfo::new()));
+            assert_eq!(row.next, None);
+            row.next = Some(last);
+        }
+
+        Ok(())
     }
 
-    fn assert_rvar_includes_and_excludes(&mut self, lhs: RVar, includes: &[(Key, Slot)],
-                                         excludes: &[Key]) -> TypeResult<()> {
-        trace!("{:?} should include {:?} and exclude {:?}", lhs, includes, excludes);
+    fn assert_rvar_includes_(&mut self, lhs: RVar, includes: &[(Key, Slot)]) -> TypeResult<()> {
+        trace!("{:?} should include {:?}", lhs, includes);
 
         // optimize a no-op just in case
-        if includes.is_empty() && excludes.is_empty() {
+        if includes.is_empty() {
             return Ok(());
         }
 
@@ -777,19 +711,18 @@ impl<R: Report> Context<R> {
         } else {
             return Err(self.gen_report().put(Origin::RVar, format!("recursive record")));
         };
+        trace!("{:?} already had {:?} and {:?}", lhs, fields, next);
 
-        let e = inner(self, includes, excludes, &mut fields, next);
+        let e = inner(self, lhs, includes, &mut fields, next);
         self.row_infos.get_mut(&lhs_).unwrap().fields = Some(fields);
         return e;
 
-        fn inner<R: Report>(ctx: &mut Context<R>,
-                            includes: &[(Key, Slot)], excludes: &[Key],
+        fn inner<R: Report>(ctx: &mut Context<R>, lhs: RVar, includes: &[(Key, Slot)],
                             fields: &mut HashMap<Key, Option<Slot>>,
                             next: Option<RVar>) -> TypeResult<()> {
             // collect missing fields, whether positive or negative, and
             // check if other matching fields are compatible
             let mut missing = Vec::new();
-            let mut absent = Vec::new();
             for &(ref k, ref rv) in includes {
                 match fields.get(k) {
                     Some(&Some(ref lv)) => {
@@ -799,26 +732,12 @@ impl<R: Report> Context<R> {
                     Some(&None) => {
                         // the field is excluded, immediately fail
                         return Err(ctx.gen_report().put(Origin::RVar,
-                                                        format!("record cannot have a field {:?}",
-                                                                k)));
+                                                        format!("record {:?} cannot have \
+                                                                 a field {:?}", lhs, k)));
                     }
                     None => {
                         // the field should be added to the next row variable (if any)
                         missing.push((k.clone(), rv.clone()));
-                    }
-                }
-            }
-            for k in excludes {
-                match fields.get(k) {
-                    Some(&Some(ref lv)) => {
-                        return Err(ctx.gen_report().put(Origin::RVar,
-                                                        format!("record should not have a field \
-                                                                 {:?} but already had {:?}",
-                                                                k, lv)));
-                    }
-                    Some(&None) => {}
-                    None => {
-                        absent.push(k.clone());
                     }
                 }
             }
@@ -827,10 +746,9 @@ impl<R: Report> Context<R> {
             // we can avoid instantiation when it has not yet been instantiated though
             if let Some(next) = next {
                 // we need to put fields back, so this cannot be a tail recursion
-                ctx.assert_rvar_includes_and_excludes(next, &missing, &absent)?;
+                ctx.assert_rvar_includes_(next, &missing)?;
             } else {
                 fields.extend(missing.into_iter().map(|(k, v)| (k, Some(v))));
-                fields.extend(absent.into_iter().map(|k| (k, None)));
             }
 
             Ok(())
@@ -1149,7 +1067,7 @@ impl<R: Report> TypeContext for Context<R> {
     }
 
     fn assert_rvar_includes(&mut self, lhs: RVar, rhs: &[(Key, Slot)]) -> TypeResult<()> {
-        self.assert_rvar_includes_and_excludes(lhs.clone(), rhs, &[]).map_err(|r| {
+        self.assert_rvar_includes_(lhs.clone(), rhs).map_err(|r| {
             r.put(Origin::RVar, format!("the record should include {:?} but didn't", rhs))
         })
     }

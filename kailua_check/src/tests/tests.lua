@@ -435,6 +435,11 @@ local a = (x or 53) + 42
 local b = y or 53 --: integer | true
 --! ok
 
+--8<-- disjunctive-type-erasure-table
+--# assume x: {a = string, b = integer}?
+local x = x or {} --: {a = string, b = integer}!
+--! ok
+
 --8<-- conjunctive-lhs-dynamic
 --# assume p: WHATEVER
 local a = (p and 'foo') + 54
@@ -1389,6 +1394,39 @@ p.x = q
 --@^ Error: Cannot assign `number` into `integer`
 --@^^ Note: The other type originates here
 -- the error message should not mention `integer!`
+--! error
+
+--8<-- assign-record-1
+local t = {}
+t.a = 42
+local x = t.b --@< Error: Cannot index `{a = integer}` with `"b"`
+--! error
+
+--8<-- assign-record-2
+local t = {} --: {a = integer}
+local x = t.a
+t.a = 42
+local x = t.a --: integer
+--! ok
+
+--8<-- assign-record-extension
+local t = {}
+local u = {} --: {}
+t.a = 42
+u.b = 54
+local x = t.a + u.b --: integer
+--! ok
+
+--8<-- assign-record-row-variable
+local x = {a = 1, b = 'foo'}
+
+local y = x --: {a = integer, b = string, c = string}
+y.c = 'foo'
+local c = x.c --: string
+
+local z = x --: {a = integer, b = string, c = integer}
+--@^ Error: Cannot assign `{a = 1, b = "foo", c = string}` into `{a = integer, b = string, c = integer}`
+--@^^ Note: The other type originates here
 --! error
 
 --8<-- require-unknown
