@@ -1,3 +1,13 @@
+## 0.0.4
+
+* `--# assume x.y: T` syntax is now supported.
+
+* `true` and `false` now coerces to `boolean` unless explicitly typed.
+
+* `true | false` no longer translates to `boolean`, it's now forbidden.
+
+* Fixed a misleading error for bad binary operators.
+
 ## 0.0.3
 
 * The error reporting for type errors has been vastly improved.
