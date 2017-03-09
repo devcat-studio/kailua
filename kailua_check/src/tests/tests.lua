@@ -2773,3 +2773,25 @@ end
 local z --@< Warning: This code will never execute
 --! error
 
+--8<-- lua51-table-insert-1
+--# open lua51
+local x = {} --: vector<integer>
+table.insert(x, 42)
+table.insert(x, 54)
+--! ok
+
+-->8-- lua51-table-insert-2
+--# open lua51
+local x = {} --: vector<integer>
+table.insert(x, 42)
+table.insert(x, 'not an integer') -- should error, but current definition is rather weak
+--! error
+
+--8<-- lua51-table-maxn
+--# open lua51
+local x = {1, 2, 3} --: vector<integer>
+local y = {'foo', 'bar'} --: vector<string>
+local n = table.maxn(x) --: integer
+local m = table.maxn(y) --: integer
+--! ok
+

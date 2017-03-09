@@ -5,10 +5,10 @@
 --#     {
 --#         `concat` = function(vector<const string|number>, string?,
 --#                             integer?, integer?) --> string;
---#         -- TODO ah fuck, needs overloading with function(vector<any>, integer, any)
---#         `insert` = function(vector<any>, any);
+--#         -- TODO ah fuck, needs overloading with function(vector<WHATEVER>, integer, any)
+--#         `insert` = function(vector<WHATEVER>, any);
 --#         `maxn` = function(vector<const any>) --> integer;
---#         `remove` = function(vector<any>, integer?) --> any?;
---#         `sort` = function(vector<any>, (function(WHATEVER, WHATEVER) --> boolean)?);
+--#         `remove` = function(vector<WHATEVER>, integer?) --> any?;
+--#         `sort` = function(vector<WHATEVER>, (function(WHATEVER, WHATEVER) --> boolean)?);
 --#     }
 
