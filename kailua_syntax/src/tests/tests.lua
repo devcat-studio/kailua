@@ -916,6 +916,12 @@ local x --: function() --> [builtin] (string, string)
 --@^ Error: Cannot attach the type attribute (like [name]) to the type sequence
 --! [Local([`x`$1: _ Func(() --> (String, String))], [])$1]
 
+--8<-- kind-or-recover
+function foo()
+    local x --: integer | --@<-v Error: Expected a type, got a newline
+end
+--! [FuncDecl(`foo`_, [] --> _, $1[Local([`x`$2: _ Union([Integer])], [])$2])]
+
 --8<-- funcspec
 --v function()
 function foo() end
@@ -1050,6 +1056,12 @@ end
 function foo() --> (string, WHATEVER...)
 end
 --! [FuncDecl(`foo`_, [] --> [String, Dynamic...], $1[])]
+
+--8<-- rettype-recover
+--@v-vv Error: Expected a single type or type sequence, got a newline
+function foo() -->
+end
+--! [FuncDecl(`foo`_, [] --> Oops, $1[])]
 
 --8<-- funcspec-and-rettype
 --v function()
@@ -1609,7 +1621,7 @@ f()
 
 --8<-- assume-func-invalid-char
 --# assume x: function () --> #foo --@< Error: Expected a single type or type sequence, got `#`
-                                   --@^ Error: Expected a newline, got a name
+                                   --@^ Error: Expected a newline, got `#`
 --! [KailuaAssume((`x`_), _, Func(() --> Oops))]
 
 --8<-- assume-named
@@ -1659,6 +1671,7 @@ f(                             --@< Error: Expected `)`, got the end of file
 
 --8<-- assume-or-invalid-char
 --# assume x: integer | # --@< Error: Expected a type, got `#`
+                          --@^ Error: Expected a newline, got `#`
 f()
 --! [KailuaAssume((`x`_), _, Union([Integer])), Void(`f`_())]
 

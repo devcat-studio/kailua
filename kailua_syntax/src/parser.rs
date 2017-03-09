@@ -2398,6 +2398,7 @@ impl<'a> Parser<'a> {
                             None => {
                                 let tok = self.read();
                                 self.error(tok.1.span, m::NoType { read: &tok.1.base }).done()?;
+                                self.unread(tok);
                                 break;
                             }
                         }
@@ -2429,8 +2430,9 @@ impl<'a> Parser<'a> {
         if let Some(kindseq) = self.try_parse_kailua_kind_seq()? {
             Ok(kindseq.base)
         } else {
-            let tok = self.read().1;
-            self.error(tok.span, m::NoTypeOrTypeSeq { read: &tok.base }).done()?;
+            let tok = self.read();
+            self.error(tok.1.span, m::NoTypeOrTypeSeq { read: &tok.1.base }).done()?;
+            self.unread(tok);
             Ok(Seq { head: vec![Recover::recover()], tail: None })
         }
     }
