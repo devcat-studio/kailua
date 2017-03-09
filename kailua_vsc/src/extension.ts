@@ -88,7 +88,7 @@ function initializeLanguageServer(context: vscode.ExtensionContext) {
                     executablePath = releasePath + extension;
                     mode = 'release mode';
                 }
-                env = {RUST_LOG: 'kailua_langsvr=info'};
+                env = {RUST_LOG: 'kailua_langsvr=info', RUST_BACKTRACE: '1'};
             }
             languageClient.outputChannel.append(`spawning a language server (${mode})\n`);
 

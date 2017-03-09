@@ -12,6 +12,7 @@ members = [
 
 [profile.release]
 lto = true
+debug = true # TODO
 
 # required by kailua_langsvr
 [replace]

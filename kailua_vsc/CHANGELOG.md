@@ -1,3 +1,13 @@
+## 0.0.5
+
+* Fixed various erratic behavior of record types.
+
+* Fixed several parser errors that completly disable the language server.
+
+* Correctly reports an error when the start path itself is missing.
+
+* `--# assume` syntax has been changed; it now creates a new local binding _only when the local variable of the same name exists_, otherwise it creates a global variable. `--# assume local` and `--# assume global` can be used to force either case and error on others.
+
 ## 0.0.4
 
 * `--# assume x.y: T` syntax is now supported.
