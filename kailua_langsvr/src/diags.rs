@@ -136,10 +136,15 @@ impl ReportTree {
 
     // ReportTree itself does not implement Report, because it needs Source
     // for building CDP's Diagnostic interface.
+    // (but you can directly put `Diagnostic` with `add_diag` for exceptional cases)
     pub fn report<F>(&self, translate: F) -> ReportTreeReport<F>
         where F: Fn((Kind, Span, String)) -> Option<(String, Diagnostic)>
     {
         ReportTreeReport { inner: self.inner.clone(), translate: translate }
+    }
+
+    pub fn add_diag(&self, path: String, diag: Diagnostic) {
+        self.inner.collected.lock().push((path, diag));
     }
 }
 

@@ -24,6 +24,7 @@ use kailua_check::{self, FsSource, FsOptions, Context, Output};
 use fmtutils::Ellipsis;
 use diags::{self, ReportTree};
 use futureutils::{CancelError, CancelToken, CancelFuture};
+use message as m;
 use protocol;
 
 #[derive(Clone, Debug)]
@@ -322,22 +323,46 @@ impl WorkspaceFile {
             // will spawn the (i+1)-th task without removing itself from the pool queue!
             // chaining the already-spawned future will ensure that
             // the task body will be only spawned after the last future has been finished.
-            let fut = span_fut.map_err(|_| {
-                CancelError::Error(ReportTree::new(Locale::dummy(), None))
-            }).and_then(move |span| {
-                let span = *span;
-
+            let fut = span_fut.then(move |span_ret| {
                 let inner = spare_inner.read();
-                inner.cancel_token.keep_going()?;
 
-                let source = inner.source.read();
+                match span_ret {
+                    Ok(span) => {
+                        inner.cancel_token.keep_going()?;
 
-                let path = source.file(span.unit()).map(|f| f.path());
-                let diags = ReportTree::new(inner.message_locale, path);
+                        let source = inner.source.read();
 
-                let report = diags.report(|r| diags::translate_diag(r, &source));
-                let tokens = collect_tokens(&source, span, &report);
-                Ok((Arc::new(tokens), diags))
+                        let path = source.file(span.unit()).map(|f| f.path());
+                        let diags = ReportTree::new(inner.message_locale, path);
+
+                        let report = diags.report(|r| diags::translate_diag(r, &source));
+                        let tokens = collect_tokens(&source, *span, &report);
+                        Ok((Arc::new(tokens), diags))
+                    },
+
+                    Err(e) => {
+                        Err(e.as_ref().map(|e| {
+                            // translate an I/O error into a report
+                            let msg = m::CannotOpenStartPath { error: e };
+                            let msg = Localized::new(&msg, inner.message_locale).to_string();
+
+                            let path = inner.path.display().to_string();
+                            let diags = ReportTree::new(inner.message_locale, Some(&path));
+                            diags.add_diag(path, protocol::Diagnostic {
+                                range: protocol::Range {
+                                    start: protocol::Position { line: 0, character: 0 },
+                                    end: protocol::Position { line: 0, character: 0 },
+                                },
+                                severity: Some(protocol::DiagnosticSeverity::Error),
+                                code: None,
+                                source: None,
+                                message: msg,
+                            });
+
+                            diags
+                        }))
+                    },
+                }
             });
 
             inner.tokens = Some(inner.pool.spawn(fut).boxed().shared());
