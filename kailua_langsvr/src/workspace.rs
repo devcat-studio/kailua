@@ -335,7 +335,7 @@ impl WorkspaceFile {
                         let path = source.file(span.unit()).map(|f| f.path());
                         let diags = ReportTree::new(inner.message_locale, path);
 
-                        let report = diags.report(|r| diags::translate_diag(r, &source));
+                        let report = diags.report(|span| diags::translate_span(span, &source));
                         let tokens = collect_tokens(&source, *span, &report);
                         Ok((Arc::new(tokens), diags))
                     },
@@ -393,7 +393,9 @@ impl WorkspaceFile {
 
                 // in this future source access is only needed for reporting
                 let chunk = {
-                    let report = diags.report(|r| diags::translate_diag(r, &inner.source.read()));
+                    let report = diags.report(|span| {
+                        diags::translate_span(span, &inner.source.read())
+                    });
                     parse_to_chunk(tokens, &report)
                 };
                 match chunk {
@@ -554,7 +556,7 @@ impl FsSource for WorkspaceFsSource {
 
         let chunk = {
             let source = fssource.source.read();
-            let report = diags.report(|r| diags::translate_diag(r, &source));
+            let report = diags.report(|span| diags::translate_span(span, &source));
             let tokens = collect_tokens(&source, span, &report);
             parse_to_chunk(tokens, &report)
         };
@@ -802,8 +804,8 @@ impl Workspace {
                 let (ok, output) = {
                     // the translation should NOT lock the source (read or write) indefinitely.
                     // we also want to drop the proxy report as fast as possible.
-                    let mut context = Context::new(diags.report(|r| {
-                        diags::translate_diag(r, &source.read())
+                    let mut context = Context::new(diags.report(|span| {
+                        diags::translate_span(span, &source.read())
                     }));
                     let ok = kailua_check::check_from_chunk(&mut context, start_chunk,
                                                             opts).is_ok();

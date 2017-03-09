@@ -10,8 +10,7 @@ use kailua_diag::{self, Kind, Report, Locale, Localize, Localized};
 
 use protocol::{Position, Range, DiagnosticSeverity, Diagnostic};
 
-pub fn translate_diag((kind, span, msg): (Kind, Span, String),
-                      source: &Source) -> Option<(String, Diagnostic)> {
+pub fn translate_span(span: Span, source: &Source) -> Option<(String, Range)> {
     // ignore any unknown span
     let (file, (beginline, mut spans, endline)) = match source.get_file(span.unit()) {
         Some(file) => match file.lines_from_span(span) {
@@ -51,21 +50,11 @@ pub fn translate_diag((kind, span, msg): (Kind, Span, String),
     let endspan = spans.next_back().unwrap_or(beginspan);
     let mut endch = calculate_u16_offset(endspan.begin(), span.end(), file);
     if span.begin() == span.end() { endch += 1; } // avoid creating an empty range
-    let range = Range {
+
+    Some((file.path().to_owned(), Range {
         start: Position { line: beginline as u64, character: beginch as u64 },
         end: Position { line: endline as u64, character: endch as u64 }, // exclusive
-    };
-
-    let severity = match kind {
-        Kind::Fatal | Kind::Error => DiagnosticSeverity::Error,
-        Kind::Warning => DiagnosticSeverity::Warning,
-        Kind::Info | Kind::Cause => DiagnosticSeverity::Information,
-        Kind::Note => DiagnosticSeverity::Hint,
-    };
-    let diag = Diagnostic {
-        range: range, severity: Some(severity), code: None, source: None, message: msg,
-    };
-    Some((file.path().to_owned(), diag))
+    }))
 }
 
 // hierarchical diagnostics, forming a DAG.
@@ -138,7 +127,7 @@ impl ReportTree {
     // for building CDP's Diagnostic interface.
     // (but you can directly put `Diagnostic` with `add_diag` for exceptional cases)
     pub fn report<F>(&self, translate: F) -> ReportTreeReport<F>
-        where F: Fn((Kind, Span, String)) -> Option<(String, Diagnostic)>
+        where F: Fn(Span) -> Option<(String, Range)>
     {
         ReportTreeReport { inner: self.inner.clone(), translate: translate }
     }
@@ -160,7 +149,7 @@ pub struct ReportTreeReport<F> {
 }
 
 impl<F> Report for ReportTreeReport<F>
-    where F: Fn((Kind, Span, String)) -> Option<(String, Diagnostic)>
+    where F: Fn(Span) -> Option<(String, Range)>
 {
     fn message_locale(&self) -> Locale {
         self.inner.locale
@@ -168,9 +157,48 @@ impl<F> Report for ReportTreeReport<F>
 
     fn add_span(&self, kind: Kind, span: Span, msg: &Localize) -> kailua_diag::Result<()> {
         let msg = Localized::new(msg, self.inner.locale).to_string();
-        if let Some((path, diag)) = (self.translate)((kind, span, msg)) {
-            self.inner.collected.lock().push((path, diag));
+
+        // TODO span should be translated _after_ deciding whether to put a new diagnostic,
+        // but this is currently used to guard against unspanned, yet-to-be-fixed stray messages
+        if let Some((path, range)) = (self.translate)(span) {
+            let (severity, prefix) = match kind {
+                Kind::Fatal | Kind::Error => (DiagnosticSeverity::Error, None),
+                Kind::Warning => (DiagnosticSeverity::Warning, None),
+                Kind::Cause => (DiagnosticSeverity::Information, Some("└ ")),
+                Kind::Info => (DiagnosticSeverity::Information, None),
+                Kind::Note => (DiagnosticSeverity::Hint, Some("  • ")),
+            };
+
+            let mut collected = self.inner.collected.lock();
+
+            if let (false, Some(prefix)) = (collected.is_empty(), prefix) {
+                // merge notes and causes to the prior message (if exists)
+                let (ref lastpath, ref mut last) = *collected.last_mut().unwrap();
+                last.message.push('\n');
+                last.message.push_str(prefix);
+                last.message.push_str(&msg);
+                last.message.push_str(" (");
+                if path != *lastpath {
+                    last.message.push_str(&path);
+                    last.message.push(' ');
+                }
+                last.message.push_str(&format!("{}:{}", range.start.line + 1,
+                                               range.start.character + 1));
+                if range.start.line != range.end.line ||
+                   range.start.character + 1 < range.end.character {
+                    last.message.push_str(&format!("-{}:{}", range.end.line + 1,
+                                                   range.end.character + 1));
+                   }
+                last.message.push_str(")");
+            } else {
+                // otherwise report normally
+                collected.push((path, Diagnostic {
+                    range: range, severity: Some(severity),
+                    code: None, source: None, message: msg,
+                }));
+            }
         }
+
         if kind == Kind::Fatal { Err(kailua_diag::Stop) } else { Ok(()) }
     }
 }
