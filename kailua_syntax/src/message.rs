@@ -390,13 +390,8 @@ define_msg! { pub AssumeShadowedGlobal<'a> { name: &'a Name }:
              but it was shadowed by a local variable of the same name",
 }
 
-define_msg! { pub AssumeMissingLocal<'a> { name: &'a Name }:
-    "ko" => "`--# assume` 명령이 존재하지 않는 지역 변수 {name}를 갱신하려 합니다",
-    _    => "`--# assume` directive tried to update a missing local variable {name}",
-}
-
-define_msg! { pub AssumeFieldScope<'a> { scope: &'a str }:
-    "ko" => "`--# assume` 명령이 테이블의 필드를 갱신할 경우 `{scope}`을 쓸 수 없습니다",
-    _    => "`{scope}` cannot be used when `--# assume` directive updates a field in the table",
+define_msg! { pub AssumeGlobalInLocalScope:
+    "ko" => "`--# assume global`은 최상위 블록에서만 쓸 수 있습니다",
+    _    => "`--# assume global` should be in the top-level scope",
 }
 

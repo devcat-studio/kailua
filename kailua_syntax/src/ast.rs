@@ -455,7 +455,9 @@ pub enum St {
     // Kailua extensions
     KailuaOpen(Spanned<Name>),
     KailuaType(Spanned<Name>, Spanned<Kind>),
-    KailuaAssume(Spanned<(Spanned<NameRef>, Vec<Spanned<Name>>)>, M, Spanned<Kind>, Option<Scope>),
+    KailuaAssume(NameRef, // a final name reference to be created
+                 Spanned<(Spanned<NameRef>, Vec<Spanned<Name>>)>, // name(s) being updated
+                 M, Spanned<Kind>, Option<Scope>),
 }
 
 impl fmt::Debug for St {
@@ -501,8 +503,8 @@ impl fmt::Debug for St {
 
             St::KailuaOpen(ref lib) => write!(f, "KailuaOpen({:?})", lib),
             St::KailuaType(ref t, ref k) => write!(f, "KailuaType({:?}, {:?})", t, k),
-            St::KailuaAssume(Spanned { base: (ref i, ref ii), span }, m, ref k, is) => {
-                write!(f, "KailuaAssume(({:?}", i)?;
+            St::KailuaAssume(ref i_, Spanned { base: (ref i, ref ii), span }, m, ref k, is) => {
+                write!(f, "KailuaAssume({:?}, ({:?}", i_, i)?;
                 for i in ii { write!(f, ".{:?}", i)?; }
                 write!(f, "){:?}, {:?}, {:?})", span, m, k)?;
                 if let Some(is) = is { write!(f, "{:?}", is)?; }

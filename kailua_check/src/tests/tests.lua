@@ -2690,8 +2690,8 @@ do
     --# assume x.y: integer
     x.y = 42
 end
-local y = x.y + 42 --: integer
---! ok
+local y = x.y + 42 --@< Error: Cannot index `{}` with `"y"`
+--! error
 
 --8<-- assume-field-overwrite
 local x = {y = 'string'}
@@ -2727,21 +2727,21 @@ local z = x.y + 42 --: integer
 local x = 54
 --# assume x.y: integer
 --@^ Error: `--# assume` directive tried to access a field from a non-table type `integer`
-local z = x.y + 42 --: integer --@< Error: Tried to index a non-table type `integer`
+local z = x.y + 42 --: integer
 --! error
 
 --8<-- assume-field-missing-2
 local x = {}
 --# assume x.y.z: integer
 --@^ Error: `--# assume` directive tried to access a missing field
-local z = x.y.z + 42 --: integer --@< Error: Cannot index `{}` with `"y"`
+local z = x.y.z + 42 --: integer
 --! error
 
 --8<-- assume-field-unknown
 function f(x)
     --# assume x.y.z: integer
     --@^ Error: `--# assume` directive tried to access a field from a type not yet known enough
-    local z = x.y.z + 42 --: integer --@< Error: The type `<unknown type>` is tabular but not known enough to index
+    local z = x.y.z + 42 --: integer
 end
 --! error
 

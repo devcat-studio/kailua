@@ -800,8 +800,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         Ok(())
     }
 
-    fn assume_field(&mut self, rootname: &Spanned<NameRef>, names: &[Spanned<Name>],
-                    _namespan: Span, slot: Slot) -> CheckResult<()> {
+    fn assume_field_slot(&mut self, rootname: &Spanned<NameRef>, names: &[Spanned<Name>],
+                         _namespan: Span, slot: Slot) -> CheckResult<Slot> {
         assert!(!names.is_empty());
 
         // if we are updating a table, we need to sever any row variable connections
@@ -838,7 +838,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             self.env.ensure_var(rootname)?
         } else {
             self.env.error(rootname, m::NoVar { name: self.env.get_name(rootname) }).done()?;
-            return Ok(());
+            return Ok(Slot::dummy());
         };
 
         // extract the prior table and continue to index fields except for the last one
@@ -852,10 +852,10 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     table = next;
                 } else {
                     self.env.error(span, m::AssumeFieldToMissing {}).done()?;
-                    return Ok(());
+                    return Ok(Slot::dummy());
                 }
             } else { // the error occurred and already reported
-                return Ok(());
+                return Ok(Slot::dummy());
             }
         }
 
@@ -866,7 +866,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             tables.push((flex, nil, fields));
             // drop the last item popped, we will replace it with our own
         } else { // the error occurred and already reported
-            return Ok(());
+            return Ok(Slot::dummy());
         }
 
         assert_eq!(names.len(), tables.len());
@@ -884,9 +884,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         }
 
         // the final table should be assumed back to the current scope
-        self.env.assume_var(rootname, slot.with_loc(rootname))?;
-
-        Ok(())
+        Ok(slot)
     }
 
     pub fn visit(&mut self, chunk: &Spanned<Block>) -> CheckResult<()> {
@@ -1410,14 +1408,15 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 Ok(Exit::None)
             }
 
-            St::KailuaAssume(Spanned { base: (ref rootname, ref names), span },
+            St::KailuaAssume(ref newname, Spanned { base: (ref rootname, ref names), span },
                              kindm, ref kind, _nextscope) => {
-                let slot = self.visit_kind(F::from(kindm), kind)?;
-                if names.is_empty() {
-                    self.env.assume_var(rootname, slot)?;
-                } else {
-                    self.assume_field(rootname, names, span, slot.base)?;
+                let mut slot = self.visit_kind(F::from(kindm), kind)?;
+                let newname = newname.clone().with_loc(rootname);
+                if !names.is_empty() {
+                    let newslot = self.assume_field_slot(rootname, names, span, slot.base)?;
+                    slot = newslot.with_loc(rootname);
                 }
+                self.env.assume_var(&newname, slot)?;
                 Ok(Exit::None)
             }
         }
