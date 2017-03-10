@@ -262,6 +262,11 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 let lflags = self.env.get_type_bounds(&lhs.unlift()).1;
                 let rflags = self.env.get_type_bounds(&rhs.unlift()).1;
 
+                // filter dynamics
+                if lflags.is_dynamic() || rflags.is_dynamic() {
+                    return Ok(Slot::just(Ty::new(T::Boolean)));
+                }
+
                 // filter any non-strings and non-numbers
                 // avoid using assert_sub here, it is not accurate enough
                 if !lflags.is_stringy() || !rflags.is_stringy() {

@@ -196,6 +196,11 @@ local function p() end
 local x = p < 3.14 --@< Error: Cannot apply < operator to `function() --> ()` and `number`
 --! error
 
+--8<-- lt-error -- exact
+local x = f() --@< Error: Global or local variable `f` is not defined
+local y = 3 < x
+--! error
+
 --8<-- unknown-type
 --# assume p: unknown_type --@< Error: Type `unknown_type` is not defined
 --! error
