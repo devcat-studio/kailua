@@ -1,26 +1,56 @@
 use std::str;
 use std::error::Error;
+use std::collections::HashMap;
 use std::io::{self, Read, BufRead, Write, BufReader};
 use std::net::TcpStream;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use serde::Serialize;
 use serde_json::{self, Value};
 use parking_lot::Mutex;
+use futures::future::{Future, BoxFuture};
+use futures::sync::oneshot::{self, Sender};
 use fmtutils::Asis;
-use protocol::{self, Id, Request, RequestMessage, RequestError, ResponseMessage, ResponseError};
+use protocol::{self, Id, Method};
+use protocol::{Request, RequestMessage, Notification, NotificationMessage};
+use protocol::{ResponseMessage, ResponseError, Message, MessageError};
 
 fn invalid<E: Into<Box<Error + Send + Sync>>>(e: E) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, e)
 }
 
-pub struct Server {
+struct ServerInner {
     reader: Mutex<Box<BufRead + Send + Sync>>,
     writer: Mutex<Box<Write + Send + Sync>>,
+
+    next_id: AtomicUsize,
+
+    // Values are deserialized by Receiver
+    futures: Mutex<HashMap<Id, Sender<Result<Option<Value>, ResponseError<Value>>>>>,
+}
+
+#[derive(Clone)]
+pub struct Server {
+    inner: Arc<ServerInner>,
+}
+
+#[derive(Clone, Debug)]
+pub enum Received {
+    Request(Id, Request),
+    Notification(Notification),
 }
 
 impl Server {
     pub fn new(reader: Box<BufRead + Send + Sync>,
                writer: Box<Write + Send + Sync>) -> Server {
-        Server { reader: Mutex::new(reader), writer: Mutex::new(writer) }
+        Server {
+            inner: Arc::new(ServerInner {
+                reader: Mutex::new(reader),
+                writer: Mutex::new(writer),
+                next_id: AtomicUsize::new(0),
+                futures: Mutex::new(HashMap::new()),
+            }),
+        }
     }
 
     pub fn from_stdio() -> Server {
@@ -35,7 +65,7 @@ impl Server {
     }
 
     fn recv_msg(&self) -> io::Result<Vec<u8>> {
-        let mut reader = self.reader.lock();
+        let mut reader = self.inner.reader.lock();
 
         let mut line = Vec::new();
         let mut bodylen = None;
@@ -73,7 +103,7 @@ impl Server {
     }
 
     fn send_msg(&self, buf: &[u8]) -> io::Result<()> {
-        let mut writer = self.writer.lock();
+        let mut writer = self.inner.writer.lock();
         write!(writer, "Content-Length: {}\r\n\r\n", buf.len())?;
         writer.write(buf)?;
         drop(writer);
@@ -85,7 +115,7 @@ impl Server {
         Ok(())
     }
 
-    pub fn recv(&self) -> io::Result<Option<Request>> {
+    pub fn recv(&self) -> io::Result<Option<Received>> {
         let body = self.recv_msg()?;
 
         // now we can recover from the error; any error past this point is represented by None
@@ -97,7 +127,7 @@ impl Server {
                 return Ok(None);
             }
         };
-        let msg = match serde_json::from_value::<RequestMessage>(json) {
+        let msg = match serde_json::from_value::<Message>(json) {
             Ok(msg) => msg,
             Err(e) => {
                 self.send_err(None, protocol::error_codes::INVALID_REQUEST,
@@ -105,26 +135,50 @@ impl Server {
                 return Ok(None);
             },
         };
-        let req = match Request::from_message(msg) {
-            Ok(req) => req,
-            Err((id, RequestError::MethodNotFound(method))) => {
-                self.send_err(id, protocol::error_codes::METHOD_NOT_FOUND,
-                              format!("method not found: {}", method), ())?;
-                return Ok(None);
+
+        let ret = match msg {
+            Message::Request(msg) => match Request::from_message(msg) {
+                (id, Ok(req)) => Ok(Received::Request(id, req)),
+                (id, Err(e)) => Err((Some(id), e)),
             },
-            Err((id, RequestError::InvalidRequest(estr))) => {
-                self.send_err(id, protocol::error_codes::INVALID_REQUEST,
-                              format!("invalid request: {}", estr), ())?;
-                return Ok(None);
+
+            Message::Notification(msg) => match Notification::from_message(msg) {
+                Ok(req) => Ok(Received::Notification(req)),
+                Err(e) => Err((None, e)),
             },
-            Err((id, RequestError::InvalidParams(estr))) => {
-                self.send_err(id, protocol::error_codes::INVALID_PARAMS,
-                              format!("invalid parameters: {}", estr), ())?;
+
+            Message::Response(msg) => {
+                if let Some(ref id) = msg.id {
+                    if let Some(sender) = self.inner.futures.lock().remove(id) {
+                        if let Some(error) = msg.error {
+                            sender.complete(Err(error));
+                        } else {
+                            sender.complete(Ok(msg.result));
+                        }
+                    } else {
+                        warn!("no callback registered for {:?}", msg);
+                    }
+                } else {
+                    // this indicates an error from the server side, and cannot be handled
+                    warn!("got and ignored {:?}", msg);
+                }
                 return Ok(None);
             },
         };
 
-        Ok(Some(req))
+        match ret {
+            Ok(received) => Ok(Some(received)),
+            Err((id, MessageError::MethodNotFound(method))) => {
+                self.send_err(id, protocol::error_codes::METHOD_NOT_FOUND,
+                              format!("method not found: {}", method), ())?;
+                Ok(None)
+            },
+            Err((id, MessageError::InvalidParams(estr))) => {
+                self.send_err(id, protocol::error_codes::INVALID_PARAMS,
+                              format!("invalid parameters: {}", estr), ())?;
+                Ok(None)
+            },
+        }
     }
 
     pub fn send_ok<R: Serialize>(&self, id: Id, result: R) -> io::Result<()> {
@@ -154,11 +208,42 @@ impl Server {
         self.send_msg(&buf)
     }
 
-    pub fn send_notify<T: Serialize>(&self, method: &str, params: T) -> io::Result<()> {
+    pub fn send_req<T: Serialize>(&self, method: Method, params: T)
+        -> io::Result<BoxFuture<Option<Value>, ResponseError<Value>>>
+    {
+        let id = Id::Number(self.inner.next_id.fetch_add(1, Ordering::SeqCst) as i64);
+        let (sender, receiver) = oneshot::channel();
+        let prev = self.inner.futures.lock().insert(id.clone(), sender);
+        assert!(prev.is_none(), "duplicate request id?!");
+
         let msg = RequestMessage::<T> {
             version: protocol::Version,
-            id: None,
-            method: method.into(),
+            id: id,
+            method: method.as_str().into(),
+            params: Some(params),
+        };
+        let buf = serde_json::to_vec(&msg).map_err(invalid)?;
+        self.send_msg(&buf)?;
+
+        Ok(receiver.then(|ret| {
+            match ret {
+                Ok(Ok(result)) => Ok(result),
+                Ok(Err(error)) => Err(error),
+                Err(_) => {
+                    // possible when the server is shut down before the future is dropped
+                    Err(ResponseError {
+                        code: protocol::error_codes::UNKNOWN_ERROR_CODE,
+                        message: "Canceled".into(), data: None,
+                    })
+                },
+            }
+        }).boxed())
+    }
+
+    pub fn send_notify<T: Serialize>(&self, method: Method, params: T) -> io::Result<()> {
+        let msg = NotificationMessage::<T> {
+            version: protocol::Version,
+            method: method.as_str().into(),
             params: Some(params),
         };
         let buf = serde_json::to_vec(&msg).map_err(invalid)?;

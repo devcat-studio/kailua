@@ -102,6 +102,7 @@ fn initialize_workspace(server: &Server) -> Workspace {
     use futures_cpupool::CpuPool;
     use workspace::Workspace;
     use protocol::*;
+    use server::Received;
     use message as m;
 
     loop {
@@ -110,7 +111,7 @@ fn initialize_workspace(server: &Server) -> Workspace {
         debug!("pre-init read: {:#?}", req);
 
         match req {
-            Request::Initialize(id, params) => {
+            Received::Request(id, Request::Initialize(params)) => {
                 if let Some(dir) = params.rootPath {
                     let initopts = parse_init_options(params.initializationOptions);
 
@@ -123,15 +124,18 @@ fn initialize_workspace(server: &Server) -> Workspace {
                     let nworkers = num_cpus::get() * 4;
                     let pool = Arc::new(CpuPool::new(nworkers));
 
-                    let mut workspace = Workspace::new(PathBuf::from(dir), pool,
+                    let mut workspace = Workspace::new(PathBuf::from(dir), pool.clone(),
                                                        initopts.default_locale);
 
                     // try to read the config...
                     if let Err(e) = workspace.read_config() {
-                        let _ = server.send_notify("window/showMessage", ShowMessageParams {
-                            type_: MessageType::Warning,
-                            message: workspace.localize(&m::CannotReadConfig { error: &e }),
-                        });
+                        let _ = server.send_notify(
+                            Method::ShowMessage,
+                            ShowMessageParams {
+                                type_: MessageType::Warning,
+                                message: workspace.localize(&m::CannotReadConfig { error: &e }),
+                            },
+                        );
                     } else {
                         // ...then try to initially scan the directory (should happen before sending
                         // an initialize response so that changes reported later are not dups)
@@ -162,23 +166,23 @@ fn initialize_workspace(server: &Server) -> Workspace {
                 }
             }
 
-            req => {
-                // reply an error to the request (notifications are ignored)
-                if let Some(id) = req.id() {
-                    let _ = server.send_err(Some(id.clone()),
-                                            error_codes::SERVER_NOT_INITIALIZED,
-                                            "server hasn't been initialized yet",
-                                            InitializeError { retry: false });
-                }
+            // reply an error to the request (notifications are ignored)
+            Received::Request(id, _) => {
+                let _ = server.send_err(Some(id.clone()),
+                                        error_codes::SERVER_NOT_INITIALIZED,
+                                        "server hasn't been initialized yet",
+                                        InitializeError { retry: false });
             }
+            Received::Notification(_) => {}
         }
     }
 }
 
-fn send_diagnostics(server: Arc<Server>, root: ReportTree) -> io::Result<()> {
+fn send_diagnostics(server: Server, root: ReportTree) -> io::Result<()> {
     use std::path::Path;
     use std::collections::HashMap;
     use url::Url;
+    use protocol::*;
 
     let mut diags = HashMap::new();
     for tree in root.trees() {
@@ -193,15 +197,15 @@ fn send_diagnostics(server: Arc<Server>, root: ReportTree) -> io::Result<()> {
     for (path, diags) in diags.into_iter() {
         let uri = Url::from_file_path(&Path::new(&path)).expect("no absolute path");
         server.send_notify(
-            "textDocument/publishDiagnostics",
-            protocol::PublishDiagnosticsParams { uri: uri.to_string(), diagnostics: diags }
+            Method::PublishDiagnostics,
+            PublishDiagnosticsParams { uri: uri.to_string(), diagnostics: diags }
         )?;
     }
 
     Ok(())
 }
 
-fn send_diagnostics_when_available<T, F>(server: Arc<Server>,
+fn send_diagnostics_when_available<T, F>(server: Server,
                                          pool: &futures_cpupool::CpuPool,
                                          fut: futures::future::Shared<F>)
     where T: Send + Sync + 'static,
@@ -223,13 +227,13 @@ fn send_diagnostics_when_available<T, F>(server: Arc<Server>,
     pool.spawn(fut).forget();
 }
 
-fn on_file_changed(file: &WorkspaceFile, server: Arc<Server>, pool: &futures_cpupool::CpuPool) {
+fn on_file_changed(file: &WorkspaceFile, server: Server, pool: &futures_cpupool::CpuPool) {
     send_diagnostics_when_available(server.clone(), pool, file.ensure_tokens());
     send_diagnostics_when_available(server, pool, file.ensure_chunk());
 }
 
 // in the reality, the "loop" is done via a chain of futures and the function immediately returns
-fn checking_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>,
+fn checking_loop(server: Server, workspace: Arc<RwLock<Workspace>>,
                  timer: Timer) -> BoxFuture<(), ()> {
     use std::time::Duration;
     use futures;
@@ -277,7 +281,7 @@ fn checking_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>,
             // the loop terminates, possibly with a message
             if workspace.read().has_read_config() {
                 // avoid a duplicate message if kailua.json is missing
-                let _ = server.send_notify("window/showMessage", ShowMessageParams {
+                let _ = server.send_notify(Method::ShowMessage, ShowMessageParams {
                     type_: MessageType::Warning,
                     message: workspace.read().localize(&m::NoStartPath {}),
                 });
@@ -287,12 +291,13 @@ fn checking_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>,
     }).erase_err().boxed()
 }
 
-fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
+fn main_loop(server: Server, workspace: Arc<RwLock<Workspace>>) {
     use std::collections::HashMap;
     use futureutils::CancelToken;
     use workspace::WorkspaceError;
     use completion::{self, CompletionClass};
     use protocol::*;
+    use server::Received;
 
     let mut cancel_tokens: HashMap<Id, CancelToken> = HashMap::new();
     let timer = Timer::default();
@@ -317,18 +322,18 @@ fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
         }
 
         match req {
-            Request::Initialize(id, ..) => {
+            Received::Request(id, Request::Initialize(_)) => {
                 let _ = server.send_err(Some(id), error_codes::INTERNAL_ERROR,
                                         "already initialized", InitializeError { retry: false });
             }
 
-            Request::CancelRequest(params) => {
+            Received::Notification(Notification::CancelRequest(params)) => {
                 if let Some(token) = cancel_tokens.remove(&params.id) {
                     token.cancel();
                 }
             }
 
-            Request::DidOpenTextDocument(params) => {
+            Received::Notification(Notification::DidOpenTextDocument(params)) => {
                 let uri = params.textDocument.uri.clone();
 
                 let ws = workspace.write();
@@ -340,7 +345,7 @@ fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
                 on_file_changed(&file, server.clone(), &pool);
             }
 
-            Request::DidChangeTextDocument(params) => {
+            Received::Notification(Notification::DidChangeTextDocument(params)) => {
                 let uri = params.textDocument.uri;
 
                 let ws = workspace.write();
@@ -361,13 +366,13 @@ fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
                 debug!("workspace: {:#?}", *ws);
             }
 
-            Request::DidCloseTextDocument(params) => {
+            Received::Notification(Notification::DidCloseTextDocument(params)) => {
                 let ws = workspace.write();
                 try_or_notify!(ws.close_file(&params.textDocument.uri));
                 debug!("workspace: {:#?}", *ws);
             }
 
-            Request::DidChangeWatchedFiles(params) => {
+            Received::Notification(Notification::DidChangeWatchedFiles(params)) => {
                 let ws = workspace.write();
                 for ev in params.changes {
                     match ev.type_ {
@@ -379,7 +384,7 @@ fn main_loop(server: Arc<Server>, workspace: Arc<RwLock<Workspace>>) {
                 debug!("workspace: {:#?}", *ws);
             }
 
-            Request::Completion(id, params) => {
+            Received::Request(id, Request::Completion(params)) => {
                 let token = CancelToken::new();
                 cancel_tokens.insert(id.clone(), token.clone());
 
@@ -440,6 +445,5 @@ pub fn main() {
     info!("established connection");
     let workspace = Arc::new(RwLock::new(initialize_workspace(&server)));
     info!("initialized workspace, starting a main loop");
-    let server = Arc::new(server);
     main_loop(server, workspace);
 }

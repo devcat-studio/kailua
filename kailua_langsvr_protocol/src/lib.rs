@@ -3,7 +3,9 @@ extern crate serde;
 extern crate serde_json;
 
 use std::str;
+use std::str::FromStr;
 use std::fmt;
+use std::error::Error;
 use std::collections::BTreeMap as Object;
 use serde::{de, Serialize, Serializer, Deserialize, Deserializer};
 use serde_json::Value;
@@ -234,12 +236,103 @@ impl Deserialize for Id {
     }
 }
 
-// also acts as NotificationMessage when id is None
+#[derive(Debug, Clone)]
+pub enum Message {
+    Request(RequestMessage),
+    Response(ResponseMessage),
+    Notification(NotificationMessage),
+}
+
+impl Serialize for Message {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match *self {
+            Message::Request(ref msg) => msg.serialize(s),
+            Message::Response(ref msg) => msg.serialize(s),
+            Message::Notification(ref msg) => msg.serialize(s),
+        }
+    }
+}
+
+impl Deserialize for Message {
+    fn deserialize<D: Deserializer>(d: D) -> Result<Message, D::Error> {
+        #[derive(Deserialize)]
+        struct MessageInternal {
+            #[serde(rename = "jsonrpc")] version: Version,
+            #[serde(default)] id: Option<Option<Id>>,
+            #[serde(default)] method: Option<String>,
+            #[serde(default)] params: Option<Value>,
+            #[serde(default)] result: Option<Value>,
+            #[serde(default)] error: Option<ResponseError<Value>>,
+        }
+
+        let msg: MessageInternal = Deserialize::deserialize(d)?;
+
+        if let Some(id) = msg.id {
+            if let Some(method) = msg.method {
+                // RequestMessage
+                const FIELDS: &'static [&'static str] = &["jsonrpc", "id", "method", "params"];
+                if let Some(id) = id {
+                    if msg.result.is_some() {
+                        Err(de::Error::unknown_field("result", FIELDS))
+                    } else if msg.error.is_some() {
+                        Err(de::Error::unknown_field("error", FIELDS))
+                    } else {
+                        Ok(Message::Request(RequestMessage {
+                            version: msg.version, id: id, method: method, params: msg.params,
+                        }))
+                    }
+                } else {
+                    Err(de::Error::invalid_type(de::Unexpected::Unit, &"a string or an integer"))
+                }
+            } else {
+                // ResponseMessage
+                const FIELDS: &'static [&'static str] = &["jsonrpc", "id", "result", "error"];
+                if msg.method.is_some() {
+                    Err(de::Error::unknown_field("method", FIELDS))
+                } else if msg.params.is_some() {
+                    Err(de::Error::unknown_field("params", FIELDS))
+                } else if msg.result.is_some() && msg.error.is_some() {
+                    Err(de::Error::custom("both `result` and `error` fields are present \
+                                           in the response message"))
+                } else {
+                    Ok(Message::Response(ResponseMessage {
+                        version: msg.version, id: id, result: msg.result, error: msg.error,
+                    }))
+                }
+            }
+        } else {
+            // NotificationMessage
+            const FIELDS: &'static [&'static str] = &["jsonrpc", "method", "params"];
+            if let Some(method) = msg.method {
+                if msg.result.is_some() {
+                    Err(de::Error::unknown_field("result", FIELDS))
+                } else if msg.error.is_some() {
+                    Err(de::Error::unknown_field("error", FIELDS))
+                } else {
+                    Ok(Message::Notification(NotificationMessage {
+                        version: msg.version, method: method, params: msg.params,
+                    }))
+                }
+            } else {
+                Err(de::Error::missing_field("method"))
+            }
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(bound(serialize = "T: Serialize", deserialize = "T: Deserialize"))]
 pub struct RequestMessage<T = Value> {
     #[serde(rename = "jsonrpc")] pub version: Version,
-    #[serde(default, skip_serializing_if = "is_default")] pub id: Option<Id>,
+    pub id: Id,
+    pub method: String,
+    #[serde(default, skip_serializing_if = "is_default")] pub params: Option<T>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(bound(serialize = "T: Serialize", deserialize = "T: Deserialize"))]
+pub struct NotificationMessage<T = Value> {
+    #[serde(rename = "jsonrpc")] pub version: Version,
     pub method: String,
     #[serde(default, skip_serializing_if = "is_default")] pub params: Option<T>,
 }
@@ -279,37 +372,185 @@ pub mod error_codes {
 
 // the actual language server protocol continues
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum Request {
-    // proper requests, use Id for reply
-    Initialize(Id, InitializeParams),
-    Shutdown(Id),
-    ShowMessageRequest(Id, ShowMessageRequestParams),
-    #[cfg(protocol_v3)] Registration(Id, RegistrationParams),
-    #[cfg(protocol_v3)] Unregistration(Id, UnregistrationParams),
-    WorkspaceSymbol(Id, WorkspaceSymbolParams),
-    #[cfg(protocol_v3)] ExecuteCommand(Id, ExecuteCommandParams),
-    #[cfg(protocol_v3)] ApplyWorkspaceEdit(Id, ApplyWorkspaceEditParams),
-    #[cfg(protocol_v3)] WillSaveWaitUntilTextDocument(Id, WillSaveTextDocumentParams),
-    Completion(Id, TextDocumentPositionParams),
-    CompletionItemResolve(Id, CompletionItem),
-    Hover(Id, TextDocumentPositionParams),
-    SignatureHelp(Id, TextDocumentPositionParams),
-    FindReferences(Id, ReferenceParams),
-    DocumentHighlight(Id, TextDocumentPositionParams),
-    DocumentSymbol(Id, DocumentSymbolParams),
-    DocumentFormatting(Id, DocumentFormattingParams),
-    DocumentRangeFormatting(Id, DocumentRangeFormattingParams),
-    DocumentOnTypeFormatting(Id, DocumentOnTypeFormattingParams),
-    GotoDefinition(Id, TextDocumentPositionParams),
-    CodeAction(Id, CodeActionParams),
-    CodeLens(Id, CodeLensParams),
-    CodeLensResolve(Id, CodeLens),
-    DocumentLink(Id, DocumentLinkParams),
-    DocumentLinkResolve(Id, DocumentLink),
-    Rename(Id, RenameParams),
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MethodParseError(());
 
-    // notifications
+impl fmt::Display for MethodParseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "No such method exists")
+    }
+}
+
+impl Error for MethodParseError {
+    fn description(&self) -> &str { "No such method exists" }
+}
+
+macro_rules! define_methods {
+    ($($name:ident $str:tt $(#[$attr:meta])* = $val:expr,)*) => (
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+        pub enum Method {
+            $($(#[$attr])* $name = $val,)*
+        }
+
+        impl Method {
+            pub fn as_str(&self) -> &str {
+                match *self {
+                    $($(#[$attr])* Method::$name => $str,)*
+                }
+            }
+        }
+
+        impl FromStr for Method {
+            type Err = MethodParseError;
+
+            fn from_str(s: &str) -> Result<Method, MethodParseError> {
+                match s {
+                    $($(#[$attr])* $str => Ok(Method::$name),)*
+                    _ => Err(MethodParseError(())),
+                }
+            }
+        }
+    )
+}
+
+define_methods! {
+    CancelRequest "$/cancelRequest" = 0x200,
+    Initialize "initialize" = 0x100,
+    Shutdown "shutdown" = 0x101,
+    Exit "exit" = 0x102,
+    ShowMessage "window/showMessage" = 0x103,
+    ShowMessageRequest "window/showMessageRequest" = 0x201,
+    LogMessage "window/logMessage" = 0x104,
+    TelemetryEvent "telemetry/event" = 0x202,
+    DidChangeConfiguration "workspace/didChangeConfiguration" = 0x105,
+    DidChangeWatchedFiles "workspace/didChangeWatchedFiles" = 0x106,
+    WorkspaceSymbol "workspace/symbol" = 0x107,
+    PublishDiagnostics "textDocument/publishDiagnostics" = 0x108,
+    DidOpen "textDocument/didOpen" = 0x109,
+    DidChange "textDocument/didChange" = 0x10a,
+    DidSave "textDocument/didSave" = 0x203,
+    DidClose "textDocument/didClose" = 0x10b,
+    Completion "textDocument/completion" = 0x10c,
+    CompletionItemResolve "completionItem/resolve" = 0x10d,
+    Hover "textDocument/hover" = 0x10e,
+    SignatureHelp "textDocument/signatureHelp" = 0x10f,
+    References "textDocument/references" = 0x110,
+    DocumentHighlight "textDocument/documentHighlight" = 0x111,
+    DocumentSymbol "textDocument/documentSymbol" = 0x112,
+    Formatting "textDocument/formatting" = 0x113,
+    RangeFormatting "textDocument/rangeFormatting" = 0x114,
+    OnTypeFormatting "textDocument/onTypeFormatting" = 0x115,
+    Definition "textDocument/definition" = 0x116,
+    CodeAction "textDocument/codeAction" = 0x117,
+    CodeLens "textDocument/codeLens" = 0x118,
+    CodeLensResolve "codeLens/resolve" = 0x119,
+    DocumentLink "textDocument/documentLink" = 0x204,
+    DocumentLinkResolve "documentLink/resolve" = 0x205,
+    Rename "textDocument/rename" = 0x11a,
+
+    Initialized "initialized" #[cfg(protocol_v3)] = 0x300,
+    RegisterCapability "client/registerCapability" #[cfg(protocol_v3)] = 0x301,
+    UnregisterCapability "client/unregisterCapability" #[cfg(protocol_v3)] = 0x302,
+    ExecuteCommand "workspace/executeCommand" #[cfg(protocol_v3)] = 0x303,
+    ApplyEdit "workspace/applyEdit" #[cfg(protocol_v3)] = 0x304,
+    WillSave "textDocument/willSave" #[cfg(protocol_v3)] = 0x305,
+    WillSaveWaitUntil "textDocument/willSaveWaitUntil" #[cfg(protocol_v3)] = 0x306,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MessageError {
+    MethodNotFound(String),
+    InvalidParams(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum Request {
+    Initialize(InitializeParams),
+    Shutdown,
+    ShowMessageRequest(ShowMessageRequestParams),
+    #[cfg(protocol_v3)] Registration(RegistrationParams),
+    #[cfg(protocol_v3)] Unregistration(UnregistrationParams),
+    WorkspaceSymbol(WorkspaceSymbolParams),
+    #[cfg(protocol_v3)] ExecuteCommand(ExecuteCommandParams),
+    #[cfg(protocol_v3)] ApplyWorkspaceEdit(ApplyWorkspaceEditParams),
+    #[cfg(protocol_v3)] WillSaveWaitUntilTextDocument(WillSaveTextDocumentParams),
+    Completion(TextDocumentPositionParams),
+    CompletionItemResolve(CompletionItem),
+    Hover(TextDocumentPositionParams),
+    SignatureHelp(TextDocumentPositionParams),
+    FindReferences(ReferenceParams),
+    DocumentHighlight(TextDocumentPositionParams),
+    DocumentSymbol(DocumentSymbolParams),
+    DocumentFormatting(DocumentFormattingParams),
+    DocumentRangeFormatting(DocumentRangeFormattingParams),
+    DocumentOnTypeFormatting(DocumentOnTypeFormattingParams),
+    GotoDefinition(TextDocumentPositionParams),
+    CodeAction(CodeActionParams),
+    CodeLens(CodeLensParams),
+    CodeLensResolve(CodeLens),
+    DocumentLink(DocumentLinkParams),
+    DocumentLinkResolve(DocumentLink),
+    Rename(RenameParams),
+}
+
+impl Request {
+    pub fn from_message(msg: RequestMessage) -> (Id, Result<Request, MessageError>) {
+        fn parse<T, F>(msg: RequestMessage, wrap: F) -> (Id, Result<Request, MessageError>)
+            where T: Deserialize, F: Fn(T) -> Request
+        {
+            if let Some(params) = msg.params {
+                match serde_json::from_value(params) {
+                    Ok(p) => (msg.id, Ok(wrap(p))),
+                    Err(e) => (msg.id, Err(MessageError::InvalidParams(e.to_string()))),
+                }
+            } else {
+                (msg.id, Err(MessageError::InvalidParams("no parameters given".into())))
+            }
+        }
+
+        use self::Method as M;
+        use self::Request as R;
+
+        match msg.method.parse::<M>() {
+            Ok(M::Initialize) => parse(msg, R::Initialize),
+            Ok(M::Shutdown) => (msg.id, Ok(R::Shutdown)),
+            Ok(M::ShowMessageRequest) => parse(msg, R::ShowMessageRequest),
+            Ok(M::Completion) => parse(msg, R::Completion),
+            Ok(M::CompletionItemResolve) => parse(msg, R::CompletionItemResolve),
+            Ok(M::Hover) => parse(msg, R::Hover),
+            Ok(M::SignatureHelp) => parse(msg, R::SignatureHelp),
+            Ok(M::References) => parse(msg, R::FindReferences),
+            Ok(M::DocumentHighlight) => parse(msg, R::DocumentHighlight),
+            Ok(M::DocumentSymbol) => parse(msg, R::DocumentSymbol),
+            Ok(M::Formatting) => parse(msg, R::DocumentFormatting),
+            Ok(M::RangeFormatting) => parse(msg, R::DocumentRangeFormatting),
+            Ok(M::OnTypeFormatting) => parse(msg, R::DocumentOnTypeFormatting),
+            Ok(M::Definition) => parse(msg, R::GotoDefinition),
+            Ok(M::CodeAction) => parse(msg, R::CodeAction),
+            Ok(M::CodeLens) => parse(msg, R::CodeLens),
+            Ok(M::CodeLensResolve) => parse(msg, R::CodeLensResolve),
+            Ok(M::DocumentLink) => parse(msg, R::DocumentLink),
+            Ok(M::DocumentLinkResolve) => parse(msg, R::DocumentLinkResolve),
+            Ok(M::Rename) => parse(msg, R::Rename),
+
+            #[cfg(protocol_v3)]
+            Ok(M::RegisterCapability) => parse(msg, R::Registration),
+            #[cfg(protocol_v3)]
+            Ok(M::UnregisterCapability) => parse(msg, R::Unregistration),
+            #[cfg(protocol_v3)]
+            Ok(M::ExecuteCommand) => parse(msg, R::ExecuteCommand),
+            #[cfg(protocol_v3)]
+            Ok(M::ApplyEdit) => parse(msg, R::ApplyWorkspaceEdit),
+            #[cfg(protocol_v3)]
+            Ok(M::WillSaveWaitUntil) => parse(msg, R::WillSaveWaitUntilTextDocument),
+
+            _ => (msg.id, Err(MessageError::MethodNotFound(msg.method))),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Notification {
     CancelRequest(CancelParams),
     #[cfg(protocol_v3)] Initialized,
     Exit,
@@ -326,163 +567,42 @@ pub enum Request {
     DidCloseTextDocument(DidCloseTextDocumentParams),
 }
 
-impl Request {
-    pub fn id(&self) -> Option<&Id> {
-        match *self {
-            Request::Initialize(ref id, ..) |
-            Request::Shutdown(ref id) |
-            Request::ShowMessageRequest(ref id, ..) |
-            Request::WorkspaceSymbol(ref id, ..) |
-            Request::Completion(ref id, ..) |
-            Request::CompletionItemResolve(ref id, ..) |
-            Request::Hover(ref id, ..) |
-            Request::SignatureHelp(ref id, ..) |
-            Request::FindReferences(ref id, ..) |
-            Request::DocumentHighlight(ref id, ..) |
-            Request::DocumentSymbol(ref id, ..) |
-            Request::DocumentFormatting(ref id, ..) |
-            Request::DocumentRangeFormatting(ref id, ..) |
-            Request::DocumentOnTypeFormatting(ref id, ..) |
-            Request::GotoDefinition(ref id, ..) |
-            Request::CodeAction(ref id, ..) |
-            Request::CodeLens(ref id, ..) |
-            Request::CodeLensResolve(ref id, ..) |
-            Request::DocumentLink(ref id, ..) |
-            Request::DocumentLinkResolve(ref id, ..) |
-            Request::Rename(ref id, ..) => Some(id),
-
-            #[cfg(protocol_v3)]
-            Request::Registration(ref id, ..) |
-            Request::Unregistration(ref id, ..) |
-            Request::ExecuteCommand(ref id, ..) |
-            Request::ApplyWorkspaceEdit(ref id, ..) |
-            Request::WillSaveWaitUntilTextDocument(ref id, ..) => Some(id),
-
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RequestError {
-    MethodNotFound(String),
-    InvalidRequest(String),
-    InvalidParams(String),
-}
-
-impl Request {
-    pub fn from_message(msg: RequestMessage) -> Result<Request, (Option<Id>, RequestError)> {
-        fn request_simple<F>(msg: RequestMessage,
-                             wrap: F) -> Result<Request, (Option<Id>, RequestError)>
-            where F: Fn(Id) -> Request
+impl Notification {
+    pub fn from_message(msg: NotificationMessage) -> Result<Notification, MessageError> {
+        fn parse<T, F>(msg: NotificationMessage, wrap: F) -> Result<Notification, MessageError>
+            where T: Deserialize, F: Fn(T) -> Notification
         {
-            if let Some(id) = msg.id {
-                Ok(wrap(id))
-            } else {
-                Err((None, RequestError::InvalidRequest("missing ID".into())))
-            }
-        }
-
-        fn notification_simple<F>(msg: RequestMessage,
-                                  wrap: F) -> Result<Request, (Option<Id>, RequestError)>
-            where F: Fn() -> Request
-        {
-            if msg.id.is_some() {
-                Err((None, RequestError::InvalidRequest("unexpected ID".into())))
-            } else {
-                Ok(wrap())
-            }
-        }
-
-        fn request<T, F>(msg: RequestMessage,
-                         wrap: F) -> Result<Request, (Option<Id>, RequestError)>
-            where T: Deserialize, F: Fn(Id, T) -> Request
-        {
-            if let Some(id) = msg.id {
-                if let Some(params) = msg.params {
-                    match serde_json::from_value(params) {
-                        Ok(p) => Ok(wrap(id, p)),
-                        Err(e) => Err((Some(id), RequestError::InvalidParams(e.to_string()))),
-                    }
-                } else {
-                    Err((Some(id), RequestError::InvalidParams("no parameters given".into())))
+            if let Some(params) = msg.params {
+                match serde_json::from_value(params) {
+                    Ok(p) => Ok(wrap(p)),
+                    Err(e) => Err(MessageError::InvalidParams(e.to_string())),
                 }
             } else {
-                Err((None, RequestError::InvalidRequest("missing ID".into())))
+                Err(MessageError::InvalidParams("no parameters given".into()))
             }
         }
 
-        fn notification<T, F>(msg: RequestMessage,
-                              wrap: F) -> Result<Request, (Option<Id>, RequestError)>
-            where T: Deserialize, F: Fn(T) -> Request
-        {
-            if let Some(id) = msg.id {
-                Err((Some(id), RequestError::InvalidRequest("unexpected ID".into())))
-            } else {
-                if let Some(params) = msg.params {
-                    match serde_json::from_value(params) {
-                        Ok(p) => Ok(wrap(p)),
-                        Err(e) => Err((None, RequestError::InvalidParams(e.to_string()))),
-                    }
-                } else {
-                    Err((None, RequestError::InvalidParams("no parameters given".into())))
-                }
-            }
-        }
+        use self::Method as M;
+        use self::Notification as N;
 
-        match &msg.method[..] {
-            "$/cancelRequest" => notification(msg, Request::CancelRequest),
-            "initialize" => request(msg, Request::Initialize),
-            "shutdown" => request_simple(msg, Request::Shutdown),
-            "exit" => notification_simple(msg, || Request::Exit),
-            "window/showMessage" => notification(msg, Request::ShowMessage),
-            "window/showMessageRequest" => request(msg, Request::ShowMessageRequest),
-            "window/logMessage" => notification(msg, Request::LogMessage),
-            "telemetry/event" => notification(msg, Request::TelemetryEvent),
-            "workspace/didChangeConfiguration" =>
-                notification(msg, Request::DidChangeConfiguration),
-            "workspace/didChangeWatchedFiles" => notification(msg, Request::DidChangeWatchedFiles),
-            "workspace/symbol" => request(msg, Request::WorkspaceSymbol),
-            "textDocument/publishDiagnostics" => notification(msg, Request::PublishDiagnostics),
-            "textDocument/didOpen" => notification(msg, Request::DidOpenTextDocument),
-            "textDocument/didChange" => notification(msg, Request::DidChangeTextDocument),
-            "textDocument/didSave" => notification(msg, Request::DidSaveTextDocument),
-            "textDocument/didClose" => notification(msg, Request::DidCloseTextDocument),
-            "textDocument/completion" => request(msg, Request::Completion),
-            "completionItem/resolve" => request(msg, Request::CompletionItemResolve),
-            "textDocument/hover" => request(msg, Request::Hover),
-            "textDocument/signatureHelp" => request(msg, Request::SignatureHelp),
-            "textDocument/references" => request(msg, Request::FindReferences),
-            "textDocument/documentHighlight" => request(msg, Request::DocumentHighlight),
-            "textDocument/documentSymbol" => request(msg, Request::DocumentSymbol),
-            "textDocument/formatting" => request(msg, Request::DocumentFormatting),
-            "textDocument/rangeFormatting" => request(msg, Request::DocumentRangeFormatting),
-            "textDocument/onTypeFormatting" => request(msg, Request::DocumentOnTypeFormatting),
-            "textDocument/definition" => request(msg, Request::GotoDefinition),
-            "textDocument/codeAction" => request(msg, Request::CodeAction),
-            "textDocument/codeLens" => request(msg, Request::CodeLens),
-            "codeLens/resolve" => request(msg, Request::CodeLensResolve),
-            "textDocument/documentLink" => request(msg, Request::DocumentLink),
-            "documentLink/resolve" => request(msg, Request::DocumentLinkResolve),
-            "textDocument/rename" => request(msg, Request::Rename),
+        match msg.method.parse::<M>() {
+            Ok(M::CancelRequest) => parse(msg, N::CancelRequest),
+            Ok(M::Exit) => Ok(N::Exit),
+            Ok(M::ShowMessage) => parse(msg, N::ShowMessage),
+            Ok(M::LogMessage) => parse(msg, N::LogMessage),
+            Ok(M::TelemetryEvent) => parse(msg, N::TelemetryEvent),
+            Ok(M::DidChangeConfiguration) => parse(msg, N::DidChangeConfiguration),
+            Ok(M::DidChangeWatchedFiles) => parse(msg, N::DidChangeWatchedFiles),
+            Ok(M::PublishDiagnostics) => parse(msg, N::PublishDiagnostics),
+            Ok(M::DidOpen) => parse(msg, N::DidOpenTextDocument),
+            Ok(M::DidChange) => parse(msg, N::DidChangeTextDocument),
+            Ok(M::DidSave) => parse(msg, N::DidSaveTextDocument),
+            Ok(M::DidClose) => parse(msg, N::DidCloseTextDocument),
 
-            #[cfg(protocol_v3)]
-            "initialized" => notification_simple(msg, || Request::Initialized),
-            #[cfg(protocol_v3)]
-            "client/registerCapability" => request(msg, Request::Registration),
-            #[cfg(protocol_v3)]
-            "client/unregisterCapability" => request(msg, Request::Unregistration),
-            #[cfg(protocol_v3)]
-            "workspace/executeCommand" => request(msg, Request::ExecuteCommand),
-            #[cfg(protocol_v3)]
-            "workspace/applyEdit" => request(msg, Request::ApplyWorkspaceEdit),
-            #[cfg(protocol_v3)]
-            "textDocument/willSave" => notification(msg, Request::WillSaveTextDocument),
-            #[cfg(protocol_v3)]
-            "textDocument/willSaveWaitUntil" =>
-                request(msg, Request::WillSaveWaitUntilTextDocument),
+            #[cfg(protocol_v3)] Ok(M::Initialized) => Ok(N::Initialized),
+            #[cfg(protocol_v3)] Ok(M::WillSave) => parse(msg, N::WillSaveTextDocument),
 
-            _ => Err((msg.id, RequestError::MethodNotFound(msg.method))),
+            _ => Err(MessageError::MethodNotFound(msg.method)),
         }
     }
 }
