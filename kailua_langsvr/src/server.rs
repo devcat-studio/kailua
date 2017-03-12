@@ -106,6 +106,7 @@ impl Server {
         let mut writer = self.inner.writer.lock();
         write!(writer, "Content-Length: {}\r\n\r\n", buf.len())?;
         writer.write(buf)?;
+        writer.flush()?;
         drop(writer);
 
         if cfg!(debug_assertions) {
