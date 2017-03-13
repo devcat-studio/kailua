@@ -511,9 +511,23 @@ define_msg! { pub NotTVar<'a> { slot: Slot<'a> }:
     _    => "Internal Error: A type `{slot}` is not a type variable",
 }
 
-#[cfg(feature = "no_implicit_sig_in_named_func")]
+#[cfg(feature = "no_implicit_func_sig")]
 define_msg! { pub ImplicitSigOnNamedFunc:
     "ko" => "이름이 붙은 함수의 모든 인자에는 타입이 붙어야 합니다",
     _    => "Every argument in the named function should have a type specified",
+}
+
+#[cfg(feature = "no_implicit_func_sig")]
+define_msg! { pub ImplicitArgTypeOnAnonymousFunc:
+    "ko" => "익명 함수의 인자에 타입이 없고 호출로부터 추론할 수도 없습니다",
+    _    => "The type for this argument in the anonymous function is missing \
+             but couldn't be inferred from the calls",
+}
+
+#[cfg(feature = "no_implicit_func_sig")]
+define_msg! { pub ImplicitVarargsTypeOnAnonymousFunc:
+    "ko" => "익명 함수의 가변 인자에 타입이 없고 호출로부터 추론할 수도 없습니다",
+    _    => "The type for variadic arguments in the anonymous function is missing \
+             but couldn't be inferred from the calls",
 }
 

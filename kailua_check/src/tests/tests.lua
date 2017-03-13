@@ -16,7 +16,7 @@ p(3) --@< Error: The type `function() --> ()` cannot be called
      --@^ Cause: First function argument `3` is not a subtype of `nil`
 --! error
 
---8<-- funccall-func-too-less-args-1 -- feature:!no_implicit_sig_in_named_func
+--8<-- funccall-func-too-less-args-1 -- feature:!no_implicit_func_sig
 local function p(x)
     x = x + 1
 end
@@ -284,15 +284,18 @@ local p = ({['not ice'] = 4})[x] --@< Error: Cannot index `{`not ice` = 4}` with
 local p = ({}):hello() --@< Error: Cannot index `{}` with `"hello"`
 --! error
 
---8<-- methodcall-rec-1
+--8<-- methodcall-rec-1 -- feature:no_implicit_func_sig
 local x = {hello = function(a) end}
+--@^ Error: The type for this argument in the anonymous function is missing but couldn't be inferred from the calls
 local p = x:hello()
---! ok
+--! error
 
---8<-- methodcall-rec-1-type-1
+--8<-- methodcall-rec-1-type-1 -- feature:no_implicit_func_sig
+-- TODO should this be inferrable?
 local x = {hello = function(a) end} --: {hello = function(table)}
+--@^ Error: The type for this argument in the anonymous function is missing but couldn't be inferred from the calls
 local p = x:hello()
---! ok
+--! error
 
 --8<-- methodcall-rec-1-type-2
 local x = {}
@@ -646,7 +649,15 @@ function f()
 end
 --! ok
 
---8<-- func-varargs
+--8<-- func-varargs -- feature:no_implicit_func_sig
+--@v-vvv Error: The type for variadic arguments in the anonymous function is missing but couldn't be inferred from the calls
+function a(...)
+    return ...
+end
+--! error
+
+--8<-- func-varargs-type
+--v function(...: any) --> (any...)
 function a(...)
     return ...
 end
@@ -659,12 +670,85 @@ end
 --! error
 
 --8<-- func-nested-varargs
+--v function(...: any) --> function() --> (any...)
 function a(...)
     return function()
         return ... --@< Error: Variadic arguments do not exist in the innermost function
     end
 end
 --! error
+
+--8<-- func-hint
+--v function(a: function(integer, integer) --> integer)
+function p(a) end
+
+p(function(x, y)
+    return x + y
+end)
+--! ok
+
+--8<-- func-hint-not-func -- feature:no_implicit_func_sig
+--v function(a: string)
+function p(a) end
+
+p(function(x) end)
+--@^ Error: The type for this argument in the anonymous function is missing but couldn't be inferred from the calls
+--@^^ Error: The type `function(string) --> ()` cannot be called
+--@^^^ Cause: First function argument `function(<error>) --> ()` is not a subtype of `string`
+--! error
+
+--8<-- func-hint-less-arity -- feature:no_implicit_func_sig
+--v function(a: function(integer, integer) --> integer)
+function p(a) end
+
+-- the hint doesn't directly affect the diagnostics
+--@vv Error: The type `function(function(integer, integer) --> integer) --> ()` cannot be called
+--@v-vvv Cause: First function argument `function(integer) --> integer` is not a subtype of `function(integer, integer) --> integer`
+p(function(x)
+    return x * 2
+end)
+--! error
+
+--8<-- func-hint-more-arity -- feature:no_implicit_func_sig
+--v function(a: function(integer, integer) --> integer)
+function p(a) end
+
+--@vv Error: The type `function(function(integer, integer) --> integer) --> ()` cannot be called
+--@v-vvvvv Cause: First function argument `function(integer, integer, nil) --> number` is not a subtype of `function(integer, integer) --> integer`
+p(function(x, y, z)
+    local xy = x + y
+    return xy + z --@< Error: Cannot apply + operator to `integer` and `nil`
+                  --@^ Cause: `nil` is not a subtype of `number`
+end)
+--! error
+
+--8<-- func-hint-varargs
+--v function(a: function(integer, integer, integer...) --> integer)
+function p(a) end
+
+p(function(x, y, ...)
+    return x + y
+end)
+--! ok
+
+--8<-- func-hint-varargs-less-arity -- feature:no_implicit_func_sig
+--v function(a: function(integer, integer, integer...) --> integer)
+function p(a) end
+
+--@v-vvv Error: The type for variadic arguments in the anonymous function is missing but couldn't be inferred from the calls
+p(function(x, ...)
+    return x * 2
+end)
+--! error
+
+--8<-- func-hint-varargs-more-arity
+--v function(a: function(integer, integer, integer...) --> integer)
+function p(a) end
+
+p(function(x, y, z, ...)
+    return x + y + z
+end)
+--! ok
 
 --8<-- index-rec-with-name-1
 local a = { x = 3, y = 'foo' }
@@ -705,7 +789,7 @@ end
 local x = p(4.5)
 --! ok
 
---8<-- func-number-arg-implicit -- feature:!no_implicit_sig_in_named_func
+--8<-- func-number-arg-implicit -- feature:!no_implicit_func_sig
 function p(a) return a + 3 end
 local x = p('what') --@< Error: The type `function(<unknown type>) --> integer` cannot be called
                     --@^ Cause: First function argument `"what"` is not a subtype of `<unknown type>`
@@ -1004,6 +1088,16 @@ local function f()
 end
 --! error
 
+--8<-- assign-func-no-hint-1
+local x --: function(string)
+x = function(a) end
+--! ok
+
+--8<-- assign-func-no-hint-2 -- feature:no_implicit_func_sig
+local x
+x = function(a) end --@< Error: The type for this argument in the anonymous function is missing but couldn't be inferred from the calls
+--! error
+
 --8<-- assign-from-seq-1
 local function p()
     return 3, 4, 5
@@ -1097,7 +1191,7 @@ local function p(...) end
 p(1, 2, 3, nil, nil, nil)
 --! ok
 
---8<-- func-varargs-type-delegated
+--8<-- func-varargs-type-delegated -- feature:!no_implicit_func_sig
 --v function(...: string)
 function f(...)
 end
@@ -1524,8 +1618,8 @@ require 'a'
 -- XXX the span should be ideally at `return`
 
 --& a
-local function p(...) return ... end
-return p() -- this doesn't (yet) resolve fully (no generics)
+--# open `internal kailua_test`
+return kailua_test.gen_tvar()
 
 --! error
 
@@ -2263,7 +2357,7 @@ local a = foo:bar(3) --: integer
 
 --! error
 
---8<-- no-check-untyped-args -- feature:!no_implicit_sig_in_named_func
+--8<-- no-check-untyped-args -- feature:!no_implicit_func_sig
 --v [no_check]
 function foo(x) --> boolean --@< Error: [no_check] attribute requires the arguments to be typed
     return x + "string"
@@ -2498,7 +2592,7 @@ local b = a --: {true|string}
 a = b
 --! ok
 
---8<-- union-assert-return -- feature:!no_implicit_sig_in_named_func
+--8<-- union-assert-return -- feature:!no_implicit_func_sig
 function x(q, a)
     if q then
         return 42
@@ -2575,7 +2669,7 @@ a.z = true
 a.z = false
 --! ok
 
---8<-- implicit-literal-type-in-func-args -- feature:!no_implicit_sig_in_named_func
+--8<-- implicit-literal-type-in-func-args -- feature:!no_implicit_func_sig
 -- XXX this essentially depends on the accuracy of constraint solver,
 -- which we chose not to concern when we are not explicit about types
 local function f(x, y, z)
