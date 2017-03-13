@@ -511,3 +511,9 @@ define_msg! { pub NotTVar<'a> { slot: Slot<'a> }:
     _    => "Internal Error: A type `{slot}` is not a type variable",
 }
 
+#[cfg(feature = "no_implicit_sig_in_named_func")]
+define_msg! { pub ImplicitSigOnNamedFunc:
+    "ko" => "이름이 붙은 함수의 모든 인자에는 타입이 붙어야 합니다",
+    _    => "Every argument in the named function should have a type specified",
+}
+

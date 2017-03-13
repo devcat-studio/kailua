@@ -102,6 +102,7 @@ impl kailua_test::Testing for Testing {
 fn main() {
     env_logger::init().unwrap();
     kailua_test::Tester::new("kailua-check-test", Testing::new())
+        .feature("no_implicit_sig_in_named_func", cfg!(feature = "no_implicit_sig_in_named_func"))
         .feature("warn_on_useless_conds", cfg!(feature = "warn_on_useless_conds"))
         .feature("warn_on_dead_code", cfg!(feature = "warn_on_dead_code"))
         .scan("src/tests")

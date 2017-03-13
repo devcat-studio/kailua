@@ -13,6 +13,8 @@ name = "kailua-check-test"
 harness = false
 
 [features]
+default = ["no_implicit_sig_in_named_func"]
+no_implicit_sig_in_named_func = []
 warn_on_useless_conds = []
 warn_on_dead_code = []
 

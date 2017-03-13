@@ -120,6 +120,11 @@ pub enum Tag {
     // this is internally created and cannot be constructed in normal ways.
     Constructor,
 
+    // function() -> any
+    //
+    // issues a fresh type variable for each use. the return type is ignored.
+    KailuaGenTvar,
+
     // function(any)
     //
     // fails when given type is not a type variable (no matter it is bounded or not).
@@ -148,6 +153,7 @@ impl Tag {
             b"string_meta"   => Ok(Some(Tag::StringMeta)),
             b"make_class"    => Ok(Some(Tag::MakeClass)),
 
+            b"internal kailua_gen_tvar"    => Ok(Some(Tag::KailuaGenTvar)),
             b"internal kailua_assert_tvar" => Ok(Some(Tag::KailuaAssertTvar)),
 
             _ => {
@@ -177,6 +183,7 @@ impl Tag {
             Tag::_NoSubtype       => "internal no_subtype",
             Tag::Constructible    => "internal constructible",
             Tag::Constructor      => "internal constructor",
+            Tag::KailuaGenTvar    => "internal kailua_gen_tvar",
             Tag::KailuaAssertTvar => "internal kailua_assert_tvar",
         }
     }
@@ -195,6 +202,7 @@ impl Tag {
             Tag::MakeClass |
             Tag::Constructible |
             Tag::Constructor |
+            Tag::KailuaGenTvar |
             Tag::KailuaAssertTvar => true,
             _ => false,
         }

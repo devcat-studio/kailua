@@ -195,6 +195,7 @@ function Hello:init(x, y, z)
     self.z = z
 end
 
+--v function(self, n: integer)
 function Hello:add(n)
     self.x = self.x + n
     self.y = self.y + n

@@ -16,7 +16,7 @@ p(3) --@< Error: The type `function() --> ()` cannot be called
      --@^ Cause: First function argument `3` is not a subtype of `nil`
 --! error
 
---8<-- funccall-func-too-less-args-1
+--8<-- funccall-func-too-less-args-1 -- feature:!no_implicit_sig_in_named_func
 local function p(x)
     x = x + 1
 end
@@ -296,6 +296,7 @@ local p = x:hello()
 
 --8<-- methodcall-rec-1-type-2
 local x = {}
+--v function(a: table)
 local function hello(a) end
 x.hello = hello
 local p = x:hello()
@@ -704,7 +705,7 @@ end
 local x = p(4.5)
 --! ok
 
---8<-- func-number-arg-implicit
+--8<-- func-number-arg-implicit -- feature:!no_implicit_sig_in_named_func
 function p(a) return a + 3 end
 local x = p('what') --@< Error: The type `function(<unknown type>) --> integer` cannot be called
                     --@^ Cause: First function argument `"what"` is not a subtype of `<unknown type>`
@@ -1434,6 +1435,11 @@ local z = x --: {a = integer, b = string, c = integer}
 --@^^ Note: The other type originates here
 --! error
 
+--8<-- require-dummy
+--# open lua51
+x = require(y) --@< Error: Global or local variable `y` is not defined
+--! error
+
 --8<-- require-unknown
 --# open lua51
 x = require 'a' --@< Warning: Cannot resolve the module name given to `require`
@@ -2025,6 +2031,7 @@ local p --: string!
 
 --8<-- unassigned-local-var-2
 local p --: string!
+--v function(x: string)
 local function f(x) end
 f(p)
 --@^ Error: The variable is not yet initialized
@@ -2042,6 +2049,7 @@ local p --: string
 
 --8<-- unassigned-local-var-nil-2
 local p --: string
+--v function(x: string)
 local function f(x) end
 f(p)
 p = 'string'
@@ -2169,7 +2177,7 @@ local x = ('notice'):sub(1, 3) --: string
 local x = ('notice'):sub(10, 10) --: string
 --! ok
 
---8<-- lua51-assert-string-type-and-meta
+-->8-- lua51-assert-string-type-and-meta
 --# open lua51
 local function f(s)
     assert(type(s) == 'string')
@@ -2192,7 +2200,7 @@ x()
 local p = 3 + x
 --! error
 
---8<-- lua51-lt-operand-inferred-from-funcarg
+-->8-- lua51-lt-operand-inferred-from-funcarg
 --# open lua51
 local function negative(x)
     assert(type(x) == 'number') -- won't destroy the type varible
@@ -2255,7 +2263,7 @@ local a = foo:bar(3) --: integer
 
 --! error
 
---8<-- no-check-untyped-args
+--8<-- no-check-untyped-args -- feature:!no_implicit_sig_in_named_func
 --v [no_check]
 function foo(x) --> boolean --@< Error: [no_check] attribute requires the arguments to be typed
     return x + "string"
@@ -2298,6 +2306,7 @@ end
 
 --8<-- local-func-without-sibling-scope-1
 local r
+--v function(p: any)
 function r(p)
 end
 --! ok
@@ -2306,6 +2315,7 @@ end
 local r
 do
     local s
+    --v function(p: any)
     function r(p)
     end
 end
@@ -2464,31 +2474,31 @@ local a --: true | 42 | 'foobar' | thread | userdata | (function()) | {string}
 --! ok
 
 --8<-- union-assert-or-1
-function x(a)
-    -- a is unresolved
-    local s = '' --: boolean|string
-    -- `s or a` forces an unresolved a to have the same type to the truthy part of s
-    local u = s or a --: true|string
-    -- so that a's type is now known
-    local b = a --: true|string
-    a = b
-end
+--# open `internal kailua_test`
+local a = kailua_test.gen_tvar()
+-- a is unresolved
+local s = '' --: boolean|string
+-- `s or a` forces an unresolved a to have the same type to the truthy part of s
+local u = s or a --: true|string
+-- so that a's type is now known
+local b = a --: true|string
+a = b
 --! ok
 
 --8<-- union-assert-or-2
-function x(a)
-    -- a is unresolved
-    local t = {a}
-    local s = {''} --: {boolean|string}
-    -- `s or t` forces an unresolved t to have the same type to the truthy part of s
-    local u = s or t --: {boolean|string}
-    -- so that a's type is now known
-    local b = a --: {true|string}
-    a = b
-end
+--# open `internal kailua_test`
+local a = kailua_test.gen_tvar()
+-- a is unresolved
+local t = {a}
+local s = {''} --: {boolean|string}
+-- `s or t` forces an unresolved t to have the same type to the truthy part of s
+local u = s or t --: {boolean|string}
+-- so that a's type is now known
+local b = a --: {true|string}
+a = b
 --! ok
 
---8<-- union-assert-return
+--8<-- union-assert-return -- feature:!no_implicit_sig_in_named_func
 function x(q, a)
     if q then
         return 42
@@ -2565,7 +2575,7 @@ a.z = true
 a.z = false
 --! ok
 
---8<-- implicit-literal-type-in-func-args
+--8<-- implicit-literal-type-in-func-args -- feature:!no_implicit_sig_in_named_func
 -- XXX this essentially depends on the accuracy of constraint solver,
 -- which we chose not to concern when we are not explicit about types
 local function f(x, y, z)
@@ -2652,20 +2662,37 @@ end
 f(0, '', false)
 --! ok
 
+--8<-- kailua-test-gen-tvar
+--# open `internal kailua_test`
+
+local a = kailua_test.gen_tvar()
+local b = a --: integer
+local c = a --: integer
+local d = a --: string --@< Error: Cannot assign `<unknown type>` into `string`
+                       --@^ Note: The other type originates here
+
+local a = kailua_test.gen_tvar()
+local b = a --: string
+local c = a --: integer --@< Error: Cannot assign `<unknown type>` into `integer`
+                        --@^ Note: The other type originates here
+
+--! error
+
 --8<-- kailua-test-assert-tvar
 --# open `internal kailua_test`
 
 -- concrete type
 kailua_test.assert_tvar('string')
 --@^ Error: Internal Error: A type `"string"` is not a type variable
+local p = 'string'
+kailua_test.assert_tvar(p)
+--@^ Error: Internal Error: A type `string` is not a type variable
 
 -- type variable (that is later inferred to a concrete type, which doesn't matter)
-function p(a, b) --: integer
-    a = 'string'
-    kailua_test.assert_tvar(a)
-    kailua_test.assert_tvar(b)
-    --@^ Error: Internal Error: A type `integer` is not a type variable
-end
+local a = kailua_test.gen_tvar()
+kailua_test.assert_tvar(a)
+a = 'string'
+kailua_test.assert_tvar(a)
 --! error
 
 --8<-- assume-scope
@@ -2738,11 +2765,12 @@ local z = x.y.z + 42 --: integer
 --! error
 
 --8<-- assume-field-unknown
-function f(x)
-    --# assume x.y.z: integer
-    --@^ Error: `--# assume` directive tried to access a field from a type not yet known enough
-    local z = x.y.z + 42 --: integer
-end
+--# open `internal kailua_test`
+local x = kailua_test.gen_tvar()
+
+--# assume x.y.z: integer
+--@^ Error: `--# assume` directive tried to access a field from a type not yet known enough
+local z = x.y.z + 42 --: integer
 --! error
 
 --8<-- dead-code -- feature:warn_on_dead_code

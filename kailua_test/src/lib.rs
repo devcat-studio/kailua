@@ -492,6 +492,7 @@ impl<T: Testing> Tester<T> {
     }
 
     pub fn feature(mut self, name: &str, value: bool) -> Tester<T> {
+        info!("feature {} is turned {}", name, if value { "on" } else { "off " });
         if value {
             self.features.insert(name.to_owned());
         }
@@ -516,8 +517,16 @@ impl<T: Testing> Tester<T> {
                     self.note_file(&path);
                     file_noted = true;
                 }
-                let ignored = test.ignored || (!test.features.is_empty() &&
-                                               !test.features.is_subset(&self.features));
+                let mut ignored = test.ignored;
+                if !test.features.is_empty() {
+                    ignored |= !test.features.iter().all(|feat| {
+                        if feat.starts_with("!") {
+                            !self.features.contains(&feat[1..])
+                        } else {
+                            self.features.contains(feat)
+                        }
+                    });
+                }
                 if ignored {
                     self.num_ignored += 1;
                     self.note_test(&test, TestResult::Ignored);

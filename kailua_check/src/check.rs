@@ -887,6 +887,19 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         Ok(slot)
     }
 
+    #[cfg(feature = "no_implicit_sig_in_named_func")]
+    fn error_on_implicit_sig(&mut self, sig: &Sig) -> CheckResult<()> {
+        if sig.args.head.iter().any(|spec| spec.kind.is_none()) {
+            self.env.error(&sig.args, m::ImplicitSigOnNamedFunc {}).done()?;
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "no_implicit_sig_in_named_func"))]
+    fn error_on_implicit_sig(&mut self, _sig: &Sig) -> CheckResult<()> {
+        Ok(())
+    }
+
     pub fn visit(&mut self, chunk: &Spanned<Block>) -> CheckResult<()> {
         self.visit_block(chunk)?;
         Ok(())
@@ -1219,6 +1232,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             }
 
             St::FuncDecl(ref name, ref sig, _blockscope, ref block, nextscope) => {
+                self.error_on_implicit_sig(sig)?;
+
                 // `name` itself is available to the inner scope
                 let funcv = self.context().gen_tvar();
                 let info = Slot::just(Ty::new(T::TVar(funcv))).with_loc(stmt);
@@ -1243,6 +1258,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             St::MethodDecl(Spanned { base: (ref name, ref meths), .. },
                            ref selfparam, ref sig, _blockscope, ref block) => {
                 assert!(meths.len() >= 1);
+
+                self.error_on_implicit_sig(sig)?;
 
                 // find a slot for the first name
                 let info = if self.env.get_var(name).is_some() {
@@ -1539,8 +1556,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     return Ok(SlotSeq::dummy());
                 }
 
-                if let Some(modname) = self.env.resolve_exact_type(&argtys.head[0].unlift())
-                                               .and_then(|t| t.as_string().map(|s| s.to_owned())) {
+                let arg = self.env.resolve_exact_type(&argtys.ensure_at(0).unlift());
+                if let Some(modname) = arg.and_then(|t| t.as_string().map(|s| s.to_owned())) {
                     if let Some(slot) = self.context().get_loaded_module(&modname, expspan)? {
                         info!("requiring {:?} (cached)", modname);
                         return Ok(SlotSeq::from(slot));
@@ -1552,7 +1569,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     let chunk = match opts.borrow_mut().require_chunk(&modname) {
                         Ok(chunk) => chunk,
                         Err(_) => {
-                            self.env.warn(&argtys.head[0], m::CannotResolveModName {}).done()?;
+                            self.env.warn(argtys.ensure_at(0), m::CannotResolveModName {}).done()?;
                             return Ok(SlotSeq::from(T::All));
                         }
                     };
@@ -1611,12 +1628,9 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     return Ok(SlotSeq::dummy());
                 }
 
-                // other cases are eliminated by `nargs < 2` condition
-                if let Args::List(_) = args.base {
-                    if let Some(flags) = self.ext_literal_ty_to_flags(&argtys.head[1])? {
-                        let cond = Cond::Flags(argtys.head[0].clone(), flags);
-                        self.assert_cond(cond, false)?;
-                    }
+                if let Some(flags) = self.ext_literal_ty_to_flags(argtys.ensure_at(1))? {
+                    let cond = Cond::Flags(argtys.ensure_at(0).clone(), flags);
+                    self.assert_cond(cond, false)?;
                 }
             }
 
@@ -1624,6 +1638,11 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             Some(Tag::MakeClass) => {
                 let cid = self.context().make_class(None, expspan); // TODO parent
                 return Ok(SlotSeq::from(T::Class(Class::Prototype(cid))));
+            }
+
+            // kailua_test.gen_tvar()
+            Some(Tag::KailuaGenTvar) => {
+                return Ok(SlotSeq::from(T::TVar(self.context().gen_tvar())));
             }
 
             // kailua_test.assert_tvar()
@@ -1636,15 +1655,11 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     return Ok(SlotSeq::dummy());
                 }
 
-                if let Args::List(_) = args.base {
-                    match **argtys.head[0].unlift() {
-                        T::TVar(_) => {}
-                        _ => {
-                            self.env.error(&argtys.head[0],
-                                           m::NotTVar { slot: self.display(&argtys.head[0]) })
-                                    .done()?;
-                        }
-                    }
+                let is_tvar =
+                    if let T::TVar(_) = **argtys.ensure_at(0).unlift() { true } else { false };
+                if !is_tvar {
+                    let arg = argtys.ensure_at(0);
+                    self.env.error(arg, m::NotTVar { slot: self.display(arg) }).done()?;
                 }
                 return Ok(SlotSeq::new());
             }
