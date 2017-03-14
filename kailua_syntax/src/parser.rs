@@ -12,7 +12,7 @@ use message as m;
 use lang::{Language, Lua, Kailua};
 use lex::{Tok, Punct, Keyword, NestedToken, NestingCategory, NestingSerial};
 use ast::{Name, NameRef, Str, Var, Seq, Presig, Sig, Attr, Args};
-use ast::{Ex, Exp, UnOp, BinOp, SelfParam, St, Stmt, Block};
+use ast::{Ex, Exp, UnOp, BinOp, SelfParam, TypeScope, St, Stmt, Block};
 use ast::{M, K, Kind, SlotKind, FuncKind, TypeSpec, Chunk};
 
 pub struct Parser<'a> {
@@ -2670,8 +2670,16 @@ impl<'a> Parser<'a> {
                         Some(Box::new(St::KailuaOpen(name)))
                     }
 
-                    // type NAME = KIND
+                    // type {local | global} NAME = KIND
                     (_, Spanned { base: Tok::Keyword(Keyword::Type), .. }) => {
+                        let typescope = if parser.may_expect(Keyword::Local) {
+                            TypeScope::Local
+                        } else if parser.may_expect(Keyword::Global) {
+                            TypeScope::Global
+                        } else {
+                            TypeScope::Exported
+                        };
+
                         let name = parser.parse_name()?;
                         parser.expect(Punct::Eq)?;
                         let kind = parser.recover_upto(Self::parse_kailua_kind)?;
@@ -2681,7 +2689,21 @@ impl<'a> Parser<'a> {
                             parser.error(name.span, m::CannotRedefineBuiltin {}).done()?;
                         }
 
-                        Some(Box::new(St::KailuaType(name, kind)))
+                        // error on module-level type definitions in the local scope
+                        let end = parser.last_pos();
+                        if parser.block_depth != 0 {
+                            match typescope {
+                                TypeScope::Local => {}
+                                TypeScope::Global => {
+                                    parser.error(begin..end, m::TypeGlobalInLocalScope {}).done()?;
+                                }
+                                TypeScope::Exported => {
+                                    parser.error(begin..end, m::TypeExportInLocalScope {}).done()?;
+                                }
+                            }
+                        }
+
+                        Some(Box::new(St::KailuaType(typescope, name, kind)))
                     }
 
                     tok => {

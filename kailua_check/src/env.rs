@@ -409,8 +409,20 @@ impl RowInfo {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct Module {
+    pub returns: Slot,
+    pub exported_types: HashMap<Name, TypeDef>,
+}
+
+impl Module {
+    pub fn dummy() -> Module {
+        Module { returns: Slot::dummy(), exported_types: HashMap::new() }
+    }
+}
+
 enum LoadStatus {
-    Done(Slot),
+    Done(Module),
     Ongoing(Span), // span for who to blame
 }
 
@@ -503,9 +515,9 @@ impl<R: Report> Context<R> {
         Ok(())
     }
 
-    pub fn get_loaded_module(&self, name: &[u8], span: Span) -> CheckResult<Option<Slot>> {
+    pub fn get_loaded_module(&self, name: &[u8], span: Span) -> CheckResult<Option<Module>> {
         match self.loaded.get(name) {
-            Some(&LoadStatus::Done(ref slot)) => Ok(Some(slot.clone())),
+            Some(&LoadStatus::Done(ref module)) => Ok(Some(module.clone())),
             None => Ok(None),
 
             // this is allowed in Lua 5.2 and later, but will result in a loop anyway.
@@ -513,7 +525,7 @@ impl<R: Report> Context<R> {
                 self.error(span, m::RecursiveRequire {})
                     .note(oldspan, m::PreviousRequire {})
                     .done()?;
-                Ok(Some(Slot::dummy()))
+                Ok(Some(Module::dummy()))
             }
         }
     }
@@ -1131,6 +1143,8 @@ pub struct Env<'ctx, R: 'ctx> {
     opts: Rc<RefCell<Options>>,
     map_index: usize,
     scopes: Vec<Scope>,
+    // separate from scoped types, `--# type` will set both
+    exported_types: HashMap<Name, TypeDef>,
 }
 
 impl<'ctx, R: Report> Env<'ctx, R> {
@@ -1145,6 +1159,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             map_index: map_index,
             // we have local variables even at the global position, so we need at least one Scope
             scopes: vec![Scope::new_function(global_frame)],
+            exported_types: HashMap::new(),
         }
     }
 
@@ -1190,7 +1205,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         self.context.resolve_exact_type(ty)
     }
 
-    pub fn return_from_module(mut self, modname: &[u8], span: Span) -> CheckResult<Slot> {
+    pub fn return_from_module(mut self, modname: &[u8], span: Span) -> CheckResult<Option<Module>> {
         // note that this scope is distinct from the global scope
         let top_scope = self.scopes.drain(..).next().unwrap();
         let returns = match top_scope.frame.unwrap().returns {
@@ -1204,7 +1219,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             // prepare for the worse
             if !flags.is_dynamic() && flags.contains(T_FALSE) {
                 self.error(span, m::ModCannotReturnFalse {}).done()?;
-                return Ok(Slot::dummy());
+                return Ok(None);
             }
 
             // simulate `require` behavior, i.e. nil translates to true
@@ -1219,14 +1234,17 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             };
 
             // this has to be Var since the module is shared across the entire program
-            let slot = Slot::new(F::Var, ty);
-            self.context.loaded.insert(modname.to_owned(), LoadStatus::Done(slot.clone()));
-            Ok(slot)
+            let module = Module {
+                returns: Slot::new(F::Var, ty),
+                exported_types: self.exported_types,
+            };
+            self.context.loaded.insert(modname.to_owned(), LoadStatus::Done(module.clone()));
+            Ok(Some(module))
         } else {
             // TODO ideally we would want to resolve type variables in this type
             self.error(span, m::ModCannotReturnInexactType { returns: self.display(&returns) })
                 .done()?;
-            Ok(Slot::dummy())
+            Ok(None)
         }
     }
 
@@ -1499,7 +1517,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
                 // note that even when the type is defined in the global scope
                 // we check both the local and global scope for the type name
                 if let Some(def) = self.get_named_type(&name) {
-                    self.error(&name, m::CannotRedefineType { name: &name.base })
+                    self.error(&name, m::CannotRedefineTypeAsClass { name: &name.base })
                         .note(def.span, m::AlreadyDefinedType {})
                         .done()?;
                     return Ok(());
@@ -1652,17 +1670,29 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         self.context.get_tvar_exact_type(tvar)
     }
 
-    pub fn get_named_type<'a>(&'a self, name: &Name) -> Option<&'a TypeDef> {
+    pub fn get_named_global_type<'a>(&'a self, name: &Name) -> Option<&'a TypeDef> {
+        self.context.global_scope().get_type(name)
+    }
+
+    pub fn get_named_local_type<'a>(&'a self, name: &Name) -> Option<&'a TypeDef> {
         for scope in self.scopes.iter().rev() {
             if let Some(def) = scope.get_type(name) { return Some(def); }
         }
-        if let Some(def) = self.context.global_scope().get_type(name) { return Some(def); }
         None
     }
 
-    pub fn define_type(&mut self, name: &Spanned<Name>, ty: Ty) -> CheckResult<()> {
-        if let Some(def) = self.get_named_type(name) {
-            self.error(name, m::CannotRedefineType { name: &name.base })
+    pub fn get_named_type<'a>(&'a self, name: &Name) -> Option<&'a TypeDef> {
+        self.get_named_local_type(name).or_else(|| self.get_named_global_type(name))
+    }
+
+    pub fn define_local_type(&mut self, name: &Spanned<Name>, ty: Ty) -> CheckResult<()> {
+        if let Some(def) = self.get_named_local_type(name) {
+            self.error(name, m::CannotRedefineLocalType { name: &name.base })
+                .note(def.span, m::AlreadyDefinedType {})
+                .done()?;
+            return Ok(());
+        } else if let Some(def) = self.get_named_global_type(name) {
+            self.error(name, m::CannotRedefineGlobalType { name: &name.base })
                 .note(def.span, m::AlreadyDefinedType {})
                 .done()?;
             return Ok(());
@@ -1670,6 +1700,122 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
         let ret = self.current_scope_mut().put_type(name.clone(), ty);
         assert!(ret, "failed to insert the type");
+        Ok(())
+    }
+
+    pub fn define_global_type(&mut self, name: &Spanned<Name>, ty: Ty) -> CheckResult<()> {
+        if let Some(def) = self.get_named_local_type(name) {
+            self.error(name, m::CannotRedefineLocalTypeAsGlobal { name: &name.base })
+                .note(def.span, m::AlreadyDefinedType {})
+                .done()?;
+            return Ok(());
+        } else if let Some(def) = self.get_named_global_type(name) {
+            self.error(name, m::CannotRedefineGlobalType { name: &name.base })
+                .note(def.span, m::AlreadyDefinedType {})
+                .done()?;
+            return Ok(());
+        }
+
+        let ret = self.global_scope_mut().put_type(name.clone(), ty);
+        assert!(ret, "failed to insert the type");
+        Ok(())
+    }
+
+    pub fn define_and_export_type(&mut self, name: &Spanned<Name>, ty: Ty) -> CheckResult<()> {
+        if let Some(def) = self.get_named_type(name) {
+            self.error(name, m::CannotRedefineAndReexportType { name: &name.base })
+                .note(def.span, m::AlreadyDefinedType {})
+                .done()?;
+            return Ok(());
+        }
+
+        // insert to the exported types (distinct from scoped types)
+        let defspan = match self.exported_types.entry(name.base.clone()) {
+            hash_map::Entry::Vacant(e) => {
+                e.insert(TypeDef { ty: ty.clone(), span: name.span });
+                None
+            },
+            hash_map::Entry::Occupied(e) => Some(e.get().span),
+        };
+        if let Some(defspan) = defspan {
+            // if the parser has been working correctly this should be impossible,
+            // because a set of exported types should be a subset of top-level local types.
+            // therefore this error can only occur when the AST is not well-formed.
+            self.error(name, m::CannotRedefineAndReexportType { name: &name.base })
+                .note(defspan, m::AlreadyDefinedType {})
+                .done()?;
+            return Ok(());
+        }
+
+        // insert a locally scoped type
+        let ret = self.current_scope_mut().put_type(name.clone(), ty);
+        assert!(ret, "failed to insert the type");
+        Ok(())
+    }
+
+    pub fn redefine_global_type(&mut self, name: &Spanned<Name>, tyspan: Span) -> CheckResult<()> {
+        let ty = if let Some(def) = self.get_named_local_type(name) {
+            def.ty.clone()
+        } else if let Some(def) = self.get_named_global_type(name) {
+            self.error(name, m::CannotRedefineGlobalType { name: &name.base })
+                .note(def.span, m::AlreadyDefinedType {})
+                .done()?;
+            return Ok(());
+        } else {
+            self.error(tyspan, m::NoType { name: &name.base }).done()?;
+            Ty::dummy()
+        };
+
+        let ret = self.global_scope_mut().put_type(name.clone(), ty);
+        assert!(ret, "failed to insert the type");
+        Ok(())
+    }
+
+    pub fn reexport_local_type(&mut self, name: &Spanned<Name>, tyspan: Span) -> CheckResult<()> {
+        let ty = if let Some(def) = self.get_named_local_type(name) {
+            def.ty.clone()
+        } else if let Some(def) = self.get_named_global_type(name) {
+            self.error(name, m::CannotRedefineGlobalType { name: &name.base })
+                .note(def.span, m::AlreadyDefinedType {})
+                .done()?;
+            return Ok(());
+        } else {
+            self.error(tyspan, m::NoType { name: &name.base }).done()?;
+            Ty::dummy()
+        };
+
+        // insert to the exported types
+        let defspan = match self.exported_types.entry(name.base.clone()) {
+            hash_map::Entry::Vacant(e) => {
+                e.insert(TypeDef { ty: ty.clone(), span: name.span });
+                None
+            },
+            hash_map::Entry::Occupied(e) => Some(e.get().span),
+        };
+        if let Some(defspan) = defspan {
+            // see `Env::define_and_export_type` for the possibility of this case
+            self.error(name, m::CannotReexportType { name: &name.base })
+                .note(defspan, m::AlreadyDefinedType {})
+                .done()?;
+            return Ok(());
+        }
+
+        Ok(())
+    }
+
+    pub fn import_types(&mut self, typedefs: Spanned<HashMap<Name, TypeDef>>) -> CheckResult<()> {
+        for (name, def) in typedefs.base.into_iter() {
+            if let Some(prevdef) = self.get_named_type(&name) {
+                self.error(typedefs.span, m::CannotImportAlreadyDefinedType { name: &name })
+                    .note(prevdef.span, m::AlreadyDefinedType {})
+                    .done()?;
+                return Ok(());
+            }
+
+            let ret = self.current_scope_mut().put_type(name.with_loc(def.span), def.ty);
+            assert!(ret, "failed to insert the type");
+        }
+
         Ok(())
     }
 }

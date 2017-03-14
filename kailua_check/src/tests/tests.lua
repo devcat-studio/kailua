@@ -1202,26 +1202,59 @@ end
 
 --8<-- type
 --# type known_type = number
+--# type local well_known_type = number
+--# type global widespread_type = number
 --# assume p: known_type
-local q = p - 5
+--# assume q: well_known_type
+--# assume r: widespread_type
+local s = p + q + r - 5
 --! ok
 
 --8<-- type-local
 do
-    --# type known_type = number
+    --# type local known_type = number
 end
 --# assume p: known_type --@< Error: Type `known_type` is not defined
 --! error
 
---8<-- type-no-shadowing
---# type known_type = integer --@< Note: The type was originally defined here
+--8<-- type-local-no-shadowing
+--# type local known_type = integer --@< Note: The type was originally defined here
 do
-    --# type known_type = number --@< Error: A type named `known_type` is already defined
+    --# type local known_type = number --@< Error: A type `known_type` is already defined
 end
 --! error
 
 --8<-- type-no-recursive
 --# type known_type = known_type --@< Error: Type `known_type` is not defined
+--# type local well_known_type = well_known_type --@< Error: Type `well_known_type` is not defined
+--# type global widespread_type = widespread_type --@< Error: Type `widespread_type` is not defined
+--! error
+
+--8<-- type-reexport-1
+--# type local known_type = integer
+--# type known_type = known_type
+--! ok
+
+--8<-- type-reexport-2
+--# type local well_known_type = integer
+--# type local known_type = string --@< Note: The type was originally defined here
+--# type known_type = well_known_type --@< Error: A non-exported type `known_type` can only be redefined and exported as itself
+--! error
+
+--8<-- type-globalize-1
+--# type local known_type = integer
+--# type global known_type = known_type
+--! ok
+
+--8<-- type-globalize-2
+--# type known_type = integer
+--# type global known_type = known_type
+--! ok
+
+--8<-- type-globalize-3
+--# type local well_known_type = integer
+--# type local known_type = string --@< Note: The type was originally defined here
+--# type global known_type = well_known_type --@< Error: A locally defined type `known_type` can only be redefined as itself in the global scope
 --! error
 
 --8<-- type-transitive
@@ -1682,6 +1715,127 @@ x = require('a' .. 'b')
 return 42
 
 --! ok
+
+--8<-- require-type-local
+--# open lua51
+local x = require('x')
+local y = require('y')
+local z = x + y --: int --@< Error: Type `int` is not defined
+
+--& x
+--# type local int = integer
+local p = 4 --: int
+return p
+
+--& y
+local q = 5 --: int --@< Error: Type `int` is not defined
+return q
+
+--! error
+
+--8<-- require-type-export
+--# open lua51
+local x = require('x')
+local y = require('y')
+local z = x + y --: int
+
+--& x
+--# type int = integer
+local p = 4 --: int
+return p
+
+--& y
+local q = 5 --: int --@< Error: Type `int` is not defined
+return q
+
+--! error
+
+--8<-- require-type-global
+--# open lua51
+local x = require('x')
+local y = require('y')
+local z = x + y --: int
+
+--& x
+--# type global int = integer
+local p = 4 --: int
+return p
+
+--& y
+local q = 5 --: int
+return q
+
+--! ok
+
+--8<-- require-type-no-reexport
+--# open lua51
+local x = require('x')
+local y = x + 3 --: int --@< Error: Type `int` is not defined
+
+--& x
+local p = require('y')
+local q = p + 2 --: int
+return q
+
+--& y
+--# type int = integer
+local a = 1 --: int
+return a
+
+--! error
+
+--8<-- require-type-reexport
+--# open lua51
+local x = require('x')
+local y = x + 3 --: int
+
+--& x
+local p = require('y')
+--# type int = int
+local q = p + 2 --: int
+return q
+
+--& y
+--# type int = integer
+local a = 1 --: int
+return a
+
+--! ok
+
+--8<-- require-type-import-no-shadowing
+--# open lua51
+--# type local str = string --@< Note: The type was originally defined here
+local x = require('x') --@< Error: A type `str` to be imported is already defined
+local z = 'string' .. x.to_string() --: str
+
+--& x
+--# type str = { to_string = function() --> string }
+local p = { to_string = function() return 'foo' end } --: str
+return p
+
+--! error
+
+--8<-- require-type-import-multiple
+--# open lua51
+local z = 0
+do
+    local x = require('x')
+    local y = x + 4 --: int
+    z = z + y
+end
+do
+    local x = require('x')
+    local y = x + 5 --: int
+    z = z + y
+end
+local w = z + z --: int --@< Error: Type `int` is not defined
+
+--& x
+--# type int = integer
+local p = 42 --: int
+return p
+
+--! error
 
 --8<-- index-assign-typed
 local p = {x = 5, y = 6} --: {x=number, y=number}

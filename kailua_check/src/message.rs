@@ -91,9 +91,40 @@ define_msg! { pub UnassignedVarOrigin<'a> { var: Slot<'a> }:
     _    => "The variable was not implicitly initialized to `nil` as its type is `{var}`",
 }
 
-define_msg! { pub CannotRedefineType<'a> { name: &'a Name }:
+// can be used for exported types, so avoid using a "locally defined" qualification
+define_msg! { pub CannotRedefineLocalType<'a> { name: &'a Name }:
     "ko" => "{name} 타입은 이미 선언되어 있습니다",
-    _    => "A type named {name} is already defined",
+    _    => "A type {name} is already defined",
+}
+
+define_msg! { pub CannotRedefineGlobalType<'a> { name: &'a Name }:
+    "ko" => "{name} 타입은 이미 전역에 선언되어 있습니다",
+    _    => "A type {name} is already defined globally",
+}
+
+define_msg! { pub CannotImportAlreadyDefinedType<'a> { name: &'a Name }:
+    "ko" => "{name} 타입을 들여 오려 했으나 이미 선언되어 있습니다",
+    _    => "A type {name} to be imported is already defined",
+}
+
+define_msg! { pub CannotReexportType<'a> { name: &'a Name }:
+    "ko" => "모듈에서 {name} 타입을 다시 내보낼 수 없습니다",
+    _    => "A type {name} cannot be exported again",
+}
+
+define_msg! { pub CannotRedefineLocalTypeAsGlobal<'a> { name: &'a Name }:
+    "ko" => "지역적으로 선언된 {name} 타입은 전역에서 자기 자신으로만 다시 선언할 수 있습니다",
+    _    => "A locally defined type {name} can only be redefined as itself in the global scope",
+}
+
+define_msg! { pub CannotRedefineAndReexportType<'a> { name: &'a Name }:
+    "ko" => "모듈에서 내보내지 않은 {name} 타입은 자기 자신으로만 선언해서 내보낼 수 있습니다",
+    _    => "A non-exported type {name} can only be redefined and exported as itself",
+}
+
+define_msg! { pub CannotRedefineTypeAsClass<'a> { name: &'a Name }:
+    "ko" => "{name} 타입은 이미 선언되어 있습니다",
+    _    => "A type {name} is already defined",
 }
 
 define_msg! { pub AlreadyDefinedType:

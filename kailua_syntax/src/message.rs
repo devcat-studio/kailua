@@ -395,3 +395,13 @@ define_msg! { pub AssumeGlobalInLocalScope:
     _    => "`--# assume global` should be in the top-level scope",
 }
 
+define_msg! { pub TypeGlobalInLocalScope:
+    "ko" => "`--# type global`은 최상위 블록에서만 쓸 수 있습니다",
+    _    => "`--# type global` should be in the top-level scope",
+}
+
+define_msg! { pub TypeExportInLocalScope:
+    "ko" => "타입을 바깥으로 내보내는 `--# type`은 최상위 블록에서만 쓸 수 있습니다",
+    _    => "`--# type` with an exported type should be in the top-level scope",
+}
+

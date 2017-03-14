@@ -52,8 +52,8 @@ local x = x + 3
 --8<-- make-class-global-name-collision-with-local
 --# assume `class`: [make_class] function() --> table
 do
-    --# type Hello = string --@< Note: The type was originally defined here
-    Hello = class()         --@< Error: A type named `Hello` is already defined
+    --# type local Hello = string --@< Note: The type was originally defined here
+    Hello = class()               --@< Error: A type `Hello` is already defined
 end
 --! error
 

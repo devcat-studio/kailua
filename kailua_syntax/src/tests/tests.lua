@@ -1750,31 +1750,53 @@ f()
 
 --8<-- alias
 --# type int = integer
+--# type local integral = integer
+--# type global Integer = integer
 --# assume x: vector<int>
---! [KailuaType(`int`, Integer), \
+--! [KailuaType(Exported, `int`, Integer), \
+--!  KailuaType(Local, `integral`, Integer), \
+--!  KailuaType(Global, `Integer`, Integer), \
 --!  KailuaAssume(`x`$1, (`x`_), _, Array(_ `int`))$1]
 
 --8<-- alias-builtin
 --# type any = integer --@< Error: Cannot redefine a builtin type
 --# assume x: vector<any>
---! [KailuaType(`any`, Integer), KailuaAssume(`x`$1, (`x`_), _, Array(_ Any))$1]
+--! [KailuaType(Exported, `any`, Integer), KailuaAssume(`x`$1, (`x`_), _, Array(_ Any))$1]
 
 --8<-- alias-incomplete
 --# type int =
 --# assume x: vector<int> --@< Error: Expected a single type, got a keyword `assume`
---! [KailuaType(`int`, Oops), KailuaAssume(`x`$1, (`x`_), _, Array(_ `int`))$1]
+--! [KailuaType(Exported, `int`, Oops), KailuaAssume(`x`$1, (`x`_), _, Array(_ `int`))$1]
+
+--8<-- alias-export-in-local-scope
+do
+    --# type int = integer --@< Error: `--# type` with an exported type should be in the top-level scope
+end
+--! [Do([KailuaType(Exported, `int`, Integer)])]
+
+--8<-- alias-global-in-local-scope
+do
+    --# type global int = integer --@< Error: `--# type global` should be in the top-level scope
+end
+--! [Do([KailuaType(Global, `int`, Integer)])]
+
+--8<-- alias-local-in-local-scope
+do
+    --# type local int = integer
+end
+--! [Do([KailuaType(Local, `int`, Integer)])]
 
 --8<-- kind-error
 --# type x = error
---! [KailuaType(`x`, Error)]
+--! [KailuaType(Exported, `x`, Error)]
 
 --8<-- kind-error-with-message
 --# type x = error 'whatever'
---! [KailuaType(`x`, Error("whatever"))]
+--! [KailuaType(Exported, `x`, Error("whatever"))]
 
 --8<-- kind-error-or-string
 --# type x = error | 'whatever'
---! [KailuaType(`x`, Union([Error, String("whatever")]))]
+--! [KailuaType(Exported, `x`, Union([Error, String("whatever")]))]
 
 --8<-- lua51-goto-as-a-name
 --# open lua51
@@ -1785,12 +1807,12 @@ goto = 42 --@< Warning: The use of a keyword `goto` is discouraged as it was a n
 --# open lua51
 --# type goto = integer --@< Warning: The use of a keyword `goto` is discouraged as it was a name in Lua 5.1 but it became a keyword since Lua 5.2
 f()
---! [KailuaOpen(`lua51`), KailuaType(`goto`, Integer), Void(`f`_())]
+--! [KailuaOpen(`lua51`), KailuaType(Exported, `goto`, Integer), Void(`f`_())]
 
 --8<-- lua51-goto-as-a-name-in-meta-2
 --# open lua51
 --# type `goto` = integer
---! [KailuaOpen(`lua51`), KailuaType(`goto`, Integer)]
+--! [KailuaOpen(`lua51`), KailuaType(Exported, `goto`, Integer)]
 
 --8<-- type-spec-recover-negative-span
 local a = {} --: var { var { } } --@< Error: Expected a single type, got a keyword `var`

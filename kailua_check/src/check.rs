@@ -8,7 +8,7 @@ use take_mut::take;
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag::{self, Report, Reporter};
 use kailua_syntax::{Str, Name, NameRef, Var, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
-use kailua_syntax::{SelfParam, Args, St, Stmt, Block};
+use kailua_syntax::{SelfParam, TypeScope, Args, St, Stmt, Block, K};
 use diag::{CheckResult, TypeReport, TypeReportHint, TypeReportMore, Displayed, Display};
 use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, TypeContext};
 use ty::{Key, Tables, Function, Functions};
@@ -1469,9 +1469,31 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 Ok(Exit::None)
             }
 
-            St::KailuaType(ref name, ref kind) => {
+            St::KailuaType(scope, ref name, ref kind) => {
+                // self-redefinition is handled separately, as we cannot distingiush
+                // `--# type local A = <some type> / --# type A = A` from `--# type A = <some type>`
+                if let K::Named(ref name_) = *kind.base {
+                    if name.base == name_.base {
+                        match scope {
+                            TypeScope::Local => {} // invalid, will error below
+                            TypeScope::Global => {
+                                self.env.redefine_global_type(name, kind.span)?;
+                                return Ok(Exit::None);
+                            }
+                            TypeScope::Exported => {
+                                self.env.reexport_local_type(name, kind.span)?;
+                                return Ok(Exit::None);
+                            }
+                        }
+                    }
+                }
+
                 let ty = Ty::from_kind(kind, &mut self.env)?;
-                self.env.define_type(name, ty)?;
+                match scope {
+                    TypeScope::Local => self.env.define_local_type(name, ty)?,
+                    TypeScope::Global => self.env.define_global_type(name, ty)?,
+                    TypeScope::Exported => self.env.define_and_export_type(name, ty)?,
+                }
                 Ok(Exit::None)
             }
 
@@ -1685,27 +1707,35 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
                 let arg = self.env.resolve_exact_type(&argtys.ensure_at(0).unlift());
                 if let Some(modname) = arg.and_then(|t| t.as_string().map(|s| s.to_owned())) {
-                    if let Some(slot) = self.context().get_loaded_module(&modname, expspan)? {
-                        info!("requiring {:?} (cached)", modname);
-                        return Ok(SlotSeq::from(slot));
-                    }
-                    self.context().mark_module_as_loading(&modname, expspan);
+                    let mut module = self.context().get_loaded_module(&modname, expspan)?;
 
-                    info!("requiring {:?}", modname);
-                    let opts = self.env.opts().clone();
-                    let chunk = match opts.borrow_mut().require_chunk(&modname) {
-                        Ok(chunk) => chunk,
-                        Err(_) => {
-                            self.env.warn(argtys.ensure_at(0), m::CannotResolveModName {}).done()?;
-                            return Ok(SlotSeq::from(T::All));
+                    if module.is_none() {
+                        self.context().mark_module_as_loading(&modname, expspan);
+
+                        info!("requiring {:?}", modname);
+                        let opts = self.env.opts().clone();
+                        let chunk = match opts.borrow_mut().require_chunk(&modname) {
+                            Ok(chunk) => chunk,
+                            Err(_) => {
+                                self.env.warn(argtys.ensure_at(0),
+                                m::CannotResolveModName {}).done()?;
+                                return Ok(SlotSeq::from(T::All));
+                            }
+                        };
+                        let mut env = Env::new(self.env.context(), opts, chunk.map);
+                        {
+                            let mut sub = Checker::new(&mut env);
+                            sub.visit_block(&chunk.block)?;
                         }
-                    };
-                    let mut env = Env::new(self.env.context(), opts, chunk.map);
-                    {
-                        let mut sub = Checker::new(&mut env);
-                        sub.visit_block(&chunk.block)?;
+                        module = env.return_from_module(&modname, expspan)?;
                     }
-                    return Ok(SlotSeq::from(env.return_from_module(&modname, expspan)?));
+
+                    if let Some(module) = module {
+                        self.env.import_types(module.exported_types.with_loc(expspan))?;
+                        return Ok(SlotSeq::from(module.returns.clone()));
+                    } else {
+                        return Ok(SlotSeq::dummy());
+                    }
                 } else {
                     return Ok(SlotSeq::from(T::All));
                 }
