@@ -1,3 +1,13 @@
+## 0.0.6
+
+* No implicit function types are now disabled by default; the only allowed cases (for now, subject to expansion) are anonymous functions in the function call of the known argument types and the assignment to a slot with the known type.
+
+* Associated diagnostics are now displayed altogether with the base diagnostic (as VS Code always destroy the diagnostics ordering).
+
+* Reverted `--# assume` syntax, renaming `--# assume local` to `--# assume` (almost same to the previous semantics but always create a local binding). `--# assume global` works as is.
+
+* Fixed a faulty error when `WHATEVER` etc. is used as comparison operands.
+
 ## 0.0.5
 
 * Fixed various erratic behavior of record types.
