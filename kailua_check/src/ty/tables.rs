@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use kailua_diag::Locale;
 use kailua_syntax::Str;
 use diag::{Origin, TypeReport, TypeResult, Display, unquotable_name};
-use super::{T, Ty, Slot, TypeContext, Lattice, RVar};
+use super::{T, Ty, Slot, TypeContext, Union, Lattice, RVar};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Key {
@@ -177,6 +177,46 @@ impl Tables {
                 Ok(())
             }
         }
+    }
+}
+
+impl Union for Tables {
+    type Output = Tables;
+
+    fn union(&self, other: &Tables, explicit: bool, ctx: &mut TypeContext) -> TypeResult<Tables> {
+        (|| {
+            match (self, other) {
+                (_, &Tables::All) | (&Tables::All, _) => Ok(Tables::All),
+
+                // for the same kind of tables, they should be equal to each other
+                (&Tables::Array(ref a), &Tables::Array(ref b)) => {
+                    a.assert_eq(b, ctx)?;
+                    Ok(Tables::Array(a.clone()))
+                },
+                (&Tables::Map(ref ak, ref av), &Tables::Map(ref bk, ref bv)) => {
+                    ak.assert_eq(bk, ctx)?;
+                    av.assert_eq(bv, ctx)?;
+                    Ok(Tables::Map(ak.clone(), av.clone()))
+                },
+                (&Tables::Fields(ref ar), &Tables::Fields(ref br)) => {
+                    ar.assert_eq(&br, ctx)?;
+                    Ok(Tables::Fields(ar.clone()))
+                },
+
+                // for the records and non-records, records should be a subtype of non-records
+                // (and should be no longer extensible)
+                (lhs @ &Tables::Fields(_), rhs) => {
+                    lhs.assert_sub(rhs, ctx)?;
+                    Ok(rhs.clone())
+                },
+                (lhs, rhs @ &Tables::Fields(_)) => {
+                    rhs.assert_sub(lhs, ctx)?;
+                    Ok(lhs.clone())
+                },
+
+                (_, _) => Err(ctx.gen_report()),
+            }
+        })().map_err(|r: TypeReport| r.cannot_union(Origin::Tables, self, other, explicit, ctx))
     }
 }
 

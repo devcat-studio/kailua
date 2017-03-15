@@ -229,12 +229,14 @@ impl Union for Unioned {
                 lhs.union(rhs, explicit, ctx)?
             });
 
-            // tables and functions cannot be unioned in any case;
-            // unequal table and function components always results in an error
+            // tables cannot be unioned except when one operand is a record and another is
+            // a supertype of that record. otherwise (including the case of two records)
+            // they should be equal, so records can be seemingly unioned due to row extension
             let tables = union_options!(&self.tables, &other.tables, |lhs, rhs| {
-                lhs.assert_eq(rhs, ctx)?;
-                lhs.clone()
+                lhs.union(rhs, explicit, ctx)?
             });
+
+            // functions cannot be unioned at all and unequal function always results in an error
             let functions = union_options!(&self.functions, &other.functions, |lhs, rhs| {
                 lhs.assert_eq(rhs, ctx)?;
                 lhs.clone()

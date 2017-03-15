@@ -444,10 +444,82 @@ local a = (x or 53) + 42
 local b = y or 53 --: integer | true
 --! ok
 
---8<-- disjunctive-type-erasure-table
+--8<-- disjunctive-type-erasure-rec
+--# assume x: {a: string, b: integer}?
+--# assume y: {b: integer, c: boolean}
+local z = x or y --: {a: string, b: integer, c: boolean}
+--! ok
+
+--8<-- disjunctive-type-erasure-rec-empty
 --# assume x: {a: string, b: integer}?
 local x = x or {} --: {a: string, b: integer}!
 --! ok
+
+--8<-- disjunctive-type-erasure-map-1
+--# assume x: map<string, string>?
+--# assume y: map<string, string>!
+local z = x or y --: map<string, string>!
+--! ok
+
+--8<-- disjunctive-type-erasure-map-2
+--# assume x: map<string, string>?
+--# assume y: map<string, const string>!
+local z = x or y --: map<string, string>!
+--@^ Error: Cannot apply or operator to `map<string, string>?` and `map<string, const string>!`
+--@^^ Cause: Cannot create a union type of `map<string, string>` and `map<string, const string>!`
+--@^^^ Note: The other type originates here
+--! error
+
+--8<-- disjunctive-type-erasure-map-empty
+--# assume x: map<string, boolean>?
+local x = x or {} --: map<string, boolean>!
+--! ok
+
+--8<-- disjunctive-type-erasure-map-rec-sub
+--# assume x: map<string, boolean>?
+local x = x or {a = true, b = false} --: map<string, boolean>!
+--! ok
+
+--8<-- disjunctive-type-erasure-map-rec-no-sub
+--# assume x: map<string, boolean>?
+local x = x or {a = true, b = 42} --: map<string, boolean>!
+--@^ Error: Cannot apply or operator to `map<string, boolean>?` and `{a: true, b: 42}`
+--@^^ Cause: Cannot create a union type of `map<string, boolean>` and `{a: true, b: 42}`
+--@^^^ Note: The other type originates here
+--! error
+
+--8<-- disjunctive-type-erasure-array-1
+--# assume x: vector<string>?
+--# assume y: vector<string>!
+local z = x or y --: vector<string>!
+--! ok
+
+--8<-- disjunctive-type-erasure-array-2
+--# assume x: vector<string>?
+--# assume y: vector<const string>!
+local z = x or y --: vector<string>!
+--@^ Error: Cannot apply or operator to `vector<string>?` and `vector<const string>!`
+--@^^ Cause: Cannot create a union type of `vector<string>` and `vector<const string>!`
+--@^^^ Note: The other type originates here
+--! error
+
+--8<-- disjunctive-type-erasure-array-empty
+--# assume x: vector<integer>?
+local x = x or {} --: vector<integer>!
+--! ok
+
+--8<-- disjunctive-type-erasure-array-rec-sub
+--# assume x: vector<integer>?
+local x = x or {4, 5, 6} --: vector<integer>!
+--! ok
+
+--8<-- disjunctive-type-erasure-array-rec-no-sub
+--# assume x: vector<integer>?
+local x = x or {a = 4, b = 5, c = 6} --: vector<integer>!
+--@^ Error: Cannot apply or operator to `vector<integer>?` and `{a: 4, b: 5, c: 6}`
+--@^^ Cause: Cannot create a union type of `vector<integer>` and `{a: 4, b: 5, c: 6}`
+--@^^^ Note: The other type originates here
+--! error
 
 --8<-- conjunctive-lhs-dynamic
 --# assume p: WHATEVER

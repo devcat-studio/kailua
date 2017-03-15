@@ -600,12 +600,14 @@ impl<'a> T<'a> {
                 (&T::Class(a), &T::Class(b)) if a == b => T::Class(a),
                 (&T::Class(_), &T::Class(_)) if !explicit => return Err(ctx.gen_report()),
 
-                // tables and functions cannot be `union`ed in any way and
-                // any attempt to union different types of those kinds is an error
+                // tables cannot be unioned except when one operand is a record and another is
+                // a supertype of that record. otherwise (including the case of two records)
+                // they should be equal, so records can be seemingly unioned due to row extension
                 (&T::Tables(ref a), &T::Tables(ref b)) => {
-                    a.assert_eq(b, ctx)?;
-                    T::Tables(Cow::Owned(a.clone().into_owned()))
+                    T::Tables(Cow::Owned(a.union(b, explicit, ctx)?))
                 },
+
+                // functions cannot be unioned at all and unequal function always errors
                 (&T::Functions(ref a), &T::Functions(ref b)) => {
                     a.assert_eq(b, ctx)?;
                     T::Functions(Cow::Owned(a.clone().into_owned()))
@@ -1684,9 +1686,9 @@ mod tests {
 
         // tables
         check!(T::table(), T::table(); T::table());
-        check!(T::table(), T::array(just(T::Integer)); _);
-        check!(T::table(), T::array(var(T::Integer)); _);
-        check!(T::table(), T::array(cnst(T::Integer)); _);
+        check!(T::table(), T::array(just(T::Integer)); T::table());
+        check!(T::array(var(T::Integer)), T::table(); T::table());
+        check!(T::table(), T::array(cnst(T::Integer)); T::table());
         check!(T::array(just(T::Integer)), T::array(just(T::Integer));
                T::array(just(T::Integer)));
         check!(T::array(var(T::Integer)), T::array(var(T::Integer));
