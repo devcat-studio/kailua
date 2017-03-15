@@ -1,3 +1,11 @@
+## 0.0.9
+
+* Method calls now correctly give hints to the arguments, so calls like `o:f(function(a, b, c) ... end)` will correctly infer the anonymous function type whenever possible.
+
+* Record type syntax has been changed from `{a = T, b = U}` to `{a: T, b: U}`.
+
+* Union of any table type `T` and records that is `T`'s subtype is now `T`. It was previously an error, and forbade codes like `x or {}` (with any table `x`) or `x or {3, 4, 5}` (with an integer vector `x`).
+
 ## 0.0.8
 
 * Top-level functions defined in the internal definitions (as loaded by `--# open`) now return `T` instead of `T?`, even when nil is expected. There are some cases that the explicit check for nil is beneficial in general, though, and some of them can be changed later when using `T?` becomes easier.

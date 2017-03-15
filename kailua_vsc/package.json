@@ -2,7 +2,7 @@
   "name": "kailua",
   "displayName": "Kailua",
   "description": "A type checker and IDE support for Lua",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "publisher": "devCAT",
   "preview": true,
   "engines": {
