@@ -3,19 +3,19 @@
 --# -- TODO many of them will interfere with Kailua's own reasoning, so the support is minimal
 --# assume global `debug`:
 --#     {
---#         `debug` = function();
---#         `getfenv` = function;
---#         `gethook` = function;
---#         `getinfo` = function;
---#         `getlocal` = function;
---#         `getmetatable` = function;
---#         `getregistry` = function;
---#         `getupvalue` = function;
---#         `setfenv` = function;
---#         `sethook` = function;
---#         `setlocal` = function;
---#         `setmetatable` = function;
---#         `setupvalue` = function;
---#         `traceback` = function;
+--#         `debug`: function();
+--#         `getfenv`: function;
+--#         `gethook`: function;
+--#         `getinfo`: function;
+--#         `getlocal`: function;
+--#         `getmetatable`: function;
+--#         `getregistry`: function;
+--#         `getupvalue`: function;
+--#         `setfenv`: function;
+--#         `sethook`: function;
+--#         `setlocal`: function;
+--#         `setmetatable`: function;
+--#         `setupvalue`: function;
+--#         `traceback`: function;
 --#     }
 

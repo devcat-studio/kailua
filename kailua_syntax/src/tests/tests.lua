@@ -696,9 +696,13 @@ local x --: bool
 --! [Local([`x`$1: _ Boolean], [])$1]
 
 --8<-- kind-table
-local x --: {b=string, a=integer, c=const {d=const {}}}
+local x --: {b:string, a:integer, c:const {const {}}}
 --! [Local([`x`$1: _ Record(["b": _ String, "a": _ Integer, \
---!                          "c": Const Record(["d": Const EmptyTable])])], [])$1]
+--!                          "c": Const Tuple([Const EmptyTable])])], [])$1]
+
+--8<-- kind-table-old-recover
+local x --: {b=string, a=integer, c=const {const {}}} --@< Error: Expected `,`, `;` or `}`, got `=`
+--! [Local([`x`$1: _ Tuple([_ `b`])], [])$1]
 
 --8<-- kind-func
 local x --: function
@@ -804,8 +808,8 @@ local x --: {}
 --! [Local([`x`$1: _ EmptyTable], [])$1]
 
 --8<-- kind-rec
-local x --: {a = const function (), b = string,
-        --:  c = const function (string, integer) --> number}?
+local x --: {a: const function (), b: string,
+        --:  c: const function (string, integer) --> number}?
 --! [Local([`x`$1: _ Record(["a": Const Func(() --> ()), \
 --!                          "b": _ String, \
 --!                          "c": Const Func((String, Integer) --> Number)\
@@ -1683,8 +1687,8 @@ f()
 --! [KailuaAssume(`x`$1, (`x`_), _, `whatever`)$1]
 
 --8<-- assume-rec-invalid-char
---# assume x: {x = integer #} --@< Error: Expected `,`, `;` or `}`, got `#`
---# assume y: {y = integer #} --@< Error: Expected `,`, `;` or `}`, got `#`
+--# assume x: {x: integer #} --@< Error: Expected `,`, `;` or `}`, got `#`
+--# assume y: {y: integer #} --@< Error: Expected `,`, `;` or `}`, got `#`
 --! [KailuaAssume(`x`$1, (`x`_), _, Record(["x": _ Integer]))$1, \
 --!  KailuaAssume(`y`$2, (`y`_), _, Record(["y": _ Integer]))$2]
 
@@ -1695,19 +1699,19 @@ f()
 --!  KailuaAssume(`y`$2, (`y`_), _, Tuple([_ Integer, _ Integer]))$2]
 
 --8<-- assume-rec-duplicate-name
---# assume x: {x = integer, x = string} --@< Error: Duplicate record field `x` in the type specification
-                                        --@^ Note: The first duplicate appeared here
+--# assume x: {x: integer, x: string} --@< Error: Duplicate record field `x` in the type specification
+                                      --@^ Note: The first duplicate appeared here
 --! [KailuaAssume(`x`$1, (`x`_), _, Record(["x": _ Integer, "x": _ String]))$1]
 
 --8<-- assume-rec-duplicate-name-recover
---# assume x: {x = integer,
---#            x = string,  --@< Error: Duplicate record field `x` in the type specification
---#                         --@^^ Note: The first duplicate appeared here
---#            y = table,
---#            x = boolean, --@< Error: Duplicate record field `x` in the type specification
---#                         --@^^^^^ Note: The first duplicate appeared here
---#            y = number}  --@< Error: Duplicate record field `y` in the type specification
-                            --@^^^^ Note: The first duplicate appeared here
+--# assume x: {x: integer,
+--#            x: string,  --@< Error: Duplicate record field `x` in the type specification
+--#                        --@^^ Note: The first duplicate appeared here
+--#            y: table,
+--#            x: boolean, --@< Error: Duplicate record field `x` in the type specification
+--#                        --@^^^^^ Note: The first duplicate appeared here
+--#            y: number}  --@< Error: Duplicate record field `y` in the type specification
+                           --@^^^^ Note: The first duplicate appeared here
 --! [KailuaAssume(`x`$1, (`x`_), _, Record(["x": _ Integer, \
 --!                                         "x": _ String, \
 --!                                         "y": _ Table, \

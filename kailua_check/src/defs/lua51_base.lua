@@ -100,12 +100,12 @@
 --# assume global `coroutine`:
 --#     {
 --#         -- TODO genericity
---#         `create` = function(function) --> thread;
---#         `resume` = function(thread, any...) --> (boolean, any...);
---#         `running` = function() --> thread;
---#         `status` = function(thread) --> string;
+--#         `create`: function(function) --> thread;
+--#         `resume`: function(thread, any...) --> (boolean, any...);
+--#         `running`: function() --> thread;
+--#         `status`: function(thread) --> string;
 --#         -- TODO genericity
---#         `wrap` = function(function) --> thread;
---#         `yield` = function(any...) --> (any...);
+--#         `wrap`: function(function) --> thread;
+--#         `yield`: function(any...) --> (any...);
 --#     }
 

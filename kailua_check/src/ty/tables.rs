@@ -137,7 +137,7 @@ impl Tables {
                         _ => {}
                     }
                     if first { first = false; } else { write!(f, ", ")?; }
-                    write!(f, "{} = ", name)?;
+                    write!(f, "{}: ", name)?;
                     write_slot(t, f, false)?;
                 }
 

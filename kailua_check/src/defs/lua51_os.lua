@@ -1,31 +1,31 @@
 -- definitions for Lua 5.1 os library
 
 --# type local tm = {
---#     year = integer, month = integer, day = integer,
---#     hour = integer?, min = integer?, sec = integer?, isdst = boolean?
+--#     year: integer, month: integer, day: integer,
+--#     hour: integer?, min: integer?, sec: integer?, isdst: boolean?
 --# }
 --#
 --# assume global `os`:
 --#     {
---#         `clock` = function() --> number;
+--#         `clock`: function() --> number;
 --#         -- TODO it is very hard to recognize '*t'|!'*t' from other string types, ugh
---#         `date` = function(string?, tm?) --> string | {
---#             year = integer, month = integer, day = integer,
---#             hour = integer, min = integer, sec = integer,
---#             wday = integer, yday = integer, isdst = boolean
+--#         `date`: function(string?, tm?) --> string | {
+--#             year: integer, month: integer, day: integer,
+--#             hour: integer, min: integer, sec: integer,
+--#             wday: integer, yday: integer, isdst: boolean
 --#         };
---#         `difftime` = function(number, number) --> number;
---#         `execute` = function(string?) --> integer;
+--#         `difftime`: function(number, number) --> number;
+--#         `execute`: function(string?) --> integer;
 --#         -- TODO diverging function signature
---#         `exit` = function(integer?);
---#         `getenv` = function(string) --> string;
+--#         `exit`: function(integer?);
+--#         `getenv`: function(string) --> string;
 --#         -- TODO sequence conditional union: (true) | (nil, string)
 --#         -- there is alos an undocumented 3rd return type (integer) for errno, omitted here
---#         `remove` = function(string) --> (boolean, string);
+--#         `remove`: function(string) --> (boolean, string);
 --#         -- TODO sequence conditional union: (true) | (nil, string)
---#         `rename` = function(string, string) --> (boolean, string);
---#         `setlocale` = function(string?, string?) --> string;
---#         `time` = function(tm?) --> number;
---#         `tmpname` = function() --> string;
+--#         `rename`: function(string, string) --> (boolean, string);
+--#         `setlocale`: function(string?, string?) --> string;
+--#         `time`: function(tm?) --> number;
+--#         `tmpname`: function() --> string;
 --#     }
 

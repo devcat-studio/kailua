@@ -2,25 +2,25 @@
 
 --# assume global `string`:
 --#     [string_meta] {
---#         `byte` = function(string, integer?, integer?) --> (integer...);
---#         `char` = function(integer...) --> string;
---#         `dump` = function(function) --> string;
+--#         `byte`: function(string, integer?, integer?) --> (integer...);
+--#         `char`: function(integer...) --> string;
+--#         `dump`: function(function) --> string;
 --#         -- TODO repeating return types can contain integer when the pattern contains `()`
---#         `find` = function(string, string, integer?, boolean?) -->
---#                           (integer?, integer?, string...);
---#         `format` = function(string, any...) --> string;
---#         `gmatch` = function(string, string) --> function() --> string?;
+--#         `find`: function(string, string, integer?, boolean?) -->
+--#                          (integer?, integer?, string...);
+--#         `format`: function(string, any...) --> string;
+--#         `gmatch`: function(string, string) --> function() --> string?;
 --#         -- TODO have to constrain the function argument, but not easy
---#         `gsub` = function(string, string,
---#                           string | map<string, string> | (function(WHATEVER...) --> string),
---#                           integer?) --> string;
---#         `len` = function(string) --> integer;
---#         `lower` = function(string) --> string;
+--#         `gsub`: function(string, string,
+--#                          string | map<string, string> | (function(WHATEVER...) --> string),
+--#                          integer?) --> string;
+--#         `len`: function(string) --> integer;
+--#         `lower`: function(string) --> string;
 --#         -- TODO repeating return types can contain integer when the pattern contains `()`
---#         `match` = function(string, string, integer?) --> (string...);
---#         `rep` = function(string, integer) --> string;
---#         `reverse` = function(string) --> string;
---#         `sub` = function(string, integer, integer?) --> string;
---#         `upper` = function(string) --> string;
+--#         `match`: function(string, string, integer?) --> (string...);
+--#         `rep`: function(string, integer) --> string;
+--#         `reverse`: function(string) --> string;
+--#         `sub`: function(string, integer, integer?) --> string;
+--#         `upper`: function(string) --> string;
 --#     }
 

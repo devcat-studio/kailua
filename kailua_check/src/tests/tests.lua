@@ -228,7 +228,7 @@ local p = ({[3] = 4})[3]
 --! ok
 
 --8<-- index-intrec-with-integer-no-key
-local p = ({[2] = 4})[3] --@< Error: Cannot index `{2 = 4}` with `3`
+local p = ({[2] = 4})[3] --@< Error: Cannot index `{2: 4}` with `3`
 --! error
 
 --8<-- index-map-with-integer
@@ -261,13 +261,13 @@ local p = ({a = 4}).a
 --! ok
 
 --8<-- index-rec-with-name-no-key
-local p = ({a = 4}).b --@< Error: Cannot index `{a = 4}` with `"b"`
+local p = ({a = 4}).b --@< Error: Cannot index `{a: 4}` with `"b"`
 --! error
 
 --8<-- index-rec-with-string
 --# assume x: string
 local p = ({a = 4})[x]
---@^ Error: Cannot index `{a = 4}` with index `string` that cannot be resolved ahead of time
+--@^ Error: Cannot index `{a: 4}` with index `string` that cannot be resolved ahead of time
 --! error
 
 --8<-- index-rec-with-weird-string
@@ -277,7 +277,7 @@ local p = ({['not ice'] = 4})[x]
 
 --8<-- index-rec-with-weird-string-error
 --# assume x: 'ice'
-local p = ({['not ice'] = 4})[x] --@< Error: Cannot index `{`not ice` = 4}` with `"ice"`
+local p = ({['not ice'] = 4})[x] --@< Error: Cannot index `{`not ice`: 4}` with `"ice"`
 --! error
 
 --8<-- methodcall-empty
@@ -292,7 +292,7 @@ local p = x:hello()
 
 --8<-- methodcall-rec-1-type-1 -- feature:no_implicit_func_sig
 -- TODO should this be inferrable?
-local x = {hello = function(a) end} --: {hello = function(table)}
+local x = {hello = function(a) end} --: {hello: function(table)}
 --@^ Error: The type for this argument in the anonymous function is missing but couldn't be inferred from the calls
 local p = x:hello()
 --! error
@@ -328,7 +328,7 @@ local p = x:hello('string') --@< Error: The type `function(table!, integer!) -->
 --8<-- methodcall-rec-5
 local x = {hello = function() end}
 local p = x:hello() --@< Error: The type `function() --> ()` cannot be called
-                    --@^ Cause: `{hello = function() --> ()}` in the `self` position is not a subtype of `nil`
+                    --@^ Cause: `{hello: function() --> ()}` in the `self` position is not a subtype of `nil`
 --! error
 
 --8<-- methodcall-integer
@@ -386,7 +386,7 @@ f = {54, 49} --@< Error: Cannot assign `{54, 49}` into `function() --> ()`
 
 --8<-- assume-rec
 local f = function() end
---# assume f: {index = integer}
+--# assume f: {index: integer}
 local p = f.index
 --! ok
 
@@ -445,8 +445,8 @@ local b = y or 53 --: integer | true
 --! ok
 
 --8<-- disjunctive-type-erasure-table
---# assume x: {a = string, b = integer}?
-local x = x or {} --: {a = string, b = integer}!
+--# assume x: {a: string, b: integer}?
+local x = x or {} --: {a: string, b: integer}!
 --! ok
 
 --8<-- conjunctive-lhs-dynamic
@@ -886,13 +886,13 @@ b = a.y
 --8<-- index-rec-with-wrong-name-1
 local a = { x = 3, y = 'foo' }
 local b = a.z + 1 -- z should be nil
---@^ Error: Cannot index `{x = 3, y = "foo"}` with `"z"`
+--@^ Error: Cannot index `{x: 3, y: "foo"}` with `"z"`
 --! error
 
 --8<-- index-rec-with-wrong-name-2
 local a = { x = 3, y = 'foo' }
 local b = a.z .. 'bar' -- ditto
---@^ Error: Cannot index `{x = 3, y = "foo"}` with `"z"`
+--@^ Error: Cannot index `{x: 3, y: "foo"}` with `"z"`
 --! error
 
 --8<-- table-update
@@ -1140,19 +1140,19 @@ y = 54
 --! ok
 
 --8<-- func-returns-rec-1
---v function() --> {a=integer}
+--v function() --> {a:integer}
 local function p() return {a=4} end
 local x = p().a + 5
 --! ok
 
 --8<-- func-returns-rec-2
---v function() --> {a=integer}
+--v function() --> {a:integer}
 local function p() return {a=4} end
 local x = p().a.b --@< Error: Tried to index a non-table type `integer`
 --! error
 
 --8<-- func-returns-rec-2-span
---v function() --> {a=integer}
+--v function() --> {a:integer}
 local function p() return {a=4} end
 local x = p().a
 local y = x.b --@< Error: Tried to index a non-table type `integer`
@@ -1280,7 +1280,7 @@ local function p()
     return 1, 2, 3
 end
 local a = {p(), p()} --: {integer, integer, integer, integer}
-local b = {foo = p()} --: {foo = integer}
+local b = {foo = p()} --: {foo: integer}
 local c = {p(), bar = p()} --: map<integer|string, integer>
 --! ok
 
@@ -1653,11 +1653,11 @@ p.x = q
 --8<-- assign-record-1
 local t = {}
 t.a = 42
-local x = t.b --@< Error: Cannot index `{a = integer}` with `"b"`
+local x = t.b --@< Error: Cannot index `{a: integer}` with `"b"`
 --! error
 
 --8<-- assign-record-2
-local t = {} --: {a = integer}
+local t = {} --: {a: integer}
 local x = t.a
 t.a = 42
 local x = t.a --: integer
@@ -1674,12 +1674,12 @@ local x = t.a + u.b --: integer
 --8<-- assign-record-row-variable
 local x = {a = 1, b = 'foo'}
 
-local y = x --: {a = integer, b = string, c = string}
+local y = x --: {a: integer, b: string, c: string}
 y.c = 'foo'
 local c = x.c --: string
 
-local z = x --: {a = integer, b = string, c = integer}
---@^ Error: Cannot assign `{a = 1, b = "foo", c = string}` into `{a = integer, b = string, c = integer}`
+local z = x --: {a: integer, b: string, c: integer}
+--@^ Error: Cannot assign `{a: 1, b: "foo", c: string}` into `{a: integer, b: string, c: integer}`
 --@^^ Note: The other type originates here
 --! error
 
@@ -1930,7 +1930,7 @@ local x = require('x') --@< Error: A type `stringy` to be imported is already de
 local z = 'string' .. x.to_string() --: stringy
 
 --& x
---# type stringy = { to_string = function() --> string }
+--# type stringy = { to_string: function() --> string }
 local p = { to_string = function() return 'foo' end } --: stringy
 return p
 
@@ -1959,7 +1959,7 @@ return p
 --! error
 
 --8<-- index-assign-typed
-local p = {x = 5, y = 6} --: {x=number, y=number}
+local p = {x = 5, y = 6} --: {x:number, y:number}
 p.x = 'string' --@< Error: Cannot assign `"string"` into `number`
                --@^ Note: The other type originates here
 --! error
@@ -2229,7 +2229,7 @@ local function p() end
 --# --@v Warning: `sudo` is an unknown type attribute and ignored
 --# assume sudo: [sudo] {
 --#     --@v Warning: `make_sandwich` is an unknown type attribute and ignored
---#     make_sandwich = const [make_sandwich] function(boolean)
+--#     make_sandwich: const [make_sandwich] function(boolean)
 --# }
 --! ok
 
@@ -2494,13 +2494,13 @@ p.a() --@< Error: Cannot index `const {}` with `"a"`
 --! error
 
 --8<-- method-decl-const-nested
-local p = { a = {} } --: const {a = const {}}
+local p = { a = {} } --: const {a: const {}}
 function p.a.b() end --@< Error: Cannot update the immutable type `const {}` by indexing
 p.a.b() --@< Error: Cannot index `const {}` with `"b"`
 --! error
 
 --8<-- methodcall-string-meta-table
---# assume blah: [string_meta] { byte = function(string) --> integer }
+--# assume blah: [string_meta] { byte: function(string) --> integer }
 local x = ('f'):byte() --: integer
 --! ok
 
@@ -2523,9 +2523,9 @@ local x = ('f'):byte() --: integer
 --! error
 
 --8<-- string-meta-redefine
---# assume blah: [string_meta] { byte = function(string) --> integer }
+--# assume blah: [string_meta] { byte: function(string) --> integer }
 --@^ Note: A metatable for `string` type has been previously defined here
---# assume blah2: [string_meta] { lower = function(string) --> string }
+--# assume blah2: [string_meta] { lower: function(string) --> string }
 --@^ Error: A metatable for `string` type cannot be defined more than once and in general should only be set via `--# open` directive
 --! error
 
@@ -2627,7 +2627,7 @@ end
 
 -- this is an error because `self` type is not affected by [no_check]
 --@vv Error: The type `function(integer, integer) --> integer` cannot be called
---@v Cause: `{bar = function(integer, integer) --> integer}` in the `self` position is not a subtype of `integer`
+--@v Cause: `{bar: function(integer, integer) --> integer}` in the `self` position is not a subtype of `integer`
 local a = foo:bar(3) --: integer
 
 --! error
@@ -2801,19 +2801,19 @@ local e = {1, 2, 3, string = 4} --: map<integer|string, integer>
 
 --8<-- table-lit-subtyping-3
 local x = {1, 2, 3, [5] = 4} --: vector<integer>
---@^ Error: Cannot assign `{1, 2, 3, 5 = 4}` into `vector<integer>`
+--@^ Error: Cannot assign `{1, 2, 3, 5: 4}` into `vector<integer>`
 --@^^ Note: The other type originates here
 --! error
 
 --8<-- table-lit-subtyping-4
 local y = {1, 2, 3, string = 4} --: vector<integer>
---@^ Error: Cannot assign `{1, 2, 3, string = 4}` into `vector<integer>`
+--@^ Error: Cannot assign `{1, 2, 3, string: 4}` into `vector<integer>`
 --@^^ Note: The other type originates here
 --! error
 
 --8<-- table-lit-subtyping-5
 local z = {1, 2, 3, string = 4} --: map<integer, integer>
---@^ Error: Cannot assign `{1, 2, 3, string = 4}` into `map<integer, integer>`
+--@^ Error: Cannot assign `{1, 2, 3, string: 4}` into `map<integer, integer>`
 --@^^ Note: The other type originates here
 --! error
 
@@ -2891,7 +2891,7 @@ p.a = 42 --@< Error: Cannot update the immutable type `const {}` by indexing
 --! error
 
 --8<-- table-assign-const-nested
-local p = {a = {}, b = {}} --: {a = {}, b = const {}}
+local p = {a = {}, b = {}} --: {a: {}, b: const {}}
 p.a.x = 42
 p.b.y = 54 --@< Error: Cannot update the immutable type `const {}` by indexing
 --! error

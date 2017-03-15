@@ -2199,14 +2199,14 @@ impl<'a> Parser<'a> {
                     // tuple or record -- distinguished by the secondary lookahead
                     tok => {
                         let is_record = if let Tok::Name(_) = tok.1.base {
-                            self.lookahead(Punct::Eq)
+                            self.lookahead(Punct::Colon)
                         } else {
                             false
                         };
                         self.unread(tok);
 
                         if is_record {
-                            // "{" NAME "=" MODF KIND {"," NAME "=" MODF KIND} "}"
+                            // "{" NAME ":" MODF KIND {"," NAME ":" MODF KIND} "}"
                             let mut seen = HashMap::new(); // value denotes the first span
                             let fields = self.scan_tabular_body(|parser| {
                                 let name = parser.parse_name()?;
@@ -2223,7 +2223,7 @@ impl<'a> Parser<'a> {
                                     }
                                 }
                                 let name = Str::from(name.base).with_loc(name.span);
-                                parser.expect(Punct::Eq)?;
+                                parser.expect(Punct::Colon)?;
                                 let slotkind = parser.parse_kailua_slotkind()?;
                                 Ok((name, slotkind))
                             })?;
