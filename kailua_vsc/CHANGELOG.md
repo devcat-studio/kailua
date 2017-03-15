@@ -1,3 +1,15 @@
+## 0.0.8
+
+* Top-level functions defined in the internal definitions (as loaded by `--# open`) now return `T` instead of `T?`, even when nil is expected. There are some cases that the explicit check for nil is beneficial in general, though, and some of them can be changed later when using `T?` becomes easier.
+
+* C++-like `int` and `bool` are now supported as aliases to `integer` and `boolean`. The longer names still remain as canonical because that's what Lua 5.2 and later uses.
+
+* Some compromises in the built-in definitions.
+
+    * `math.floor` and `math.ceil` now returns integers. (This is technically incorrect as they can return NaN for NaN.)
+
+    * `string.match` and `string.find` now always returns strings. (This is technically incorrect as they can return integers when the pattern includes `()`; use `--# assume` if you want.)
+
 ## 0.0.7
 
 * `--# type local` and `--# type global` has been added (they are respectively similar to `--# assume local` and `--# assume global` except that they don't allow shadowing). The old `--# type` is now solely used for exporting types, so that a `require` call can now import types (again, no shadowing is allowed). Redefinition of existing types is forbidden except for two cases, `--# type T = T` and `--# type global T = T` where `T` is a visible local type.
