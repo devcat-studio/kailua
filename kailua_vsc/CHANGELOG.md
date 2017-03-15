@@ -1,3 +1,7 @@
+## 0.0.7
+
+* `--# type local` and `--# type global` has been added (they are respectively similar to `--# assume local` and `--# assume global` except that they don't allow shadowing). The old `--# type` is now solely used for exporting types, so that a `require` call can now import types (again, no shadowing is allowed). Redefinition of existing types is forbidden except for two cases, `--# type T = T` and `--# type global T = T` where `T` is a visible local type.
+
 ## 0.0.6
 
 * No implicit function types are now disabled by default; the only allowed cases (for now, subject to expansion) are anonymous functions in the function call of the known argument types and the assignment to a slot with the known type.
