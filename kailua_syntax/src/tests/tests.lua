@@ -687,6 +687,14 @@ end
 --!  Do([KailuaAssume(`a`_, (`a`_.`b`), _, Dynamic), \
 --!      KailuaAssume(`a`_, (`a`_.`b`.`c`), _, Dynamic)])]
 
+--8<-- kind-int
+local x --: int
+--! [Local([`x`$1: _ Integer], [])$1]
+
+--8<-- kind-bool
+local x --: bool
+--! [Local([`x`$1: _ Boolean], [])$1]
+
 --8<-- kind-table
 local x --: {b=string, a=integer, c=const {d=const {}}}
 --! [Local([`x`$1: _ Record(["b": _ String, "a": _ Integer, \
@@ -1749,14 +1757,14 @@ f()
 --! [Oops, Void(`f`_())]
 
 --8<-- alias
---# type int = integer
+--# type Int = integer
 --# type local integral = integer
 --# type global Integer = integer
---# assume x: vector<int>
---! [KailuaType(Exported, `int`, Integer), \
+--# assume x: vector<Int>
+--! [KailuaType(Exported, `Int`, Integer), \
 --!  KailuaType(Local, `integral`, Integer), \
 --!  KailuaType(Global, `Integer`, Integer), \
---!  KailuaAssume(`x`$1, (`x`_), _, Array(_ `int`))$1]
+--!  KailuaAssume(`x`$1, (`x`_), _, Array(_ `Int`))$1]
 
 --8<-- alias-builtin
 --# type any = integer --@< Error: Cannot redefine a builtin type
@@ -1764,27 +1772,27 @@ f()
 --! [KailuaType(Exported, `any`, Integer), KailuaAssume(`x`$1, (`x`_), _, Array(_ Any))$1]
 
 --8<-- alias-incomplete
---# type int =
---# assume x: vector<int> --@< Error: Expected a single type, got a keyword `assume`
---! [KailuaType(Exported, `int`, Oops), KailuaAssume(`x`$1, (`x`_), _, Array(_ `int`))$1]
+--# type Int =
+--# assume x: vector<Int> --@< Error: Expected a single type, got a keyword `assume`
+--! [KailuaType(Exported, `Int`, Oops), KailuaAssume(`x`$1, (`x`_), _, Array(_ `Int`))$1]
 
 --8<-- alias-export-in-local-scope
 do
-    --# type int = integer --@< Error: `--# type` with an exported type should be in the top-level scope
+    --# type Int = integer --@< Error: `--# type` with an exported type should be in the top-level scope
 end
---! [Do([KailuaType(Exported, `int`, Integer)])]
+--! [Do([KailuaType(Exported, `Int`, Integer)])]
 
 --8<-- alias-global-in-local-scope
 do
-    --# type global int = integer --@< Error: `--# type global` should be in the top-level scope
+    --# type global Int = integer --@< Error: `--# type global` should be in the top-level scope
 end
---! [Do([KailuaType(Global, `int`, Integer)])]
+--! [Do([KailuaType(Global, `Int`, Integer)])]
 
 --8<-- alias-local-in-local-scope
 do
-    --# type local int = integer
+    --# type local Int = integer
 end
---! [Do([KailuaType(Local, `int`, Integer)])]
+--! [Do([KailuaType(Local, `Int`, Integer)])]
 
 --8<-- kind-error
 --# type x = error

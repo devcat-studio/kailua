@@ -684,18 +684,18 @@ impl<'a> Parser<'a> {
     // Some(Some(k)) for concrete kinds, Some(None) for generic kinds
     fn builtin_kind(&self, name: &[u8]) -> Option<Option<K>> {
         match name {
-            b"WHATEVER" => Some(Some(K::Dynamic)),
-            b"any"      => Some(Some(K::Any)),
-            b"boolean"  => Some(Some(K::Boolean)),
-            b"number"   => Some(Some(K::Number)),
-            b"integer"  => Some(Some(K::Integer)),
-            b"string"   => Some(Some(K::String)),
-            b"table"    => Some(Some(K::Table)),
-            b"function" => Some(Some(K::Function)), // allow for quoted `function` too
-            b"thread"   => Some(Some(K::Thread)),
-            b"userdata" => Some(Some(K::UserData)),
-            b"vector"   => Some(None),
-            b"map"      => Some(None),
+            b"WHATEVER"          => Some(Some(K::Dynamic)),
+            b"any"               => Some(Some(K::Any)),
+            b"boolean" | b"bool" => Some(Some(K::Boolean)),
+            b"number"            => Some(Some(K::Number)),
+            b"integer" | b"int"  => Some(Some(K::Integer)),
+            b"string"            => Some(Some(K::String)),
+            b"table"             => Some(Some(K::Table)),
+            b"function"          => Some(Some(K::Function)), // allow for quoted `function` too
+            b"thread"            => Some(Some(K::Thread)),
+            b"userdata"          => Some(Some(K::UserData)),
+            b"vector"            => Some(None),
+            b"map"               => Some(None),
             _ => None,
         }
     }

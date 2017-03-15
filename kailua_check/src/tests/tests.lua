@@ -1720,15 +1720,15 @@ return 42
 --# open lua51
 local x = require('x')
 local y = require('y')
-local z = x + y --: int --@< Error: Type `int` is not defined
+local z = x + y --: integral --@< Error: Type `integral` is not defined
 
 --& x
---# type local int = integer
-local p = 4 --: int
+--# type local integral = integer
+local p = 4 --: integral
 return p
 
 --& y
-local q = 5 --: int --@< Error: Type `int` is not defined
+local q = 5 --: integral --@< Error: Type `integral` is not defined
 return q
 
 --! error
@@ -1737,15 +1737,15 @@ return q
 --# open lua51
 local x = require('x')
 local y = require('y')
-local z = x + y --: int
+local z = x + y --: integral
 
 --& x
---# type int = integer
-local p = 4 --: int
+--# type integral = integer
+local p = 4 --: integral
 return p
 
 --& y
-local q = 5 --: int --@< Error: Type `int` is not defined
+local q = 5 --: integral --@< Error: Type `integral` is not defined
 return q
 
 --! error
@@ -1754,15 +1754,15 @@ return q
 --# open lua51
 local x = require('x')
 local y = require('y')
-local z = x + y --: int
+local z = x + y --: integral
 
 --& x
---# type global int = integer
-local p = 4 --: int
+--# type global integral = integer
+local p = 4 --: integral
 return p
 
 --& y
-local q = 5 --: int
+local q = 5 --: integral
 return q
 
 --! ok
@@ -1770,16 +1770,16 @@ return q
 --8<-- require-type-no-reexport
 --# open lua51
 local x = require('x')
-local y = x + 3 --: int --@< Error: Type `int` is not defined
+local y = x + 3 --: integral --@< Error: Type `integral` is not defined
 
 --& x
 local p = require('y')
-local q = p + 2 --: int
+local q = p + 2 --: integral
 return q
 
 --& y
---# type int = integer
-local a = 1 --: int
+--# type integral = integer
+local a = 1 --: integral
 return a
 
 --! error
@@ -1787,30 +1787,30 @@ return a
 --8<-- require-type-reexport
 --# open lua51
 local x = require('x')
-local y = x + 3 --: int
+local y = x + 3 --: integral
 
 --& x
 local p = require('y')
---# type int = int
-local q = p + 2 --: int
+--# type integral = integral
+local q = p + 2 --: integral
 return q
 
 --& y
---# type int = integer
-local a = 1 --: int
+--# type integral = integer
+local a = 1 --: integral
 return a
 
 --! ok
 
 --8<-- require-type-import-no-shadowing
 --# open lua51
---# type local str = string --@< Note: The type was originally defined here
-local x = require('x') --@< Error: A type `str` to be imported is already defined
-local z = 'string' .. x.to_string() --: str
+--# type local stringy = string --@< Note: The type was originally defined here
+local x = require('x') --@< Error: A type `stringy` to be imported is already defined
+local z = 'string' .. x.to_string() --: stringy
 
 --& x
---# type str = { to_string = function() --> string }
-local p = { to_string = function() return 'foo' end } --: str
+--# type stringy = { to_string = function() --> string }
+local p = { to_string = function() return 'foo' end } --: stringy
 return p
 
 --! error
@@ -1820,19 +1820,19 @@ return p
 local z = 0
 do
     local x = require('x')
-    local y = x + 4 --: int
+    local y = x + 4 --: integral
     z = z + y
 end
 do
     local x = require('x')
-    local y = x + 5 --: int
+    local y = x + 5 --: integral
     z = z + y
 end
-local w = z + z --: int --@< Error: Type `int` is not defined
+local w = z + z --: integral --@< Error: Type `integral` is not defined
 
 --& x
---# type int = integer
-local p = 42 --: int
+--# type integral = integer
+local p = 42 --: integral
 return p
 
 --! error
