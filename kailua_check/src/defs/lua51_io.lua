@@ -1,15 +1,15 @@
 -- definitions for Lua 5.1 io library
 
---# type file = {
+--# type local file = {
 --#     -- TODO method receivers and recursive types are generally not implemented yet
 --#     `close` = function(WHATEVER);
 --#     `flush` = function(WHATEVER);
 --#     `lines` = function(WHATEVER) --> function() --> string?;
---#     -- TODO should be: function(self, '*n') --> number? &
+--#     -- TODO should be: function(self, '*n') --> number &
 --#     --                 function(self, '*a') --> string &
---#     --                 function(self, '*l'|integer?) --> string?
+--#     --                 function(self, '*l'|integer?) --> string
 --#     -- for now, let's ignore *n (which is most useless)
---#     `read` = function(WHATEVER, '*a'|'*l'|integer?) --> string?;
+--#     `read` = function(WHATEVER, '*a'|'*l'|integer?) --> string;
 --#     `seek` = function(WHATEVER, 'set'|'cur'|'end'?, integer?);
 --#     -- TODO again, 'no' does not accept an integer
 --#     `setvbuf` = function(WHATEVER, 'no'|'full'|'line', integer?);
@@ -21,14 +21,15 @@
 --#         `close` = function(file?);
 --#         `flush` = function();
 --#         -- TODO should be separated
---#         `input` = function(string|file?) --> file?;
+--#         `input` = function(string|file?) --> file;
 --#         `lines` = function(string?) --> function() --> string?;
---#         `open` = function(string, string?) --> (file?, string?);
---#         `output` = function(string|file?) --> file?;
---#         `popen` = function(string, string?) --> file?;
---#         `read` = function('*a'|'*l'|integer?) --> string?;
+--#         -- TODO sequence conditional union: (file) | (nil, string)
+--#         `open` = function(string, string?) --> (file, string);
+--#         `output` = function(string|file?) --> file;
+--#         `popen` = function(string, string?) --> file;
+--#         `read` = function('*a'|'*l'|integer?) --> string;
 --#         `tmpfile` = function() --> file;
---#         `type` = function(any) --> 'file'|'closed file'?;
+--#         `type` = function(any) --> 'file'|'closed file';
 --#         `write` = function(string|number);
 --#     }
 

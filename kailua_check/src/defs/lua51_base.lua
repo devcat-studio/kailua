@@ -5,10 +5,10 @@
 --#     [assert] function(any, string?)
 --#
 --# assume global `collectgarbage`:
---#     function(string?, any?) --> any?
+--#     function(string?, any?) --> any
 --#
 --# assume global `dofile`:
---#     [geval] function(string?) --> any?
+--#     [geval] function(string?) --> any
 --#
 --# -- TODO diverging function signature
 --# assume global `error`:
@@ -29,17 +29,17 @@
 --#         (function(vector<const WHATEVER>, integer) --> (integer?, any),
 --#          vector<const WHATEVER>, integer)
 --#
---# -- TODO sequence conditional union
+--# -- TODO sequence conditional union: (function) | (nil, string)
 --# assume global `load`:
---#     [geval] function(function() --> string?, string?) --> (function?, string?)
+--#     [geval] function(function() --> string?, string?) --> (function, string)
 --#
---# -- TODO sequence conditional union
+--# -- TODO sequence conditional union: (function) | (nil, string)
 --# assume global `loadfile`:
---#     [geval] function(string?) --> (function?, string?)
+--#     [geval] function(string?) --> (function, string)
 --#
---# -- TODO sequence conditional union
+--# -- TODO sequence conditional union: (function) | (nil, string)
 --# assume global `loadstring`:
---#     [geval] function(string, string?) --> (function?, string?)
+--#     [geval] function(string, string?) --> (function, string)
 --#
 --# -- TODO genericity
 --# assume global `next`:
@@ -60,7 +60,7 @@
 --#     function(any, any) --> boolean
 --#
 --# assume global `rawget`:
---#     function(table, any) --> any?
+--#     function(table, any) --> any
 --#
 --# assume global `rawset`:
 --#     function(table, any, any) --> table
@@ -102,7 +102,7 @@
 --#         -- TODO genericity
 --#         `create` = function(function) --> thread;
 --#         `resume` = function(thread, any...) --> (boolean, any...);
---#         `running` = function() --> thread?;
+--#         `running` = function() --> thread;
 --#         `status` = function(thread) --> string;
 --#         -- TODO genericity
 --#         `wrap` = function(function) --> thread;

@@ -8,7 +8,7 @@
 --#         -- TODO ah fuck, needs overloading with function(vector<WHATEVER>, integer, any)
 --#         `insert` = function(vector<WHATEVER>, any);
 --#         `maxn` = function(vector<const any>) --> integer;
---#         `remove` = function(vector<WHATEVER>, integer?) --> any?;
+--#         `remove` = function(vector<WHATEVER>, integer?) --> any;
 --#         `sort` = function(vector<WHATEVER>, (function(WHATEVER, WHATEVER) --> boolean)?);
 --#     }
 

@@ -1,6 +1,6 @@
 -- definitions for Lua 5.1 os library
 
---# type tm = {
+--# type local tm = {
 --#     year = integer, month = integer, day = integer,
 --#     hour = integer?, min = integer?, sec = integer?, isdst = boolean?
 --# }
@@ -8,7 +8,7 @@
 --# assume global `os`:
 --#     {
 --#         `clock` = function() --> number;
---#         -- TODO it is very hard to recognize '*t'|'!*t' from other string types, ugh
+--#         -- TODO it is very hard to recognize '*t'|!'*t' from other string types, ugh
 --#         `date` = function(string?, tm?) --> string | {
 --#             year = integer, month = integer, day = integer,
 --#             hour = integer, min = integer, sec = integer,
@@ -18,10 +18,13 @@
 --#         `execute` = function(string?) --> integer;
 --#         -- TODO diverging function signature
 --#         `exit` = function(integer?);
---#         `getenv` = function(string) --> string?;
---#         `remove` = function(string) --> (boolean?, string?);
---#         `rename` = function(string, string) --> (boolean?, string?);
---#         `setlocale` = function(string?, string?) --> string?;
+--#         `getenv` = function(string) --> string;
+--#         -- TODO sequence conditional union: (true) | (nil, string)
+--#         -- there is alos an undocumented 3rd return type (integer) for errno, omitted here
+--#         `remove` = function(string) --> (boolean, string);
+--#         -- TODO sequence conditional union: (true) | (nil, string)
+--#         `rename` = function(string, string) --> (boolean, string);
+--#         `setlocale` = function(string?, string?) --> string;
 --#         `time` = function(tm?) --> number;
 --#         `tmpname` = function() --> string;
 --#     }
