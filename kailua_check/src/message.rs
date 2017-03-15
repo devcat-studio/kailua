@@ -26,12 +26,22 @@ define_msg! { pub NotSubtype<'a> { sub: &'a str, sup: &'a str }:
     _    => "`{sub}` is not a subtype of `{sup}`",
 }
 
+define_msg! { pub NotSubtypeInSelf<'a> { sub: &'a str, sup: &'a str }:
+    "ko" => "`self` 자리에 있는 `{sub}`이(가) `{sup}`의 서브타입이 아닙니다",
+    _    => "`{sub}` in the `self` position is not a subtype of `{sup}`",
+}
+
 define_msg! { pub NotSubtypeInFuncArgs<'a> { sub: &'a str, sup: &'a str, index: Ordinal }:
     "ko" => "함수의 {index} 인자 `{sub}`이(가) `{sup}`의 서브타입이 아닙니다",
     _    => "{index:+} function argument `{sub}` is not a subtype of `{sup}`",
 }
 
-define_msg! { pub NotSubtypeInFuncReturns<'a> { sub: &'a str, sup: &'a str, index: Ordinal }:
+define_msg! { pub NotSubtypeInMethodArgs<'a> { sub: &'a str, sup: &'a str, index: Ordinal }:
+    "ko" => "메소드의 {index} 인자 `{sub}`이(가) `{sup}`의 서브타입이 아닙니다",
+    _    => "{index:+} method argument `{sub}` is not a subtype of `{sup}`",
+}
+
+define_msg! { pub NotSubtypeInReturns<'a> { sub: &'a str, sup: &'a str, index: Ordinal }:
     "ko" => "함수의 {index} 반환값인 `{sub}`이(가) `{sup}`의 서브타입이 아닙니다",
     _    => "{index:+} return type `{sub}` is not a subtype of `{sup}`",
 }
@@ -41,12 +51,22 @@ define_msg! { pub NotEqual<'a> { lhs: &'a str, rhs: &'a str }:
     _    => "`{lhs}` does not equal to `{rhs}`",
 }
 
+define_msg! { pub NotEqualInSelf<'a> { lhs: &'a str, rhs: &'a str }:
+    "ko" => "`self` 자리에 있는 `{lhs}`와(과) `{rhs}`이(가) 같은 타입이 아닙니다",
+    _    => "`{lhs}` in the `self` position does not equal to `{rhs}`",
+}
+
 define_msg! { pub NotEqualInFuncArgs<'a> { lhs: &'a str, rhs: &'a str, index: Ordinal }:
     "ko" => "함수의 {index} 인자 `{lhs}`와(과) `{rhs}`이(가) 같은 타입이 아닙니다",
     _    => "{index:+} function argument `{lhs}` does not equal to `{rhs}`",
 }
 
-define_msg! { pub NotEqualInFuncReturns<'a> { lhs: &'a str, rhs: &'a str, index: Ordinal }:
+define_msg! { pub NotEqualInMethodArgs<'a> { lhs: &'a str, rhs: &'a str, index: Ordinal }:
+    "ko" => "메소드의 {index} 인자 `{lhs}`와(과) `{rhs}`이(가) 같은 타입이 아닙니다",
+    _    => "{index:+} method argument `{lhs}` does not equal to `{rhs}`",
+}
+
+define_msg! { pub NotEqualInReturns<'a> { lhs: &'a str, rhs: &'a str, index: Ordinal }:
     "ko" => "함수의 {index} 반환값인 `{lhs}`와(과) `{rhs}`이(가) 같은 타입이 아닙니다",
     _    => "{index:+} return type `{lhs}` does not equal to `{rhs}`",
 }
@@ -56,12 +76,22 @@ define_msg! { pub InvalidUnionType<'a> { lhs: &'a str, rhs: &'a str }:
     _    => "Cannot create a union type of `{lhs}` and `{rhs}`",
 }
 
+define_msg! { pub InvalidUnionTypeInSelf<'a> { lhs: &'a str, rhs: &'a str }:
+    "ko" => "`self` 자리에 있는 `{lhs}`와(과) `{rhs}`의 합 타입을 만들 수 없습니다",
+    _    => "Cannot create a union type of `{lhs}` and `{rhs}` in the `self` position",
+}
+
 define_msg! { pub InvalidUnionTypeInFuncArgs<'a> { lhs: &'a str, rhs: &'a str, index: Ordinal }:
     "ko" => "함수의 {index} 인자에서 `{lhs}`와(과) `{rhs}`의 합 타입을 만들 수 없습니다",
     _    => "Cannot create a union type of `{lhs}` and `{rhs}` in the {index} function argument",
 }
 
-define_msg! { pub InvalidUnionTypeInFuncReturns<'a> { lhs: &'a str, rhs: &'a str, index: Ordinal }:
+define_msg! { pub InvalidUnionTypeInMethodArgs<'a> { lhs: &'a str, rhs: &'a str, index: Ordinal }:
+    "ko" => "메소드의 {index} 인자에서 `{lhs}`와(과) `{rhs}`의 합 타입을 만들 수 없습니다",
+    _    => "Cannot create a union type of `{lhs}` and `{rhs}` in the {index} method argument",
+}
+
+define_msg! { pub InvalidUnionTypeInReturns<'a> { lhs: &'a str, rhs: &'a str, index: Ordinal }:
     "ko" => "함수의 {index} 반환값에서 `{lhs}`와(과) `{rhs}`의 합 타입을 만들 수 없습니다",
     _    => "Cannot create a union type of `{lhs}` and `{rhs}` in the {index} return type",
 }

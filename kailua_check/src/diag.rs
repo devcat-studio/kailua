@@ -344,7 +344,8 @@ impl TypeReport {
 pub enum TypeReportHint {
     None,
     FuncArgs,
-    FuncReturns,
+    MethodArgs,
+    Returns,
 }
 
 pub trait TypeReportMore {
@@ -357,29 +358,49 @@ impl<'a, T> TypeReportMore for ReportMore<'a, T> {
 
         fn report_binary<
             'a, 'b, T,
-            M: 'b + Localize, MA: 'b + Localize, MR: 'b + Localize,
-            Msg, MsgArgs, MsgReturns
+            M: 'b + Localize, Msg: FnOnce(&'b str, &'b str) -> M,
+            MS: 'b + Localize, MsgSelf: FnOnce(&'b str, &'b str) -> MS,
+            MFA: 'b + Localize, MsgFuncArgs: FnOnce(&'b str, &'b str, Ordinal) -> MFA,
+            MMA: 'b + Localize, MsgMethodArgs: FnOnce(&'b str, &'b str, Ordinal) -> MMA,
+            MR: 'b + Localize, MsgReturns: FnOnce(&'b str, &'b str, Ordinal) -> MR,
         >(
             more: ReportMore<'a, T>, lhs: &'b Spanned<String>, rhs: &'b Spanned<String>,
             idx: Option<usize>, hint: &mut TypeReportHint,
-            make_msg: Msg, make_msg_in_args: MsgArgs, make_msg_in_returns: MsgReturns
-        ) -> ReportMore<'a, T>
-            where Msg: FnOnce(&'b str, &'b str) -> M,
-                  MsgArgs: FnOnce(&'b str, &'b str, Ordinal) -> MA,
-                  MsgReturns: FnOnce(&'b str, &'b str, Ordinal) -> MR
-        {
+            make_msg: Msg, make_msg_in_self: MsgSelf, make_msg_in_func_args: MsgFuncArgs,
+            make_msg_in_method_args: MsgMethodArgs, make_msg_in_returns: MsgReturns,
+        ) -> ReportMore<'a, T> {
             match idx {
                 Some(idx) if *hint == TypeReportHint::FuncArgs => {
                     *hint = TypeReportHint::None;
                     if lhs.span.is_dummy() && !rhs.span.is_dummy() {
-                        more.cause(rhs, make_msg_in_args(lhs, rhs, Ordinal(idx)))
+                        more.cause(rhs, make_msg_in_func_args(lhs, rhs, Ordinal(idx)))
                     } else {
-                        more.cause(lhs, make_msg_in_args(lhs, rhs, Ordinal(idx)))
+                        more.cause(lhs, make_msg_in_func_args(lhs, rhs, Ordinal(idx)))
                             .note_if(rhs, m::OtherTypeOrigin {})
                     }
                 },
 
-                Some(idx) if *hint == TypeReportHint::FuncReturns => {
+                Some(0) if *hint == TypeReportHint::MethodArgs => {
+                    *hint = TypeReportHint::None;
+                    if lhs.span.is_dummy() && !rhs.span.is_dummy() {
+                        more.cause(rhs, make_msg_in_self(lhs, rhs))
+                    } else {
+                        more.cause(lhs, make_msg_in_self(lhs, rhs))
+                            .note_if(rhs, m::OtherTypeOrigin {})
+                    }
+                },
+
+                Some(idx) if *hint == TypeReportHint::MethodArgs => {
+                    *hint = TypeReportHint::None;
+                    if lhs.span.is_dummy() && !rhs.span.is_dummy() {
+                        more.cause(rhs, make_msg_in_method_args(lhs, rhs, Ordinal(idx - 1)))
+                    } else {
+                        more.cause(lhs, make_msg_in_method_args(lhs, rhs, Ordinal(idx - 1)))
+                            .note_if(rhs, m::OtherTypeOrigin {})
+                    }
+                },
+
+                Some(idx) if *hint == TypeReportHint::Returns => {
                     *hint = TypeReportHint::None;
                     if lhs.span.is_dummy() && !rhs.span.is_dummy() {
                         more.cause(rhs, make_msg_in_returns(lhs, rhs, Ordinal(idx)))
@@ -406,8 +427,10 @@ impl<'a, T> TypeReportMore for ReportMore<'a, T> {
                     self = report_binary(
                         self, sub, sup, idx, &mut hint,
                         |sub, sup| m::NotSubtype { sub: sub, sup: sup },
+                        |sub, sup| m::NotSubtypeInSelf { sub: sub, sup: sup },
                         |sub, sup, i| m::NotSubtypeInFuncArgs { sub: sub, sup: sup, index: i },
-                        |sub, sup, i| m::NotSubtypeInFuncReturns { sub: sub, sup: sup, index: i },
+                        |sub, sup, i| m::NotSubtypeInMethodArgs { sub: sub, sup: sup, index: i },
+                        |sub, sup, i| m::NotSubtypeInReturns { sub: sub, sup: sup, index: i },
                     )
                 },
 
@@ -415,8 +438,10 @@ impl<'a, T> TypeReportMore for ReportMore<'a, T> {
                     self = report_binary(
                         self, lhs, rhs, idx, &mut hint,
                         |lhs, rhs| m::NotEqual { lhs: lhs, rhs: rhs },
+                        |lhs, rhs| m::NotEqualInSelf { lhs: lhs, rhs: rhs },
                         |lhs, rhs, i| m::NotEqualInFuncArgs { lhs: lhs, rhs: rhs, index: i },
-                        |lhs, rhs, i| m::NotEqualInFuncReturns { lhs: lhs, rhs: rhs, index: i },
+                        |lhs, rhs, i| m::NotEqualInMethodArgs { lhs: lhs, rhs: rhs, index: i },
+                        |lhs, rhs, i| m::NotEqualInReturns { lhs: lhs, rhs: rhs, index: i },
                     )
                 },
 
@@ -425,10 +450,13 @@ impl<'a, T> TypeReportMore for ReportMore<'a, T> {
                     self = report_binary(
                         self, lhs, rhs, idx, &mut hint,
                         |lhs, rhs| m::InvalidUnionType { lhs: lhs, rhs: rhs },
+                        |lhs, rhs| m::InvalidUnionTypeInSelf { lhs: lhs, rhs: rhs },
                         |lhs, rhs, i| m::InvalidUnionTypeInFuncArgs { lhs: lhs, rhs: rhs,
                                                                       index: i },
-                        |lhs, rhs, i| m::InvalidUnionTypeInFuncReturns { lhs: lhs, rhs: rhs,
-                                                                         index: i },
+                        |lhs, rhs, i| m::InvalidUnionTypeInMethodArgs { lhs: lhs, rhs: rhs,
+                                                                        index: i },
+                        |lhs, rhs, i| m::InvalidUnionTypeInReturns { lhs: lhs, rhs: rhs,
+                                                                     index: i },
                     )
                 },
 

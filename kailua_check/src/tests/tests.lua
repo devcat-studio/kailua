@@ -309,7 +309,7 @@ local p = x:hello()
 local x = {hello = --v function(a: table!, b: integer!)
                    function(a, b) end}
 local p = x:hello() --@< Error: The type `function(table!, integer!) --> ()` cannot be called
-                    --@^ Cause: Second function argument `nil` is not a subtype of `integer!`
+                    --@^ Cause: First method argument `nil` is not a subtype of `integer!`
 --! error
 
 --8<-- methodcall-rec-3
@@ -322,13 +322,13 @@ local p = x:hello(4)
 local x = {hello = --v function(a: table!, b: integer!)
                    function(a, b) end}
 local p = x:hello('string') --@< Error: The type `function(table!, integer!) --> ()` cannot be called
-                            --@^ Cause: Second function argument `"string"` is not a subtype of `integer!`
+                            --@^ Cause: First method argument `"string"` is not a subtype of `integer!`
 --! error
 
 --8<-- methodcall-rec-5
 local x = {hello = function() end}
 local p = x:hello() --@< Error: The type `function() --> ()` cannot be called
-                    --@^ Cause: First function argument `{hello = function() --> ()}` is not a subtype of `nil`
+                    --@^ Cause: `{hello = function() --> ()}` in the `self` position is not a subtype of `nil`
 --! error
 
 --8<-- methodcall-integer
@@ -779,7 +779,7 @@ tab.p(tab, function(x) end)
 tab:p(function(x) end)
 --@^ Error: The type for this argument in the anonymous function is missing but couldn't be inferred from the calls
 --@^^ Error: The type `function(<unknown type>, string) --> ()` cannot be called
---@^^^ Cause: Second function argument `function(<error>) --> ()` is not a subtype of `string`
+--@^^^ Cause: First method argument `function(<error>) --> ()` is not a subtype of `string`
 --! error
 
 --8<-- methodcall-func-hint-less-arity -- feature:no_implicit_func_sig
@@ -795,7 +795,7 @@ tab.p(tab, function(x)
 end)
 
 --@vv Error: The type `function(<unknown type>, function(integer, integer) --> integer) --> ()` cannot be called
---@v-vvv Cause: Second function argument `function(integer) --> integer` is not a subtype of `function(integer, integer) --> integer`
+--@v-vvv Cause: First method argument `function(integer) --> integer` is not a subtype of `function(integer, integer) --> integer`
 tab:p(function(x)
     return x * 2
 end)
@@ -816,7 +816,7 @@ tab.p(tab, function(x, y, z)
 end)
 
 --@vv Error: The type `function(<unknown type>, function(integer, integer) --> integer) --> ()` cannot be called
---@v-vvvvv Cause: Second function argument `function(integer, integer, nil) --> number` is not a subtype of `function(integer, integer) --> integer`
+--@v-vvvvv Cause: First method argument `function(integer, integer, nil) --> number` is not a subtype of `function(integer, integer) --> integer`
 tab:p(function(x, y, z)
     local xy = x + y
     return xy + z --@< Error: Cannot apply + operator to `integer` and `nil`
@@ -2627,7 +2627,7 @@ end
 
 -- this is an error because `self` type is not affected by [no_check]
 --@vv Error: The type `function(integer, integer) --> integer` cannot be called
---@v Cause: First function argument `{bar = function(integer, integer) --> integer}` is not a subtype of `integer`
+--@v Cause: `{bar = function(integer, integer) --> integer}` in the `self` position is not a subtype of `integer`
 local a = foo:bar(3) --: integer
 
 --! error

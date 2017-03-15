@@ -358,8 +358,10 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         }
     }
 
-    fn check_callable(&mut self, func: &Spanned<Ty>, args: &SpannedTySeq) -> CheckResult<TySeq> {
-        debug!("checking if {:?} can be called with {:?}", func, args);
+    fn check_callable(&mut self, func: &Spanned<Ty>, args: &SpannedTySeq,
+                      methodcall: bool) -> CheckResult<TySeq> {
+        debug!("checking if {:?} can be called with {:?} ({})",
+               func, args, if methodcall { "method call" } else { "func call" });
 
         // check for `[internal constructor] <#x>`
         // (should be done before the resolution, as it is likely to fail!)
@@ -380,8 +382,13 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             Functions::Simple(ref f) => {
                 let funcargs = f.args.clone().all_without_loc();
                 if let Err(r) = args.assert_sub(&funcargs, self.context()) {
+                    let hint = if methodcall {
+                        TypeReportHint::MethodArgs
+                    } else {
+                        TypeReportHint::FuncArgs
+                    };
                     self.env.error(func, m::CallToWrongType { func: self.display(func) })
-                            .report_types(r, TypeReportHint::FuncArgs)
+                            .report_types(r, hint)
                             .done()?;
                     return Ok(TySeq::dummy());
                 }
@@ -1234,7 +1241,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     let args = SpannedTySeq { head: vec![state, indvarty.without_loc()],
                                               tail: None,
                                               span: Span::dummy() };
-                    let mut returns = self.check_callable(&func.clone().with_loc(expspan), &args)?;
+                    let mut returns = self.check_callable(&func.clone().with_loc(expspan),
+                                                          &args, false)?;
                     if let Err(r) = last.assert_sub(&indvar, self.context()) {
                         // it is very hard to describe, but it is conceptually
                         // an extension of check_callable
@@ -1279,7 +1287,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 let functy = self.visit_func_body(None, sig, block, stmt.span, None)?;
                 if let Err(r) = T::TVar(funcv).assert_eq(&*functy.unlift(), self.context()) {
                     self.env.error(stmt, m::BadRecursiveCall {})
-                        .report_types(r, TypeReportHint::FuncArgs)
+                        .report_types(r, TypeReportHint::None)
                         .done()?;
                 }
                 Ok(Exit::None)
@@ -1444,7 +1452,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                             }
                             Err(r) => {
                                 self.env.error(stmt, m::CannotExtendImplicitReturnType {})
-                                        .report_types(r, TypeReportHint::FuncReturns)
+                                        .report_types(r, TypeReportHint::Returns)
                                         .done()?;
                             }
                         };
@@ -1453,7 +1461,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         if let Err(r) = seq.assert_sub(&returns, self.context()) {
                             self.env.error(stmt, m::CannotReturn { returns: self.display(&returns),
                                                                    ty: self.display(&seq) })
-                                    .report_types(r, TypeReportHint::FuncReturns)
+                                    .report_types(r, TypeReportHint::Returns)
                                     .done()?;
                         }
                     }
@@ -1828,10 +1836,13 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             _ => {}
         }
 
-        if let Some(selfinfo) = selfinfo {
+        let methodcall = if let Some(selfinfo) = selfinfo {
             argtys.head.insert(0, selfinfo);
-        }
-        let returns = self.check_callable(functy, &argtys.unlift())?;
+            true
+        } else {
+            false
+        };
+        let returns = self.check_callable(functy, &argtys.unlift(), methodcall)?;
         // TODO this should be Var instead of Just!!!!!
         Ok(SlotSeq::from_seq(returns))
     }
