@@ -1670,7 +1670,11 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 // at this stage the hint is given at the best effort basis
                 let hint = self.env.resolve_exact_type(functy).and_then(|ty| {
                     if let Some(&Functions::Simple(ref f)) = ty.get_functions() {
-                        Some(SlotSeq::from_seq(f.args.clone()).all_with_loc(functy))
+                        let mut args = f.args.clone();
+                        if selfinfo.is_some() && !args.head.is_empty() {
+                            args.head.remove(0);
+                        }
+                        Some(SlotSeq::from_seq(args).all_with_loc(functy))
                     } else {
                         None
                     }

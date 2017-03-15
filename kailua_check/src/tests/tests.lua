@@ -678,7 +678,7 @@ function a(...)
 end
 --! error
 
---8<-- func-hint
+--8<-- funccall-func-hint
 --v function(a: function(integer, integer) --> integer)
 function p(a) end
 
@@ -687,7 +687,7 @@ p(function(x, y)
 end)
 --! ok
 
---8<-- func-hint-not-func -- feature:no_implicit_func_sig
+--8<-- funccall-func-hint-not-func -- feature:no_implicit_func_sig
 --v function(a: string)
 function p(a) end
 
@@ -697,7 +697,7 @@ p(function(x) end)
 --@^^^ Cause: First function argument `function(<error>) --> ()` is not a subtype of `string`
 --! error
 
---8<-- func-hint-less-arity -- feature:no_implicit_func_sig
+--8<-- funccall-func-hint-less-arity -- feature:no_implicit_func_sig
 --v function(a: function(integer, integer) --> integer)
 function p(a) end
 
@@ -709,7 +709,7 @@ p(function(x)
 end)
 --! error
 
---8<-- func-hint-more-arity -- feature:no_implicit_func_sig
+--8<-- funccall-func-hint-more-arity -- feature:no_implicit_func_sig
 --v function(a: function(integer, integer) --> integer)
 function p(a) end
 
@@ -722,7 +722,7 @@ p(function(x, y, z)
 end)
 --! error
 
---8<-- func-hint-varargs
+--8<-- funccall-func-hint-varargs
 --v function(a: function(integer, integer, integer...) --> integer)
 function p(a) end
 
@@ -731,7 +731,7 @@ p(function(x, y, ...)
 end)
 --! ok
 
---8<-- func-hint-varargs-less-arity -- feature:no_implicit_func_sig
+--8<-- funccall-func-hint-varargs-less-arity -- feature:no_implicit_func_sig
 --v function(a: function(integer, integer, integer...) --> integer)
 function p(a) end
 
@@ -741,11 +741,132 @@ p(function(x, ...)
 end)
 --! error
 
---8<-- func-hint-varargs-more-arity
+--8<-- funccall-func-hint-varargs-more-arity
 --v function(a: function(integer, integer, integer...) --> integer)
 function p(a) end
 
 p(function(x, y, z, ...)
+    return x + y + z
+end)
+--! ok
+
+--8<-- methodcall-func-hint
+local tab = {}
+
+--v function(self, a: function(int, int) --> int)
+function tab:p(a) end
+
+tab.p(tab, function(x, y)
+    return x + y
+end)
+
+tab:p(function(x, y)
+    return x + y
+end)
+--! ok
+
+--8<-- methodcall-func-hint-not-func -- feature:no_implicit_func_sig
+local tab = {}
+
+--v function(self, a: string)
+function tab:p(a) end
+
+tab.p(tab, function(x) end)
+--@^ Error: The type for this argument in the anonymous function is missing but couldn't be inferred from the calls
+--@^^ Error: The type `function(<unknown type>, string) --> ()` cannot be called
+--@^^^ Cause: Second function argument `function(<error>) --> ()` is not a subtype of `string`
+
+tab:p(function(x) end)
+--@^ Error: The type for this argument in the anonymous function is missing but couldn't be inferred from the calls
+--@^^ Error: The type `function(<unknown type>, string) --> ()` cannot be called
+--@^^^ Cause: Second function argument `function(<error>) --> ()` is not a subtype of `string`
+--! error
+
+--8<-- methodcall-func-hint-less-arity -- feature:no_implicit_func_sig
+local tab = {}
+
+--v function(self, a: function(integer, integer) --> integer)
+function tab:p(a) end
+
+--@vv Error: The type `function(<unknown type>, function(integer, integer) --> integer) --> ()` cannot be called
+--@v-vvv Cause: Second function argument `function(integer) --> integer` is not a subtype of `function(integer, integer) --> integer`
+tab.p(tab, function(x)
+    return x * 2
+end)
+
+--@vv Error: The type `function(<unknown type>, function(integer, integer) --> integer) --> ()` cannot be called
+--@v-vvv Cause: Second function argument `function(integer) --> integer` is not a subtype of `function(integer, integer) --> integer`
+tab:p(function(x)
+    return x * 2
+end)
+--! error
+
+--8<-- methodcall-func-hint-more-arity -- feature:no_implicit_func_sig
+local tab = {}
+
+--v function(self, a: function(integer, integer) --> integer)
+function tab:p(a) end
+
+--@vv Error: The type `function(<unknown type>, function(integer, integer) --> integer) --> ()` cannot be called
+--@v-vvvvv Cause: Second function argument `function(integer, integer, nil) --> number` is not a subtype of `function(integer, integer) --> integer`
+tab.p(tab, function(x, y, z)
+    local xy = x + y
+    return xy + z --@< Error: Cannot apply + operator to `integer` and `nil`
+                  --@^ Cause: `nil` is not a subtype of `number`
+end)
+
+--@vv Error: The type `function(<unknown type>, function(integer, integer) --> integer) --> ()` cannot be called
+--@v-vvvvv Cause: Second function argument `function(integer, integer, nil) --> number` is not a subtype of `function(integer, integer) --> integer`
+tab:p(function(x, y, z)
+    local xy = x + y
+    return xy + z --@< Error: Cannot apply + operator to `integer` and `nil`
+                  --@^ Cause: `nil` is not a subtype of `number`
+end)
+--! error
+
+--8<-- methodcall-func-hint-varargs
+local tab = {}
+
+--v function(self, a: function(integer, integer, integer...) --> integer)
+function tab:p(a) end
+
+tab.p(tab, function(x, y, ...)
+    return x + y
+end)
+
+tab:p(function(x, y, ...)
+    return x + y
+end)
+--! ok
+
+--8<-- methodcall-func-hint-varargs-less-arity -- feature:no_implicit_func_sig
+local tab = {}
+
+--v function(self, a: function(integer, integer, integer...) --> integer)
+function tab:p(a) end
+
+--@v-vvv Error: The type for variadic arguments in the anonymous function is missing but couldn't be inferred from the calls
+tab.p(tab, function(x, ...)
+    return x * 2
+end)
+
+--@v-vvv Error: The type for variadic arguments in the anonymous function is missing but couldn't be inferred from the calls
+tab:p(function(x, ...)
+    return x * 2
+end)
+--! error
+
+--8<-- methodcall-func-hint-varargs-more-arity
+local tab = {}
+
+--v function(self, a: function(integer, integer, integer...) --> integer)
+function tab:p(a) end
+
+tab.p(tab, function(x, y, z, ...)
+    return x + y + z
+end)
+
+tab:p(function(x, y, z, ...)
     return x + y + z
 end)
 --! ok
