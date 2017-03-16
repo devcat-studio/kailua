@@ -377,10 +377,16 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             return Ok(TySeq::dummy());
         };
 
-        // check if func.args :> args
+        // check if generalize(func.args) :> args and gather generalize(func.returns)
         let mut returns = match *functy.get_functions().unwrap() {
             Functions::Simple(ref f) => {
-                let funcargs = f.args.clone().all_without_loc();
+                let generalize_tyseq = |seq: &TySeq, ctx: &mut TypeContext| {
+                    let head = seq.head.iter().map(|t| t.clone().generalize(ctx)).collect();
+                    let tail = seq.tail.as_ref().map(|t| t.clone().generalize(ctx));
+                    TySeq { head: head, tail: tail }
+                };
+
+                let funcargs = generalize_tyseq(&f.args, self.context()).all_without_loc();
                 if let Err(r) = args.assert_sub(&funcargs, self.context()) {
                     let hint = if methodcall {
                         TypeReportHint::MethodArgs
@@ -392,12 +398,13 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                             .done()?;
                     return Ok(TySeq::dummy());
                 }
-                f.returns.clone()
-            }
+                generalize_tyseq(&f.returns, self.context())
+            },
+
             Functions::All => {
                 self.env.error(func, m::CallToAnyFunc { func: self.display(func) }).done()?;
                 return Ok(TySeq::dummy());
-            }
+            },
         };
 
         // XXX hack to allow generics for some significant functions

@@ -962,6 +962,24 @@ impl<R: Report> TypeContext for Context<R> {
         self.next_tvar
     }
 
+    fn copy_tvar(&mut self, tvar: TVar) -> TVar {
+        if self.tvar_eq.get_bound(tvar).map_or(false, |b| b.bound.is_some()) {
+            // we have an equal bound, so tvar has no chance to be extended
+            trace!("copying {:?} is a no-op", tvar);
+            tvar
+        } else {
+            let tvar_ = self.gen_tvar();
+            trace!("copied {:?} to {:?}", tvar, tvar_);
+            if let Some(ub) = self.tvar_sub.get_bound(tvar).and_then(|b| b.bound.clone()) {
+                self.tvar_sub.add_bound(tvar_, &ub).expect("bounding fresh tvar should not fail");
+            }
+            if let Some(lb) = self.tvar_sup.get_bound(tvar).and_then(|b| b.bound.clone()) {
+                self.tvar_sup.add_bound(tvar_, &lb).expect("bounding fresh tvar should not fail");
+            }
+            tvar_
+        }
+    }
+
     fn assert_tvar_sub(&mut self, lhs: TVar, rhs0: &Ty) -> TypeResult<()> {
         let rhs = rhs0.clone().coerce();
         debug!("adding a constraint {:?} <: {:?} (coerced to {:?})", lhs, rhs0, rhs);
@@ -1061,6 +1079,51 @@ impl<R: Report> TypeContext for Context<R> {
     fn gen_rvar(&mut self) -> RVar {
         let rvar = self.next_rvar.clone();
         self.next_rvar = RVar::new(rvar.to_usize() + 1);
+        rvar
+    }
+
+    fn copy_rvar(&mut self, rvar0: RVar) -> RVar {
+        let mut fields = HashMap::new();
+        let mut rvar = rvar0.clone();
+
+        loop {
+            if rvar == RVar::empty() {
+                // the original rvar has no chance to be extended, so we can safely return that
+                return rvar0;
+            }
+
+            if let Some(info) = self.row_infos.get(&rvar.to_usize()) {
+                for (k, v) in info.fields.as_ref().unwrap().iter() {
+                    if let Some(ref v) = *v {
+                        // positive fields can overwrite negative fields
+                        let prev = fields.insert(k.clone(), Some(v.clone()));
+                        assert!(prev.map_or(true, |t| t.is_none()),
+                                "duplicate field {:?} in the chain {:?}..{:?}", k, rvar0, rvar);
+                    } else {
+                        // negative fields should not overwrite positive fields
+                        if let hash_map::Entry::Vacant(e) = fields.entry(k.clone()) {
+                            e.insert(None);
+                        }
+                    }
+                }
+                if let Some(ref next) = info.next {
+                    rvar = next.clone();
+                } else {
+                    break;
+                }
+            } else {
+                // next row variable has been instantiated but not set any fields, stop here
+                break;
+            }
+
+            // TODO is recursion detection required here?
+        }
+
+        // we know that rvar0 contains `fields` plus an unspecified non-empty row variable,
+        // which should be replaced with an (uninstantiated) fresh row variable.
+        let rvar = self.gen_rvar();
+        self.row_infos.insert(rvar.to_usize(),
+                              Box::new(RowInfo { fields: Some(fields), next: None }));
         rvar
     }
 

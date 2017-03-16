@@ -84,6 +84,10 @@ impl S {
         S { flex: flex, ty: self.ty.coerce() }
     }
 
+    pub fn generalize(self, ctx: &mut TypeContext) -> S {
+        S { flex: self.flex, ty: self.ty.generalize(ctx) }
+    }
+
     // self and other may be possibly different slots and being merged by union
     // mainly used by `and`/`or` operators and table lifting
     pub fn union(&mut self, other: &mut S, explicit: bool,
@@ -329,6 +333,11 @@ impl Slot {
     pub fn coerce(&self) -> Slot {
         let s = self.0.read();
         Slot::from(s.clone().coerce())
+    }
+
+    pub fn generalize(&self, ctx: &mut TypeContext) -> Slot {
+        let s = self.0.read();
+        Slot::from(s.clone().generalize(ctx))
     }
 }
 

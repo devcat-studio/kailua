@@ -86,6 +86,19 @@ pub enum Tables {
 }
 
 impl Tables {
+    pub fn generalize(self, ctx: &mut TypeContext) -> Tables {
+        match self {
+            Tables::Fields(r) => Tables::Fields(ctx.copy_rvar(r)),
+            Tables::Array(v) => Tables::Array(v.generalize(ctx)),
+            Tables::Map(k, v) => {
+                let k = k.generalize(ctx);
+                let v = v.generalize(ctx);
+                Tables::Map(k, v)
+            },
+            Tables::All => Tables::All,
+        }
+    }
+
     fn fmt_generic<WriteTy, WriteSlot>(&self, f: &mut fmt::Formatter,
                                        ctx: Option<&TypeContext>,
                                        mut write_ty: WriteTy,

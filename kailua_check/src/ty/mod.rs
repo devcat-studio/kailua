@@ -114,6 +114,7 @@ pub trait TypeContext {
     // type variable management
     fn last_tvar(&self) -> Option<TVar>;
     fn gen_tvar(&mut self) -> TVar;
+    fn copy_tvar(&mut self, tvar: TVar) -> TVar;
     fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &Ty) -> TypeResult<()>;
     fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &Ty) -> TypeResult<()>;
     fn assert_tvar_eq(&mut self, lhs: TVar, rhs: &Ty) -> TypeResult<()>;
@@ -124,6 +125,7 @@ pub trait TypeContext {
 
     // row variable management
     fn gen_rvar(&mut self) -> RVar;
+    fn copy_rvar(&mut self, rvar: RVar) -> RVar;
     fn assert_rvar_sub(&mut self, lhs: RVar, rhs: RVar) -> TypeResult<()>;
     fn assert_rvar_eq(&mut self, lhs: RVar, rhs: RVar) -> TypeResult<()>;
     fn assert_rvar_includes(&mut self, lhs: RVar, rhs: &[(Key, Slot)]) -> TypeResult<()>;
@@ -218,6 +220,9 @@ impl TypeContext for NoTypeContext {
     fn gen_tvar(&mut self) -> TVar {
         panic!("gen_tvar is not supposed to be called here");
     }
+    fn copy_tvar(&mut self, tvar: TVar) -> TVar {
+        panic!("copy_tvar({:?}) is not supposed to be called here", tvar);
+    }
     fn assert_tvar_sub(&mut self, lhs: TVar, rhs: &Ty) -> TypeResult<()> {
         panic!("assert_tvar_sub({:?}, {:?}) is not supposed to be called here", lhs, rhs);
     }
@@ -242,6 +247,9 @@ impl TypeContext for NoTypeContext {
 
     fn gen_rvar(&mut self) -> RVar {
         panic!("gen_rvar is not supposed to be called here");
+    }
+    fn copy_rvar(&mut self, rvar: RVar) -> RVar {
+        panic!("copy_rvar({:?}) is not supposed to be called here", rvar);
     }
     fn assert_rvar_sub(&mut self, lhs: RVar, rhs: RVar) -> TypeResult<()> {
         panic!("assert_rvar_sub({:?}, {:?}) is not supposed to be called here", lhs, rhs);

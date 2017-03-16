@@ -2912,3 +2912,32 @@ end
 local z --@< Warning: This code will never execute
 --! error
 
+--8<-- funccall-no-rvar-extension-args
+--v function(a: {x: string?, y: string?})
+function f(a) end
+
+-- these two calls do not interfere with each other!
+f({x = 'string', z = 'f'})
+f({x = 'string', z = 42})
+
+-- this is still an error
+f({x = 54, z = 42}) --@< Error: The type `function({x: string?, y: string?}) --> ()` cannot be called
+                    --@^ Cause: First function argument `{x: 54, z: 42}` is not a subtype of `{x: string?, y: string?}`
+--! error
+
+--8<-- funccall-no-rvar-extension-returns
+--v function() --> {x: string}
+function f() return {x = 'string'} end
+
+-- these two uses do not interfere with each other!
+local a = f()
+a.z = 'f'
+
+local b = f()
+b.z = 42
+
+-- this is still an error
+local c = f() --: {x: integer} --@< Error: Cannot assign `{x: string}` into `{x: integer}`
+                               --@^ Note: The other type originates here
+--! error
+

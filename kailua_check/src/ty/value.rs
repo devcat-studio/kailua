@@ -195,9 +195,6 @@ impl<'a> T<'a> {
     pub fn is_truthy(&self)   -> bool { self.flags().is_truthy() }
     pub fn is_falsy(&self)    -> bool { self.flags().is_falsy() }
 
-    // XXX for now
-    pub fn is_referential(&self) -> bool { self.flags().is_tabular() }
-
     pub fn get_dynamic(&self) -> Option<Dyn> {
         match *self {
             T::Dynamic(dyn) => Some(dyn),
@@ -306,6 +303,45 @@ impl<'a> T<'a> {
 
             // unions are also _not_ recursively altered as they are always explicit
             T::Union(u) => T::Union(Cow::Owned(u.into_owned())),
+        }
+    }
+
+    // replaces type and row variables present in given type to their fresh copies.
+    // primarily used for function calls where all tvars & rvars are made fresh per each call,
+    // so that prior calls cannot affect constraints to later calls.
+    pub fn generalize(self, ctx: &mut TypeContext) -> T<'static> {
+        match self {
+            T::Dynamic(dyn) => T::Dynamic(dyn),
+
+            T::All        => T::All,
+            T::None       => T::None,
+            T::Boolean    => T::Boolean,
+            T::True       => T::True,
+            T::False      => T::False,
+            T::Thread     => T::Thread,
+            T::UserData   => T::UserData,
+
+            T::Number     => T::Number,
+            T::Integer    => T::Integer,
+            T::Int(v)     => T::Int(v),
+            T::String     => T::String,
+            T::Str(s)     => T::Str(Cow::Owned(s.into_owned())),
+
+            // tables are recursively altered
+            T::Tables(tab) => T::Tables(Cow::Owned(tab.into_owned().generalize(ctx))),
+
+            // functions are _not_ recursively altered (will be generalized at call site)
+            T::Functions(func) => T::Functions(Cow::Owned(func.into_owned())),
+
+            T::Class(c) => T::Class(c),
+            T::TVar(tv) => T::TVar(ctx.copy_tvar(tv)),
+
+            // unions _are_ recursively altered
+            T::Union(u) => {
+                let mut u = u.into_owned();
+                u.tables = u.tables.take().map(|tab| tab.generalize(ctx));
+                T::Union(Cow::Owned(u))
+            },
         }
     }
 
@@ -1186,6 +1222,11 @@ impl Ty {
 
     pub fn coerce(mut self) -> Ty {
         self.inner.remap_ty(|t| t.coerce());
+        self
+    }
+
+    pub fn generalize(mut self, ctx: &mut TypeContext) -> Ty {
+        self.inner.remap_ty(|t| t.generalize(ctx));
         self
     }
 
