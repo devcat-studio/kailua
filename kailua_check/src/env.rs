@@ -656,6 +656,11 @@ impl<R: Report> Context<R> {
             }
         }
 
+        // to make tests reproducible :-)
+        matching.sort_by(|a, b| a.0.cmp(&b.0));
+        lmissing.sort_by(|a, b| a.0.cmp(&b.0));
+        rmissing.sort_by(|a, b| a.0.cmp(&b.0));
+
         // check for the matching fields
         if is_sub {
             for (_k, lv, rv) in matching {
