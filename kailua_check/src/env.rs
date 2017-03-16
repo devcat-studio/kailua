@@ -668,20 +668,11 @@ impl<R: Report> Context<R> {
         }
 
         // remaining fields should be in the relevant updatable row variable
-        // (also check for the empty rows if any; we cannot update them)
         if !lmissing.is_empty() {
-            if lnext == RVar::empty() {
-                return Err(self.gen_report().put(Origin::RVar,
-                                                 format!("lhs is no longer extensible")));
-            }
-            self.assert_rvar_includes_(lnext.clone(), &lmissing)?;
+            self.assert_rvar_includes_(lnext.clone(), &lmissing, false)?;
         }
         if !rmissing.is_empty() {
-            if rnext == RVar::empty() {
-                return Err(self.gen_report().put(Origin::RVar,
-                                                 format!("rhs is no longer extensible")));
-            }
-            self.assert_rvar_includes_(rnext.clone(), &rmissing)?;
+            self.assert_rvar_includes_(rnext.clone(), &rmissing, is_sub)?;
         }
 
         // finally two row variables should be linked by setting the common last row variable
@@ -703,12 +694,19 @@ impl<R: Report> Context<R> {
         Ok(())
     }
 
-    fn assert_rvar_includes_(&mut self, lhs: RVar, includes: &[(Key, Slot)]) -> TypeResult<()> {
-        trace!("{:?} should include {:?}", lhs, includes);
+    fn assert_rvar_includes_(&mut self, lhs: RVar, includes: &[(Key, Slot)],
+                             nilable: bool) -> TypeResult<()> {
+        trace!("{:?} should include {:?} ({} nil)",
+               lhs, includes, if nilable { "allows" } else { "disallows" });
 
         // optimize a no-op just in case
         if includes.is_empty() {
             return Ok(());
+        }
+
+        if lhs == RVar::empty() {
+            return Err(self.gen_report().put(Origin::RVar,
+                                             format!("the record is not extensible")));
         }
 
         let lhs_ = lhs.to_usize();
@@ -725,12 +723,12 @@ impl<R: Report> Context<R> {
         };
         trace!("{:?} already had {:?} and {:?}", lhs, fields, next);
 
-        let e = inner(self, lhs, includes, &mut fields, next);
+        let e = inner(self, lhs, includes, nilable, &mut fields, next);
         self.row_infos.get_mut(&lhs_).unwrap().fields = Some(fields);
         return e;
 
         fn inner<R: Report>(ctx: &mut Context<R>, lhs: RVar, includes: &[(Key, Slot)],
-                            fields: &mut HashMap<Key, Option<Slot>>,
+                            nilable: bool, fields: &mut HashMap<Key, Option<Slot>>,
                             next: Option<RVar>) -> TypeResult<()> {
             // collect missing fields, whether positive or negative, and
             // check if other matching fields are compatible
@@ -758,9 +756,19 @@ impl<R: Report> Context<R> {
             // we can avoid instantiation when it has not yet been instantiated though
             if let Some(next) = next {
                 // we need to put fields back, so this cannot be a tail recursion
-                ctx.assert_rvar_includes_(next, &missing)?;
+                ctx.assert_rvar_includes_(next, &missing, nilable)?;
             } else {
-                fields.extend(missing.into_iter().map(|(k, v)| (k, Some(v))));
+                for (k, v) in missing.into_iter() {
+                    // when the record is extended due to the (in)equality relation,
+                    // the type that is not explicitly nilable is disallowed
+                    if nilable || v.unlift().nil() == Nil::Noisy {
+                        fields.insert(k, Some(v));
+                    } else {
+                        return Err(ctx.gen_report().put(Origin::RVar,
+                                                        format!("record {:?} is being extended \
+                                                                 with non-nilable {:?}", lhs, v)));
+                    }
+                }
             }
 
             Ok(())
@@ -1142,7 +1150,7 @@ impl<R: Report> TypeContext for Context<R> {
     }
 
     fn assert_rvar_includes(&mut self, lhs: RVar, rhs: &[(Key, Slot)]) -> TypeResult<()> {
-        self.assert_rvar_includes_(lhs.clone(), rhs).map_err(|r| {
+        self.assert_rvar_includes_(lhs.clone(), rhs, true).map_err(|r| {
             r.put(Origin::RVar, format!("the record should include {:?} but didn't", rhs))
         })
     }

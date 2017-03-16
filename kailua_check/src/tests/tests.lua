@@ -444,15 +444,32 @@ local a = (x or 53) + 42
 local b = y or 53 --: integer | true
 --! ok
 
---8<-- disjunctive-type-erasure-rec
+--8<-- disjunctive-type-erasure-rec-1
 --# assume x: {a: string, b: integer}?
 --# assume y: {b: integer, c: boolean}
 local z = x or y --: {a: string, b: integer, c: boolean}
+--@^ Error: Cannot apply or operator to `{a: string, b: integer}?` and `{b: integer, c: boolean}`
+--@^^ Cause: Cannot create a union type of `{a: string, b: integer}` and `{b: integer, c: boolean}`
+--@^^^ Note: The other type originates here
+--! error
+
+--8<-- disjunctive-type-erasure-rec-2
+--# assume x: {a: string?, b: integer}?
+--# assume y: {b: integer, c: boolean?}
+local z = x or y --: {a: string?, b: integer, c: boolean?}
 --! ok
 
---8<-- disjunctive-type-erasure-rec-empty
+--8<-- disjunctive-type-erasure-rec-empty-1
 --# assume x: {a: string, b: integer}?
 local x = x or {} --: {a: string, b: integer}!
+--@^ Error: Cannot apply or operator to `{a: string, b: integer}?` and `{}`
+--@^^ Cause: Cannot create a union type of `{a: string, b: integer}` and `{}`
+--@^^^ Note: The other type originates here
+--! error
+
+--8<-- disjunctive-type-erasure-rec-empty-2
+--# assume x: {a: string?, b: integer?}?
+local x = x or {} --: {a: string?, b: integer?}!
 --! ok
 
 --8<-- disjunctive-type-erasure-map-1
@@ -1616,7 +1633,7 @@ local x = t.b --@< Error: Cannot index `{a: integer}` with `"b"`
 --! error
 
 --8<-- assign-record-2
-local t = {} --: {a: integer}
+local t = {a = nil} --: {a: integer}
 local x = t.a
 t.a = 42
 local x = t.a --: integer
@@ -1633,12 +1650,12 @@ local x = t.a + u.b --: integer
 --8<-- assign-record-row-variable
 local x = {a = 1, b = 'foo'}
 
-local y = x --: {a: integer, b: string, c: string}
+local y = x --: {a: integer, b: string, c: string?}
 y.c = 'foo'
 local c = x.c --: string
 
-local z = x --: {a: integer, b: string, c: integer}
---@^ Error: Cannot assign `{a: 1, b: "foo", c: string}` into `{a: integer, b: string, c: integer}`
+local z = x --: {a: integer, b: string, c: integer?}
+--@^ Error: Cannot assign `{a: 1, b: "foo", c: string?}` into `{a: integer, b: string, c: integer?}`
 --@^^ Note: The other type originates here
 --! error
 
@@ -2939,5 +2956,25 @@ b.z = 42
 -- this is still an error
 local c = f() --: {x: integer} --@< Error: Cannot assign `{x: string}` into `{x: integer}`
                                --@^ Note: The other type originates here
+--! error
+
+--8<-- funccall-table-args
+--v function(opts: {mandatory: string, optional: string?})
+function f(opts) end
+
+f{} --@< Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+    --@^ Cause: First function argument `{}` is not a subtype of `{mandatory: string, optional: string?}`
+f{mandatory = nil}
+f{mandatory = 42} --@< Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+                  --@^ Cause: First function argument `{mandatory: 42}` is not a subtype of `{mandatory: string, optional: string?}`
+f{mandatory = 'foo'}
+f{mandatory = 'foo', optional = nil}
+f{mandatory = 'foo', optional = 'bar'}
+f{mandatory = 'foo', optional = 54} --@< Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+                                    --@^ Cause: First function argument `{mandatory: "foo", optional: 54}` is not a subtype of `{mandatory: string, optional: string?}`
+f{mandatory = 'foo', additional = nil}
+f{mandatory = 'foo', additional = true}
+f{mandatory = 'foo', optional = 'bar', additional = true}
+
 --! error
 
