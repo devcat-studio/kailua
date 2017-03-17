@@ -1,3 +1,25 @@
+## 0.0.10
+
+* The record types in the function arguments and returns are no longer affected by later calls.
+
+* Non-existent fields no longer count as nil when records need to be equal to or a subtype of other records. In the other words, you *can* supply additional fields to a function accepting a known record type, but you cannot omit non-`T?` fields in them. This change in particular affects function calls, disjunctive implicit unions (`a or b`) and assignments.
+
+* `--# assume` has been (again) revised.
+
+    * `--# assume global x.y: T` is gone (again), and `--# assume x.y: T` will always alter `x` in place: the change is visible wherever `x` is visible.
+
+    * `--# assume C.x: T` when `C` is a class prototype is allowed. This actually sets a field to the class *instance* of `C`---that is, same to set `self.x` to given type in the constructor. One can use `--# assume static C.x: T` to set a field to the class *prototype*. For now, adding a method requires a verbosity like `--# assume static C.method: function(C, ...) -> ...`; this will be shortened in the future.
+
+    * `--# assume x.y: T` where `x` is an explicitly nilable type (like `{}?`) is now correctly disallowed.
+
+* Function calls can hint the return types of anonymous functions given as arguments. Previously this was only done with anonymous functions' arguments.
+
+* `[no_check]` is now checked after function type hinting, so it can be used to omit hintable function types.
+
+* Fields completion now correctly gives class and instance methods.
+
+* Three keywords `static`, `class` and `method` have been added to the Kailua-only meta block. You need to use backquotes (like `` `class` ``) to use them as normal names.
+
 ## 0.0.9
 
 * Method calls now correctly give hints to the arguments, so calls like `o:f(function(a, b, c) ... end)` will correctly infer the anonymous function type whenever possible.
