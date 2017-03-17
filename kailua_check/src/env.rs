@@ -16,7 +16,7 @@ use kailua_syntax::{Name, NameRef};
 use diag::{CheckResult, Origin, TypeReport, TypeResult, TypeReportHint, TypeReportMore};
 use diag::{Displayed, Display, unquotable_name};
 use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, RVar, Lattice, Union, Tag};
-use ty::{TypeContext, TypeResolver, ClassId, Class, Functions, Function, Key};
+use ty::{TypeContext, TypeResolver, ClassId, Class, Tables, Functions, Function, Key};
 use ty::flags::*;
 use defs::get_defs;
 use options::Options;
@@ -898,6 +898,73 @@ impl Output {
         }
     }
 
+    pub fn get_available_fields<'a>(&'a self, ty: &Ty) -> Option<HashMap<Key, Slot>> {
+        if let Some(mut ty) = self.resolve_exact_type(ty) {
+            // if the type includes an explicit nil no direct field access is safe
+            if ty.nil() == Nil::Noisy {
+                return None;
+            }
+
+            // nominal types
+            match *ty {
+                T::Class(Class::Prototype(cid)) => {
+                    let mut fields = HashMap::new();
+                    let mut cid = Some(cid);
+                    while let Some(def) = cid.and_then(|cid| self.get_class(cid)) {
+                        // do not update the existing (children's) fields
+                        for (k, v) in def.class_ty.iter() {
+                            fields.entry(k.clone()).or_insert(v.clone());
+                        }
+                        cid = def.parent;
+                    }
+                    return Some(fields);
+                }
+
+                T::Class(Class::Instance(cid)) => {
+                    // instance fields take preference over class fields, which get overwritten
+                    let mut instfields = HashMap::new();
+                    let mut fields = HashMap::new();
+                    let mut cid = Some(cid);
+                    while let Some(def) = cid.and_then(|cid| self.get_class(cid)) {
+                        // do not update the existing (children's) fields
+                        for (k, v) in def.instance_ty.iter() {
+                            instfields.entry(k.clone()).or_insert(v.clone());
+                        }
+                        for (k, v) in def.class_ty.iter() {
+                            fields.entry(k.clone()).or_insert(v.clone());
+                        }
+                        cid = def.parent;
+                    }
+                    fields.extend(instfields.into_iter());
+                    return Some(fields);
+                }
+
+                _ => {}
+            }
+
+            // string types (use the current metatable instead)
+            if ty.flags() == T_STRING {
+                if let Some(metaslot) = self.get_string_meta() {
+                    if let Some(metaty) = self.resolve_exact_type(&metaslot.unlift()) {
+                        ty = metaty;
+                    }
+                }
+            }
+
+            // otherwise it should be a record
+            if let Some(&Tables::Fields(ref rvar)) = ty.get_tables() {
+                let mut fields = HashMap::new();
+                self.list_rvar_fields(rvar.clone(), |k, v| -> Result<(), ()> {
+                    fields.insert(k.clone(), v.clone());
+                    Ok(())
+                }).expect("list_rvar_fields exited early while we haven't break");
+                return Some(fields);
+            }
+        }
+
+        None
+    }
+
     pub fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result {
         fn class_name(classes: &[ClassDef],
                       cid: ClassId) -> Option<(&Spanned<Name>, &'static str)> {
@@ -1114,9 +1181,7 @@ impl<R: Report> TypeContext for Context<R> {
                                 "duplicate field {:?} in the chain {:?}..{:?}", k, rvar0, rvar);
                     } else {
                         // negative fields should not overwrite positive fields
-                        if let hash_map::Entry::Vacant(e) = fields.entry(k.clone()) {
-                            e.insert(None);
-                        }
+                        fields.entry(k.clone()).or_insert(None);
                     }
                 }
                 if let Some(ref next) = info.next {

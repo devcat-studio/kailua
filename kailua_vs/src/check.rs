@@ -12,8 +12,7 @@ use widestring::{WideStr, WideString};
 use kailua_env::{Pos, Span, Spanned};
 use kailua_diag::{Report, Stop};
 use kailua_syntax::Chunk;
-use kailua_check::{self, FsSource, FsOptions, Id, Context, Slot, Tables, Key};
-use kailua_check::flags::T_STRING;
+use kailua_check::{self, FsSource, FsOptions, Id, Context, Slot, Key};
 
 pub type VSFsSourceCallback =
     extern "system" fn(*const u16, i32, usize, *mut *const VSParseTree) -> i32;
@@ -115,27 +114,14 @@ impl VSCheckerOutput {
     // XXX required to be mutable because it can generate a union currently
     pub fn fields_after_pos(&mut self, pos: Pos) -> Option<VSNameEntries> {
         if let Some(slot) = self.slot_before_pos(pos).map(|s| s.map(|s| s.clone())) {
-            if let Some(mut ty) = self.context.resolve_exact_type(&slot.unlift()) {
-                if ty.flags() == T_STRING {
-                    if let Some(metaslot) = self.context.get_string_meta() {
-                        // use the string meta table for strings
-                        if let Some(metaty) = self.context.resolve_exact_type(&metaslot.unlift()) {
-                            ty = metaty;
-                        }
+            if let Some(fields) = self.context.get_available_fields(&slot.unlift()) {
+                let mut newfields = Vec::new();
+                for (k, _v) in fields {
+                    if let Key::Str(ref s) = k {
+                        newfields.push(VSNameEntry::new(s[..].to_owned(), -1));
                     }
                 }
-
-                if let Some(&Tables::Fields(ref rvar)) = ty.get_tables() {
-                    let mut fields = Vec::new();
-                    let _ = self.context.list_rvar_fields(rvar.clone(), &mut |k: &Key, _v: &Slot| {
-                        match *k {
-                            Key::Str(ref s) => fields.push(VSNameEntry::new(s[..].to_owned(), -1)),
-                            Key::Int(_) => {}
-                        }
-                        Ok::<_, ()>(())
-                    });
-                    return Some(VSNameEntries::from(fields));
-                }
+                return Some(VSNameEntries::from(newfields));
             }
         }
 

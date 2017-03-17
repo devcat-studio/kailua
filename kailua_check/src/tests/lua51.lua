@@ -309,6 +309,21 @@ local x = ('notice'):sub(1, 3) --: string
 local x = ('notice'):sub(10, 10) --: string
 --! ok
 
+--8<-- lua51-string-meta-extension
+--# open lua51
+
+function string.hello() --> string
+    return 'hello'
+end
+
+--v function(self: string, n: integer) --> string
+function string:suffix(n)
+    return self:sub(-n)
+end
+
+print(string.hello() .. ('string'):suffix(3))
+--! ok
+
 -->8-- lua51-assert-string-type-and-meta
 --# open lua51
 local function f(s)

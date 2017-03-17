@@ -4,8 +4,7 @@ use std::sync::Arc;
 
 use kailua_env::{Pos, Span, Source};
 use kailua_syntax::{Tok, Punct, Keyword, NestedToken, NestingCategory, Chunk};
-use kailua_check::{Output, Key, Tables};
-use kailua_check::flags::T_STRING;
+use kailua_check::{Output, Key};
 
 use protocol::*;
 
@@ -325,24 +324,12 @@ pub fn complete_field(tokens: &[NestedToken], sep_idx: usize,
 
     // now we've got the closest slot for given position; check if it's actually a table or similar
     if let Some(slot) = closest_slot.map(|s| s.map(|s| s.clone())) {
-        if let Some(mut ty) = last_output.resolve_exact_type(&slot.unlift()) {
-            if ty.flags() == T_STRING {
-                if let Some(metaslot) = last_output.get_string_meta() {
-                    // use the string meta table for strings
-                    if let Some(metaty) = last_output.resolve_exact_type(&metaslot.unlift()) {
-                        ty = metaty;
-                    }
+        if let Some(fields) = last_output.get_available_fields(&slot.unlift()) {
+            for (k, _v) in fields {
+                if let Key::Str(ref s) = k {
+                    let name = String::from_utf8_lossy(&s).into_owned();
+                    items.push(make_item(name, CompletionItemKind::Field, None));
                 }
-            }
-
-            if let Some(&Tables::Fields(ref rvar)) = ty.get_tables() {
-                let _ = last_output.list_rvar_fields(rvar.clone(), |k: &Key, _v| {
-                    if let Key::Str(ref s) = *k {
-                        let name = String::from_utf8_lossy(&s).into_owned();
-                        items.push(make_item(name, CompletionItemKind::Field, None));
-                    }
-                    Ok::<_, ()>(())
-                });
             }
         }
     }
