@@ -1614,13 +1614,14 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         // if the hint exists and is a function,
         // collect first `sig.args.head.len()` types for missing argument types,
         // and a repeating part of remaining type sequence for a missing variadic argument type.
+        // also collect the return type(s) which can be used as is.
         //
         // one edge case: if the signature has `n` arguments plus a variadic argument,
         // and the hint has `m` arguments plus a variadic argument,
         // then when `n < m` the variadic argument would get `n - m` non-repeating types!
         // since this is forbidden from the signature we treat this as an error case
         // and drop the type hint for the variadic argument altogether.
-        let hint: Option<(Vec<Ty>, Option<Ty>)> = hint.and_then(|hint| {
+        let hint: Option<(Vec<Ty>, Option<Ty>, TySeq)> = hint.and_then(|hint| {
             self.env.resolve_exact_type(&hint.unlift()).and_then(|ty| {
                 if let Some(&Functions::Simple(ref f)) = ty.get_functions() {
                     let mut args = f.args.clone();
@@ -1629,15 +1630,15 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     }
                     let hinthead = args.head.drain(..sig.args.head.len()).collect();
                     let hinttail = if args.head.is_empty() { args.tail } else { None };
-                    Some((hinthead, hinttail))
+                    Some((hinthead, hinttail, f.returns.clone()))
                 } else {
                     None
                 }
             })
         });
-        let (hinthead, hinttail) = match hint {
-            Some((h, t)) => (Some(h), t),
-            None => (None, None),
+        let (hinthead, hinttail, hintreturns) = match hint {
+            Some((h, t, ret)) => (Some(h), t, Some(ret)),
+            None => (None, None, None),
         };
 
         let vatype = match sig.args.tail {
@@ -1645,13 +1646,13 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
             Some(None) => {
                 // varargs present but types are unspecified
-                if no_check {
+                if let Some(hint) = hinttail {
+                    // use a hint instead ([no_check] can rely on this hint as well)
+                    Some(hint)
+                } else if no_check {
                     // [no_check] always requires a type
                     self.env.error(declspan, m::NoCheckRequiresTypedVarargs {}).done()?;
                     return Ok(Slot::dummy());
-                } else if let Some(hint) = hinttail {
-                    // use a hint instead
-                    Some(hint)
                 } else {
                     #[cfg(feature = "no_implicit_func_sig")] {
                         // implicit signature disabled, raise an error and continue
@@ -1678,6 +1679,9 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         let frame = if let Some(ref returns) = sig.returns {
             let returns = TySeq::from_kind_seq(returns, &mut self.env)?;
             Frame { vararg: vainfo, returns: Returns::Explicit(returns) }
+        } else if let Some(hint) = hintreturns {
+            // use a hint if possible ([no_check] can rely on this hint as well)
+            Frame { vararg: vainfo, returns: Returns::Explicit(hint) }
         } else if no_check {
             self.env.error(declspan, m::NoCheckRequiresTypedReturns {}).done()?;
             return Ok(Slot::dummy());
@@ -1707,14 +1711,14 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 ty = Ty::from_kind(kind, &mut scope.env)?;
                 let flex = F::from(param.modf);
                 sty = Slot::new(flex, ty.clone());
+            } else if let Some(hint) = hint {
+                // use a hint instead ([no_check] can rely on this hint as well)
+                ty = hint;
+                sty = Slot::new(F::Var, ty.clone());
             } else if no_check {
                 // [no_check] always requires a type
                 scope.env.error(&param.base, m::NoCheckRequiresTypedArgs {}).done()?;
                 return Ok(Slot::dummy());
-            } else if let Some(hint) = hint {
-                // use a hint instead
-                ty = hint;
-                sty = Slot::new(F::Var, ty.clone());
             } else {
                 #[cfg(feature = "no_implicit_func_sig")] {
                     // implicit signature disabled, raise an error and continue

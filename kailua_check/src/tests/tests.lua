@@ -377,10 +377,17 @@ local f = x --: string
 f = nil
 --! ok
 
---8<-- reinit-func-func
+--8<-- reinit-func-func-1
 local f = function() end
-f = function() return 54 end --@< Error: Cannot assign `function() --> 54` into `function() --> ()`
-                             --@^ Note: The other type originates here
+f = function() return 54 end --@< Error: Attempted to return a type `(54)` which is incompatible to given return type `()`
+                             --@^ Cause: First return type `54` is not a subtype of `nil`
+--! error
+
+--8<-- reinit-func-func-2
+local f = function() end
+f = function() --> integer --@< Error: Cannot assign `function() --> integer` into `function() --> ()`
+    return 54
+end                        --@^^-< Note: The other type originates here
 --! error
 
 --8<-- reinit-func-table
@@ -781,6 +788,16 @@ p(function(x, y)
 end)
 --! ok
 
+--8<-- funccall-func-hint-returns
+--v function(a: function(integer, integer) --> integer)
+function p(a) end
+
+p(function(x, y)
+    return x .. y --@< Error: Attempted to return a type `(string)` which is incompatible to given return type `(integer)`
+                  --@^ Cause: First return type `string` is not a subtype of `integer`
+end)
+--! error
+
 --8<-- funccall-func-hint-not-func -- feature:no_implicit_func_sig
 --v function(a: string)
 function p(a) end
@@ -807,12 +824,12 @@ end)
 --v function(a: function(integer, integer) --> integer)
 function p(a) end
 
---@vv Error: The type `function(function(integer, integer) --> integer) --> ()` cannot be called
---@v-vvvvv Cause: First function argument `function(integer, integer, nil) --> number` is not a subtype of `function(integer, integer) --> integer`
 p(function(x, y, z)
     local xy = x + y
     return xy + z --@< Error: Cannot apply + operator to `integer` and `nil`
                   --@^ Cause: `nil` is not a subtype of `number`
+                  --@^^ Error: Attempted to return a type `(number)` which is incompatible to given return type `(integer)`
+                  --@^^^ Cause: First return type `number` is not a subtype of `integer`
 end)
 --! error
 
@@ -901,20 +918,20 @@ local tab = {}
 --v function(self, a: function(integer, integer) --> integer)
 function tab:p(a) end
 
---@vv Error: The type `function(<unknown type>, function(integer, integer) --> integer) --> ()` cannot be called
---@v-vvvvv Cause: Second function argument `function(integer, integer, nil) --> number` is not a subtype of `function(integer, integer) --> integer`
 tab.p(tab, function(x, y, z)
     local xy = x + y
     return xy + z --@< Error: Cannot apply + operator to `integer` and `nil`
                   --@^ Cause: `nil` is not a subtype of `number`
+                  --@^^ Error: Attempted to return a type `(number)` which is incompatible to given return type `(integer)`
+                  --@^^^ Cause: First return type `number` is not a subtype of `integer`
 end)
 
---@vv Error: The type `function(<unknown type>, function(integer, integer) --> integer) --> ()` cannot be called
---@v-vvvvv Cause: First method argument `function(integer, integer, nil) --> number` is not a subtype of `function(integer, integer) --> integer`
 tab:p(function(x, y, z)
     local xy = x + y
     return xy + z --@< Error: Cannot apply + operator to `integer` and `nil`
                   --@^ Cause: `nil` is not a subtype of `number`
+                  --@^^ Error: Attempted to return a type `(number)` which is incompatible to given return type `(integer)`
+                  --@^^^ Cause: First return type `number` is not a subtype of `integer`
 end)
 --! error
 
@@ -2430,6 +2447,42 @@ foo = {}
 function foo:bar(x)
     return x + "string"
 end
+--! error
+
+--8<-- no-check-func-hint
+--v function(f: function(integer) --> boolean)
+function foo(f) end
+
+foo(--v [no_check]
+    function(x) return x + "string" end)
+--! ok
+
+--8<-- no-check-func-hint-ignored
+--v function(f: function(integer) --> boolean)
+function foo(f) end
+
+foo(--v [no_check]
+    --v function(x: integer) --> boolean
+    function(x) return x + "string" end)
+--! ok
+
+--8<-- no-check-func-hint-partial
+--v function(f: function(integer) --> boolean)
+function foo(f) end
+
+--@vv Error: The type `function(function(integer) --> boolean) --> ()` cannot be called
+--@v-vvvv Cause: First function argument `function(integer) --> string` is not a subtype of `function(integer) --> boolean`
+foo(--v [no_check]
+    function(x) --> string
+        return x + "string"
+    end)
+
+--@vv Error: The type `function(function(integer) --> boolean) --> ()` cannot be called
+--@v-vvvv Cause: First function argument `function(string) --> boolean` is not a subtype of `function(integer) --> boolean`
+foo(--v [no_check]
+    function(x) --: string
+        return x + "string"
+    end)
 --! error
 
 --8<-- local-func-without-sibling-scope-1
