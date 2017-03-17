@@ -2,6 +2,7 @@ use diag::{Ordinal, Displayed};
 use ty::{self, Key};
 use kailua_syntax::Name;
 
+pub type T<'a> = Displayed<'a, 'a, ty::T<'a>>;
 pub type Ty<'a> = Displayed<'a, 'a, ty::Ty>;
 pub type SpannedTySeq<'a> = Displayed<'a, 'a, ty::SpannedTySeq>;
 pub type Slot<'a> = Displayed<'a, 'a, ty::Slot>;
@@ -557,9 +558,33 @@ define_msg! { pub AssumeFieldToUnknownType:
     _    => "`--# assume` directive tried to access a field from a type not yet known enough",
 }
 
-define_msg! { pub AssumeFieldToNonTable<'a> { slot: Slot<'a> }:
-    "ko" => "`--# assume` 명령이 테이블이 아닌 `{slot}` 타입에서 필드를 접근하려 했습니다",
-    _    => "`--# assume` directive tried to access a field from a non-table type `{slot}`",
+define_msg! { pub AssumeFieldToInstance<'a> { slot: Slot<'a> }:
+    "ko" => "`--# assume` 명령을 클래스 프로토타입이 아닌 인스턴스 `{slot}`에 적용할 수 없습니다",
+    _    => "`--# assume` directive cannot be applied to a class instance `{slot}` \
+             instead of its prototype",
+}
+
+define_msg! { pub AssumeFieldToUnknownClass<'a> { cls: Slot<'a> }:
+    "ko" => "`{cls}` 타입이 정확히 하나의 클래스로 추론되지 않아 \
+             `--# assume` 명령을 적용할 수 없습니다",
+    _    => "Cannot apply `--# assume` directive to `{cls}` \
+             that cannot be inferred to a single class",
+}
+
+define_msg! { pub AssumeFieldNestedToClass<'a> { cls: T<'a> }:
+    "ko" => "`{cls}` 클래스 프로토타입의 필드 내부에 `--# assume` 명령을 적용할 수 없습니다",
+    _    => "Cannot apply `--# assume` directive to the inside of fields \
+             in the class prototype of `{cls}`",
+}
+
+define_msg! { pub AssumeFieldStaticToNonClass<'a> { slot: Slot<'a> }:
+    "ko" => "`--# assume static`은 클래스가 아닌 `{slot}` 타입에 쓸 수 없습니다",
+    _    => "`--# assume static` cannot be used for a non-class type `{slot}`",
+}
+
+define_msg! { pub AssumeFieldToNonRecord<'a> { slot: Slot<'a> }:
+    "ko" => "`--# assume` 명령이 레코드가 아닌 `{slot}` 타입에서 필드를 접근하려 했습니다",
+    _    => "`--# assume` directive tried to access a field from a non-record type `{slot}`",
 }
 
 define_msg! { pub AssumeFieldToMissing:

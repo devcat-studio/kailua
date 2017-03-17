@@ -463,8 +463,10 @@ pub enum St {
     KailuaOpen(Spanned<Name>),
     KailuaType(TypeScope, Spanned<Name>, Spanned<Kind>),
     KailuaAssume(NameRef, // a final name reference to be created
-                 Spanned<(Spanned<NameRef>, Vec<Spanned<Name>>)>, // name(s) being updated
+                 Spanned<NameRef>, // a name being updated
                  M, Spanned<Kind>, Option<Scope>),
+    KailuaAssumeField(bool /*static*/, Spanned<(Spanned<NameRef>, Vec<Spanned<Name>>)>,
+                      M, Spanned<Kind>),
 }
 
 impl fmt::Debug for St {
@@ -511,12 +513,15 @@ impl fmt::Debug for St {
             St::KailuaOpen(ref lib) => write!(f, "KailuaOpen({:?})", lib),
             St::KailuaType(scope, ref t, ref k) =>
                 write!(f, "KailuaType({:?}, {:?}, {:?})", scope, t, k),
-            St::KailuaAssume(ref i_, Spanned { base: (ref i, ref ii), span }, m, ref k, is) => {
-                write!(f, "KailuaAssume({:?}, ({:?}", i_, i)?;
-                for i in ii { write!(f, ".{:?}", i)?; }
-                write!(f, "){:?}, {:?}, {:?})", span, m, k)?;
+            St::KailuaAssume(ref i_, ref i, m, ref k, is) => {
+                write!(f, "KailuaAssume({:?}, {:?}, {:?}, {:?})", i_, i, m, k)?;
                 if let Some(is) = is { write!(f, "{:?}", is)?; }
                 Ok(())
+            },
+            St::KailuaAssumeField(static_, Spanned { base: (ref i, ref ii), span }, m, ref k) => {
+                write!(f, "KailuaAssumeField({}, ({:?}", static_, i)?;
+                for i in ii { write!(f, ".{:?}", i)?; }
+                write!(f, "){:?}, {:?}, {:?})", span, m, k)
             },
         }
     }

@@ -85,6 +85,9 @@
         Type = 0x9d,
         Var = 0x9e,
         Vector = 0x9f,
+        Class = 0xa0,
+        Method = 0xa1,
+        Static = 0xa2,
     }
 
     namespace Extensions

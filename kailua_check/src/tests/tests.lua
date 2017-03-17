@@ -280,6 +280,11 @@ local p = ({['not ice'] = 4})[x]
 local p = ({['not ice'] = 4})[x] --@< Error: Cannot index `{`not ice`: 4}` with `"ice"`
 --! error
 
+--8<-- index-rec-or-nil
+local x = {a = 42} --: {a: integer}?
+local p = x.a --@< Error: Tried to index a non-table type `{a: integer}?`
+--! error
+
 --8<-- methodcall-empty
 local p = ({}):hello() --@< Error: Cannot index `{}` with `"hello"`
 --! error
@@ -2840,8 +2845,8 @@ do
     --# assume x.y: integer
     x.y = 42
 end
-local y = x.y + 42 --@< Error: Cannot index `{}` with `"y"`
---! error
+local y = x.y + 42
+--! ok
 
 --8<-- assume-field-overwrite
 local x = {y = 'string'}
@@ -2869,22 +2874,22 @@ local q = x.y.z + 3 --: integer
 --8<-- assume-field-whatever
 --# assume x: WHATEVER
 --# assume x.y: integer -- unlike most cases, WHATEVER is an error here
---@^ Error: `--# assume` directive tried to access a field from a non-table type `WHATEVER`
+--@^ Error: `--# assume` directive tried to access a field from a non-record type `WHATEVER`
 local z = x.y + 42 --: integer
 --! error
 
 --8<-- assume-field-missing-1
 local x = 54
 --# assume x.y: integer
---@^ Error: `--# assume` directive tried to access a field from a non-table type `integer`
-local z = x.y + 42 --: integer
+--@^ Error: `--# assume` directive tried to access a field from a non-record type `integer`
+local z = x.y + 42 --: integer --@< Error: Tried to index a non-table type `integer`
 --! error
 
 --8<-- assume-field-missing-2
 local x = {}
 --# assume x.y.z: integer
 --@^ Error: `--# assume` directive tried to access a missing field
-local z = x.y.z + 42 --: integer
+local z = x.y.z + 42 --: integer --@< Error: Cannot index `{}` with `"y"`
 --! error
 
 --8<-- assume-field-unknown
@@ -2893,7 +2898,19 @@ local x = kailua_test.gen_tvar()
 
 --# assume x.y.z: integer
 --@^ Error: `--# assume` directive tried to access a field from a type not yet known enough
-local z = x.y.z + 42 --: integer
+local z = x.y.z + 42 --: integer --@< Error: The type `<unknown type>` is tabular but not known enough to index
+--! error
+
+--8<-- assume-field-table-or-nil
+local x = {} --: {}?
+--# assume x.y: integer --@< Error: `--# assume` directive tried to access a field from a non-record type `{}?`
+local z = x.y + 42 --: integer --@< Error: Tried to index a non-table type `{}?`
+--! error
+
+--8<-- assume-field-static
+local x = {}
+--# assume static x.y: integer --@< Error: `--# assume static` cannot be used for a non-class type `{}`
+local z = x.y + 42 --: integer
 --! error
 
 --8<-- dead-code -- feature:warn_on_dead_code

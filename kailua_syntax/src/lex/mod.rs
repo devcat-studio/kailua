@@ -160,12 +160,15 @@ define_keywords! { Keyword:
 
     meta_only { // Kailua extensions
         Assume      b"assume",
+        Class       b"class",
         Const       b"const",
         Global      b"global",
         Map         b"map",
+        Method      b"method",
         Module      b"module",
         Once        b"once",
         Open        b"open",
+        Static      b"static",
         Type        b"type",
         Var         b"var",
         Vector      b"vector",

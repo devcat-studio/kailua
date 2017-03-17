@@ -12,7 +12,7 @@ use kailua_syntax::{SelfParam, TypeScope, Args, St, Stmt, Block, K};
 use diag::{CheckResult, TypeReport, TypeReportHint, TypeReportMore, Displayed, Display};
 use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, TypeContext};
 use ty::{Key, Tables, Function, Functions};
-use ty::{F, Slot, SlotSeq, SpannedSlotSeq, Tag, Class};
+use ty::{F, Slot, SlotSeq, SpannedSlotSeq, Tag, Class, ClassId};
 use ty::flags::*;
 use env::{Env, Returns, Frame, Scope, Context};
 use message as m;
@@ -814,75 +814,152 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         Ok(())
     }
 
-    fn assume_field_slot(&mut self, rootname: &Spanned<NameRef>, names: &[Spanned<Name>],
-                         _namespan: Span, slot: Slot) -> CheckResult<Slot> {
+    fn assume_field_slot(&mut self, static_: bool, rootname: &Spanned<NameRef>,
+                         names: &[Spanned<Name>], namespan: Span, slot: Slot) -> CheckResult<Slot> {
         assert!(!names.is_empty());
 
         // if we are updating a table, we need to sever any row variable connections
         // between the new table and the old table (otherwise we may be silently
         // updating a row variable).
 
-        // extracts a table from given slot and returns the flexibility,
-        // nilability (both for reconstruction), all fields except `next_key` and
-        // the slot for `next_key` if any.
-        let extract_table = |prev: &Slot, next_key: &Name, span: Span, env: &mut Env<R>| {
-            if let Some(ty) = env.resolve_exact_type(&prev.unlift()) {
-                if let Some(&Tables::Fields(ref rvar)) = ty.get_tables() {
-                    let mut fields = env.context().get_rvar_fields(rvar.clone());
-                    let pos = fields.iter().position(|&(ref k, _)| {
-                        match *k {
-                            Key::Str(ref k) => **k == **next_key,
-                            Key::Int(_) => false,
-                        }
-                    });
-                    let popped = pos.map(|i| fields.remove(i).1);
-                    Ok(Some((prev.flex(), ty.nil(), fields, popped)))
-                } else {
-                    env.error(span, m::AssumeFieldToNonTable { slot: env.display(prev) }).done()?;
-                    Ok(None)
-                }
+        #[derive(Clone, Debug)]
+        enum TableExtract {
+            // a record with flexibility & nilability (both for reconstruction),
+            // all fields except `next_key` and the slot for `next_key` if any
+            Rec(F, Nil, Vec<(Key, Slot)>, Option<Slot>),
+
+            // a class prototype, only possible at the rootname
+            Proto(ClassId),
+        }
+
+        let extract_table = |prev: &Slot, next_key: &Name, span: Span, env: &mut Env<R>,
+                             allow_prototype: bool| {
+            let ty = if let Some(ty) = env.resolve_exact_type(&prev.unlift()) {
+                ty
             } else {
                 env.error(span, m::AssumeFieldToUnknownType {}).done()?;
+                return Ok(None);
+            };
+
+            if allow_prototype {
+                match *ty {
+                    T::Class(Class::Prototype(cid)) => {
+                        return Ok(Some(TableExtract::Proto(cid)));
+                    }
+
+                    T::Class(Class::Instance(_)) => {
+                        env.error(span, m::AssumeFieldToInstance { slot: env.display(prev) })
+                           .done()?;
+                        return Ok(None);
+                    }
+
+                    T::Union(ref u) if !u.classes.is_empty() => {
+                        // the union is assumed to be simplified, so even if `u.classes` has
+                        // one type it is mixed with other types so it cannot be indexed.
+                        env.error(span, m::AssumeFieldToUnknownClass { cls: env.display(prev) })
+                           .done()?;
+                        return Ok(None);
+                    }
+
+                    _ => {}
+                }
+            }
+
+            if !ty.is_tabular() {
+                env.error(span, m::AssumeFieldToNonRecord { slot: env.display(prev) }).done()?;
+                return Ok(None);
+            }
+
+            if let Some(&Tables::Fields(ref rvar)) = ty.get_tables() {
+                if static_ {
+                    env.error(span, m::AssumeFieldStaticToNonClass { slot: env.display(prev) })
+                       .done()?;
+                    // behave as if there were no `static`
+                }
+
+                let mut fields = env.context().get_rvar_fields(rvar.clone());
+                let pos = fields.iter().position(|&(ref k, _)| {
+                    match *k {
+                        Key::Str(ref k) => **k == **next_key,
+                        Key::Int(_) => false,
+                    }
+                });
+                let popped = pos.map(|i| fields.remove(i).1);
+                Ok(Some(TableExtract::Rec(prev.flex(), ty.nil(), fields, popped)))
+            } else {
+                env.error(span, m::AssumeFieldToNonRecord { slot: env.display(prev) }).done()?;
                 Ok(None)
             }
         };
 
         // resolve rootname
-        let mut table = if self.env.get_var(rootname).is_some() {
+        // (we are keeping root to return it on an error---the new scoped id should retain that)
+        let root = if self.env.get_var(rootname).is_some() {
             self.env.ensure_var(rootname)?
         } else {
             self.env.error(rootname, m::NoVar { name: self.env.get_name(rootname) }).done()?;
             return Ok(Slot::dummy());
         };
 
-        // extract the prior table and continue to index fields except for the last one
+        let mut table;
         let mut span = rootname.span; // `a`, `a.b`, `a.b.c`, ...
         let mut tables = Vec::new();
-        for name in &names[..names.len()-1] {
-            span |= name.span;
-            if let Some((flex, nil, fields, next)) = extract_table(&table, name, span, self.env)? {
-                tables.push((flex, nil, fields));
-                if let Some(next) = next {
-                    table = next;
-                } else {
-                    self.env.error(span, m::AssumeFieldToMissing {}).done()?;
-                    return Ok(Slot::dummy());
+
+        // handle the first table, which can be a class prototype
+        let firstname = names.first().unwrap();
+        span |= firstname.span;
+        match extract_table(&root, firstname, span, self.env, true)? {
+            Some(TableExtract::Proto(cid)) => {
+                // this has to be a last field!
+                if names.len() > 1 {
+                    let cls = T::Class(Class::Instance(cid));
+                    self.env.error(namespan,
+                                   m::AssumeFieldNestedToClass { cls: self.display(&cls) })
+                            .done()?;
+                    return Ok(root);
                 }
-            } else { // the error occurred and already reported
-                return Ok(Slot::dummy());
+
+                let mut def = self.context().get_class_mut(cid).expect("invalid ClassId");
+                let firstname = Key::Str(firstname.base.clone().into());
+                if static_ {
+                    def.class_ty.insert(firstname, slot);
+                } else {
+                    def.instance_ty.insert(firstname, slot);
+                }
+
+                return Ok(root);
+            }
+            Some(TableExtract::Rec(flex, nil, fields, next)) => {
+                tables.push((flex, nil, fields));
+                table = next;
+            }
+            None => { // the error occurred and already reported
+                return Ok(root);
             }
         }
 
-        // index the last table and put the new slot to it
-        let lastname = names.last().unwrap();
-        span |= lastname.span;
-        if let Some((flex, nil, fields, _)) = extract_table(&table, lastname, span, self.env)? {
-            tables.push((flex, nil, fields));
-            // drop the last item popped, we will replace it with our own
-        } else { // the error occurred and already reported
-            return Ok(Slot::dummy());
+        // extract the prior table and continue to index fields
+        for name in &names[1..] {
+            if let Some(prevtable) = table {
+                span |= name.span;
+                match extract_table(&prevtable, name, span, self.env, false)? {
+                    Some(TableExtract::Proto(_)) => unreachable!(),
+                    Some(TableExtract::Rec(flex, nil, fields, next)) => {
+                        tables.push((flex, nil, fields));
+                        table = next;
+                    }
+                    None => { // the error occurred and already reported
+                        return Ok(root);
+                    }
+                }
+            } else {
+                self.env.error(span, m::AssumeFieldToMissing {}).done()?;
+                return Ok(root);
+            }
         }
 
+        // the last `table` extracted is a field being replaced, so should be ignored
+        drop(table);
         assert_eq!(names.len(), tables.len());
 
         // put the last table to the second-to-last table and so on
@@ -1512,15 +1589,17 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 Ok(Exit::None)
             }
 
-            St::KailuaAssume(ref newname, Spanned { base: (ref rootname, ref names), span },
-                             kindm, ref kind, _nextscope) => {
-                let mut slot = self.visit_kind(F::from(kindm), kind)?;
-                let newname = newname.clone().with_loc(rootname);
-                if !names.is_empty() {
-                    let newslot = self.assume_field_slot(rootname, names, span, slot.base)?;
-                    slot = newslot.with_loc(rootname);
-                }
-                self.env.assume_var(&newname, slot)?;
+            St::KailuaAssume(ref newname, ref name, kindm, ref kind, _nextscope) => {
+                let slot = self.visit_kind(F::from(kindm), kind)?;
+                self.env.assume_var(&newname.clone().with_loc(name), slot)?;
+                Ok(Exit::None)
+            }
+
+            St::KailuaAssumeField(static_, Spanned { base: (ref rootname, ref names), span },
+                                  kindm, ref kind) => {
+                let slot = self.visit_kind(F::from(kindm), kind)?;
+                let newslot = self.assume_field_slot(static_, rootname, names, span, slot.base)?;
+                self.env.assume_var(rootname, newslot.with_loc(rootname))?;
                 Ok(Exit::None)
             }
         }

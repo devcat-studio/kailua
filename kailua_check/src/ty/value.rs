@@ -1212,12 +1212,29 @@ impl Ty {
         self
     }
 
+    pub fn is_dynamic(&self)  -> bool { self.flags().is_dynamic() }
+    pub fn is_integral(&self) -> bool { self.flags().is_integral() }
+    pub fn is_numeric(&self)  -> bool { self.flags().is_numeric() }
+    pub fn is_stringy(&self)  -> bool { self.flags().is_stringy() }
+    pub fn is_tabular(&self)  -> bool { self.flags().is_tabular() }
+    pub fn is_callable(&self) -> bool { self.flags().is_callable() }
+    pub fn is_truthy(&self)   -> bool { self.flags().is_truthy() }
+    pub fn is_falsy(&self)    -> bool { self.flags().is_falsy() }
+
     pub fn split_tvar(&self) -> (Option<TVar>, Option<Ty>) {
         let (tv, ty) = self.inner.ty().split_tvar();
         let ty = ty.map(|t| {
             Ty { inner: Box::new(TyInner::new(t, self.inner.nil(), self.inner.tag())) }
         });
         (tv, ty)
+    }
+
+    pub fn as_string(&self) -> Option<&Str> {
+        if self.inner.nil() == Nil::Noisy { None } else { self.inner.ty().as_string() }
+    }
+
+    pub fn as_integer(&self) -> Option<i32> {
+        if self.inner.nil() == Nil::Noisy { None } else { self.inner.ty().as_integer() }
     }
 
     pub fn coerce(mut self) -> Ty {

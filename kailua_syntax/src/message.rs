@@ -383,8 +383,18 @@ define_msg! { pub FutureKeyword<'a> { read: &'a Tok, current: Lua, future: Lua }
              but it became a keyword since {future}",
 }
 
+define_msg! { pub AssumeNameStatic:
+    "ko" => "`--# assume static`은 클래스 프로토타입의 필드를 설정하는 데만 쓸 수 있습니다",
+    _    => "`--# assume static` can only be used to set fields in class prototypes",
+}
+
+define_msg! { pub AssumeFieldGlobal:
+    "ko" => "필드는 제자리에서 `--# assume`되므로 `global`을 쓸 필요가 없습니다",
+    _    => "`global` is redundant here because a field gets `--# assume`d in place",
+}
+
 define_msg! { pub AssumeShadowedGlobal<'a> { name: &'a Name }:
-    "ko" => "`--# assume` 명령이 전역 변수 {name}를 설정하려 했으나, \
+    "ko" => "`--# assume` 명령이 전역 변수 {name}을(를) 설정하려 했으나, \
              같은 이름의 지역 변수가 전역 변수를 감추었습니다",
     _    => "`--# assume` directive tried to set a global variable {name}, \
              but it was shadowed by a local variable of the same name",
@@ -393,6 +403,11 @@ define_msg! { pub AssumeShadowedGlobal<'a> { name: &'a Name }:
 define_msg! { pub AssumeGlobalInLocalScope:
     "ko" => "`--# assume global`은 최상위 블록에서만 쓸 수 있습니다",
     _    => "`--# assume global` should be in the top-level scope",
+}
+
+define_msg! { pub AssumeFieldGlobalInLocalScope<'a> { name: &'a Name }:
+    "ko" => "전역 변수 {name}의 필드에 대한 `--# assume`은 최상위 블록에서만 쓸 수 있습니다",
+    _    => "`--# assume` for fields in a global variable {name} should be in the top-level scope",
 }
 
 define_msg! { pub TypeGlobalInLocalScope:

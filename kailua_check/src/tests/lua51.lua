@@ -321,7 +321,12 @@ function string:suffix(n)
     return self:sub(-n)
 end
 
-print(string.hello() .. ('string'):suffix(3))
+--v function(self: string) --> string
+function string:trim()
+    return self:gsub('^%s+', ''):gsub('%s+$', '')
+end
+
+print((string.hello() .. ('string'):suffix(3)):trim())
 --! ok
 
 -->8-- lua51-assert-string-type-and-meta
@@ -344,14 +349,6 @@ f('string')
 local function negative(x)
     assert(type(x) == 'number') -- won't destroy the type varible
     return x < 0
-end
---! ok
-
---8<-- lua51-string-add-method
---# open lua51
---v function(self: string) --> string
-function string:trim()
-    return self:gsub('^%s+', ''):gsub('%s+$', '')
 end
 --! ok
 

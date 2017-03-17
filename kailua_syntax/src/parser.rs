@@ -2614,11 +2614,21 @@ impl<'a> Parser<'a> {
 
                 let mut sibling_scope = None;
                 let stmt = match parser.read() {
-                    // assume [global] NAME {"." NAME} ":" MODF KIND
+                    // assume [global] NAME ":" MODF KIND
+                    // assume [static] NAME {"." NAME} ":" MODF KIND
                     (_, Spanned { base: Tok::Keyword(Keyword::Assume), .. }) => {
-                        let globalbegin = parser.pos();
-                        let global = parser.may_expect(Keyword::Global);
-                        let globalend = parser.last_pos();
+                        #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+                        enum Scope { Implied, Global, Static }
+
+                        let scopebegin = parser.pos();
+                        let scope = if parser.may_expect(Keyword::Global) {
+                            Scope::Global
+                        } else if parser.may_expect(Keyword::Static) {
+                            Scope::Static
+                        } else {
+                            Scope::Implied
+                        };
+                        let scope = scope.with_loc(scopebegin..parser.last_pos());
 
                         let namesbegin = parser.pos();
                         let rootname = parser.parse_name()?;
@@ -2632,35 +2642,65 @@ impl<'a> Parser<'a> {
                         let modf = parser.parse_kailua_mod();
                         let kind = parser.recover_upto(Self::parse_kailua_kind)?;
 
-                        let (newnameref, rootname) = if global {
-                            let local_shadowing = parser.resolve_local_name(&rootname).is_some();
-                            if parser.block_depth > 0 {
-                                parser.error(globalbegin..globalend,
-                                             m::AssumeGlobalInLocalScope {})
-                                      .done()?;
-                            }
-                            if local_shadowing {
-                                parser.error(&rootname,
-                                             m::AssumeShadowedGlobal { name: &rootname })
-                                      .done()?;
-                            }
-                            if parser.block_depth == 0 && !local_shadowing {
-                                // only register a new global variable when it didn't error
-                                parser.global_scope.insert(rootname.base.clone(), rootname.span);
-                            }
-                            (NameRef::Global(rootname.base.clone()), rootname.map(NameRef::Global))
-                        } else {
-                            let scope = parser.generate_sibling_scope();
-                            sibling_scope = Some(scope);
-                            let scoped_id = parser.add_spanned_local_name(scope, rootname.clone());
-                            let rootname = rootname.map(|name| parser.resolve_name(name));
-                            (NameRef::Local(scoped_id.base), rootname)
-                        };
+                        if names.is_empty() {
+                            let (newnameref, rootname) = if scope.base == Scope::Global {
+                                // assume global NAME ":" MODF KIND
+                                let local_shadowing =
+                                    parser.resolve_local_name(&rootname).is_some();
+                                if parser.block_depth > 0 {
+                                    parser.error(&scope, m::AssumeGlobalInLocalScope {}).done()?;
+                                }
+                                if local_shadowing {
+                                    parser.error(&rootname,
+                                                 m::AssumeShadowedGlobal { name: &rootname })
+                                          .done()?;
+                                }
 
-                        Some(Box::new(St::KailuaAssume(
-                            newnameref, (rootname, names).with_loc(namesbegin..namesend),
-                            modf, kind, sibling_scope,
-                        )))
+                                if parser.block_depth == 0 && !local_shadowing {
+                                    // only register a new global variable when it didn't error
+                                    parser.global_scope.insert(rootname.base.clone(),
+                                                               rootname.span);
+                                }
+                                (NameRef::Global(rootname.base.clone()),
+                                 rootname.map(NameRef::Global))
+                            } else {
+                                // assume [static] NAME ":" MODF KIND (`static` is ignored)
+                                if scope.base == Scope::Static {
+                                    parser.error(&scope, m::AssumeNameStatic {}).done()?;
+                                }
+
+                                let scope = parser.generate_sibling_scope();
+                                sibling_scope = Some(scope);
+                                let scoped_id = parser.add_spanned_local_name(scope,
+                                                                              rootname.clone());
+                                let rootname = rootname.map(|name| parser.resolve_name(name));
+                                (NameRef::Local(scoped_id.base), rootname)
+                            };
+                            Some(Box::new(St::KailuaAssume(
+                                newnameref, rootname, modf, kind, sibling_scope,
+                            )))
+                        } else {
+                            if scope.base == Scope::Global {
+                                parser.error(&scope, m::AssumeFieldGlobal {}).done()?;
+                                // and treated as like Scope::Implied
+                            }
+
+                            let rootname0 = rootname.clone();
+                            let rootname = rootname.map(|name| parser.resolve_name(name));
+                            if let NameRef::Global(_) = rootname.base {
+                                if parser.block_depth > 0 {
+                                    parser.error(&rootname0,
+                                                 m::AssumeFieldGlobalInLocalScope {
+                                                     name: &rootname0
+                                                 })
+                                          .done()?;
+                                }
+                            }
+                            Some(Box::new(St::KailuaAssumeField(
+                                scope.base == Scope::Static,
+                                (rootname, names).with_loc(namesbegin..namesend), modf, kind,
+                            )))
+                        }
                     }
 
                     // open NAME
@@ -2670,7 +2710,7 @@ impl<'a> Parser<'a> {
                         Some(Box::new(St::KailuaOpen(name)))
                     }
 
-                    // type {local | global} NAME = KIND
+                    // type [local | global] NAME = KIND
                     (_, Spanned { base: Tok::Keyword(Keyword::Type), .. }) => {
                         let typescope = if parser.may_expect(Keyword::Local) {
                             TypeScope::Local

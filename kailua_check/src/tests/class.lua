@@ -231,6 +231,26 @@ local h = Hello.new(3, 4, 5)
 h:stringify()
 --! error
 
+--8<-- class-fields-bad-assign-after-ctor
+--# assume `class`: [make_class] function() --> table
+Hello = class()
+
+--v function(self, x: integer, y: integer, z: integer)
+function Hello:init(x, y, z)
+    self.x = x
+    self.y = y
+    self.z = z
+end
+
+function Hello:summarize()
+    self.sum = self.x + self.y + self.z --@< Error: Cannot add a new field to the class instance outside of the constructor
+end
+
+local h = Hello.new(3, 4, 5)
+h:summarize()
+local x = h.sum --: integer --@< Error: Cannot index `Hello` with `"sum"`
+--! error
+
 --8<-- class-no-methodcall-in-ctor
 --# assume `class`: [make_class] function() --> table
 Hello = class()
@@ -352,5 +372,99 @@ end
 local h = Hello.new()
 Hello.foo(h)
 
+--! error
+
+--8<-- assume-field-class-local
+--# assume `class`: [make_class] function() --> table
+local Hello = class()
+function Hello:init() end
+--# assume Hello.f: function(Hello) --> string
+--# assume static Hello.g: function() --> string
+
+local h = Hello.new()
+local x = h:f() --: string
+local y = h.g() --: string
+--! ok
+
+--8<-- assume-field-class-local-export
+--# assume global `class`: [make_class] function() --> table
+--# assume global `require`: [require] function(string) --> any
+
+local Hello = require 'x' --@< Warning: A new name for the previously named class is ignored
+local h = Hello.new()
+local x = h:f() --: string
+local y = h.g() --: string
+
+--& x
+local Hello = class() --@< Note: The class was previously named here
+function Hello:init() end
+--# assume Hello.f: function(Hello) --> string
+--# assume static Hello.g: function() --> string
+return Hello
+
+--! ok
+
+--8<-- assume-field-class-global
+--# assume `class`: [make_class] function() --> table
+Hello = class()
+function Hello:init() end
+--# assume Hello.f: function(Hello) --> string
+--# assume static Hello.g: function() --> string
+
+local h = Hello.new()
+local x = h:f() --: string
+local y = h.g() --: string
+--! ok
+
+--8<-- assume-field-class-global-export
+--# assume global `class`: [make_class] function() --> table
+--# assume global `require`: [require] function(string) --> any
+
+require 'x'
+local h = Hello.new()
+local x = h:f() --: string
+local y = h.g() --: string
+
+--& x
+Hello = class()
+function Hello:init() end
+--# assume Hello.f: function(Hello) --> string
+--# assume static Hello.g: function() --> string
+
+--! ok
+
+--8<-- assume-field-class-nested
+--# assume `class`: [make_class] function() --> table
+Hello = class()
+function Hello:init() end
+--# assume Hello.f.x: function(Hello) --> string
+--@^ Error: Cannot apply `--# assume` directive to the inside of fields in the class prototype of `Hello`
+--# assume static Hello.g.y: function() --> string
+--@^ Error: Cannot apply `--# assume` directive to the inside of fields in the class prototype of `Hello`
+
+local h = Hello.new()
+local x = h:f() --: string --@< Error: Cannot index `Hello` with `"f"`
+local y = h.g() --: string --@< Error: Cannot index `Hello` with `"g"`
+--! error
+
+--8<-- assume-field-class-fields
+--# assume `class`: [make_class] function() --> table
+Hello = class()
+function Hello:init() end
+--# assume Hello.x: integer
+--# assume static Hello.y: string
+
+--v function(self, n: integer)
+function Hello:set(n)
+    self.x = n
+    self.y = n .. '' --@< Error: Cannot add a new field to the class instance outside of the constructor
+end
+
+local h = Hello.new()
+h:set(42)
+local x = h.x --: integer
+local y = h.y --: string
+local xx = Hello.x --: integer --@< Error: Cannot index `<prototype for Hello>` with `"x"`
+local yy = Hello.y --: string
 --! error
 
