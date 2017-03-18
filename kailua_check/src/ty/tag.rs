@@ -48,6 +48,8 @@ pub enum Tag {
     // the first argument is exactly resolved first and the return values are updated
     // to fit the following generic signature if possible (not yet directly supported):
     //     ({T => U}, ...) -> (function({T => U}, T) -> (T?, U), {T => U}, T, ...)
+    // except when the third return type is not any, in which case T is replaced with
+    // *that* parameter so that ipairs (which T should be integer) works for any table types.
     GenericPairs,
 
     // table

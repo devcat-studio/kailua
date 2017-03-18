@@ -416,23 +416,39 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     None => return,
                 };
 
-                if !tab.is_tabular() { return; }
+                let (mut k, v) = if let Some(dyn) = tab.get_dynamic() {
+                    // the table itself is dynamic, return the same dynamic types
+                    (Ty::new(T::Dynamic(dyn)),
+                     Slot::new(F::Dynamic(dyn), Ty::new(T::Dynamic(dyn))))
+                } else if tab.is_tabular() {
+                    match tab.clone().unwrap() {
+                        // map<k, v> -> (k, v)
+                        T::Tables(Cow::Owned(Tables::Map(k, v))) =>
+                            (k, v),
+                        T::Tables(Cow::Borrowed(&Tables::Map(ref k, ref v))) =>
+                            (k.clone(), v.clone()),
 
-                let (k, v) = match tab.clone().unwrap() {
-                    // map<k, v> -> (k, v)
-                    T::Tables(Cow::Owned(Tables::Map(k, v))) =>
-                        (k, v),
-                    T::Tables(Cow::Borrowed(&Tables::Map(ref k, ref v))) =>
-                        (k.clone(), v.clone()),
+                        // vector<v> -> (integer, v)
+                        T::Tables(Cow::Owned(Tables::Array(v))) =>
+                            (Ty::new(T::Integer), v),
+                        T::Tables(Cow::Borrowed(&Tables::Array(ref v))) =>
+                            (Ty::new(T::Integer), v.clone()),
 
-                    // vector<v> -> (integer, v)
-                    T::Tables(Cow::Owned(Tables::Array(v))) =>
-                        (Ty::new(T::Integer), v),
-                    T::Tables(Cow::Borrowed(&Tables::Array(ref v))) =>
-                        (Ty::new(T::Integer), v.clone()),
-
-                    _ => return,
+                        _ => return,
+                    }
+                } else {
+                    return
                 };
+
+                // replace the key with the third return type if it's not any
+                // (this is primarily to detect ipairs)
+                {
+                    let third = returns.ensure_at(2);
+                    match **third {
+                        T::All => {}
+                        _ => { k = third.clone(); }
+                    }
+                }
 
                 // fix `returns` in place
                 let knil = k.clone().with_nil();

@@ -2892,6 +2892,11 @@ local x = {}
 local z = x.y + 42 --: integer
 --! ok
 
+--8<-- assume-field-no-ref
+--# assume x.y: integer --@< Error: Global or local variable `x` is not defined
+local z = x.y + 42 --: integer -- this does set `x` to WHATEVER
+--! error
+
 --8<-- assume-field-scope
 local x = {}
 do

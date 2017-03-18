@@ -175,6 +175,27 @@ for x, y in ipairs(p) do
 end
 --! error
 
+--8<-- lua51-ipairs-whatever-1
+--# open lua51
+--# assume p: WHATEVER
+for x, y in ipairs(p) do
+    -- x should be integer, y should be WHATEVER
+    local a = x * 3
+    local b = y * 4
+    local c = #y
+end
+--! ok
+
+--8<-- lua51-ipairs-whatever-2
+--# open lua51
+--# assume p: WHATEVER
+for x, y in ipairs(p) do
+    -- x should be integer, y should be WHATEVER
+    local a = #x --@< Error: Cannot apply # operator to `integer`
+                 --@^ Cause: `integer` is not a subtype of `(string|table)`
+end
+--! error
+
 --8<-- lua51-pairs-integer-array
 --# open lua51
 --# assume p: vector<integer>
@@ -258,8 +279,9 @@ end
 --# open lua51
 --# assume p: table
 for x, y in pairs(p) do
-    print(p .. 3) --@< Error: Cannot apply .. operator to `table` and `3`
-                  --@^ Cause: `table` is not a subtype of `(number|string)`
+    local a = x + y --@< Error: Cannot apply + operator to `any` and `any`
+                    --@^ Cause: `any` is not a subtype of `number`
+                    --@^^ Cause: `any` is not a subtype of `number`
 end
 --! error
 
@@ -271,6 +293,18 @@ for x, y in pairs(p) do
     --@^^ Cause: First function argument `string` is not a subtype of `table`
 end
 --! error
+
+--8<-- lua51-pairs-whatever
+--# open lua51
+--# assume p: WHATEVER
+for x, y in pairs(p) do
+    -- x should be WHATEVER, y should be WHATEVER
+    local a = x * 3
+    local b = #x
+    local c = y * 4
+    local d = #y
+end
+--! ok
 
 --8<-- lua51-update-package-cpath
 --# open lua51
