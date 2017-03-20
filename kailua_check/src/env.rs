@@ -2,6 +2,7 @@ use std::mem;
 use std::ops;
 use std::str;
 use std::fmt;
+use std::result;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::borrow::Cow;
@@ -11,9 +12,9 @@ use atomic::Atomic;
 use atomic::Ordering::Relaxed;
 
 use kailua_env::{self, Span, Spanned, WithLoc, ScopedId, ScopeMap, SpanMap};
-use kailua_diag::{self, Kind, Report, Reporter, Locale, Localize};
+use kailua_diag::{Result, Kind, Report, Reporter, Locale, Localize};
 use kailua_syntax::{Name, NameRef};
-use diag::{CheckResult, Origin, TypeReport, TypeResult, TypeReportHint, TypeReportMore};
+use diag::{Origin, TypeReport, TypeResult, TypeReportHint, TypeReportMore};
 use diag::{Displayed, Display, unquotable_name};
 use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, RVar, Lattice, Union, Tag};
 use ty::{TypeContext, TypeResolver, ClassId, Class, Tables, Functions, Function, Key};
@@ -496,8 +497,7 @@ impl<R: Report> Context<R> {
         &self.report
     }
 
-    pub fn open_library(&mut self, name: &Spanned<Name>,
-                        opts: Rc<RefCell<Options>>) -> CheckResult<()> {
+    pub fn open_library(&mut self, name: &Spanned<Name>, opts: Rc<RefCell<Options>>) -> Result<()> {
         if let Some(defs) = str::from_utf8(&name.base).ok().and_then(get_defs) {
             // one library may consist of multiple files, so we defer duplicate check
             for def in defs {
@@ -515,7 +515,7 @@ impl<R: Report> Context<R> {
         Ok(())
     }
 
-    pub fn get_loaded_module(&self, name: &[u8], span: Span) -> CheckResult<Option<Module>> {
+    pub fn get_loaded_module(&self, name: &[u8], span: Span) -> Result<Option<Module>> {
         match self.loaded.get(name) {
             Some(&LoadStatus::Done(ref module)) => Ok(Some(module.clone())),
             None => Ok(None),
@@ -548,7 +548,7 @@ impl<R: Report> Context<R> {
         cid
     }
 
-    pub fn name_class(&mut self, cid: ClassId, name: Spanned<Name>) -> CheckResult<()> {
+    pub fn name_class(&mut self, cid: ClassId, name: Spanned<Name>) -> Result<()> {
         let cls = &mut self.output.classes[cid.0 as usize];
         if let Some(ref prevname) = cls.name {
             self.report.warn(name, m::RedefinedClassName {})
@@ -873,8 +873,8 @@ impl Output {
     }
 
     // differs from the trait version because we cannot use generics in trait objects
-    pub fn list_rvar_fields<E, F>(&self, mut rvar: RVar, mut f: F) -> Result<RVar, E>
-        where F: FnMut(&Key, &Slot) -> Result<(), E>
+    pub fn list_rvar_fields<E, F>(&self, mut rvar: RVar, mut f: F) -> result::Result<RVar, E>
+        where F: FnMut(&Key, &Slot) -> result::Result<(), E>
     {
         loop {
             if let Some(info) = self.row_infos.get(&rvar.to_usize()) {
@@ -954,7 +954,7 @@ impl Output {
             // otherwise it should be a record
             if let Some(&Tables::Fields(ref rvar)) = ty.get_tables() {
                 let mut fields = HashMap::new();
-                self.list_rvar_fields(rvar.clone(), |k, v| -> Result<(), ()> {
+                self.list_rvar_fields(rvar.clone(), |k, v| -> result::Result<(), ()> {
                     fields.insert(k.clone(), v.clone());
                     Ok(())
                 }).expect("list_rvar_fields exited early while we haven't break");
@@ -1023,7 +1023,7 @@ impl<R: Report> Report for Context<R> {
         self.report.message_locale()
     }
 
-    fn add_span(&self, k: Kind, s: Span, m: &Localize) -> kailua_diag::Result<()> {
+    fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> {
         self.report.add_span(k, s, m)
     }
 }
@@ -1264,8 +1264,9 @@ impl<R: Report> TypeContext for Context<R> {
         }
     }
 
-    fn list_rvar_fields(&self, rvar: RVar,
-                        f: &mut FnMut(&Key, &Slot) -> Result<(), ()>) -> Result<RVar, ()> {
+    fn list_rvar_fields(
+        &self, rvar: RVar, f: &mut FnMut(&Key, &Slot) -> result::Result<(), ()>
+    ) -> result::Result<RVar, ()> {
         self.output.list_rvar_fields(rvar, f)
     }
 
@@ -1346,7 +1347,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         self.context.resolve_exact_type(ty)
     }
 
-    pub fn return_from_module(mut self, modname: &[u8], span: Span) -> CheckResult<Option<Module>> {
+    pub fn return_from_module(mut self, modname: &[u8], span: Span) -> Result<Option<Module>> {
         // note that this scope is distinct from the global scope
         let top_scope = self.scopes.drain(..).next().unwrap();
         let returns = match top_scope.frame.unwrap().returns {
@@ -1451,7 +1452,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
     // in reality we instead get a type bound which cannot be exactly resolved;
     // we instead put [constructor] tag to the placeholder and
     // catch the exact type being assigned (method definitions guarantee the resolvability).
-    fn create_new_method_from_init(&mut self, init: &Spanned<Slot>) -> CheckResult<()> {
+    fn create_new_method_from_init(&mut self, init: &Spanned<Slot>) -> Result<()> {
         // ensure that the type can be resolved...
         let ty = if let Some(ty) = self.resolve_exact_type(&init.unlift()) {
             ty
@@ -1509,7 +1510,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
     }
 
     // returns false if the assignment is failed and constraints should not be added
-    fn assign_special(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> CheckResult<bool> {
+    fn assign_special(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> Result<bool> {
         match lhs.tag() {
             Some(b @ Tag::PackagePath) |
             Some(b @ Tag::PackageCpath) => {
@@ -1552,7 +1553,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         Ok(true)
     }
 
-    fn assign_(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>, init: bool) -> CheckResult<()> {
+    fn assign_(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>, init: bool) -> Result<()> {
         if self.assign_special(lhs, rhs)? {
             if lhs.accept(rhs, self.context, init).is_err() {
                 self.error(lhs, m::CannotAssign { lhs: self.display(lhs), rhs: self.display(rhs) })
@@ -1565,7 +1566,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
     // same to Slot::accept but also able to handle the built-in semantics;
     // should be used for any kind of non-internal assignments.
-    pub fn assign(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> CheckResult<()> {
+    pub fn assign(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> Result<()> {
         trace!("assigning {:?} to an existing slot {:?}", rhs, lhs);
         self.assign_(lhs, rhs, false)
     }
@@ -1576,7 +1577,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
     // the usual notion of accepting by subtyping does not work well here.
     // this is technically two assignments, of which the latter is done via the strict equality.
     pub fn assign_new(&mut self, lhs: &Spanned<Slot>, initrhs: &Spanned<Slot>,
-                      specrhs: Option<&Spanned<Slot>>) -> CheckResult<()> {
+                      specrhs: Option<&Spanned<Slot>>) -> Result<()> {
         trace!("assigning {:?} to a new slot {:?} with type {:?}", initrhs, lhs, specrhs);
 
         // first assignment of initrhs to specrhs, if any
@@ -1607,7 +1608,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         Ok(())
     }
 
-    pub fn ensure_var(&mut self, nameref: &Spanned<NameRef>) -> CheckResult<Slot> {
+    pub fn ensure_var(&mut self, nameref: &Spanned<NameRef>) -> Result<Slot> {
         trace!("ensuring {:?} has been initialized", nameref);
         let id = self.id_from_nameref(nameref);
 
@@ -1649,7 +1650,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         Ok(defslot.base)
     }
 
-    fn name_class_if_any(&mut self, id: &Spanned<Id>, info: &Spanned<Slot>) -> CheckResult<()> {
+    fn name_class_if_any(&mut self, id: &Spanned<Id>, info: &Spanned<Slot>) -> Result<()> {
         match **info.unlift() {
             T::Class(Class::Prototype(cid)) => {
                 let name = id.name(&self.context).clone().with_loc(id);
@@ -1692,7 +1693,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
     // adds a local variable with the explicit type `specinfo` and the implicit type `initinfo`.
     pub fn add_var(&mut self, nameref: &Spanned<NameRef>,
                    specinfo: Option<Spanned<Slot>>,
-                   initinfo: Option<Spanned<Slot>>) -> CheckResult<()> {
+                   initinfo: Option<Spanned<Slot>>) -> Result<()> {
         let id = self.id_from_nameref(nameref);
         debug!("adding a variable {} with {:?} (specified) and {:?} (initialized)",
                id.display(&self.context), specinfo, initinfo);
@@ -1725,7 +1726,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
     }
 
     pub fn add_local_var_already_set(&mut self, scoped_id: &Spanned<ScopedId>,
-                                     info: Spanned<Slot>) -> CheckResult<()> {
+                                     info: Spanned<Slot>) -> Result<()> {
         let id = Id::Local(self.map_index, scoped_id.base.clone()).with_loc(scoped_id);
         debug!("adding a local variable {} already set to {:?}", id.display(&self.context), info);
 
@@ -1742,8 +1743,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
     // assigns to a global or local variable with a right-hand-side type of `info`.
     // it may create a new global variable if there is no variable with that name.
-    pub fn assign_to_var(&mut self, nameref: &Spanned<NameRef>,
-                         info: Spanned<Slot>) -> CheckResult<()> {
+    pub fn assign_to_var(&mut self, nameref: &Spanned<NameRef>, info: Spanned<Slot>) -> Result<()> {
         let id = self.id_from_nameref(nameref);
 
         let (previnfo, prevset, needslotassign) = if self.context.ids.contains_key(&id.base) {
@@ -1771,7 +1771,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         Ok(())
     }
 
-    fn assume_special(&mut self, info: &Spanned<Slot>) -> CheckResult<()> {
+    fn assume_special(&mut self, info: &Spanned<Slot>) -> Result<()> {
         match info.tag() {
             Some(Tag::StringMeta) => {
                 if let Some(ref prevmeta) = self.context.string_meta {
@@ -1789,7 +1789,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         Ok(())
     }
 
-    pub fn assume_var(&mut self, name: &Spanned<NameRef>, info: Spanned<Slot>) -> CheckResult<()> {
+    pub fn assume_var(&mut self, name: &Spanned<NameRef>, info: Spanned<Slot>) -> Result<()> {
         let id = Id::from(self.map_index, name.base.clone());
         debug!("(force) adding a variable {} as {:?}", id.display(&self.context), info);
 
@@ -1826,7 +1826,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         self.get_named_local_type(name).or_else(|| self.get_named_global_type(name))
     }
 
-    pub fn define_local_type(&mut self, name: &Spanned<Name>, ty: Ty) -> CheckResult<()> {
+    pub fn define_local_type(&mut self, name: &Spanned<Name>, ty: Ty) -> Result<()> {
         if let Some(def) = self.get_named_local_type(name) {
             self.error(name, m::CannotRedefineLocalType { name: &name.base })
                 .note(def.span, m::AlreadyDefinedType {})
@@ -1844,7 +1844,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         Ok(())
     }
 
-    pub fn define_global_type(&mut self, name: &Spanned<Name>, ty: Ty) -> CheckResult<()> {
+    pub fn define_global_type(&mut self, name: &Spanned<Name>, ty: Ty) -> Result<()> {
         if let Some(def) = self.get_named_local_type(name) {
             self.error(name, m::CannotRedefineLocalTypeAsGlobal { name: &name.base })
                 .note(def.span, m::AlreadyDefinedType {})
@@ -1862,7 +1862,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         Ok(())
     }
 
-    pub fn define_and_export_type(&mut self, name: &Spanned<Name>, ty: Ty) -> CheckResult<()> {
+    pub fn define_and_export_type(&mut self, name: &Spanned<Name>, ty: Ty) -> Result<()> {
         if let Some(def) = self.get_named_type(name) {
             self.error(name, m::CannotRedefineAndReexportType { name: &name.base })
                 .note(def.span, m::AlreadyDefinedType {})
@@ -1894,7 +1894,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         Ok(())
     }
 
-    pub fn redefine_global_type(&mut self, name: &Spanned<Name>, tyspan: Span) -> CheckResult<()> {
+    pub fn redefine_global_type(&mut self, name: &Spanned<Name>, tyspan: Span) -> Result<()> {
         let ty = if let Some(def) = self.get_named_local_type(name) {
             def.ty.clone()
         } else if let Some(def) = self.get_named_global_type(name) {
@@ -1912,7 +1912,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         Ok(())
     }
 
-    pub fn reexport_local_type(&mut self, name: &Spanned<Name>, tyspan: Span) -> CheckResult<()> {
+    pub fn reexport_local_type(&mut self, name: &Spanned<Name>, tyspan: Span) -> Result<()> {
         let ty = if let Some(def) = self.get_named_local_type(name) {
             def.ty.clone()
         } else if let Some(def) = self.get_named_global_type(name) {
@@ -1944,7 +1944,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         Ok(())
     }
 
-    pub fn import_types(&mut self, typedefs: Spanned<HashMap<Name, TypeDef>>) -> CheckResult<()> {
+    pub fn import_types(&mut self, typedefs: Spanned<HashMap<Name, TypeDef>>) -> Result<()> {
         for (name, def) in typedefs.base.into_iter() {
             if let Some(prevdef) = self.get_named_type(&name) {
                 self.error(typedefs.span, m::CannotImportAlreadyDefinedType { name: &name })
@@ -1966,7 +1966,7 @@ impl<'ctx, R: Report> Report for Env<'ctx, R> {
         self.context.report.message_locale()
     }
 
-    fn add_span(&self, k: Kind, s: Span, m: &Localize) -> kailua_diag::Result<()> {
+    fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> {
         self.context.report.add_span(k, s, m)
     }
 }
@@ -1976,7 +1976,7 @@ impl<'ctx, R: Report> TypeResolver for Env<'ctx, R> {
         self.context
     }
 
-    fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<Ty> {
+    fn ty_from_name(&self, name: &Spanned<Name>) -> Result<Ty> {
         if let Some(def) = self.get_named_type(name) {
             Ok(def.ty.clone())
         } else {

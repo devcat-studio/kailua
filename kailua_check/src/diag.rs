@@ -1,12 +1,10 @@
 use std::fmt;
 
 use kailua_env::{Span, Spanned, WithLoc};
-use kailua_diag::{self, ReportMore, Locale, Localize, Localized};
+use kailua_diag::{ReportMore, Locale, Localize, Localized};
 use kailua_syntax::Keyword;
 use message as m;
 use ty::TypeContext;
-
-pub type CheckResult<T> = kailua_diag::Result<T>;
 
 pub fn unquotable_name(s: &[u8]) -> bool {
     fn is_first(c: u8) -> bool {
@@ -148,7 +146,7 @@ impl<'b, 'c, T: Display + fmt::Debug + 'b> fmt::Debug for Displayed<'b, 'c, T> {
 }
 
 // type-level report is used to collect hierarchical information about failures.
-// this is distinct from CheckResult which is non-hierarchical by nature.
+// this is distinct from `kailua_diag::Result` which is non-hierarchical by nature.
 #[derive(Clone, Debug)]
 pub struct TypeReport {
     locale: Locale,

@@ -5,9 +5,9 @@ use std::usize;
 use std::iter;
 
 use kailua_env::{Span, Spanned, WithLoc};
-use kailua_diag::Locale;
+use kailua_diag::{self, Locale};
 use kailua_syntax::{Seq, Kind};
-use diag::{CheckResult, Origin, TypeReport, TypeResult, Display};
+use diag::{Origin, TypeReport, TypeResult, Display};
 use super::{T, Ty, Slot, Lattice, Union};
 use super::{TypeContext, TypeResolver};
 
@@ -95,7 +95,7 @@ macro_rules! define_tyseq {
 
             pub fn from_kind_seq(seq: &Seq<Spanned<Kind>>,
                                  resolv: &mut TypeResolver,
-                                 $($span: $spanty,)*) -> CheckResult<$tyseq> {
+                                 $($span: $spanty,)*) -> kailua_diag::Result<$tyseq> {
                 let head = seq.head.iter()
                                    .map(|k| $spanned_kind_to_ty(k, resolv))
                                    .collect::<Result<_,_>>()?;

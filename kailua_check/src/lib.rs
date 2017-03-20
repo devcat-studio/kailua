@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use kailua_diag::Report;
 
-pub use diag::{CheckResult, TypeReport, TypeResult, TypeReportMore, Display};
+pub use diag::{TypeReport, TypeResult, TypeReportMore, Display};
 pub use ty::flags;
 pub use ty::{RVar, TVar, ClassId, Class, TypeContext, TypeResolver, Union, Lattice};
 pub use ty::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, Dyn, Nil, T, Ty};
@@ -32,7 +32,7 @@ mod check;
 
 pub fn check_from_chunk<R: Report>(context: &mut Context<R>,
                                    chunk: kailua_syntax::Chunk,
-                                   opts: Rc<RefCell<Options>>) -> CheckResult<()> {
+                                   opts: Rc<RefCell<Options>>) -> kailua_diag::Result<()> {
     let mut env = env::Env::new(context, opts, chunk.map);
     let mut checker = check::Checker::new(&mut env);
     checker.visit(&chunk.block)

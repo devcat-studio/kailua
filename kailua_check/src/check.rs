@@ -6,10 +6,10 @@ use std::collections::HashMap;
 use take_mut::take;
 
 use kailua_env::{Span, Spanned, WithLoc};
-use kailua_diag::{self, Report, Reporter};
+use kailua_diag::{self, Result, Report, Reporter};
 use kailua_syntax::{Str, Name, NameRef, Var, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
 use kailua_syntax::{SelfParam, TypeScope, Args, St, Stmt, Block, K};
-use diag::{CheckResult, TypeReport, TypeReportHint, TypeReportMore, Displayed, Display};
+use diag::{TypeReport, TypeReportHint, TypeReportMore, Displayed, Display};
 use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, TypeContext};
 use ty::{Key, Tables, Function, Functions};
 use ty::{F, Slot, SlotSeq, SpannedSlotSeq, Tag, Class, ClassId};
@@ -119,8 +119,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         }
     }
 
-    fn check_un_op(&mut self, op: UnOp, info: &Spanned<Slot>,
-                   expspan: Span) -> CheckResult<Slot> {
+    fn check_un_op(&mut self, op: UnOp, info: &Spanned<Slot>, expspan: Span) -> Result<Slot> {
         let finalize = |r: TypeReport, checker: &mut Checker<R>| {
             checker.env.error(expspan,
                               m::WrongUnaryOperand { op: op.symbol(),
@@ -165,7 +164,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     fn check_bin_op(&mut self, lhs: &Spanned<Slot>, op: BinOp, rhs: &Spanned<Slot>,
-                    expspan: Span) -> CheckResult<Slot> {
+                    expspan: Span) -> Result<Slot> {
         let finalize = |r: TypeReport, checker: &mut Checker<R>| {
             checker.env.error(expspan,
                               m::WrongBinaryOperands { op: op.symbol(),
@@ -359,7 +358,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     fn check_callable(&mut self, func: &Spanned<Ty>, args: &SpannedTySeq,
-                      methodcall: bool) -> CheckResult<TySeq> {
+                      methodcall: bool) -> Result<TySeq> {
         debug!("checking if {:?} can be called with {:?} ({})",
                func, args, if methodcall { "method call" } else { "func call" });
 
@@ -469,7 +468,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     // when lval is true, the field is created as needed (otherwise it's an error)
     // when lval is false, the missing field is returned as Index::Missing
     fn check_index_common(&mut self, ety0: &Spanned<Slot>, kty0: &Spanned<Slot>, expspan: Span,
-                          lval: bool) -> CheckResult<Index> {
+                          lval: bool) -> Result<Index> {
         debug!("indexing {:?} with {:?} as an {}-value", ety0, kty0, if lval { "l" } else { "r" });
 
         let mut ety0: Cow<Spanned<Slot>> = Cow::Borrowed(ety0);
@@ -787,7 +786,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     fn check_rval_index(&mut self, ety: &Spanned<Slot>, kty: &Spanned<Slot>,
-                        expspan: Span) -> CheckResult<Slot> {
+                        expspan: Span) -> Result<Slot> {
         match self.check_index_common(ety, kty, expspan, false)? {
             Index::Missing => {
                 self.env.error(expspan, m::CannotIndex { tab: self.display(&ety),
@@ -802,7 +801,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
     // this should be followed by assign_to_lval_index
     fn check_lval_index(&mut self, ety: &Spanned<Slot>, kty: &Spanned<Slot>,
-                        expspan: Span) -> CheckResult<(bool, Slot)> {
+                        expspan: Span) -> Result<(bool, Slot)> {
         match self.check_index_common(ety, kty, expspan, true)? {
             Index::Missing => unreachable!(),
             Index::Created(slot) => Ok((false, slot)),
@@ -813,7 +812,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     // this should be preceded by check_lval_index with the equal parameters
     fn assign_to_lval_index(&mut self, found: bool, ety: &Spanned<Slot>, kty: &Spanned<Slot>,
                             lhs: &Spanned<Slot>, initrhs: &Spanned<Slot>,
-                            specrhs: Option<&Spanned<Slot>>) -> CheckResult<()> {
+                            specrhs: Option<&Spanned<Slot>>) -> Result<()> {
         if found {
             // ignore specrhs, should have been handled by the caller
             self.env.assign(lhs, initrhs)?;
@@ -831,7 +830,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     fn assume_field_slot(&mut self, static_: bool, rootname: &Spanned<NameRef>,
-                         names: &[Spanned<Name>], namespan: Span, slot: Slot) -> CheckResult<Slot> {
+                         names: &[Spanned<Name>], namespan: Span, slot: Slot) -> Result<Slot> {
         assert!(!names.is_empty());
 
         // if we are updating a table, we need to sever any row variable connections
@@ -995,7 +994,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     fn check_assign(&mut self, vars: &Spanned<Vec<TypeSpec<Spanned<Var>>>>,
-                    exps: Option<&Spanned<Vec<Spanned<Exp>>>>) -> CheckResult<()> {
+                    exps: Option<&Spanned<Vec<Spanned<Exp>>>>) -> Result<()> {
         #[derive(Debug)]
         enum VarRef<'a> {
             Name(&'a Spanned<NameRef>),
@@ -1030,7 +1029,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             };
 
             Ok((varref, varspec))
-        }).collect::<CheckResult<Vec<_>>>()?;
+        }).collect::<Result<Vec<_>>>()?;
 
         // the incomplete expression is parsed as Assign without rhs,
         // so we won't generate further errors due to mismatching types
@@ -1111,7 +1110,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     #[cfg(feature = "no_implicit_func_sig")]
-    fn error_on_implicit_sig(&mut self, sig: &Sig) -> CheckResult<()> {
+    fn error_on_implicit_sig(&mut self, sig: &Sig) -> Result<()> {
         if sig.args.head.iter().any(|spec| spec.kind.is_none()) {
             self.env.error(&sig.args, m::ImplicitSigOnNamedFunc {}).done()?;
         }
@@ -1119,16 +1118,16 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     #[cfg(not(feature = "no_implicit_func_sig"))]
-    fn error_on_implicit_sig(&mut self, _sig: &Sig) -> CheckResult<()> {
+    fn error_on_implicit_sig(&mut self, _sig: &Sig) -> Result<()> {
         Ok(())
     }
 
-    pub fn visit(&mut self, chunk: &Spanned<Block>) -> CheckResult<()> {
+    pub fn visit(&mut self, chunk: &Spanned<Block>) -> Result<()> {
         self.visit_block(chunk)?;
         Ok(())
     }
 
-    fn visit_block(&mut self, block: &Spanned<Block>) -> CheckResult<Exit> {
+    fn visit_block(&mut self, block: &Spanned<Block>) -> Result<Exit> {
         let mut scope = self.scoped(Scope::new());
         let mut exit = Exit::None;
         let mut ignored_stmts: Option<Span> = None;
@@ -1149,7 +1148,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         Ok(exit)
     }
 
-    fn visit_stmt(&mut self, stmt: &Spanned<Stmt>) -> CheckResult<Exit> {
+    fn visit_stmt(&mut self, stmt: &Spanned<Stmt>) -> Result<Exit> {
         debug!("visiting stmt {:?}", *stmt);
 
         match *stmt.base {
@@ -1505,7 +1504,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         None
                     };
                     Ok((&namespec.base, info))
-                }).collect::<CheckResult<Vec<_>>>()?;
+                }).collect::<Result<Vec<_>>>()?;
 
                 let hint = SpannedSlotSeq {
                     head: nameinfos.iter().map(|&(name, ref info)| {
@@ -1623,7 +1622,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
     fn visit_func_body(&mut self, selfparam: Option<(&Spanned<SelfParam>, Slot)>, sig: &Sig,
                        block: &Spanned<Vec<Spanned<Stmt>>>, declspan: Span,
-                       hint: Option<Spanned<Slot>>) -> CheckResult<Slot> {
+                       hint: Option<Spanned<Slot>>) -> Result<Slot> {
         // if no check is requested, the signature should be complete
         let no_check = sig.attrs.iter().any(|a| *a.name.base == *b"no_check");
 
@@ -1777,7 +1776,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     fn visit_func_call(&mut self, functy: &Spanned<Ty>, selfinfo: Option<Spanned<Slot>>,
-                       args: &Spanned<Args>, expspan: Span) -> CheckResult<SlotSeq> {
+                       args: &Spanned<Args>, expspan: Span) -> Result<SlotSeq> {
         // should be visited first, otherwise a WHATEVER function will ignore slots in arguments
         let (nargs, mut argtys) = match args.base {
             Args::List(ref ee) => {
@@ -1954,12 +1953,12 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     fn visit_table(&mut self,
-                   fields: &[(Option<Spanned<Exp>>, Spanned<Exp>)]) -> CheckResult<T<'static>> {
+                   fields: &[(Option<Spanned<Exp>>, Spanned<Exp>)]) -> Result<T<'static>> {
         let mut newfields = Vec::new();
 
         let mut fieldspans = HashMap::new();
         let mut add_field = |newfields: &mut Vec<(Key, Slot)>, env: &Env<R>, k: Key, v: Slot,
-                             span: Span| -> CheckResult<()> {
+                             span: Span| -> Result<()> {
             if let Some(&prevspan) = fieldspans.get(&k) {
                 env.error(span, m::TableLitWithDuplicateKey { key: &k })
                    .note(prevspan, m::PreviousKeyInTableLit {})
@@ -2033,7 +2032,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     // hint is used to drive the inference to the already known type.
     // this is mainly used for anonymous functions.
     fn visit_exp(&mut self, exp: &Spanned<Exp>,
-                 hint: Option<SpannedSlotSeq>) -> CheckResult<SpannedSlotSeq> {
+                 hint: Option<SpannedSlotSeq>) -> Result<SpannedSlotSeq> {
         let slotseq = self.visit_exp_(exp, hint)?;
 
         // mark the resulting slot (sequence) to the span
@@ -2050,7 +2049,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     fn visit_exp_(&mut self, exp: &Spanned<Exp>,
-                  hint: Option<SpannedSlotSeq>) -> CheckResult<SlotSeq> {
+                  hint: Option<SpannedSlotSeq>) -> Result<SlotSeq> {
         debug!("visiting exp {:?}", *exp);
 
         let ret = match *exp.base {
@@ -2147,12 +2146,12 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     fn visit_explist(&mut self, exps: &Spanned<Vec<Spanned<Exp>>>,
-                     hint: Option<SpannedSlotSeq>) -> CheckResult<SpannedSlotSeq> {
+                     hint: Option<SpannedSlotSeq>) -> Result<SpannedSlotSeq> {
         self.visit_explist_with_span(&exps.base, exps.span, hint)
     }
 
     fn visit_explist_with_span(&mut self, exps: &[Spanned<Exp>], expspan: Span,
-                               mut hint: Option<SpannedSlotSeq>) -> CheckResult<SpannedSlotSeq> {
+                               mut hint: Option<SpannedSlotSeq>) -> Result<SpannedSlotSeq> {
         // the last expression is special, so split it first or return the empty sequence
         let (lastexp, exps) = if let Some(exps) = exps.split_last() {
             exps
@@ -2194,13 +2193,13 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         Ok(SpannedSlotSeq { head: head, tail: last.tail, span: expspan })
     }
 
-    fn visit_kind(&mut self, flex: F, kind: &Spanned<Kind>) -> CheckResult<Spanned<Slot>> {
+    fn visit_kind(&mut self, flex: F, kind: &Spanned<Kind>) -> Result<Spanned<Slot>> {
         let ty = Ty::from_kind(kind, &mut self.env)?;
         Ok(Slot::new(flex, ty).with_loc(kind))
     }
 
     fn collect_type_from_exp(&mut self, exp: &Spanned<Exp>)
-            -> CheckResult<(Option<Spanned<Slot>>, SpannedSlotSeq)> {
+            -> Result<(Option<Spanned<Slot>>, SpannedSlotSeq)> {
         if let Ex::FuncCall(ref func, ref args) = *exp.base {
             let funcseq = self.visit_exp(func, None)?;
             let funcspan = funcseq.all_span();
@@ -2239,7 +2238,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
     // similar to visit_exp but also tries to collect Cond
     fn collect_conds_from_exp(&mut self, exp: &Spanned<Exp>)
-            -> CheckResult<(Option<Cond>, SpannedSlotSeq)> {
+            -> Result<(Option<Cond>, SpannedSlotSeq)> {
         debug!("collecting conditions from exp {:?}", *exp);
 
         match *exp.base {
@@ -2355,7 +2354,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         }
     }
 
-    fn assert_cond(&mut self, cond: Cond, negated: bool) -> CheckResult<()> {
+    fn assert_cond(&mut self, cond: Cond, negated: bool) -> Result<()> {
         debug!("asserting condition {:?} (negated {:?})", cond, negated);
 
         match cond {
@@ -2388,7 +2387,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         Ok(())
     }
 
-    fn literal_ty_to_flags(&self, info: &Spanned<Slot>) -> CheckResult<Option<Flags>> {
+    fn literal_ty_to_flags(&self, info: &Spanned<Slot>) -> Result<Option<Flags>> {
         if let Some(s) = info.unlift().as_string() {
             let tyname = &s[..];
             let flags = match tyname {
@@ -2412,7 +2411,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     // AssertType tag accepts more strings than Type
-    fn ext_literal_ty_to_flags(&self, info: &Spanned<Slot>) -> CheckResult<Option<Flags>> {
+    fn ext_literal_ty_to_flags(&self, info: &Spanned<Slot>) -> Result<Option<Flags>> {
         if let Some(s) = info.unlift().as_string() {
             let tyname = &s[..];
             let (tyname, nilflags) = if tyname.ends_with(b"?") {

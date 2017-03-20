@@ -1,7 +1,8 @@
 use std::fmt;
-use diag::{CheckResult, TypeReport, TypeResult, Display};
+use std::result;
+use diag::{TypeReport, TypeResult, Display};
 use kailua_env::Spanned;
-use kailua_diag::{Locale, Report};
+use kailua_diag::{Result, Locale, Report};
 use kailua_syntax::Name;
 
 pub use self::literals::{Numbers, Strings};
@@ -95,14 +96,14 @@ impl fmt::Debug for Class {
 // and has the name-to-type mapping (which is useless for the type operations themselves)
 pub trait TypeResolver: Report {
     fn context(&mut self) -> &mut TypeContext;
-    fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<Ty>;
+    fn ty_from_name(&self, name: &Spanned<Name>) -> Result<Ty>;
 }
 
 impl<'a, R: TypeResolver + ?Sized> TypeResolver for &'a mut R {
     fn context(&mut self) -> &mut TypeContext {
         (**self).context()
     }
-    fn ty_from_name(&self, name: &Spanned<Name>) -> CheckResult<Ty> {
+    fn ty_from_name(&self, name: &Spanned<Name>) -> Result<Ty> {
         (**self).ty_from_name(name)
     }
 }
@@ -131,8 +132,9 @@ pub trait TypeContext {
     fn assert_rvar_includes(&mut self, lhs: RVar, rhs: &[(Key, Slot)]) -> TypeResult<()>;
     fn assert_rvar_closed(&mut self, rvar: RVar) -> TypeResult<()>;
     // should return RVar::any() when the last row variable is yet to be instantiated
-    fn list_rvar_fields(&self, rvar: RVar,
-                        f: &mut FnMut(&Key, &Slot) -> Result<(), ()>) -> Result<RVar, ()>;
+    fn list_rvar_fields(
+        &self, rvar: RVar, f: &mut FnMut(&Key, &Slot) -> result::Result<(), ()>
+    ) -> result::Result<RVar, ()>;
 
     fn get_rvar_fields(&self, rvar: RVar) -> Vec<(Key, Slot)> {
         let mut fields = Vec::new();
@@ -263,8 +265,9 @@ impl TypeContext for NoTypeContext {
     fn assert_rvar_closed(&mut self, rvar: RVar) -> TypeResult<()> {
         panic!("assert_rvar_closed({:?}) is not supposed to be called here", rvar);
     }
-    fn list_rvar_fields(&self, rvar: RVar,
-                        _f: &mut FnMut(&Key, &Slot) -> Result<(), ()>) -> Result<RVar, ()> {
+    fn list_rvar_fields(
+        &self, rvar: RVar, _f: &mut FnMut(&Key, &Slot) -> result::Result<(), ()>
+    ) -> result::Result<RVar, ()> {
         panic!("list_rvar_fields({:?}, ...) is not supposed to be called here", rvar)
     }
 

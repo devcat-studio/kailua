@@ -1,6 +1,5 @@
-use kailua_diag::Reporter;
+use kailua_diag::{Result, Reporter};
 use kailua_syntax::Attr;
-use diag::CheckResult;
 use super::TypeResolver;
 use message as m;
 
@@ -136,7 +135,7 @@ pub enum Tag {
 }
 
 impl Tag {
-    pub fn from(attr: &Attr, resolv: &mut TypeResolver) -> CheckResult<Option<Tag>> {
+    pub fn from(attr: &Attr, resolv: &mut TypeResolver) -> Result<Option<Tag>> {
         match &attr.name.base[..] {
             b"internal subtype"    => Ok(Some(Tag::_Subtype)),
             b"internal no_subtype" => Ok(Some(Tag::_NoSubtype)),

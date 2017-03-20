@@ -56,8 +56,7 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
     let root = mainpath.parent().unwrap_or(&Path::new(".."));
     let opts = Rc::new(RefCell::new(FsOptions::new(fssource, root.to_owned())));
 
-    check_from_chunk(&mut context, filechunk, opts)?;
-    if report.can_continue() {
+    if check_from_chunk(&mut context, filechunk, opts).is_ok() && report.can_continue() {
         Ok(())
     } else {
         Err("stopped due to prior errors".into())

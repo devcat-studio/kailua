@@ -7,8 +7,8 @@ use std::collections::{hash_map, HashMap};
 
 use kailua_env::{Spanned, WithLoc};
 use kailua_syntax::{K, Kind, SlotKind, Str, Name};
-use kailua_diag::{Reporter, Locale};
-use diag::{CheckResult, Origin, TypeReport, TypeResult, TypeReportHint, TypeReportMore, Display};
+use kailua_diag::{Result, Reporter, Locale};
+use diag::{Origin, TypeReport, TypeResult, TypeReportHint, TypeReportMore, Display};
 use super::{F, Slot};
 use super::{TypeContext, NoTypeContext, TypeResolver, Lattice, Union, TySeq};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, Tag, Class};
@@ -1024,9 +1024,8 @@ impl Ty {
         Ty { inner: Box::new(TyInner::new(ty, Nil::Silent, None)) }
     }
 
-    pub fn from_kind(kind: &Spanned<Kind>, resolv: &mut TypeResolver) -> CheckResult<Ty> {
-        let slot_from_slotkind = |slotkind: &SlotKind,
-                                  resolv: &mut TypeResolver| -> CheckResult<Slot> {
+    pub fn from_kind(kind: &Spanned<Kind>, resolv: &mut TypeResolver) -> Result<Ty> {
+        let slot_from_slotkind = |slotkind: &SlotKind, resolv: &mut TypeResolver| -> Result<Slot> {
             let ty = Ty::from_kind(&slotkind.kind, resolv)?;
             let flex = F::from(slotkind.modf);
             Ok(Slot::new(flex, ty))
