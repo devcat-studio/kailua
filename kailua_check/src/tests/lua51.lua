@@ -412,3 +412,8 @@ local n = table.maxn(x) --: integer
 local m = table.maxn(y) --: integer
 --! ok
 
+--8<-- lua51-index-genv
+--# open lua51
+local x = _G.x --@< Error: Cannot index `[genv] table` without further type information; specify more detailed type, or use `--# assume` as a last resort
+--! error
+

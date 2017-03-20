@@ -1,6 +1,6 @@
 use diag::Ordinal;
 use ty::{self, Key, Displayed, TypeContext};
-use kailua_syntax::Name;
+use kailua_syntax::{Str, Name};
 
 pub type T<'a> = Displayed<'a, ty::T<'a>, &'a TypeContext>;
 pub type Ty<'a> = Displayed<'a, ty::Ty, &'a TypeContext>;
@@ -244,8 +244,10 @@ define_msg! { pub CallToWrongType<'a> { func: Ty<'a> }:
 }
 
 define_msg! { pub CallToAnyFunc<'a> { func: Ty<'a> }:
-    "ko" => "`{func}` 타입은 다운캐스팅하지 않으면 호출할 수 없습니다",
-    _    => "Cannot call `{func}` without downcasting",
+    "ko" => "타입이 `{func}`(이)라고만 알려져 있어서 호출할 수 없습니다. \
+             타입을 더 구체적으로 명시하거나, 여의치 않으면 `--# assume`을 사용하십시오",
+    _    => "Cannot call `{func}` without further type information; \
+             specify more detailed type, or use `--# assume` as a last resort",
 }
 
 define_msg! { pub TableLitWithUnknownKey<'a> { key: Ty<'a> }:
@@ -289,23 +291,25 @@ define_msg! { pub IndexToUnknownClass<'a> { cls: Slot<'a> }:
 }
 
 define_msg! { pub IndexToRecWithUnknownStr<'a> { tab: Slot<'a>, key: Ty<'a> }:
-    "ko" => "실행하기 전에 알 수 없는 `{key}` 타입으로 `{tab}`을(를) 인덱싱할 수 없습니다",
-    _    => "Cannot index `{tab}` with index `{key}` that cannot be resolved ahead of time",
+    "ko" => "`{tab}`에 `{key}`을(를) 키로 써서 인덱싱할 수 없습니다",
+    _    => "Cannot index `{tab}` with `{key}`",
 }
 
 define_msg! { pub IndexToClassWithUnknown<'a> { cls: Slot<'a>, key: Ty<'a> }:
-    "ko" => "실행하기 전에 알 수 없는 `{key}` 타입으로 `{cls}`을(를) 인덱싱할 수 없습니다",
-    _    => "Cannot index `{cls}` with index `{key}` that cannot be resolved ahead of time",
+    "ko" => "`{cls}`에 `{key}`을(를) 키로 써서 인덱싱할 수 없습니다",
+    _    => "Cannot index `{cls}` with `{key}`",
 }
 
 define_msg! { pub IndexToArrayWithNonInt<'a> { tab: Slot<'a>, key: Ty<'a> }:
-    "ko" => "정수가 아닌 `{key}` 타입으로 `{tab}`을(를) 인덱싱할 수 없습니다",
-    _    => "Cannot index an array `{tab}` with a non-integral index `{key}`",
+    "ko" => "`{tab}`에 정수가 아닌 `{key}`을(를) 키로 써서 인덱싱할 수 없습니다",
+    _    => "Cannot index an array `{tab}` with a non-integral key `{key}`",
 }
 
 define_msg! { pub IndexToAnyTable<'a> { tab: Slot<'a> }:
-    "ko" => "`{tab}` 타입은 다운캐스팅하지 않으면 인덱싱할 수 없습니다",
-    _    => "Cannot index `{tab}` without downcasting",
+    "ko" => "타입이 `{tab}`(이)라고만 알려져 있어서 인덱싱할 수 없습니다. \
+             타입을 더 구체적으로 명시하거나, 여의치 않으면 `--# assume`을 사용하십시오",
+    _    => "Cannot index `{tab}` without further type information; \
+             specify more detailed type, or use `--# assume` as a last resort",
 }
 
 define_msg! { pub CannotUpdateConst<'a> { tab: Slot<'a> }:
@@ -314,13 +318,18 @@ define_msg! { pub CannotUpdateConst<'a> { tab: Slot<'a> }:
 }
 
 define_msg! { pub CannotIndex<'a> { tab: Slot<'a>, key: Slot<'a> }:
-    "ko" => "`{key}` 타입으로 `{tab}`을(를) 인덱싱할 수 없습니다",
+    "ko" => "`{tab}`에 `{key}`을(를) 키로 써서 인덱싱할 수 없습니다",
     _    => "Cannot index `{tab}` with `{key}`",
 }
 
+// a special case of CannotIndex when `key` is a string literal
+define_msg! { pub CannotIndexWithStr<'a> { tab: Slot<'a>, key: &'a Str }:
+    "ko" => "`{tab}`에 {key}이(가) 없습니다",
+    _    => "Missing key {key} in `{tab}`",
+}
+
 define_msg! { pub CannotCreateIndex<'a> { tab: Slot<'a>, key: Slot<'a>, specrhs: Slot<'a> }:
-    "ko" => "`{key}` 타입으로 `{tab}`을(를) 인덱싱하여 `{specrhs}` 타입의 필드를 \
-             새로 만들 수 없습니다",
+    "ko" => "`{tab}`에 `{key}`을(를) 키로 써서 `{specrhs}` 타입의 필드를 새로 만들 수 없습니다",
     _    => "Cannot index `{tab}` with `{key}` and create a new field of the type `{specrhs}`",
 }
 

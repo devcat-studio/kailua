@@ -103,6 +103,11 @@ p() --@< Error: Tried to call a non-function `4`
 p() --@< Error: Global or local variable `p` is not defined
 --! error
 
+--8<-- funccall-function
+local f = function() end --: function
+f() --@< Error: Cannot call `function` without further type information; specify more detailed type, or use `--# assume` as a last resort
+--! error
+
 --8<-- funccall-dynamic
 --# assume p: WHATEVER
 p()
@@ -259,7 +264,7 @@ local p = t.string --@< Error: Cannot index `map<integer, integer>` with `"strin
 --! error
 
 --8<-- index-empty-with-name
-local p = ({}).a --@< Error: Cannot index `{}` with `"a"`
+local p = ({}).a --@< Error: Missing key "a" in `{}`
 --! error
 
 --8<-- index-rec-with-name
@@ -267,13 +272,19 @@ local p = ({a = 4}).a
 --! ok
 
 --8<-- index-rec-with-name-no-key
-local p = ({a = 4}).b --@< Error: Cannot index `{a: 4}` with `"b"`
+local p = ({a = 4}).b --@< Error: Missing key "b" in `{a: 4}`
 --! error
 
 --8<-- index-rec-with-string
 --# assume x: string
 local p = ({a = 4})[x]
---@^ Error: Cannot index `{a: 4}` with index `string` that cannot be resolved ahead of time
+--@^ Error: Cannot index `{a: 4}` with `string`
+--! error
+
+--8<-- index-rec-with-integer
+local a = {}
+local k = 1
+local x = a[k] --@< Error: Cannot index `{}` with `integer`
 --! error
 
 --8<-- index-rec-with-weird-string
@@ -283,7 +294,7 @@ local p = ({['not ice'] = 4})[x]
 
 --8<-- index-rec-with-weird-string-error
 --# assume x: 'ice'
-local p = ({['not ice'] = 4})[x] --@< Error: Cannot index `{`not ice`: 4}` with `"ice"`
+local p = ({['not ice'] = 4})[x] --@< Error: Missing key "ice" in `{`not ice`: 4}`
 --! error
 
 --8<-- index-rec-or-nil
@@ -291,8 +302,13 @@ local x = {a = 42} --: {a: integer}?
 local p = x.a --@< Error: Tried to index a non-table type `{a: integer}?`
 --! error
 
+--8<-- index-table
+local x = {a = 'foo'} --: table
+local p = x.a --@< Error: Cannot index `table` without further type information; specify more detailed type, or use `--# assume` as a last resort
+--! error
+
 --8<-- methodcall-empty
-local p = ({}):hello() --@< Error: Cannot index `{}` with `"hello"`
+local p = ({}):hello() --@< Error: Missing key "hello" in `{}`
 --! error
 
 --8<-- methodcall-rec-1 -- feature:no_implicit_func_sig
@@ -415,7 +431,7 @@ local p = f.index
 --8<-- assume-table
 local f = function() end
 --# assume f: table
-local p = f.index --@< Error: Cannot index `table` without downcasting
+local p = f.index --@< Error: Cannot index `table` without further type information; specify more detailed type, or use `--# assume` as a last resort
 --! error
 
 --8<-- conjunctive-lhs-1
@@ -1017,13 +1033,13 @@ b = a.y
 --8<-- index-rec-with-wrong-name-1
 local a = { x = 3, y = 'foo' }
 local b = a.z + 1 -- z should be nil
---@^ Error: Cannot index `{x: 3, y: "foo"}` with `"z"`
+--@^ Error: Missing key "z" in `{x: 3, y: "foo"}`
 --! error
 
 --8<-- index-rec-with-wrong-name-2
 local a = { x = 3, y = 'foo' }
 local b = a.z .. 'bar' -- ditto
---@^ Error: Cannot index `{x: 3, y: "foo"}` with `"z"`
+--@^ Error: Missing key "z" in `{x: 3, y: "foo"}`
 --! error
 
 --8<-- table-update
@@ -1113,7 +1129,7 @@ local a = {} --: vector<number>
 local a = {} --: vector<number>
 a[1] = 42
 a.what = 54
---@^ Error: Cannot index an array `vector<number>` with a non-integral index `"what"`
+--@^ Error: Cannot index an array `vector<number>` with a non-integral key `"what"`
 --! error
 
 --8<-- var-map-update-and-index
@@ -1697,7 +1713,7 @@ p.x = q
 --8<-- assign-record-1
 local t = {}
 t.a = 42
-local x = t.b --@< Error: Cannot index `{a: integer}` with `"b"`
+local x = t.b --@< Error: Missing key "b" in `{a: integer}`
 --! error
 
 --8<-- assign-record-2
@@ -2368,13 +2384,13 @@ p.a.b()              --@< Error: Tried to index a non-table type `42`
 --8<-- method-decl-const
 local p = {} --: const {}
 function p.a() end --@< Error: Cannot update the immutable type `const {}` by indexing
-p.a() --@< Error: Cannot index `const {}` with `"a"`
+p.a() --@< Error: Missing key "a" in `const {}`
 --! error
 
 --8<-- method-decl-const-nested
 local p = { a = {} } --: const {a: const {}}
 function p.a.b() end --@< Error: Cannot update the immutable type `const {}` by indexing
-p.a.b() --@< Error: Cannot index `const {}` with `"b"`
+p.a.b() --@< Error: Missing key "b" in `const {}`
 --! error
 
 --8<-- methodcall-string-meta-table
@@ -2409,7 +2425,7 @@ local x = ('f'):byte() --: integer
 
 --8<-- methodcall-recover
 local q = {}
-local x = q:f() --@< Error: Cannot index `{}` with `"f"`
+local x = q:f() --@< Error: Missing key "f" in `{}`
 -- `x` should be a dummy type now, so the following shouldn't fail
 x()
 local p = 3 + x
@@ -3010,7 +3026,7 @@ local z = x.y + 42 --: integer --@< Error: Tried to index a non-table type `inte
 local x = {}
 --# assume x.y.z: integer
 --@^ Error: `--# assume` directive tried to access a missing field
-local z = x.y.z + 42 --: integer --@< Error: Cannot index `{}` with `"y"`
+local z = x.y.z + 42 --: integer --@< Error: Missing key "y" in `{}`
 --! error
 
 --8<-- assume-field-unknown

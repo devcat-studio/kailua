@@ -465,6 +465,22 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         Ok(returns)
     }
 
+    fn cannot_index(&self, span: Span, tab: &Slot, key: &Slot) -> Result<()> {
+        // use a special message when the table is a record and key is a string literal
+        match (tab.unlift().get_tables(), key.unlift().as_string()) {
+            (Some(&Tables::Fields(_)), Some(s)) => {
+                self.env.error(span,
+                               m::CannotIndexWithStr { tab: self.display(tab), key: s })
+                        .done()
+            },
+            _ => {
+                self.env.error(span,
+                               m::CannotIndex { tab: self.display(tab), key: self.display(key) })
+                        .done()
+            },
+        }
+    }
+
     // common routine for check_{l,r}val_index
     // when lval is true, the field is created as needed (otherwise it's an error)
     // when lval is false, the missing field is returned as Index::Missing
@@ -676,9 +692,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 match $sub {
                     Ok(v) => v,
                     Err(_) => {
-                        self.env.error(expspan, m::CannotIndex { tab: self.display(&*ety0),
-                                                                 key: self.display(kty0) })
-                                .done()?;
+                        self.cannot_index(expspan, &ety0, kty0)?;
                         return Ok(Index::dummy());
                     }
                 }
@@ -790,9 +804,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         expspan: Span) -> Result<Slot> {
         match self.check_index_common(ety, kty, expspan, false)? {
             Index::Missing => {
-                self.env.error(expspan, m::CannotIndex { tab: self.display(&ety),
-                                                         key: self.display(&kty) })
-                        .done()?;
+                self.cannot_index(expspan, ety, kty)?;
                 Ok(Slot::dummy())
             },
             Index::Created(..) => unreachable!(),
