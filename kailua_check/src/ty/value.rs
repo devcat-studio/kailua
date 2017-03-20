@@ -7,10 +7,10 @@ use std::collections::{hash_map, HashMap};
 
 use kailua_env::{Spanned, WithLoc};
 use kailua_syntax::{K, Kind, SlotKind, Str, Name};
-use kailua_diag::{Result, Reporter, Locale};
+use kailua_diag::{Result, Reporter};
 use diag::{Origin, TypeReport, TypeResult, TypeReportHint, TypeReportMore};
-use super::{F, Slot};
-use super::{Display, TypeContext, NoTypeContext, TypeResolver, Lattice, Union, TySeq};
+use super::{Display, DisplayState, TypeContext, NoTypeContext, TypeResolver};
+use super::{F, Slot, Lattice, Union, TySeq};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, Tag, Class};
 use super::flags::*;
 use message as m;
@@ -831,12 +831,11 @@ impl<'a, 'b> PartialEq<T<'b>> for T<'a> {
 }
 
 impl<'a> Display for T<'a> {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter,
-                     locale: Locale, ctx: &TypeContext) -> fmt::Result {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
         match *self {
             T::Dynamic(Dyn::User) => write!(f, "WHATEVER"),
             T::Dynamic(Dyn::Oops) => {
-                match &locale[..] {
+                match &st.locale[..] {
                     "ko" => write!(f, "<오류>"),
                     _    => write!(f, "<error>"),
                 }
@@ -844,7 +843,7 @@ impl<'a> Display for T<'a> {
 
             T::All      => write!(f, "any"),
             T::None     => {
-                match &locale[..] {
+                match &st.locale[..] {
                     "ko" => write!(f, "<불가능한 타입>"),
                     _    => write!(f, "<impossible type>"),
                 }
@@ -862,20 +861,22 @@ impl<'a> Display for T<'a> {
             T::Str(ref s) => write!(f, "{:?}", s),
 
             T::TVar(tv) => {
-                if let Some(t) = ctx.get_tvar_exact_type(tv) {
-                    fmt::Display::fmt(&t.display(ctx).localized(locale), f)
+                if st.is_tvar_seen(tv) {
+                    return write!(f, "<...>");
+                } else if let Some(t) = st.context.get_tvar_exact_type(tv) {
+                    fmt::Display::fmt(&t.display(st), f)
                 } else {
-                    match &locale[..] {
+                    match &st.locale[..] {
                         "ko" => write!(f, "<알 수 없는 타입>"),
                         _    => write!(f, "<unknown type>"),
                     }
                 }
             },
 
-            T::Tables(ref tab)     => fmt::Display::fmt(&tab.display(ctx).localized(locale), f),
-            T::Functions(ref func) => fmt::Display::fmt(&func.display(ctx).localized(locale), f),
-            T::Class(c)            => ctx.fmt_class(c, f),
-            T::Union(ref u)        => fmt::Display::fmt(&u.display(ctx).localized(locale), f),
+            T::Tables(ref tab)     => fmt::Display::fmt(&tab.display(st), f),
+            T::Functions(ref func) => fmt::Display::fmt(&func.display(st), f),
+            T::Class(c)            => st.context.fmt_class(c, f),
+            T::Union(ref u)        => fmt::Display::fmt(&u.display(st), f),
         }
     }
 }
@@ -1536,8 +1537,7 @@ define_ty_impls! {
 }
 
 impl Display for Ty {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter,
-                     locale: Locale, ctx: &TypeContext) -> fmt::Result {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
         if let Some(tag) = self.tag() {
             write!(f, "[{}] ", tag.name())?;
         }
@@ -1551,7 +1551,7 @@ impl Display for Ty {
             (&T::None, Nil::Silent) => return write!(f, "nil"),
             (&T::None, Nil::Noisy) => return write!(f, "nil"),
 
-            (_, _) => ty.fmt_displayed(f, locale, ctx)?,
+            (_, _) => ty.fmt_displayed(f, st)?,
         }
 
         match nil {

@@ -1,10 +1,9 @@
 use std::fmt;
 use std::collections::BTreeSet;
 
-use kailua_diag::Locale;
 use kailua_syntax::Str;
 use diag::{Origin, TypeResult};
-use super::{Display, TypeContext, Lattice, Union};
+use super::{Display, DisplayState, TypeContext, Lattice, Union};
 
 #[derive(Clone)]
 pub enum Numbers {
@@ -129,8 +128,7 @@ impl PartialEq for Numbers {
 }
 
 impl Display for Numbers {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter,
-                     _locale: Locale, _ctx: &TypeContext) -> fmt::Result {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, _st: &DisplayState) -> fmt::Result {
         fmt::Debug::fmt(self, f)
     }
 }
@@ -269,8 +267,7 @@ impl PartialEq for Strings {
 }
 
 impl Display for Strings {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter,
-                     _locale: Locale, _ctx: &TypeContext) -> fmt::Result {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, _st: &DisplayState) -> fmt::Result {
         fmt::Debug::fmt(self, f)
     }
 }

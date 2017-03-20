@@ -1,8 +1,7 @@
 use std::fmt;
 
-use kailua_diag::Locale;
 use diag::{Origin, TypeReport, TypeResult};
-use super::{Display, T, TySeq, TypeContext, Lattice};
+use super::{Display, DisplayState, T, TySeq, TypeContext, Lattice};
 
 #[derive(Clone, PartialEq)]
 pub struct Function {
@@ -45,10 +44,9 @@ impl Function {
 }
 
 impl Display for Function {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter,
-                     locale: Locale, ctx: &TypeContext) -> fmt::Result {
-        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(ctx).localized(locale), f),
-                            |s, f| fmt::Display::fmt(&s.display(ctx).localized(locale), f))
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
+        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(st), f),
+                            |s, f| fmt::Display::fmt(&s.display(st), f))
     }
 }
 
@@ -109,9 +107,8 @@ impl PartialEq for Functions {
 }
 
 impl Display for Functions {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter,
-                     locale: Locale, ctx: &TypeContext) -> fmt::Result {
-        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(ctx).localized(locale), f))
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
+        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(st), f))
     }
 }
 

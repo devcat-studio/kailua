@@ -5,11 +5,11 @@ use std::usize;
 use std::iter;
 
 use kailua_env::{Span, Spanned, WithLoc};
-use kailua_diag::{self, Locale};
+use kailua_diag;
 use kailua_syntax::{Seq, Kind};
 use diag::{Origin, TypeReport, TypeResult};
 use super::{T, Ty, Slot, Lattice, Union};
-use super::{Display, TypeContext, TypeResolver};
+use super::{Display, DisplayState, TypeContext, TypeResolver};
 
 pub struct SeqIter<Item: Clone> {
     head: vec::IntoIter<Item>,
@@ -265,11 +265,9 @@ macro_rules! define_tyseq {
         }
 
         impl Display for $tyseq {
-            fn fmt_displayed(&self, f: &mut fmt::Formatter,
-                             locale: Locale, ctx: &TypeContext) -> fmt::Result {
+            fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
                 self.fmt_generic(f, |t, f, without_nil| {
-                    let t = t.display(ctx);
-                    let t = t.localized(locale);
+                    let t = t.display(st);
                     if without_nil { write!(f, "{:#}", t) } else { write!(f, "{}", t) }
                 })
             }
@@ -512,11 +510,9 @@ macro_rules! define_slotseq {
         }
 
         impl Display for $slotseq {
-            fn fmt_displayed(&self, f: &mut fmt::Formatter,
-                             locale: Locale, ctx: &TypeContext) -> fmt::Result {
+            fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
                 self.fmt_generic(f, |s, f, without_nil| {
-                    let s = s.display(ctx);
-                    let s = s.localized(locale);
+                    let s = s.display(st);
                     if without_nil { write!(f, "{:#}", s) } else { write!(f, "{}", s) }
                 })
             }

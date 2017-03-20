@@ -5,7 +5,7 @@ use kailua_env::Spanned;
 use kailua_diag::{Result, Locale, Report};
 use kailua_syntax::Name;
 
-pub use self::display::{Display, Displayed};
+pub use self::display::{Display, Displayed, DisplayState};
 pub use self::literals::{Numbers, Strings};
 pub use self::tables::{Key, Tables};
 pub use self::functions::{Function, Functions};

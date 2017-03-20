@@ -5,11 +5,10 @@ use std::sync::Arc;
 use parking_lot::{RwLock, RwLockReadGuard};
 
 use kailua_env::{Span, Spanned};
-use kailua_diag::Locale;
 use kailua_syntax::M;
 use diag::Origin;
 use super::{Dyn, Nil, T, Ty, TypeContext, Lattice, Union, TVar, Tag};
-use super::{Display, TypeReport, TypeResult};
+use super::{Display, DisplayState, TypeReport, TypeResult};
 use super::flags::Flags;
 
 // slot type flexibility (a superset of type mutability)
@@ -161,9 +160,12 @@ impl S {
 }
 
 impl Display for S {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter,
-                     locale: Locale, ctx: &TypeContext) -> fmt::Result {
-        let prefix = match (self.flex, &locale[..]) {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
+        if st.is_slot_seen(self) {
+            return write!(f, "<...>");
+        }
+
+        let prefix = match (self.flex, &st.locale[..]) {
             (F::Any, "ko") => return write!(f, "<접근 불가능한 타입>"),
             (F::Any, _)    => return write!(f, "<inaccessible type>"),
 
@@ -176,7 +178,7 @@ impl Display for S {
             (F::Var,   _) => "",
         };
 
-        write!(f, "{}{}", prefix, self.ty.display(ctx).localized(locale))
+        write!(f, "{}{}", prefix, self.ty.display(st))
     }
 }
 
@@ -402,9 +404,8 @@ impl PartialEq for Slot {
 }
 
 impl Display for Slot {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter,
-                     locale: Locale, ctx: &TypeContext) -> fmt::Result {
-        self.0.read().fmt_displayed(f, locale, ctx)
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
+        self.0.read().fmt_displayed(f, st)
     }
 }
 

@@ -2,10 +2,9 @@ use std::fmt;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 
-use kailua_diag::Locale;
 use kailua_syntax::Str;
 use diag::{TypeReport, TypeResult, Origin};
-use super::{Display, T, TypeContext, Lattice, Union};
+use super::{Display, DisplayState, T, TypeContext, Lattice, Union};
 use super::{Numbers, Strings, Tables, Functions, Class};
 use super::flags::*;
 
@@ -318,9 +317,8 @@ impl Lattice for Unioned {
 }
 
 impl Display for Unioned {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter,
-                     locale: Locale, ctx: &TypeContext) -> fmt::Result {
-        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(ctx).localized(locale), f))
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
+        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(st), f))
     }
 }
 

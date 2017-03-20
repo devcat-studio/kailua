@@ -3053,3 +3053,33 @@ f{mandatory = 'foo', optional = 'bar', additional = true}
 
 --! error
 
+--8<-- rec-recursive
+-- XXX we currently allow them, but it's probably going to be problematic later
+local x = {}
+x.x = x
+x.y = x
+x.z = x
+--! ok
+
+--8<-- rec-recursive-display-1
+local x = {}
+x.x = x
+x.y = x
+x.z = x
+local a = x --: integer --@< Error: Cannot assign `{x: <...>, y: <...>, z: <...>}` into `integer`
+                        --@^ Note: The other type originates here
+--! error
+
+--8<-- rec-recursive-display-2
+local x = {}
+x.x = x
+x.y = x
+x.z = x
+local y = {}
+y.x = y
+y.y = x
+-- this error is actually quite wrong, because it occurred in midst of recursive rvar relation...
+x = y --@< Error: Cannot assign `{x: <...>, y: {x: <...>, y: <...>, z: <...>}}` into `{x: {x: <...>, y: <...>}, y: <...>, z: <...>}`
+      --@^ Note: The other type originates here
+--! error
+

@@ -89,7 +89,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         self.env.context()
     }
 
-    fn display<'a, 'c, T: Display>(&'c self, x: &'a T) -> Displayed<'a, 'c, T> {
+    fn display<'a, 'c, T: Display>(&'c self, x: &'a T) -> Displayed<'a, T, &'c TypeContext> {
         self.env.display(x)
     }
 

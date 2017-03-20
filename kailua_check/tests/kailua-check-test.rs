@@ -16,7 +16,7 @@ use clap::{App, Arg, ArgMatches};
 use kailua_env::{Source, Span};
 use kailua_diag::{Stop, Locale, Report, Reporter, TrackMaxKind};
 use kailua_syntax::{Chunk, parse_chunk};
-use kailua_check::{Options, Context, Display, check_from_chunk};
+use kailua_check::{Options, Context, TypeContext, Display, check_from_chunk};
 
 struct Testing {
     note_spanned_infos: bool,
@@ -77,7 +77,9 @@ impl kailua_test::Testing for Testing {
                  usize::MAX - slot.span.begin().to_usize())
             });
             for slot in slots {
-                let msg = format!("slot: {}", slot.display(&context).localized(Locale::dummy()));
+                let msg = format!("slot: {}",
+                                  slot.display(&context as &TypeContext)
+                                      .localized(Locale::dummy()));
                 report.info(slot.span, &msg).done().unwrap();
             }
         }

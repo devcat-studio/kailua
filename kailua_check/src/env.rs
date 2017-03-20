@@ -1315,7 +1315,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
     }
 
     // convenience function to avoid mutable references
-    pub fn display<'a, 'c, T: Display>(&'c self, x: &'a T) -> Displayed<'a, 'c, T> {
+    pub fn display<'a, 'c, T: Display>(&'c self, x: &'a T) -> Displayed<'a, T, &'c TypeContext> {
         x.display(self.context)
     }
 

@@ -1,11 +1,11 @@
 use diag::Ordinal;
-use ty::{self, Key, Displayed};
+use ty::{self, Key, Displayed, TypeContext};
 use kailua_syntax::Name;
 
-pub type T<'a> = Displayed<'a, 'a, ty::T<'a>>;
-pub type Ty<'a> = Displayed<'a, 'a, ty::Ty>;
-pub type SpannedTySeq<'a> = Displayed<'a, 'a, ty::SpannedTySeq>;
-pub type Slot<'a> = Displayed<'a, 'a, ty::Slot>;
+pub type T<'a> = Displayed<'a, ty::T<'a>, &'a TypeContext>;
+pub type Ty<'a> = Displayed<'a, ty::Ty, &'a TypeContext>;
+pub type SpannedTySeq<'a> = Displayed<'a, ty::SpannedTySeq, &'a TypeContext>;
+pub type Slot<'a> = Displayed<'a, ty::Slot, &'a TypeContext>;
 
 define_msg! { pub NoVar<'a> { name: &'a Name }:
     "ko" => "전역 또는 지역 변수 {name}가(이) 선언되지 않았습니다",

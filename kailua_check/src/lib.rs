@@ -15,7 +15,7 @@ use kailua_diag::Report;
 
 pub use diag::{TypeReport, TypeResult, TypeReportMore};
 pub use ty::flags;
-pub use ty::{Display, Displayed};
+pub use ty::{Display, Displayed, DisplayState};
 pub use ty::{RVar, TVar, ClassId, Class, TypeContext, TypeResolver, Union, Lattice};
 pub use ty::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, Dyn, Nil, T, Ty};
 pub use ty::{F, S, Slot, SeqIter, TySeq, SpannedTySeq, SlotSeq, SpannedSlotSeq, Tag};

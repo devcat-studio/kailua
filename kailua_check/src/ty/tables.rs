@@ -3,10 +3,9 @@ use std::i32;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use kailua_diag::Locale;
 use kailua_syntax::Str;
 use diag::{Origin, TypeReport, TypeResult, unquotable_name};
-use super::{Display, T, Ty, Slot, TypeContext, Union, Lattice, RVar};
+use super::{Display, DisplayState, T, Ty, Slot, TypeContext, Union, Lattice, RVar};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Key {
@@ -100,7 +99,7 @@ impl Tables {
     }
 
     fn fmt_generic<WriteTy, WriteSlot>(&self, f: &mut fmt::Formatter,
-                                       ctx: Option<&TypeContext>,
+                                       st: Option<&DisplayState>,
                                        mut write_ty: WriteTy,
                                        mut write_slot: WriteSlot,
                                        expose_rvar: bool) -> fmt::Result
@@ -110,6 +109,12 @@ impl Tables {
             Tables::All => write!(f, "table"),
 
             Tables::Fields(ref rvar) => {
+                if let Some(st) = st {
+                    if st.is_rvar_seen(rvar.clone()) {
+                        return write!(f, "<...>");
+                    }
+                }
+
                 let mut fields = BTreeMap::new();
                 let mut morefields = 0;
 
@@ -119,8 +124,8 @@ impl Tables {
                 // keys have to be sorted in the output, but row variables may have been
                 // instantiated in an arbitrary order, so we need to collect and sort them
                 // when ctx is available. otherwise we just print ctx out.
-                let rvar = if let Some(ctx) = ctx {
-                    ctx.list_rvar_fields(rvar.clone(), &mut |k, v| {
+                let rvar = if let Some(st) = st {
+                    st.context.list_rvar_fields(rvar.clone(), &mut |k, v| {
                         if fields.len() < MAX_FIELDS {
                             fields.insert(k.clone(), v.clone());
                         } else {
@@ -341,14 +346,12 @@ impl PartialEq for Tables {
 }
 
 impl Display for Tables {
-    fn fmt_displayed(&self, f: &mut fmt::Formatter,
-                     locale: Locale, ctx: &TypeContext) -> fmt::Result {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
         self.fmt_generic(
-            f, Some(ctx),
-            |t, f| fmt::Display::fmt(&t.display(ctx).localized(locale), f),
+            f, Some(st),
+            |t, f| fmt::Display::fmt(&t.display(st), f),
             |s, f, without_nil| {
-                let s = s.display(ctx);
-                let s = s.localized(locale);
+                let s = s.display(st);
                 if without_nil { write!(f, "{:#}", s) } else { write!(f, "{}", s) }
             },
             false
