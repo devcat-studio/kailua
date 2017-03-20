@@ -386,7 +386,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     TySeq { head: head, tail: tail }
                 };
 
-                let funcargs = generalize_tyseq(&f.args, self.context()).all_without_loc();
+                let funcargs = generalize_tyseq(&f.args, self.context()).all_with_loc(func);
                 if let Err(r) = args.assert_sub(&funcargs, self.context()) {
                     let hint = if methodcall {
                         TypeReportHint::MethodArgs
@@ -1526,7 +1526,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
             St::Return(ref exps) => {
                 let returns =
-                    self.env.get_frame().returns.as_ref().map(|seq| seq.clone().all_without_loc());
+                    self.env.get_frame().returns.as_ref().map(|seq| seq.clone().all_with_loc(stmt));
 
                 let hint = match returns {
                     Returns::None => None,

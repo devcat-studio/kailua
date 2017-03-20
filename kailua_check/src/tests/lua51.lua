@@ -151,6 +151,7 @@ end
 for x, y in ipairs(p) do
     --@^ Error: The type `[generic_pairs] function(vector<const WHATEVER>) --> (function(vector<const WHATEVER>, integer) --> (integer?, any), vector<const WHATEVER>, integer)` cannot be called
     --@^^ Cause: First function argument `map<integer, string>` is not a subtype of `vector<const WHATEVER>`
+    --@^^^ Note: The other type originates here
     -- XXX WHATEVER is temporary
 end
 --! error
@@ -161,6 +162,7 @@ end
 for x, y in ipairs(p) do
     --@^ Error: The type `[generic_pairs] function(vector<const WHATEVER>) --> (function(vector<const WHATEVER>, integer) --> (integer?, any), vector<const WHATEVER>, integer)` cannot be called
     --@^^ Cause: First function argument `table` is not a subtype of `vector<const WHATEVER>`
+    --@^^^ Note: The other type originates here
     -- XXX WHATEVER is temporary
 end
 --! error
@@ -171,6 +173,7 @@ end
 for x, y in ipairs(p) do
     --@^ Error: The type `[generic_pairs] function(vector<const WHATEVER>) --> (function(vector<const WHATEVER>, integer) --> (integer?, any), vector<const WHATEVER>, integer)` cannot be called
     --@^^ Cause: First function argument `string` is not a subtype of `vector<const WHATEVER>`
+    --@^^^ Note: The other type originates here
     -- XXX WHATEVER is temporary
 end
 --! error
@@ -291,6 +294,7 @@ end
 for x, y in pairs(p) do
     --@^ Error: The type `[generic_pairs] function(table) --> (function(table, any) --> (any?, any), table, any)` cannot be called
     --@^^ Cause: First function argument `string` is not a subtype of `table`
+    --@^^^ Note: The other type originates here
 end
 --! error
 

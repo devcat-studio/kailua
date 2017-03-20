@@ -320,6 +320,7 @@ impl Slot {
 
     pub fn get_dynamic(&self) -> Option<Dyn> { self.flags().get_dynamic() }
     pub fn get_tvar(&self) -> Option<TVar> { self.unlift().get_tvar() }
+    pub fn can_omit(&self) -> bool { self.unlift().can_omit() }
     pub fn tag(&self) -> Option<Tag> { self.unlift().tag() }
 
     pub fn with_nil(&self) -> Slot {

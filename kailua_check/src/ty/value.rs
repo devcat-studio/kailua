@@ -1191,6 +1191,12 @@ impl Ty {
         self
     }
 
+    // used for sequence and row relations:
+    // if this returns false, the other type in given position can't be omitted
+    pub fn can_omit(&self) -> bool {
+        self.nil() == Nil::Noisy
+    }
+
     pub fn tag(&self) -> Option<Tag> {
         self.inner.tag()
     }

@@ -766,7 +766,7 @@ impl<R: Report> Context<R> {
                 for (k, v) in missing.into_iter() {
                     // when the record is extended due to the (in)equality relation,
                     // the type that is not explicitly nilable is disallowed
-                    if nilable || v.unlift().nil() == Nil::Noisy {
+                    if nilable || v.unlift().can_omit() {
                         fields.insert(k, Some(v));
                     } else {
                         return Err(ctx.gen_report().put(Origin::RVar,

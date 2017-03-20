@@ -97,6 +97,41 @@ define_msg! { pub InvalidUnionTypeInReturns<'a> { lhs: &'a str, rhs: &'a str, in
     _    => "Cannot create a union type of `{lhs}` and `{rhs}` in the {index} return type",
 }
 
+define_msg! { pub ArityMismatch<'a> { other: &'a str, index: Ordinal }:
+    "ko" => "반대편 타입이 `{other}`이기 때문에 {index} 타입을 생략할 수 없습니다",
+    _    => "{index:+} type cannot be omitted because the other type is `{other}`",
+}
+
+define_msg! { pub LessArityInFuncArgs<'a> { other: &'a str, index: Ordinal }:
+    "ko" => "명시된 타입이 `{other}`이기 때문에 함수의 {index} 인자를 생략할 수 없습니다",
+    _    => "{index:+} function argument cannot be omitted because its type is `{other}`",
+}
+
+define_msg! { pub LessArityInMethodArgs<'a> { other: &'a str, index: Ordinal }:
+    "ko" => "반대편 타입이 `{other}`이기 때문에 메소드의 {index} 인자를 생략할 수 없습니다",
+    _    => "{index:+} method argument cannot be omitted because its type is `{other}`",
+}
+
+define_msg! { pub LessArityInReturns<'a> { other: &'a str, index: Ordinal }:
+    "ko" => "반대편 타입이 `{other}`이기 때문에 {index} 반환값을 생략할 수 없습니다",
+    _    => "{index:+} return value cannot be omitted because its type is `{other}`",
+}
+
+define_msg! { pub MoreArityInFuncArgs { index: usize }:
+    "ko" => "함수에 {index}개를 넘는 인자를 넣을 수 없습니다",
+    _    => "Cannot give more than {index} argument(s) to the function",
+}
+
+define_msg! { pub MoreArityInMethodArgs { index: usize }:
+    "ko" => "`self`를 포함해 메소드에 {index}개를 넘는 인자를 넣을 수 없습니다",
+    _    => "Cannot give more than {index} argument(s) including `self` to the method",
+}
+
+define_msg! { pub MoreArityInReturns { index: usize }:
+    "ko" => "{index}개를 넘는 값을 반환할 수 없습니다",
+    _    => "Cannot return more than {index} value(s)",
+}
+
 define_msg! { pub OtherTypeOrigin:
     "ko" => "다른 타입은 여기에서 만들어졌습니다",
     _    => "The other type originates here",

@@ -13,7 +13,8 @@ p()
 --8<-- funccall-func-too-many-args
 local function p() end
 p(3) --@< Error: The type `function() --> ()` cannot be called
-     --@^ Cause: First function argument `3` is not a subtype of `nil`
+     --@^ Cause: Cannot give more than 0 argument(s) to the function
+     --@^^ Note: The other type originates here
 --! error
 
 --8<-- funccall-func-too-less-args-1 -- feature:!no_implicit_func_sig
@@ -27,8 +28,10 @@ p()
 local function p(x) --: integer
     x = x + 1
 end
-p()
---! ok
+p() --@< Error: The type `function(integer) --> ()` cannot be called
+    --@^ Cause: First function argument cannot be omitted because its type is `integer`
+    --@^^ Note: The other type originates here
+--! error
 
 --8<-- funccall-func-too-less-args-3
 local function p(x) --: integer?
@@ -45,7 +48,8 @@ local function p(x) --: integer!
     x = x + 1
 end
 p() --@< Error: The type `function(integer!) --> ()` cannot be called
-    --@^ Cause: First function argument `nil` is not a subtype of `integer!`
+    --@^ Cause: First function argument cannot be omitted because its type is `integer!`
+    --@^^ Note: The other type originates here
 --! error
 
 --8<-- funccall-var-outside-of-scope-1
@@ -314,7 +318,8 @@ local p = x:hello()
 local x = {hello = --v function(a: table!, b: integer!)
                    function(a, b) end}
 local p = x:hello() --@< Error: The type `function(table!, integer!) --> ()` cannot be called
-                    --@^ Cause: First method argument `nil` is not a subtype of `integer!`
+                    --@^ Cause: Second method argument cannot be omitted because its type is `integer!`
+                    --@^^ Note: The other type originates here
 --! error
 
 --8<-- methodcall-rec-3
@@ -328,12 +333,14 @@ local x = {hello = --v function(a: table!, b: integer!)
                    function(a, b) end}
 local p = x:hello('string') --@< Error: The type `function(table!, integer!) --> ()` cannot be called
                             --@^ Cause: First method argument `"string"` is not a subtype of `integer!`
+                            --@^^ Note: The other type originates here
 --! error
 
 --8<-- methodcall-rec-5
 local x = {hello = function() end}
 local p = x:hello() --@< Error: The type `function() --> ()` cannot be called
-                    --@^ Cause: `{hello: function() --> ()}` in the `self` position is not a subtype of `nil`
+                    --@^ Cause: Cannot give more than 0 argument(s) including `self` to the method
+                    --@^^ Note: The other type originates here
 --! error
 
 --8<-- methodcall-integer
@@ -380,7 +387,8 @@ f = nil
 --8<-- reinit-func-func-1
 local f = function() end
 f = function() return 54 end --@< Error: Attempted to return a type `(54)` which is incompatible to given return type `()`
-                             --@^ Cause: First return type `54` is not a subtype of `nil`
+                             --@^ Cause: Cannot return more than 0 value(s)
+                             --@^^ Note: The other type originates here
 --! error
 
 --8<-- reinit-func-func-2
@@ -795,6 +803,7 @@ function p(a) end
 p(function(x, y)
     return x .. y --@< Error: Attempted to return a type `(string)` which is incompatible to given return type `(integer)`
                   --@^ Cause: First return type `string` is not a subtype of `integer`
+                  --@^^ Note: The other type originates here
 end)
 --! error
 
@@ -806,6 +815,7 @@ p(function(x) end)
 --@^ Error: The type for this argument in the anonymous function is missing but couldn't be inferred from the calls
 --@^^ Error: The type `function(string) --> ()` cannot be called
 --@^^^ Cause: First function argument `function(<error>) --> ()` is not a subtype of `string`
+--@^^^^ Note: The other type originates here
 --! error
 
 --8<-- funccall-func-hint-less-arity -- feature:no_implicit_func_sig
@@ -813,8 +823,9 @@ p(function(x) end)
 function p(a) end
 
 -- the hint doesn't directly affect the diagnostics
---@vv Error: The type `function(function(integer, integer) --> integer) --> ()` cannot be called
---@v-vvv Cause: First function argument `function(integer) --> integer` is not a subtype of `function(integer, integer) --> integer`
+--@vvv Error: The type `function(function(integer, integer) --> integer) --> ()` cannot be called
+--@vv-vvvv Cause: First function argument `function(integer) --> integer` is not a subtype of `function(integer, integer) --> integer`
+--@v Note: The other type originates here
 p(function(x)
     return x * 2
 end)
@@ -830,6 +841,7 @@ p(function(x, y, z)
                   --@^ Cause: `nil` is not a subtype of `number`
                   --@^^ Error: Attempted to return a type `(number)` which is incompatible to given return type `(integer)`
                   --@^^^ Cause: First return type `number` is not a subtype of `integer`
+                  --@^^^^ Note: The other type originates here
 end)
 --! error
 
@@ -886,11 +898,13 @@ tab.p(tab, function(x) end)
 --@^ Error: The type for this argument in the anonymous function is missing but couldn't be inferred from the calls
 --@^^ Error: The type `function(<unknown type>, string) --> ()` cannot be called
 --@^^^ Cause: Second function argument `function(<error>) --> ()` is not a subtype of `string`
+--@^^^^ Note: The other type originates here
 
 tab:p(function(x) end)
 --@^ Error: The type for this argument in the anonymous function is missing but couldn't be inferred from the calls
 --@^^ Error: The type `function(<unknown type>, string) --> ()` cannot be called
 --@^^^ Cause: First method argument `function(<error>) --> ()` is not a subtype of `string`
+--@^^^^ Note: The other type originates here
 --! error
 
 --8<-- methodcall-func-hint-less-arity -- feature:no_implicit_func_sig
@@ -899,14 +913,16 @@ local tab = {}
 --v function(self, a: function(integer, integer) --> integer)
 function tab:p(a) end
 
---@vv Error: The type `function(<unknown type>, function(integer, integer) --> integer) --> ()` cannot be called
---@v-vvv Cause: Second function argument `function(integer) --> integer` is not a subtype of `function(integer, integer) --> integer`
+--@vvv Error: The type `function(<unknown type>, function(integer, integer) --> integer) --> ()` cannot be called
+--@vv-vvvv Cause: Second function argument `function(integer) --> integer` is not a subtype of `function(integer, integer) --> integer`
+--@v Note: The other type originates here
 tab.p(tab, function(x)
     return x * 2
 end)
 
---@vv Error: The type `function(<unknown type>, function(integer, integer) --> integer) --> ()` cannot be called
---@v-vvv Cause: First method argument `function(integer) --> integer` is not a subtype of `function(integer, integer) --> integer`
+--@vvv Error: The type `function(<unknown type>, function(integer, integer) --> integer) --> ()` cannot be called
+--@vv-vvvv Cause: First method argument `function(integer) --> integer` is not a subtype of `function(integer, integer) --> integer`
+--@v Note: The other type originates here
 tab:p(function(x)
     return x * 2
 end)
@@ -924,6 +940,7 @@ tab.p(tab, function(x, y, z)
                   --@^ Cause: `nil` is not a subtype of `number`
                   --@^^ Error: Attempted to return a type `(number)` which is incompatible to given return type `(integer)`
                   --@^^^ Cause: First return type `number` is not a subtype of `integer`
+                  --@^^^^ Note: The other type originates here
 end)
 
 tab:p(function(x, y, z)
@@ -932,6 +949,7 @@ tab:p(function(x, y, z)
                   --@^ Cause: `nil` is not a subtype of `number`
                   --@^^ Error: Attempted to return a type `(number)` which is incompatible to given return type `(integer)`
                   --@^^^ Cause: First return type `number` is not a subtype of `integer`
+                  --@^^^^ Note: The other type originates here
 end)
 --! error
 
@@ -1287,6 +1305,7 @@ local function p()
     return 3, 4
     --@^ Error: Attempted to return a type `(3, 4)` which is incompatible to given return type `(integer, string)`
     --@^^ Cause: Second return type `4` is not a subtype of `string`
+    --@^^^ Note: The other type originates here
 end
 --! error
 
@@ -1294,20 +1313,42 @@ end
 --v function() --> (integer, nil)
 local function p()
     return 3
+    --@^ Error: Attempted to return a type `(3)` which is incompatible to given return type `(integer, nil)`
+    --@^^ Cause: Second return value cannot be omitted because its type is `nil`
+    --@^^^ Note: The other type originates here
 end
---! ok
+--! error
 
 --8<-- func-returns-with-nil
 --v function() --> integer
 local function p()
-    return 3, nil
+    return 3, nil --@< Error: Attempted to return a type `(3, nil)` which is incompatible to given return type `(integer)`
+                  --@^ Cause: Cannot return more than 1 value(s)
+                  --@^^ Note: The other type originates here
 end
---! ok
+--! error
 
---8<-- func-returns-seq-union
+--8<-- func-returns-seq-union-1
 --v function(n: boolean) --> (string, string)
 local function p(n)
-    if n then return 'string' else return nil, 'error' end
+    if n then
+        return 'string' --@< Error: Attempted to return a type `("string")` which is incompatible to given return type `(string, string)`
+                        --@^ Cause: Second return value cannot be omitted because its type is `string`
+                        --@^^ Note: The other type originates here
+    else
+        return nil, 'error'
+    end
+end
+--! error
+
+--8<-- func-returns-seq-union-2
+--v function(n: boolean) --> (string, string?)
+local function p(n)
+    if n then
+        return 'string'
+    else
+        return nil, 'error'
+    end
 end
 --! ok
 
@@ -1316,7 +1357,8 @@ end
 local function f()
     return 'foo'
     --@^ Error: Attempted to return a type `("foo")` which is incompatible to given return type `()`
-    --@^^ Cause: First return type `"foo"` is not a subtype of `nil`
+    --@^^ Cause: Cannot return more than 0 value(s)
+    --@^^^ Note: The other type originates here
 end
 --! error
 
@@ -1415,6 +1457,7 @@ p(1, 2, 3)
 local function p(...) end
 p(1, false, 3) --@< Error: The type `function(integer...) --> ()` cannot be called
                --@^ Cause: Second function argument `false` is not a subtype of `integer`
+               --@^^ Note: The other type originates here
 --! error
 
 --8<-- func-varargs-type-with-nil
@@ -1968,24 +2011,32 @@ p[1] = 42
 --! ok
 
 --8<-- for-in-simple-iter-1
---# assume func: const function() --> number?
+--# assume func: const function(nil, nil) --> number?
 for x in func do
     local a = x * 3
 end
 --! ok
 
 --8<-- for-in-simple-iter-2
---# assume func: const function() --> number    -- technically infinite loop
+--# assume func: const function(nil, nil) --> number    -- technically infinite loop
 for x in func do
     local a = x * 3
 end
 --! ok
 
 --8<-- for-in-simple-iter-3
---# assume func: const function() --> number|string
+--# assume func: const function(nil, nil) --> number|string
 for x in func do
     local a = x * 3 --@< Error: Cannot apply * operator to `(number|string)` and `3`
                     --@^ Cause: `(number|string)` is not a subtype of `number`
+end
+--! error
+
+--8<-- for-in-simple-iter-bad-arity
+--# assume func: const function() --> number
+for x in func do --@< Error: The type `function() --> number` cannot be called
+                 --@^ Cause: Cannot give more than 1 argument(s) to the function
+    local a = x * 3
 end
 --! error
 
@@ -2213,7 +2264,7 @@ end
 
 --8<-- if-warning-varargs-2 -- feature:warn_on_useless_conds
 --v function() --> (string, string...)
-function f() end
+function f() return 'foo' end
 if f() then --@< Warning: This condition always evaluates to a truthy value
 end
 --! ok
@@ -2385,6 +2436,7 @@ local b = foo(4) --: string
 local c = foo('hi') --: integer
 --@^ Error: The type `function(integer) --> integer` cannot be called
 --@^^ Cause: First function argument `"hi"` is not a subtype of `integer`
+--@^^^ Note: The other type originates here
 
 --! error
 
@@ -2410,8 +2462,9 @@ function foo:bar(x)
 end
 
 -- this is an error because `self` type is not affected by [no_check]
---@vv Error: The type `function(integer, integer) --> integer` cannot be called
---@v Cause: `{bar: function(integer, integer) --> integer}` in the `self` position is not a subtype of `integer`
+--@vvv Error: The type `function(integer, integer) --> integer` cannot be called
+--@vv Cause: `{bar: function(integer, integer) --> integer}` in the `self` position is not a subtype of `integer`
+--@v Note: The other type originates here
 local a = foo:bar(3) --: integer
 
 --! error
@@ -2470,15 +2523,17 @@ foo(--v [no_check]
 --v function(f: function(integer) --> boolean)
 function foo(f) end
 
---@vv Error: The type `function(function(integer) --> boolean) --> ()` cannot be called
---@v-vvvv Cause: First function argument `function(integer) --> string` is not a subtype of `function(integer) --> boolean`
+--@vvv Error: The type `function(function(integer) --> boolean) --> ()` cannot be called
+--@vv-vvvvv Cause: First function argument `function(integer) --> string` is not a subtype of `function(integer) --> boolean`
+--@v Note: The other type originates here
 foo(--v [no_check]
     function(x) --> string
         return x + "string"
     end)
 
---@vv Error: The type `function(function(integer) --> boolean) --> ()` cannot be called
---@v-vvvv Cause: First function argument `function(string) --> boolean` is not a subtype of `function(integer) --> boolean`
+--@vvv Error: The type `function(function(integer) --> boolean) --> ()` cannot be called
+--@vv-vvvvv Cause: First function argument `function(string) --> boolean` is not a subtype of `function(integer) --> boolean`
+--@v Note: The other type originates here
 foo(--v [no_check]
     function(x) --: string
         return x + "string"
@@ -2535,7 +2590,8 @@ end
 local function g(a, b)
 end
 g(0, f()) --@< Error: The type `function(integer, integer) --> ()` cannot be called
-          --@^ Cause: Third function argument `2` is not a subtype of `nil`
+          --@^ Cause: Cannot give more than 2 argument(s) to the function
+          --@^^ Note: The other type originates here
 --! error
 
 --8<-- seq-type-with-paren
@@ -2814,6 +2870,7 @@ local function f(x, y, z)
 end
 f(0, '', false) --@< Error: The type `function(42, "string", true) --> ()` cannot be called
                 --@^ Cause: First function argument `0` is not a subtype of `42`
+                --@^^ Note: The other type originates here
 --! error
 
 --8<-- explicit-literal-type-in-func-args-2
@@ -2828,6 +2885,7 @@ local function f(x, y, z)
 end
 f(0, '', false) --@< Error: The type `function((42|54), ("another string"|"string"), boolean) --> ()` cannot be called
                 --@^ Cause: First function argument `0` is not a subtype of `(42|54)`
+                --@^^ Note: The other type originates here
 --! error
 
 --8<-- explicit-literal-type-in-func-args-3
@@ -3015,6 +3073,7 @@ f({x = 'string', z = 42})
 -- this is still an error
 f({x = 54, z = 42}) --@< Error: The type `function({x: string?, y: string?}) --> ()` cannot be called
                     --@^ Cause: First function argument `{x: 54, z: 42}` is not a subtype of `{x: string?, y: string?}`
+                    --@^^ Note: The other type originates here
 --! error
 
 --8<-- funccall-no-rvar-extension-returns
@@ -3039,14 +3098,17 @@ function f(opts) end
 
 f{} --@< Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
     --@^ Cause: First function argument `{}` is not a subtype of `{mandatory: string, optional: string?}`
+    --@^^ Note: The other type originates here
 f{mandatory = nil}
 f{mandatory = 42} --@< Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
                   --@^ Cause: First function argument `{mandatory: 42}` is not a subtype of `{mandatory: string, optional: string?}`
+                  --@^^ Note: The other type originates here
 f{mandatory = 'foo'}
 f{mandatory = 'foo', optional = nil}
 f{mandatory = 'foo', optional = 'bar'}
 f{mandatory = 'foo', optional = 54} --@< Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
                                     --@^ Cause: First function argument `{mandatory: "foo", optional: 54}` is not a subtype of `{mandatory: string, optional: string?}`
+                                    --@^^ Note: The other type originates here
 f{mandatory = 'foo', additional = nil}
 f{mandatory = 'foo', additional = true}
 f{mandatory = 'foo', optional = 'bar', additional = true}

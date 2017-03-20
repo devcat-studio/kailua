@@ -34,6 +34,65 @@ pub type SeqIterWithNil<Item> =
 pub type SeqIterWithNone<Item> =
     iter::Chain<iter::Map<SeqIter<Item>, fn(Item) -> Option<Item>>, iter::Repeat<Option<Item>>>;
 
+// assert_sub and assert_eq routines are roughly same but cannot be easily generalized :-(
+macro_rules! make_assert_body {
+    (@put_span $e:expr; $($_span:ident)+) => ($e.as_ref());
+    (@put_span $e:expr; ) => ($e.without_loc());
+
+    (@seq_span $e:expr; $span:ident $($_dummy:ident)*) => ($e.$span);
+    (@seq_span $_e:expr; ) => (Span::dummy());
+
+    (
+        lhs = $lhs:expr;
+        rhs = $rhs:expr;
+        context = $ctx:expr;
+        origin = $origin:expr;
+        assert = $assert:ident;
+        attach_index = $attach_index:ident;
+        tail_to_elem = $tail_to_elem:ident;
+        span = [$($span:ident)*];
+    ) => ({
+        let mut i = 0;
+        let mut lhshead = $lhs.head.iter().fuse();
+        let mut rhshead = $rhs.head.iter().fuse();
+        let lhstail = $lhs.$tail_to_elem();
+        let rhstail = $rhs.$tail_to_elem();
+        loop {
+            match (lhshead.next(), rhshead.next()) {
+                (Some(a), Some(b)) => {
+                    a.$assert(b, $ctx).map_err(|r| r.$attach_index($origin, i))?;
+                }
+                (Some(a), None) => {
+                    // if `a` does not explicitly allow nils this is an arity mismatch
+                    if $rhs.tail.is_none() && !a.can_omit() {
+                        return Err($ctx.gen_report().more_arity(
+                            make_assert_body!(@put_span a; $($span)*),
+                            make_assert_body!(@seq_span $rhs; $($span)*),
+                            i, $ctx,
+                        ));
+                    }
+                    a.$assert(&rhstail, $ctx).map_err(|r| r.$attach_index($origin, i))?;
+                }
+                (None, Some(b)) => {
+                    // if `b` does not explicitly allow nils this is an arity mismatch
+                    if $lhs.tail.is_none() && !b.can_omit() {
+                        return Err($ctx.gen_report().less_arity(
+                            make_assert_body!(@seq_span $lhs; $($span)*),
+                            make_assert_body!(@put_span b; $($span)*),
+                            i, $ctx,
+                        ));
+                    }
+                    lhstail.$assert(b, $ctx).map_err(|r| r.$attach_index($origin, i))?;
+                }
+                (None, None) => {
+                    return lhstail.$assert(&rhstail, $ctx).map_err(|r| r.$attach_index($origin, i));
+                }
+            }
+            i += 1;
+        }
+    });
+}
+
 macro_rules! define_tyseq {
     ($(
         type $tyseq:ident {
@@ -66,8 +125,7 @@ macro_rules! define_tyseq {
             //
             // None is same to Some(Ty::noisy_nil()) but has a display hint
             // and has a different behavior for the arity calculation.
-            // (we may need this because, well, C/C++ API *can* count the proper number of args.
-            // TODO this is not yet enforced due to a number of concerns)
+            // (we may need this because, well, C/C++ API *can* count the proper number of args)
             pub tail: Option<$ty>,
 
             // this span is used for finer diagnostics
@@ -134,6 +192,13 @@ macro_rules! define_tyseq {
             pub fn ensure_at_mut(&mut self, i: usize) -> &mut $ty {
                 self.ensure_index(i);
                 &mut self.head[i]
+            }
+
+            pub fn ensure_tail(mut self) -> Self {
+                if self.tail.is_none() {
+                    self.tail = Some($make_nil_ty($(self.$span,)*));
+                }
+                self
             }
 
             pub fn into_iter(self) -> SeqIter<$ty> {
@@ -218,49 +283,21 @@ macro_rules! define_tyseq {
             fn assert_sub(&self, other: &$tyseq, ctx: &mut TypeContext) -> TypeResult<()> {
                 debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
-                (|| {
-                    let mut i = 0;
-                    let mut selfhead = self.head.iter().fuse();
-                    let mut otherhead = other.head.iter().fuse();
-                    let selftail = self.tail_to_type();
-                    let othertail = other.tail_to_type();
-                    loop {
-                        match (selfhead.next(), otherhead.next()) {
-                            (Some(a), Some(b)) => a.assert_sub(b, ctx).map_err(|r| (r, i))?,
-                            (Some(a), None) => a.assert_sub(&othertail, ctx).map_err(|r| (r, i))?,
-                            (None, Some(b)) => selftail.assert_sub(b, ctx).map_err(|r| (r, i))?,
-                            (None, None) =>
-                                return selftail.assert_sub(&othertail, ctx).map_err(|r| (r, i)),
-                        }
-                        i += 1;
-                    }
-                })().map_err(|(r, idx): (TypeReport, usize)| {
-                    r.not_sub_attach_index(Origin::Ty, idx)
-                })
+                make_assert_body! {
+                    lhs = self; rhs = other; context = ctx; origin = Origin::Ty;
+                    assert = assert_sub; attach_index = not_sub_attach_index;
+                    tail_to_elem = tail_to_type; span = [$($span)*];
+                }
             }
 
             fn assert_eq(&self, other: &$tyseq, ctx: &mut TypeContext) -> TypeResult<()> {
                 debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
-                (|| {
-                    let mut i = 0;
-                    let mut selfhead = self.head.iter().fuse();
-                    let mut otherhead = other.head.iter().fuse();
-                    let selftail = self.tail_to_type();
-                    let othertail = other.tail_to_type();
-                    loop {
-                        match (selfhead.next(), otherhead.next()) {
-                            (Some(a), Some(b)) => a.assert_eq(b, ctx).map_err(|r| (r, i))?,
-                            (Some(a), None) => a.assert_eq(&othertail, ctx).map_err(|r| (r, i))?,
-                            (None, Some(b)) => selftail.assert_eq(b, ctx).map_err(|r| (r, i))?,
-                            (None, None) =>
-                                return selftail.assert_eq(&othertail, ctx).map_err(|r| (r, i)),
-                        }
-                        i += 1;
-                    }
-                })().map_err(|(r, idx): (TypeReport, usize)| {
-                    r.not_eq_attach_index(Origin::Ty, idx)
-                })
+                make_assert_body! {
+                    lhs = self; rhs = other; context = ctx; origin = Origin::Ty;
+                    assert = assert_eq; attach_index = not_eq_attach_index;
+                    tail_to_elem = tail_to_type; span = [$($span)*];
+                }
             }
         }
 
@@ -371,6 +408,13 @@ macro_rules! define_slotseq {
                 &mut self.head[i]
             }
 
+            pub fn ensure_tail(mut self) -> Self {
+                if self.tail.is_none() {
+                    self.tail = Some($make_nil_slot($(self.$span,)*));
+                }
+                self
+            }
+
             pub fn into_iter(self) -> SeqIter<$slot> {
                 SeqIter { head: self.head.into_iter(), tail: self.tail.map($slot_with_nil) }
             }
@@ -463,49 +507,21 @@ macro_rules! define_slotseq {
             fn assert_sub(&self, other: &$slotseq, ctx: &mut TypeContext) -> TypeResult<()> {
                 debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
-                (|| {
-                    let mut i = 0;
-                    let mut selfhead = self.head.iter().fuse();
-                    let mut otherhead = other.head.iter().fuse();
-                    let selftail = self.tail_to_slot();
-                    let othertail = other.tail_to_slot();
-                    loop {
-                        match (selfhead.next(), otherhead.next()) {
-                            (Some(a), Some(b)) => a.assert_sub(b, ctx).map_err(|r| (r, i))?,
-                            (Some(a), None) => a.assert_sub(&othertail, ctx).map_err(|r| (r, i))?,
-                            (None, Some(b)) => selftail.assert_sub(b, ctx).map_err(|r| (r, i))?,
-                            (None, None) =>
-                                return selftail.assert_sub(&othertail, ctx).map_err(|r| (r, i)),
-                        }
-                        i += 1;
-                    }
-                })().map_err(|(r, idx): (TypeReport, usize)| {
-                    r.not_sub_attach_index(Origin::Slot, idx)
-                })
+                make_assert_body! {
+                    lhs = self; rhs = other; context = ctx; origin = Origin::Slot;
+                    assert = assert_sub; attach_index = not_sub_attach_index;
+                    tail_to_elem = tail_to_slot; span = [$($span)*];
+                }
             }
 
             fn assert_eq(&self, other: &$slotseq, ctx: &mut TypeContext) -> TypeResult<()> {
                 debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
-                (|| {
-                    let mut i = 0;
-                    let mut selfhead = self.head.iter().fuse();
-                    let mut otherhead = other.head.iter().fuse();
-                    let selftail = self.tail_to_slot();
-                    let othertail = other.tail_to_slot();
-                    loop {
-                        match (selfhead.next(), otherhead.next()) {
-                            (Some(a), Some(b)) => a.assert_eq(b, ctx).map_err(|r| (r, i))?,
-                            (Some(a), None) => a.assert_eq(&othertail, ctx).map_err(|r| (r, i))?,
-                            (None, Some(b)) => selftail.assert_eq(b, ctx).map_err(|r| (r, i))?,
-                            (None, None) =>
-                                return selftail.assert_eq(&othertail, ctx).map_err(|r| (r, i)),
-                        }
-                        i += 1;
-                    }
-                })().map_err(|(r, idx): (TypeReport, usize)| {
-                    r.not_eq_attach_index(Origin::Slot, idx)
-                })
+                make_assert_body! {
+                    lhs = self; rhs = other; context = ctx; origin = Origin::Slot;
+                    assert = assert_eq; attach_index = not_eq_attach_index;
+                    tail_to_elem = tail_to_slot; span = [$($span)*];
+                }
             }
         }
 

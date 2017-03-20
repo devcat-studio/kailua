@@ -117,6 +117,8 @@ enum BinaryReportKind {
 #[derive(Clone, Debug)]
 enum ReportItem {
     Binary(BinaryReportKind, Origin, Spanned<String>, Spanned<String>, Option<usize>),
+    LessArity(Span, Spanned<String>, usize),
+    MoreArity(Spanned<String>, Span, usize),
     Other(Origin, String),
 }
 
@@ -240,6 +242,22 @@ impl TypeReport {
         self.binary_attach_index(BinaryReportKind::CannotUnion(explicit), org, index)
     }
 
+    pub fn less_arity<T: Display>(mut self, lhs: Span, rhs: Spanned<&T>, index: usize,
+                                  ctx: &TypeContext) -> TypeReport {
+        let locale = self.locale;
+        let rhs = rhs.map(|t| Localized::new(&t.display(ctx), locale).to_string());
+        self.messages.push(ReportItem::LessArity(lhs, rhs, index));
+        self
+    }
+
+    pub fn more_arity<T: Display>(mut self, lhs: Spanned<&T>, rhs: Span, index: usize,
+                                  ctx: &TypeContext) -> TypeReport {
+        let locale = self.locale;
+        let lhs = lhs.map(|t| Localized::new(&t.display(ctx), locale).to_string());
+        self.messages.push(ReportItem::MoreArity(lhs, rhs, index));
+        self
+    }
+
     pub fn cannot_assign<T: Display, U: Display>(self, org: Origin, t: T, u: U,
                                                  ctx: &TypeContext) -> TypeReport {
         let locale = self.locale;
@@ -353,7 +371,7 @@ impl<'a, T> TypeReportMore for ReportMore<'a, T> {
                         |sub, sup, i| m::NotSubtypeInMethodArgs { sub: sub, sup: sup, index: i },
                         |sub, sup, i| m::NotSubtypeInReturns { sub: sub, sup: sup, index: i },
                     )
-                },
+                }
 
                 ReportItem::Binary(BinaryReportKind::NotEqual, _org, ref lhs, ref rhs, idx) => {
                     self = report_binary(
@@ -364,7 +382,7 @@ impl<'a, T> TypeReportMore for ReportMore<'a, T> {
                         |lhs, rhs, i| m::NotEqualInMethodArgs { lhs: lhs, rhs: rhs, index: i },
                         |lhs, rhs, i| m::NotEqualInReturns { lhs: lhs, rhs: rhs, index: i },
                     )
-                },
+                }
 
                 ReportItem::Binary(BinaryReportKind::CannotUnion(_explicit), _org,
                                    ref lhs, ref rhs, idx) => {
@@ -379,7 +397,56 @@ impl<'a, T> TypeReportMore for ReportMore<'a, T> {
                         |lhs, rhs, i| m::InvalidUnionTypeInReturns { lhs: lhs, rhs: rhs,
                                                                      index: i },
                     )
-                },
+                }
+
+                ReportItem::LessArity(lhs, ref rhs, idx) if hint == TypeReportHint::FuncArgs => {
+                    hint = TypeReportHint::None;
+                    self = self.cause(lhs,
+                                      m::LessArityInFuncArgs { other: rhs, index: Ordinal(idx) })
+                               .note_if(rhs, m::OtherTypeOrigin {});
+                }
+
+                ReportItem::MoreArity(ref lhs, rhs, idx) if hint == TypeReportHint::FuncArgs => {
+                    hint = TypeReportHint::None;
+                    self = self.cause(rhs, m::MoreArityInFuncArgs { index: idx })
+                               .note_if(lhs, m::OtherTypeOrigin {});
+                }
+
+                ReportItem::LessArity(lhs, ref rhs, idx) if hint == TypeReportHint::MethodArgs => {
+                    hint = TypeReportHint::None;
+                    self = self.cause(lhs,
+                                      m::LessArityInMethodArgs { other: rhs, index: Ordinal(idx) })
+                               .note_if(rhs, m::OtherTypeOrigin {});
+                }
+
+                ReportItem::MoreArity(ref lhs, rhs, idx) if hint == TypeReportHint::MethodArgs => {
+                    hint = TypeReportHint::None;
+                    self = self.cause(rhs, m::MoreArityInMethodArgs { index: idx })
+                               .note_if(lhs, m::OtherTypeOrigin {});
+                }
+
+                ReportItem::LessArity(lhs, ref rhs, idx) if hint == TypeReportHint::Returns => {
+                    hint = TypeReportHint::None;
+                    self = self.cause(rhs,
+                                      m::LessArityInReturns { other: rhs, index: Ordinal(idx) })
+                               .note_if(lhs, m::OtherTypeOrigin {});
+                }
+
+                ReportItem::MoreArity(ref lhs, rhs, idx) if hint == TypeReportHint::Returns => {
+                    hint = TypeReportHint::None;
+                    self = self.cause(rhs, m::MoreArityInReturns { index: idx })
+                               .note_if(lhs, m::OtherTypeOrigin {});
+                }
+
+                ReportItem::LessArity(lhs, ref rhs, idx) => {
+                    self = self.cause(lhs, m::ArityMismatch { other: rhs, index: Ordinal(idx) })
+                               .note_if(rhs, m::OtherTypeOrigin {});
+                }
+
+                ReportItem::MoreArity(ref lhs, rhs, idx) => {
+                    self = self.cause(rhs, m::ArityMismatch { other: lhs, index: Ordinal(idx) })
+                               .note_if(lhs, m::OtherTypeOrigin {});
+                }
 
                 ReportItem::Other(_org, msg) => {
                     self = self.note(Span::dummy(), format!("XXX {}", msg));

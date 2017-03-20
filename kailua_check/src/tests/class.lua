@@ -73,7 +73,8 @@ function Hello:init(x, y, z)
 end
 local h = Hello.new(3, 4, 5, 6)
 --@^ Error: The type `function(integer, integer, integer) --> Hello` cannot be called
---@^^ Cause: Fourth function argument `6` is not a subtype of `nil`
+--@^^ Cause: Cannot give more than 3 argument(s) to the function
+--@^^^ Note: The other type originates here
 --! error
 
 --8<-- class-init-fields
