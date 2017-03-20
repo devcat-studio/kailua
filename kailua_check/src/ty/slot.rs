@@ -7,9 +7,9 @@ use parking_lot::{RwLock, RwLockReadGuard};
 use kailua_env::{Span, Spanned};
 use kailua_diag::Locale;
 use kailua_syntax::M;
-use diag::{Origin, Display};
+use diag::Origin;
 use super::{Dyn, Nil, T, Ty, TypeContext, Lattice, Union, TVar, Tag};
-use super::{TypeReport, TypeResult};
+use super::{Display, TypeReport, TypeResult};
 use super::flags::Flags;
 
 // slot type flexibility (a superset of type mutability)

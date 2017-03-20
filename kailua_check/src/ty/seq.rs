@@ -7,9 +7,9 @@ use std::iter;
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag::{self, Locale};
 use kailua_syntax::{Seq, Kind};
-use diag::{Origin, TypeReport, TypeResult, Display};
+use diag::{Origin, TypeReport, TypeResult};
 use super::{T, Ty, Slot, Lattice, Union};
-use super::{TypeContext, TypeResolver};
+use super::{Display, TypeContext, TypeResolver};
 
 pub struct SeqIter<Item: Clone> {
     head: vec::IntoIter<Item>,

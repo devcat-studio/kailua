@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 
 use kailua_diag::Locale;
 use kailua_syntax::Str;
-use diag::{TypeReport, TypeResult, Origin, Display};
-use super::{T, TypeContext, Lattice, Union};
+use diag::{TypeReport, TypeResult, Origin};
+use super::{Display, T, TypeContext, Lattice, Union};
 use super::{Numbers, Strings, Tables, Functions, Class};
 use super::flags::*;
 

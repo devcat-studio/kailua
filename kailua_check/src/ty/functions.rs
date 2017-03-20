@@ -1,8 +1,8 @@
 use std::fmt;
 
 use kailua_diag::Locale;
-use diag::{Origin, TypeReport, TypeResult, Display};
-use super::{T, TySeq, TypeContext, Lattice};
+use diag::{Origin, TypeReport, TypeResult};
+use super::{Display, T, TySeq, TypeContext, Lattice};
 
 #[derive(Clone, PartialEq)]
 pub struct Function {

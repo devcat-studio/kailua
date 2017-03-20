@@ -3,8 +3,8 @@ use std::collections::BTreeSet;
 
 use kailua_diag::Locale;
 use kailua_syntax::Str;
-use diag::{Origin, TypeResult, Display};
-use super::{TypeContext, Lattice, Union};
+use diag::{Origin, TypeResult};
+use super::{Display, TypeContext, Lattice, Union};
 
 #[derive(Clone)]
 pub enum Numbers {

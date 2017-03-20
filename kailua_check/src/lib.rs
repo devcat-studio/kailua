@@ -13,8 +13,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use kailua_diag::Report;
 
-pub use diag::{TypeReport, TypeResult, TypeReportMore, Display};
+pub use diag::{TypeReport, TypeResult, TypeReportMore};
 pub use ty::flags;
+pub use ty::{Display, Displayed};
 pub use ty::{RVar, TVar, ClassId, Class, TypeContext, TypeResolver, Union, Lattice};
 pub use ty::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, Dyn, Nil, T, Ty};
 pub use ty::{F, S, Slot, SeqIter, TySeq, SpannedTySeq, SlotSeq, SpannedSlotSeq, Tag};

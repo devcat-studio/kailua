@@ -1,10 +1,11 @@
 use std::fmt;
 use std::result;
-use diag::{TypeReport, TypeResult, Display};
+use diag::{TypeReport, TypeResult};
 use kailua_env::Spanned;
 use kailua_diag::{Result, Locale, Report};
 use kailua_syntax::Name;
 
+pub use self::display::{Display, Displayed};
 pub use self::literals::{Numbers, Strings};
 pub use self::tables::{Key, Tables};
 pub use self::functions::{Function, Functions};
@@ -14,6 +15,7 @@ pub use self::slot::{F, S, Slot};
 pub use self::seq::{SeqIter, TySeq, SpannedTySeq, SlotSeq, SpannedSlotSeq};
 pub use self::tag::Tag;
 
+mod display;
 mod literals;
 mod tables;
 mod functions;

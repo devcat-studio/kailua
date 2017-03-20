@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 
 use kailua_diag::Locale;
 use kailua_syntax::Str;
-use diag::{Origin, TypeReport, TypeResult, Display, unquotable_name};
-use super::{T, Ty, Slot, TypeContext, Union, Lattice, RVar};
+use diag::{Origin, TypeReport, TypeResult, unquotable_name};
+use super::{Display, T, Ty, Slot, TypeContext, Union, Lattice, RVar};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Key {

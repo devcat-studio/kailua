@@ -1,5 +1,5 @@
-use diag::{Ordinal, Displayed};
-use ty::{self, Key};
+use diag::Ordinal;
+use ty::{self, Key, Displayed};
 use kailua_syntax::Name;
 
 pub type T<'a> = Displayed<'a, 'a, ty::T<'a>>;
