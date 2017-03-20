@@ -1051,10 +1051,12 @@ impl<R: Report> TypeContext for Context<R> {
             let tvar_ = self.gen_tvar();
             trace!("copied {:?} to {:?}", tvar, tvar_);
             if let Some(ub) = self.tvar_sub.get_bound(tvar).and_then(|b| b.bound.clone()) {
-                self.tvar_sub.add_bound(tvar_, &ub).expect("bounding fresh tvar should not fail");
+                let oldub = self.tvar_sub.add_bound(tvar_, &ub);
+                assert!(oldub.is_none(), "bounding fresh tvar should not fail");
             }
             if let Some(lb) = self.tvar_sup.get_bound(tvar).and_then(|b| b.bound.clone()) {
-                self.tvar_sup.add_bound(tvar_, &lb).expect("bounding fresh tvar should not fail");
+                let oldlb = self.tvar_sup.add_bound(tvar_, &lb);
+                assert!(oldlb.is_none(), "bounding fresh tvar should not fail");
             }
             tvar_
         }

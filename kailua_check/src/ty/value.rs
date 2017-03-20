@@ -863,13 +863,17 @@ impl<'a> Display for T<'a> {
             T::TVar(tv) => {
                 if st.is_tvar_seen(tv) {
                     return write!(f, "<...>");
-                } else if let Some(t) = st.context.get_tvar_exact_type(tv) {
-                    fmt::Display::fmt(&t.display(st), f)
                 } else {
-                    match &st.locale[..] {
-                        "ko" => write!(f, "<알 수 없는 타입>"),
-                        _    => write!(f, "<unknown type>"),
-                    }
+                    let ret = if let Some(t) = st.context.get_tvar_exact_type(tv) {
+                        fmt::Display::fmt(&t.display(st), f)
+                    } else {
+                        match &st.locale[..] {
+                            "ko" => write!(f, "<알 수 없는 타입>"),
+                            _    => write!(f, "<unknown type>"),
+                        }
+                    };
+                    st.unmark_tvar(tv);
+                    ret
                 }
             },
 

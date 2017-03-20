@@ -21,8 +21,10 @@ p(3) --@< Error: The type `function() --> ()` cannot be called
 local function p(x)
     x = x + 1
 end
-p()
---! ok
+p() --@< Error: The type `function(<unknown type>) --> ()` cannot be called
+    --@^ Cause: First function argument cannot be omitted because its type is `<unknown type>`
+    --@^^ Note: The other type originates here
+--! error
 
 --8<-- funccall-func-too-less-args-2
 local function p(x) --: integer
@@ -1043,6 +1045,7 @@ local x = p(4.5)
 function p(a) return a + 3 end
 local x = p('what') --@< Error: The type `function(<unknown type>) --> integer` cannot be called
                     --@^ Cause: First function argument `"what"` is not a subtype of `<unknown type>`
+                    --@^^ Note: The other type originates here
 --! error
 
 --8<-- capture-and-return-1
@@ -2747,6 +2750,7 @@ end
 local y = x(true, false)
 --@^ Error: The type `function(<unknown type>, integer) --> integer` cannot be called
 --@^^ Cause: Second function argument `false` is not a subtype of `integer`
+--@^^^ Note: The other type originates here
 --! error
 
 --8<-- table-assign-just
@@ -2828,6 +2832,7 @@ local function f(x, y, z)
 end
 f(0, '', false) --@< Error: The type `function(<unknown type>, <unknown type>, <unknown type>) --> ()` cannot be called
                 --@^ Cause: First function argument `0` is not a subtype of `<unknown type>`
+                --@^^ Note: The other type originates here
 --! error
 
 --8<-- explicit-literal-type

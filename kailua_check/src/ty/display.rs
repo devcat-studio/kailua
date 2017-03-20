@@ -36,6 +36,18 @@ impl<'a> DisplayState<'a> {
     pub fn is_rvar_seen(&self, rvar: RVar) -> bool {
         !self.rvars_seen.borrow_mut().insert(rvar.to_u32())
     }
+
+    pub fn unmark_slot(&self, slot: &S) {
+        self.slots_seen.borrow_mut().remove(&(slot as *const S));
+    }
+
+    pub fn unmark_tvar(&self, tvar: TVar) {
+        self.tvars_seen.borrow_mut().remove(&tvar.0);
+    }
+
+    pub fn unmark_rvar(&self, rvar: RVar) {
+        self.rvars_seen.borrow_mut().remove(&rvar.to_u32());
+    }
 }
 
 // human-readable description of various types requiring the type context.

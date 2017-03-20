@@ -165,20 +165,21 @@ impl Display for S {
             return write!(f, "<...>");
         }
 
-        let prefix = match (self.flex, &st.locale[..]) {
-            (F::Any, "ko") => return write!(f, "<접근 불가능한 타입>"),
-            (F::Any, _)    => return write!(f, "<inaccessible type>"),
+        let ret = match (self.flex, &st.locale[..]) {
+            (F::Any, "ko") => write!(f, "<접근 불가능한 타입>"),
+            (F::Any, _)    => write!(f, "<inaccessible type>"),
 
-            (F::Dynamic(Dyn::User), _)    => return write!(f, "WHATEVER"),
-            (F::Dynamic(Dyn::Oops), "ko") => return write!(f, "<오류>"),
-            (F::Dynamic(Dyn::Oops), _)    => return write!(f, "<error>"),
+            (F::Dynamic(Dyn::User), _)    => write!(f, "WHATEVER"),
+            (F::Dynamic(Dyn::Oops), "ko") => write!(f, "<오류>"),
+            (F::Dynamic(Dyn::Oops), _)    => write!(f, "<error>"),
 
-            (F::Just,  _) => "", // can be seen as a mutable value yet to be assigned
-            (F::Const, _) => "const ",
-            (F::Var,   _) => "",
+            // Just can be seen as a mutable value yet to be assigned
+            (F::Just,  _) => write!(f, "{}", self.ty.display(st)),
+            (F::Const, _) => write!(f, "const {}", self.ty.display(st)),
+            (F::Var,   _) => write!(f, "{}", self.ty.display(st)),
         };
-
-        write!(f, "{}{}", prefix, self.ty.display(st))
+        st.unmark_slot(self);
+        ret
     }
 }
 

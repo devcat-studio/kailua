@@ -115,68 +115,76 @@ impl Tables {
                     }
                 }
 
-                let mut fields = BTreeMap::new();
-                let mut morefields = 0;
+                let ret = (|| {
+                    let mut fields = BTreeMap::new();
+                    let mut morefields = 0;
 
-                // do not try to copy too many fields
-                const MAX_FIELDS: usize = 0x100;
+                    // do not try to copy too many fields
+                    const MAX_FIELDS: usize = 0x100;
 
-                // keys have to be sorted in the output, but row variables may have been
-                // instantiated in an arbitrary order, so we need to collect and sort them
-                // when ctx is available. otherwise we just print ctx out.
-                let rvar = if let Some(st) = st {
-                    st.context.list_rvar_fields(rvar.clone(), &mut |k, v| {
-                        if fields.len() < MAX_FIELDS {
-                            fields.insert(k.clone(), v.clone());
-                        } else {
-                            morefields += 1;
-                        }
-                        Ok(())
-                    }).expect("list_rvar_fields exited early while we haven't break")
-                } else {
-                    rvar.clone()
-                };
-
-                write!(f, "{{")?;
-                let mut first = true;
-
-                // try consecutive initial integers first
-                let mut nextlen = 1;
-                while let Some(t) = fields.get(&Key::Int(nextlen)) {
-                    if first { first = false; } else { write!(f, ", ")?; }
-                    write_slot(t, f, false)?;
-                    nextlen += 1;
-                }
-
-                // print other keys
-                for (name, t) in fields.iter() {
-                    match *name {
-                        Key::Int(v) if 1 <= v && v < nextlen => continue, // strip duplicates
-                        _ => {}
-                    }
-                    if first { first = false; } else { write!(f, ", ")?; }
-                    write!(f, "{}: ", name)?;
-                    write_slot(t, f, false)?;
-                }
-
-                // print the number of omitted fields if any
-                if morefields > 0 {
-                    if first { first = false; } else { write!(f, ", ")?; }
-                    write!(f, "<{} fields omitted>", morefields)?;
-                }
-
-                // print the extension if any
-                if expose_rvar && rvar != RVar::empty() {
-                    if !first { write!(f, ", ")?; }
-                    if rvar == RVar::any() {
-                        write!(f, "...?")?;
+                    // keys have to be sorted in the output, but row variables may have been
+                    // instantiated in an arbitrary order, so we need to collect and sort them
+                    // when ctx is available. otherwise we just print ctx out.
+                    let rvar = if let Some(st) = st {
+                        st.context.list_rvar_fields(rvar.clone(), &mut |k, v| {
+                            if fields.len() < MAX_FIELDS {
+                                fields.insert(k.clone(), v.clone());
+                            } else {
+                                morefields += 1;
+                            }
+                            Ok(())
+                        }).expect("list_rvar_fields exited early while we haven't break")
                     } else {
-                        write!(f, "...{}", rvar.to_usize())?;
+                        rvar.clone()
+                    };
+
+                    write!(f, "{{")?;
+                    let mut first = true;
+
+                    // try consecutive initial integers first
+                    let mut nextlen = 1;
+                    while let Some(t) = fields.get(&Key::Int(nextlen)) {
+                        if first { first = false; } else { write!(f, ", ")?; }
+                        write_slot(t, f, false)?;
+                        nextlen += 1;
                     }
+
+                    // print other keys
+                    for (name, t) in fields.iter() {
+                        match *name {
+                            Key::Int(v) if 1 <= v && v < nextlen => continue, // strip duplicates
+                            _ => {}
+                        }
+                        if first { first = false; } else { write!(f, ", ")?; }
+                        write!(f, "{}: ", name)?;
+                        write_slot(t, f, false)?;
+                    }
+
+                    // print the number of omitted fields if any
+                    if morefields > 0 {
+                        if first { first = false; } else { write!(f, ", ")?; }
+                        write!(f, "<{} fields omitted>", morefields)?;
+                    }
+
+                    // print the extension if any
+                    if expose_rvar && rvar != RVar::empty() {
+                        if !first { write!(f, ", ")?; }
+                        if rvar == RVar::any() {
+                            write!(f, "...?")?;
+                        } else {
+                            write!(f, "...{}", rvar.to_usize())?;
+                        }
+                    }
+
+                    write!(f, "}}")?;
+                    Ok(())
+                })();
+
+                if let Some(st) = st {
+                    st.unmark_rvar(rvar.clone());
                 }
 
-                write!(f, "}}")?;
-                Ok(())
+                ret
             }
 
             Tables::Array(ref t) => {
