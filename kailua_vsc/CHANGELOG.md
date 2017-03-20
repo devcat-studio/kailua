@@ -1,3 +1,11 @@
+## 0.0.11
+
+* Function arguments and returns are now checked for the arity mismatch. Previously omitted arguments and returns are treated as (noisy) nils that can be matched against other nils, but this is now forbidden. Use an explicit `T?` to allow the omission.
+
+* Fixed a stack overflow when the recursive records are built and diagnostic needs to show those types.
+
+* `pairs` and `ipairs` now works correctly against `WHATEVER` arguments.
+
 ## 0.0.10
 
 * The record types in the function arguments and returns are no longer affected by later calls.
