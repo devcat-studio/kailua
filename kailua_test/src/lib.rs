@@ -408,7 +408,9 @@ struct TestLog {
     delta_only: bool, // if true, `collected` contains calculated differences only
     panicked: bool,
     output: String,
-    collected: Vec<(Kind, Span, String)>,
+    output_mismatch: bool,
+    collected: Vec<(Kind, Span, String, bool /*mismatch*/)>,
+    reports_aux: Vec<bool /*mismatch*/>, // corresponds to each report in `test.reports`
 }
 
 #[must_use]
@@ -419,6 +421,7 @@ pub struct Tester<T> {
     term: Box<StderrTerminal>,
     verbose: bool,
     exact_diags: bool,
+    highlight_mismatch: bool,
     message_locale: Locale,
     stop_on_panic: bool,
     displayed_logs: Vec<TestLog>,
@@ -451,6 +454,10 @@ impl<T: Testing> Tester<T> {
                 .long("exact-diags")
                 .help("Requires the exact output for reports.\n\
                        Without this flag the excess reports are ignored."))
+            .arg(Arg::with_name("highlight_mismatch")
+                .short("h")
+                .long("highlight-mismatch")
+                .help("Puts a prefix to any mismatch in the reports or output."))
             .arg(Arg::with_name("message_locale")
                 .short("l")
                 .long("message-locale")
@@ -471,22 +478,24 @@ impl<T: Testing> Tester<T> {
         };
         let verbose = matches.is_present("verbose");
         let exact_diags = matches.is_present("exact_diags");
+        let highlight_mismatch = matches.is_present("highlight_mismatch");
         let message_locale = matches.value_of("message_locale").unwrap_or("en");
         let message_locale = Locale::new(message_locale).expect("unrecognized message locale");
-        let stop_on_panic = matches.is_present("stop_on_panic");
+        let stop_on_panic = matches.occurrences_of("stop_on_panic");
         testing.collect_args(&matches);
 
-        if stop_on_panic {
-            // for the convenience
+        // for the convenience
+        if stop_on_panic > 1 {
+            env::set_var("RUST_BACKTRACE", "full");
+        } else if stop_on_panic > 0 {
             env::set_var("RUST_BACKTRACE", "1");
         }
 
         let term = term::stderr().unwrap();
         Tester {
             testing: testing, features: HashSet::new(), filter: filter, term: term,
-            verbose: verbose,
-            exact_diags: exact_diags, message_locale: message_locale,
-            stop_on_panic: stop_on_panic,
+            verbose: verbose, exact_diags: exact_diags, highlight_mismatch: highlight_mismatch,
+            message_locale: message_locale, stop_on_panic: stop_on_panic > 0,
             displayed_logs: Vec::new(), num_tested: 0, num_passed: 0, num_ignored: 0,
         }
     }
@@ -600,15 +609,12 @@ impl<T: Testing> Tester<T> {
         self.num_tested += 1;
 
         // fail on a mismatching output
-        let mut success = true;
-        if let Ok(ref output) = output {
+        let output_mismatch = if let Ok(ref output) = output {
             let expected_output = test.output.join("\n");
-            if !self.testing.check_output(output, &expected_output) {
-                success = false;
-            }
+            !self.testing.check_output(output, &expected_output)
         } else {
-            success = false;
-        }
+            true
+        };
 
         let translate_span = |source: &Source, span: Span| {
             source.get_file(span.unit()).and_then(|file| {
@@ -620,34 +626,51 @@ impl<T: Testing> Tester<T> {
 
         // check if test.reports are all included in collected reports (multiset inclusion)
         // do not check if collected reports have some others, though (unless exact_diags is set)
+
         let mut reportset = HashMap::new(); // # of expected reports - # of collected reports
         let exact = self.exact_diags || test.exact;
-        if success {
-            for expected in &test.reports {
-                let pos = expected.pos.as_ref().map(|&(ref p, s, e)| {
-                    (p.as_ref().map_or(MAIN_PATH, |p| &p[..]).to_owned(), s, e)
-                });
-                let key = (pos, expected.kind, expected.msg.clone().into_owned());
-                *reportset.entry(key).or_insert(0isize) += 1;
-            }
-            for &(kind, span, ref msg) in &collected {
-                let key = (translate_span(&source, span), kind, msg.to_owned());
-                if let Some(value) = reportset.get_mut(&key) {
-                    *value -= 1;
-                } else if exact {
-                    success = false; // seen a note we haven't expected
-                }
-            }
-            if success {
-                success = if exact {
-                    reportset.values().all(|&v| v == 0)
-                } else {
-                    reportset.values().all(|&v| v <= 0)
-                };
-            }
-        }
 
-        if success {
+        let reports_aux: Vec<_> = test.reports.iter().map(|expected| {
+            let pos = expected.pos.as_ref().map(|&(ref p, s, e)| {
+                (p.as_ref().map_or(MAIN_PATH, |p| &p[..]).to_owned(), s, e)
+            });
+            let key = (pos, expected.kind, expected.msg.clone().into_owned());
+            *reportset.entry(key.clone()).or_insert(0isize) += 1;
+            key
+        }).collect();
+
+        // first pass: construct a key (suitable for reportset) and update the counter
+        let collected: Vec<_> = collected.into_iter().map(|(kind, span, msg)| {
+            let key = (translate_span(&source, span), kind, msg);
+            if let Some(value) = reportset.get_mut(&key) {
+                *value -= 1;
+            }
+            let (loc, _, msg) = key; // move back
+            (loc, kind, span, msg)
+        }).collect();
+
+        // second pass: check the counter and mark mismatches
+        let mut report_mismatch = false;
+        let collected: Vec<_> = collected.into_iter().map(|(loc, kind, span, msg)| {
+            let key = (loc, kind, msg);
+
+            // assume that a missing key has a negative counter
+            let count = reportset.get(&key).map_or(-1, |&v| v);
+            report_mismatch |= count > 0 || (exact && count < 0);
+
+            let (_, _, msg) = key; // move back
+            (kind, span, msg, count != 0)
+        }).collect();
+
+        // third pass: calculate mismatches for `test.reports` as well
+        // (needed to catch reports that should occur but didn't)
+        let reports_aux: Vec<_> = reports_aux.into_iter().map(|key| {
+            let count = *reportset.get(&key).unwrap();
+            report_mismatch |= count > 0 || (exact && count < 0);
+            count != 0
+        }).collect();
+
+        if !output_mismatch && !report_mismatch {
             self.note_test(&test, TestResult::Passed);
             self.num_passed += 1;
 
@@ -655,17 +678,13 @@ impl<T: Testing> Tester<T> {
             // unexpected reports in the collected are present
             let mut collected = collected;
             if !self.verbose {
-                collected.retain(|&(kind, span, ref msg)| {
-                    // if the report is present only in the collected,
-                    // or if the numbers disagree to each other...
-                    let key = (translate_span(&source, span), kind, msg.to_owned());
-                    reportset.get(&key).map_or(true, |&v| v < 0)
-                });
+                collected.retain(|&(_, _, _, mismatch)| mismatch);
             }
-            if !collected.is_empty() {
+            if !collected.is_empty() || reports_aux.iter().any(|&mismatch| mismatch) {
                 self.displayed_logs.push(TestLog {
-                    test: test, source: source, delta_only: !self.verbose,
-                    panicked: false, output: output.unwrap(), collected: collected,
+                    test: test, source: source, delta_only: !self.verbose, panicked: false,
+                    output: output.unwrap(), output_mismatch: output_mismatch,
+                    collected: collected, reports_aux: reports_aux,
                 });
             }
         } else {
@@ -685,8 +704,9 @@ impl<T: Testing> Tester<T> {
                 },
             };
             self.displayed_logs.push(TestLog {
-                test: test, source: source, delta_only: false,
-                panicked: panicked, output: output, collected: collected,
+                test: test, source: source, delta_only: false, panicked: panicked,
+                output: output, output_mismatch: output_mismatch,
+                collected: collected, reports_aux: reports_aux,
             });
         }
     }
@@ -728,6 +748,12 @@ impl<T: Testing> Tester<T> {
         let _ = writeln!(self.term, "");
     }
 
+    fn mark_mismatch(&mut self, mismatch: bool) {
+        if self.highlight_mismatch && mismatch {
+            let _ = self.term.bg(term::color::BRIGHT_BLACK);
+        }
+    }
+
     fn note_test_output(&mut self, log: TestLog) {
         let _ = writeln!(self.term, "");
         let _ = self.term.fg(term::color::BRIGHT_MAGENTA);
@@ -742,14 +768,22 @@ impl<T: Testing> Tester<T> {
         let _ = self.term.fg(term::color::BRIGHT_BLACK);
         if !log.delta_only {
             let _ = writeln!(self.term, "{:-<60}", "EXPECTED ");
+            self.mark_mismatch(log.output_mismatch);
             let _ = self.term.fg(term::color::BRIGHT_WHITE);
-            for line in log.test.output {
-                let _ = writeln!(self.term, "{}", line);
+            for (i, line) in log.test.output.into_iter().enumerate() {
+                if i > 0 {
+                    let _ = writeln!(self.term, "");
+                }
+                let _ = write!(self.term, "{}", line);
             }
             let _ = self.term.reset();
+            let _ = writeln!(self.term, "");
             if !log.test.reports.is_empty() {
                 let _ = writeln!(self.term, "");
-                for expected in log.test.reports {
+                let reports = log.test.reports.into_iter().zip(log.reports_aux.into_iter());
+                for (expected, mismatch) in reports {
+                    self.mark_mismatch(mismatch);
+
                     if let Some((path, begin, end)) = expected.pos {
                         let path = path.as_ref().map_or(MAIN_PATH, |p| p.as_ref());
                         if begin == end {
@@ -773,6 +807,7 @@ impl<T: Testing> Tester<T> {
                 }
             }
 
+            let _ = self.term.reset();
             let _ = self.term.fg(term::color::BRIGHT_BLACK);
             let _ = writeln!(self.term, "{:-<60}", "ACTUAL ");
             if log.panicked {
@@ -783,9 +818,12 @@ impl<T: Testing> Tester<T> {
                 let _ = self.term.fg(term::color::BRIGHT_RED);
                 let _ = write!(self.term, " ");
             } else {
+                self.mark_mismatch(log.output_mismatch);
                 let _ = self.term.fg(term::color::BRIGHT_WHITE);
             }
-            let _ = writeln!(self.term, "{}", log.output);
+            let _ = write!(self.term, "{}", log.output);
+            let _ = self.term.reset();
+            let _ = writeln!(self.term, "");
         } else {
             let _ = writeln!(self.term, "{:-<60}", "ACTUAL (DIFF FROM EXPECTED) ");
         }
@@ -797,11 +835,13 @@ impl<T: Testing> Tester<T> {
             }
             let source = Rc::new(RefCell::new(log.source));
             let display = kailua_diag::ConsoleReport::new(source);
-            for (kind, span, msg) in log.collected {
+            for (kind, span, msg, mismatch) in log.collected {
+                self.mark_mismatch(mismatch);
                 let _ = display.add_span(kind, span, &msg);
             }
         }
 
+        let _ = self.term.reset();
         let _ = self.term.fg(term::color::BRIGHT_BLACK);
         let _ = writeln!(self.term, "{:-<60}", "");
         let _ = self.term.reset();
