@@ -677,12 +677,15 @@ impl<T: Testing> Tester<T> {
             // we still need to display the remaining logs if -v is set or
             // unexpected reports in the collected are present
             let mut collected = collected;
-            if !self.verbose {
+            let has_delta = collected.iter().any(|&(_, _, _, mismatch)| mismatch);
+            let delta_only = !self.verbose && !self.highlight_mismatch;
+            if delta_only {
+                // when highlight_mismatch is true, we want to see the context
                 collected.retain(|&(_, _, _, mismatch)| mismatch);
             }
-            if !collected.is_empty() || reports_aux.iter().any(|&mismatch| mismatch) {
+            if has_delta {
                 self.displayed_logs.push(TestLog {
-                    test: test, source: source, delta_only: !self.verbose, panicked: false,
+                    test: test, source: source, delta_only: delta_only, panicked: false,
                     output: output.unwrap(), output_mismatch: output_mismatch,
                     collected: collected, reports_aux: reports_aux,
                 });

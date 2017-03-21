@@ -167,12 +167,15 @@ impl Tables {
                     }
 
                     // print the extension if any
-                    if expose_rvar && rvar != RVar::empty() {
+                    if rvar != RVar::empty() {
                         if !first { write!(f, ", ")?; }
-                        if rvar == RVar::any() {
-                            write!(f, "...?")?;
-                        } else {
-                            write!(f, "...{}", rvar.to_usize())?;
+                        write!(f, "...")?;
+                        if expose_rvar {
+                            if rvar == RVar::any() {
+                                write!(f, "?")?;
+                            } else {
+                                write!(f, "{}", rvar.to_usize())?;
+                            }
                         }
                     }
 

@@ -231,7 +231,7 @@ local p = true + 7 --@< Error: Cannot apply + operator to `true` and `7`
 --! error
 
 --8<-- index-empty-with-integer
-local p = ({})[3] --@< Error: Cannot index `{}` with `3`
+local p = ({})[3] --@< Error: Cannot index `{...}` with `3`
 --! error
 
 --8<-- index-intrec-with-integer
@@ -239,7 +239,7 @@ local p = ({[3] = 4})[3]
 --! ok
 
 --8<-- index-intrec-with-integer-no-key
-local p = ({[2] = 4})[3] --@< Error: Cannot index `{2: 4}` with `3`
+local p = ({[2] = 4})[3] --@< Error: Cannot index `{2: 4, ...}` with `3`
 --! error
 
 --8<-- index-map-with-integer
@@ -264,7 +264,7 @@ local p = t.string --@< Error: Cannot index `map<integer, integer>` with `"strin
 --! error
 
 --8<-- index-empty-with-name
-local p = ({}).a --@< Error: Missing key "a" in `{}`
+local p = ({}).a --@< Error: Missing key "a" in `{...}`
 --! error
 
 --8<-- index-rec-with-name
@@ -272,19 +272,19 @@ local p = ({a = 4}).a
 --! ok
 
 --8<-- index-rec-with-name-no-key
-local p = ({a = 4}).b --@< Error: Missing key "b" in `{a: 4}`
+local p = ({a = 4}).b --@< Error: Missing key "b" in `{a: 4, ...}`
 --! error
 
 --8<-- index-rec-with-string
 --# assume x: string
 local p = ({a = 4})[x]
---@^ Error: Cannot index `{a: 4}` with `string`
+--@^ Error: Cannot index `{a: 4, ...}` with `string`
 --! error
 
 --8<-- index-rec-with-integer
 local a = {}
 local k = 1
-local x = a[k] --@< Error: Cannot index `{}` with `integer`
+local x = a[k] --@< Error: Cannot index `{...}` with `integer`
 --! error
 
 --8<-- index-rec-with-weird-string
@@ -294,7 +294,7 @@ local p = ({['not ice'] = 4})[x]
 
 --8<-- index-rec-with-weird-string-error
 --# assume x: 'ice'
-local p = ({['not ice'] = 4})[x] --@< Error: Missing key "ice" in `{`not ice`: 4}`
+local p = ({['not ice'] = 4})[x] --@< Error: Missing key "ice" in `{`not ice`: 4, ...}`
 --! error
 
 --8<-- index-rec-or-nil
@@ -308,7 +308,7 @@ local p = x.a --@< Error: Cannot index `table` without further type information;
 --! error
 
 --8<-- methodcall-empty
-local p = ({}):hello() --@< Error: Missing key "hello" in `{}`
+local p = ({}):hello() --@< Error: Missing key "hello" in `{...}`
 --! error
 
 --8<-- methodcall-rec-1 -- feature:no_implicit_func_sig
@@ -418,7 +418,7 @@ end                        --@^^-< Note: The other type originates here
 
 --8<-- reinit-func-table
 local f = function() end
-f = {54, 49} --@< Error: Cannot assign `{54, 49}` into `function() --> ()`
+f = {54, 49} --@< Error: Cannot assign `{54, 49, ...}` into `function() --> ()`
              --@^ Note: The other type originates here
 --! error
 
@@ -510,8 +510,8 @@ local z = x or y --: {a: string?, b: integer, c: boolean?}
 --8<-- disjunctive-type-erasure-rec-empty-1
 --# assume x: {a: string, b: integer}?
 local x = x or {} --: {a: string, b: integer}!
---@^ Error: Cannot apply or operator to `{a: string, b: integer}?` and `{}`
---@^^ Cause: Cannot create a union type of `{a: string, b: integer}` and `{}`
+--@^ Error: Cannot apply or operator to `{a: string, b: integer}?` and `{...}`
+--@^^ Cause: Cannot create a union type of `{a: string, b: integer}` and `{...}`
 --@^^^ Note: The other type originates here
 --! error
 
@@ -548,8 +548,8 @@ local x = x or {a = true, b = false} --: map<string, boolean>!
 --8<-- disjunctive-type-erasure-map-rec-no-sub
 --# assume x: map<string, boolean>?
 local x = x or {a = true, b = 42} --: map<string, boolean>!
---@^ Error: Cannot apply or operator to `map<string, boolean>?` and `{a: true, b: 42}`
---@^^ Cause: Cannot create a union type of `map<string, boolean>` and `{a: true, b: 42}`
+--@^ Error: Cannot apply or operator to `map<string, boolean>?` and `{a: true, b: 42, ...}`
+--@^^ Cause: Cannot create a union type of `map<string, boolean>` and `{a: true, b: 42, ...}`
 --@^^^ Note: The other type originates here
 --! error
 
@@ -581,8 +581,8 @@ local x = x or {4, 5, 6} --: vector<integer>!
 --8<-- disjunctive-type-erasure-array-rec-no-sub
 --# assume x: vector<integer>?
 local x = x or {a = 4, b = 5, c = 6} --: vector<integer>!
---@^ Error: Cannot apply or operator to `vector<integer>?` and `{a: 4, b: 5, c: 6}`
---@^^ Cause: Cannot create a union type of `vector<integer>` and `{a: 4, b: 5, c: 6}`
+--@^ Error: Cannot apply or operator to `vector<integer>?` and `{a: 4, b: 5, c: 6, ...}`
+--@^^ Cause: Cannot create a union type of `vector<integer>` and `{a: 4, b: 5, c: 6, ...}`
 --@^^^ Note: The other type originates here
 --! error
 
@@ -1043,13 +1043,13 @@ b = a.y
 --8<-- index-rec-with-wrong-name-1
 local a = { x = 3, y = 'foo' }
 local b = a.z + 1 -- z should be nil
---@^ Error: Missing key "z" in `{x: 3, y: "foo"}`
+--@^ Error: Missing key "z" in `{x: 3, y: "foo", ...}`
 --! error
 
 --8<-- index-rec-with-wrong-name-2
 local a = { x = 3, y = 'foo' }
 local b = a.z .. 'bar' -- ditto
---@^ Error: Missing key "z" in `{x: 3, y: "foo"}`
+--@^ Error: Missing key "z" in `{x: 3, y: "foo", ...}`
 --! error
 
 --8<-- table-update
@@ -1740,7 +1740,7 @@ p.x = q
 --8<-- assign-record-1
 local t = {}
 t.a = 42
-local x = t.b --@< Error: Missing key "b" in `{a: integer}`
+local x = t.b --@< Error: Missing key "b" in `{a: integer, ...}`
 --! error
 
 --8<-- assign-record-2
@@ -1774,7 +1774,7 @@ y.c = 'foo'
 local c = x.c --: string
 
 local z = x --: {a: integer, b: string, c: integer?}
---@^ Error: Cannot assign `{a: 1, b: "foo", c: string?}` into `{a: integer, b: string, c: integer?}`
+--@^ Error: Cannot assign `{a: 1, b: "foo", c: string?, ...}` into `{a: integer, b: string, c: integer?}`
 --@^^ Note: The other type originates here
 --! error
 
@@ -2460,7 +2460,7 @@ local x = ('f'):byte() --: integer
 
 --8<-- methodcall-recover
 local q = {}
-local x = q:f() --@< Error: Missing key "f" in `{}`
+local x = q:f() --@< Error: Missing key "f" in `{...}`
 -- `x` should be a dummy type now, so the following shouldn't fail
 x()
 local p = 3 + x
@@ -2517,7 +2517,7 @@ end
 
 -- this is an error because `self` type is not affected by [no_check]
 --@vvv Error: The type `function(integer, integer) --> integer` cannot be called
---@vv Cause: `{bar: function(integer, integer) --> integer}` in the `self` position is not a subtype of `integer`
+--@vv Cause: `{bar: function(integer, integer) --> integer, ...}` in the `self` position is not a subtype of `integer`
 --@v Note: The other type originates here
 local a = foo:bar(3) --: integer
 
@@ -2729,13 +2729,13 @@ local x = {1, 2, 3, [5] = 4} --: vector<integer>
 
 --8<-- table-lit-subtyping-4
 local y = {1, 2, 3, string = 4} --: vector<integer>
---@^ Error: Cannot assign `{1, 2, 3, string: 4}` into `vector<integer>`
+--@^ Error: Cannot assign `{1, 2, 3, string: 4, ...}` into `vector<integer>`
 --@^^ Note: The other type originates here
 --! error
 
 --8<-- table-lit-subtyping-5
 local z = {1, 2, 3, string = 4} --: map<integer, integer>
---@^ Error: Cannot assign `{1, 2, 3, string: 4}` into `map<integer, integer>`
+--@^ Error: Cannot assign `{1, 2, 3, string: 4, ...}` into `map<integer, integer>`
 --@^^ Note: The other type originates here
 --! error
 
@@ -2822,7 +2822,7 @@ p.b.y = 54 --@< Error: Cannot update the immutable type `const {}` by indexing
 --8<-- table-assign-const-nested-2
 local p = {a = {}, b = {}} --: {a: {...}, b: const {...}}
 p.a.x = 42
-p.b.y = 54 --@< Error: Cannot update the immutable type `const {}` by indexing
+p.b.y = 54 --@< Error: Cannot update the immutable type `const {...}` by indexing
 --! error
 
 --8<-- table-assign-type-1
@@ -3067,7 +3067,7 @@ local z = x.y + 42 --: integer --@< Error: Tried to index a non-table type `inte
 local x = {}
 --# assume x.y.z: integer
 --@^ Error: `--# assume` directive tried to access a missing field
-local z = x.y.z + 42 --: integer --@< Error: Missing key "y" in `{}`
+local z = x.y.z + 42 --: integer --@< Error: Missing key "y" in `{...}`
 --! error
 
 --8<-- assume-field-unknown
@@ -3087,7 +3087,7 @@ local z = x.y + 42 --: integer --@< Error: Tried to index a non-table type `{}?`
 
 --8<-- assume-field-static
 local x = {}
---# assume static x.y: integer --@< Error: `--# assume static` cannot be used for a non-class type `{}`
+--# assume static x.y: integer --@< Error: `--# assume static` cannot be used for a non-class type `{...}`
 local z = x.y + 42 --: integer
 --! error
 
@@ -3133,8 +3133,8 @@ f({x = 'string', z = 'f'})
 f({x = 'string', z = 42})
 
 -- this is still an error
-f({x = 54, z = 42}) --@< Error: The type `function({x: string?, y: string?}) --> ()` cannot be called
-                    --@^ Cause: First function argument `{x: 54, z: 42}` is not a subtype of `{x: string?, y: string?}`
+f({x = 54, z = 42}) --@< Error: The type `function({x: string?, y: string?, ...}) --> ()` cannot be called
+                    --@^ Cause: First function argument `{x: 54, z: 42, ...}` is not a subtype of `{x: string?, y: string?, ...}`
                     --@^^ Note: The other type originates here
 --! error
 
@@ -3150,9 +3150,9 @@ local b = f()
 b.z = 42
 
 -- this is still an error
-local c = f() --: {x: integer} --@< Error: Cannot assign `{x: string}` into `{x: integer}`
+local c = f() --: {x: integer} --@< Error: Cannot assign `{x: string, ...}` into `{x: integer}`
                                --@^ Note: The other type originates here
-local d = f() --: {x: integer, ...} --@< Error: Cannot assign `{x: string}` into `{x: integer}`
+local d = f() --: {x: integer, ...} --@< Error: Cannot assign `{x: string, ...}` into `{x: integer, ...}`
                                     --@^ Note: The other type originates here
 --! error
 
@@ -3162,32 +3162,32 @@ function f(opts) end
 
 f{}
 --@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
---@^^ Cause: First function argument `{}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^^ Cause: First function argument `{...}` is not a subtype of `{mandatory: string, optional: string?}`
 --@^^^ Note: The other type originates here
 f{mandatory = nil}
 f{mandatory = 42}
 --@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
---@^^ Cause: First function argument `{mandatory: 42}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^^ Cause: First function argument `{mandatory: 42, ...}` is not a subtype of `{mandatory: string, optional: string?}`
 --@^^^ Note: The other type originates here
 f{mandatory = 'foo'}
 f{mandatory = 'foo', optional = nil}
 f{mandatory = 'foo', optional = 'bar'}
 f{mandatory = 'foo', optional = 54}
 --@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
---@^^ Cause: First function argument `{mandatory: "foo", optional: 54}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^^ Cause: First function argument `{mandatory: "foo", optional: 54, ...}` is not a subtype of `{mandatory: string, optional: string?}`
 --@^^^ Note: The other type originates here
 -- XXX for those cases, additional `optional: string?` fields would be confusing
 f{mandatory = 'foo', additional = nil}
 --@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
---@^^ Cause: First function argument `{additional: nil, mandatory: "foo", optional: string?}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^^ Cause: First function argument `{additional: nil, mandatory: "foo", optional: string?, ...}` is not a subtype of `{mandatory: string, optional: string?}`
 --@^^^ Note: The other type originates here
 f{mandatory = 'foo', additional = true}
 --@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
---@^^ Cause: First function argument `{additional: true, mandatory: "foo", optional: string?}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^^ Cause: First function argument `{additional: true, mandatory: "foo", optional: string?, ...}` is not a subtype of `{mandatory: string, optional: string?}`
 --@^^^ Note: The other type originates here
 f{mandatory = 'foo', optional = 'bar', additional = true}
 --@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
---@^^ Cause: First function argument `{additional: true, mandatory: "foo", optional: "bar"}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^^ Cause: First function argument `{additional: true, mandatory: "foo", optional: "bar", ...}` is not a subtype of `{mandatory: string, optional: string?}`
 --@^^^ Note: The other type originates here
 
 --! error
@@ -3197,20 +3197,20 @@ f{mandatory = 'foo', optional = 'bar', additional = true}
 function f(opts) end
 
 f{}
---@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
---@^^ Cause: First function argument `{}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^ Error: The type `function({mandatory: string, optional: string?, ...}) --> ()` cannot be called
+--@^^ Cause: First function argument `{...}` is not a subtype of `{mandatory: string, optional: string?, ...}`
 --@^^^ Note: The other type originates here
 f{mandatory = nil}
 f{mandatory = 42}
---@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
---@^^ Cause: First function argument `{mandatory: 42}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^ Error: The type `function({mandatory: string, optional: string?, ...}) --> ()` cannot be called
+--@^^ Cause: First function argument `{mandatory: 42, ...}` is not a subtype of `{mandatory: string, optional: string?, ...}`
 --@^^^ Note: The other type originates here
 f{mandatory = 'foo'}
 f{mandatory = 'foo', optional = nil}
 f{mandatory = 'foo', optional = 'bar'}
 f{mandatory = 'foo', optional = 54}
---@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
---@^^ Cause: First function argument `{mandatory: "foo", optional: 54}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^ Error: The type `function({mandatory: string, optional: string?, ...}) --> ()` cannot be called
+--@^^ Cause: First function argument `{mandatory: "foo", optional: 54, ...}` is not a subtype of `{mandatory: string, optional: string?, ...}`
 --@^^^ Note: The other type originates here
 f{mandatory = 'foo', additional = nil}
 f{mandatory = 'foo', additional = true}
@@ -3231,7 +3231,7 @@ local x = {}
 x.x = x
 x.y = x
 x.z = x
-local a = x --: integer --@< Error: Cannot assign `{x: <...>, y: <...>, z: <...>}` into `integer`
+local a = x --: integer --@< Error: Cannot assign `{x: <...>, y: <...>, z: <...>, ...}` into `integer`
                         --@^ Note: The other type originates here
 --! error
 
@@ -3244,7 +3244,7 @@ local y = {}
 y.x = y
 y.y = x
 -- this error is actually quite wrong, because it occurred in midst of recursive rvar relation...
-x = y --@< Error: Cannot assign `{x: <...>, y: {x: <...>, y: <...>, z: <...>}}` into `{x: {x: <...>, y: <...>}, y: <...>, z: <...>}`
+x = y --@< Error: Cannot assign `{x: <...>, y: {x: <...>, y: <...>, z: <...>, ...}, ...}` into `{x: {x: <...>, y: <...>, ...}, y: <...>, z: <...>, ...}`
       --@^ Note: The other type originates here
 --! error
 
