@@ -2467,7 +2467,7 @@ local p = 3 + x
 --! error
 
 --8<-- no-check
---v [no_check]
+--v [NO_CHECK]
 --v function(x: integer) --> integer
 function foo(x)
     return x + "string"
@@ -2475,7 +2475,7 @@ end
 --! ok
 
 --8<-- no-check-func-type
---v [no_check]
+--v [NO_CHECK]
 --v function(x: integer) --> integer
 function foo(x)
     return x + "string"
@@ -2497,7 +2497,7 @@ local c = foo('hi') --: integer
 --8<-- no-check-method-type-1
 foo = {}
 
---v [no_check]
+--v [NO_CHECK]
 --v function(self: table, x: integer) --> integer
 function foo:bar(x)
     return x + "string"
@@ -2509,13 +2509,13 @@ local a = foo:bar(3) --: integer
 --8<-- no-check-method-type-2
 foo = {}
 
---v [no_check]
+--v [NO_CHECK]
 --v function(self: integer, x: integer) --> integer
 function foo:bar(x)
     return x + "string"
 end
 
--- this is an error because `self` type is not affected by [no_check]
+-- this is an error because `self` type is not affected by [NO_CHECK]
 --@vvv Error: The type `function(integer, integer) --> integer` cannot be called
 --@vv Cause: `{bar: function(integer, integer) --> integer, ...}` in the `self` position is not a subtype of `integer`
 --@v Note: The other type originates here
@@ -2524,15 +2524,15 @@ local a = foo:bar(3) --: integer
 --! error
 
 --8<-- no-check-untyped-args -- feature:!no_implicit_func_sig
---v [no_check]
-function foo(x) --> boolean --@< Error: [no_check] attribute requires the arguments to be typed
+--v [NO_CHECK]
+function foo(x) --> boolean --@< Error: [NO_CHECK] attribute requires the arguments to be typed
     return x + "string"
 end
 --! error
 
 --8<-- no-check-untyped-varargs
---@v-vvvvv Error: [no_check] attribute requires the variadic arguments to be typed
---v [no_check]
+--@v-vvvvv Error: [NO_CHECK] attribute requires the variadic arguments to be typed
+--v [NO_CHECK]
 function foo(x, --: integer
              ...) --> boolean
     return x + "string"
@@ -2540,8 +2540,8 @@ end
 --! error
 
 --8<-- no-check-untyped-returns
---@v-vvvv Error: [no_check] attribute requires the return type to be present
---v [no_check]
+--@v-vvvv Error: [NO_CHECK] attribute requires the return type to be present
+--v [NO_CHECK]
 function foo(x) --: integer
     return x + "string"
 end
@@ -2549,8 +2549,8 @@ end
 
 --8<-- no-check-untyped-self
 foo = {}
---v [no_check]
---v function(self, x: integer) --> boolean --@< Error: [no_check] attribute requires the `self` argument to be typed
+--v [NO_CHECK]
+--v function(self, x: integer) --> boolean --@< Error: [NO_CHECK] attribute requires the `self` argument to be typed
 function foo:bar(x)
     return x + "string"
 end
@@ -2560,7 +2560,7 @@ end
 --v function(f: function(integer) --> boolean)
 function foo(f) end
 
-foo(--v [no_check]
+foo(--v [NO_CHECK]
     function(x) return x + "string" end)
 --! ok
 
@@ -2568,7 +2568,7 @@ foo(--v [no_check]
 --v function(f: function(integer) --> boolean)
 function foo(f) end
 
-foo(--v [no_check]
+foo(--v [NO_CHECK]
     --v function(x: integer) --> boolean
     function(x) return x + "string" end)
 --! ok
@@ -2580,7 +2580,7 @@ function foo(f) end
 --@vvv Error: The type `function(function(integer) --> boolean) --> ()` cannot be called
 --@vv-vvvvv Cause: First function argument `function(integer) --> string` is not a subtype of `function(integer) --> boolean`
 --@v Note: The other type originates here
-foo(--v [no_check]
+foo(--v [NO_CHECK]
     function(x) --> string
         return x + "string"
     end)
@@ -2588,7 +2588,7 @@ foo(--v [no_check]
 --@vvv Error: The type `function(function(integer) --> boolean) --> ()` cannot be called
 --@vv-vvvvv Cause: First function argument `function(string) --> boolean` is not a subtype of `function(integer) --> boolean`
 --@v Note: The other type originates here
-foo(--v [no_check]
+foo(--v [NO_CHECK]
     function(x) --: string
         return x + "string"
     end)
@@ -2704,7 +2704,7 @@ local a = {1, 2, f()} --: {integer, integer, integer, integer}
 --! ok
 
 --8<-- table-lit-unbounded-seq
---v [no_check]
+--v [NO_CHECK]
 --v function() --> (integer...)
 function f() end
 local a = {1, 2, f()} --@< Error: This expression has an unknown number of return values, so cannot be used as the last value in the table constructor which should always be a record

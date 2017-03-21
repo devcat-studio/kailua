@@ -558,23 +558,23 @@ define_msg! { pub BadSelfTypeInMethod:
 }
 
 define_msg! { pub NoCheckRequiresTypedSelf:
-    "ko" => "[no_check] 속성이 주어졌을 경우 `self` 인자에 타입이 주어져야 합니다",
-    _    => "[no_check] attribute requires the `self` argument to be typed",
+    "ko" => "[NO_CHECK] 속성이 주어졌을 경우 `self` 인자에 타입이 주어져야 합니다",
+    _    => "[NO_CHECK] attribute requires the `self` argument to be typed",
 }
 
 define_msg! { pub NoCheckRequiresTypedArgs:
-    "ko" => "[no_check] 속성이 주어졌을 경우 인자에 타입이 주어져야 합니다",
-    _    => "[no_check] attribute requires the arguments to be typed",
+    "ko" => "[NO_CHECK] 속성이 주어졌을 경우 인자에 타입이 주어져야 합니다",
+    _    => "[NO_CHECK] attribute requires the arguments to be typed",
 }
 
 define_msg! { pub NoCheckRequiresTypedVarargs:
-    "ko" => "[no_check] 속성이 주어졌을 경우 가변 인자에 타입이 주어져야 합니다",
-    _    => "[no_check] attribute requires the variadic arguments to be typed",
+    "ko" => "[NO_CHECK] 속성이 주어졌을 경우 가변 인자에 타입이 주어져야 합니다",
+    _    => "[NO_CHECK] attribute requires the variadic arguments to be typed",
 }
 
 define_msg! { pub NoCheckRequiresTypedReturns:
-    "ko" => "[no_check] 속성이 주어졌을 경우 함수의 반환 타입이 주어져야 합니다",
-    _    => "[no_check] attribute requires the return type to be present",
+    "ko" => "[NO_CHECK] 속성이 주어졌을 경우 함수의 반환 타입이 주어져야 합니다",
+    _    => "[NO_CHECK] attribute requires the return type to be present",
 }
 
 define_msg! { pub UnsupportedErrorType:

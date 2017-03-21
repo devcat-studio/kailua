@@ -1478,9 +1478,9 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         }
 
                         // if both are missing, we try to use a fresh type variable,
-                        // except when [no_check] is requested (requires a fixed type)
+                        // except when [NO_CHECK] is requested (requires a fixed type)
                         (None, None) => {
-                            if sig.attrs.iter().any(|a| *a.name.base == *b"no_check") {
+                            if sig.attrs.iter().any(|a| *a.name.base == *b"NO_CHECK") {
                                 self.env.error(&selfparam.base, m::NoCheckRequiresTypedSelf {})
                                         .done()?;
                             }
@@ -1637,7 +1637,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                        block: &Spanned<Vec<Spanned<Stmt>>>, declspan: Span,
                        hint: Option<Spanned<Slot>>) -> Result<Slot> {
         // if no check is requested, the signature should be complete
-        let no_check = sig.attrs.iter().any(|a| *a.name.base == *b"no_check");
+        let no_check = sig.attrs.iter().any(|a| *a.name.base == *b"NO_CHECK");
 
         // if the hint exists and is a function,
         // collect first `sig.args.head.len()` types for missing argument types,
@@ -1675,10 +1675,10 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             Some(None) => {
                 // varargs present but types are unspecified
                 if let Some(hint) = hinttail {
-                    // use a hint instead ([no_check] can rely on this hint as well)
+                    // use a hint instead ([NO_CHECK] can rely on this hint as well)
                     Some(hint)
                 } else if no_check {
-                    // [no_check] always requires a type
+                    // [NO_CHECK] always requires a type
                     self.env.error(declspan, m::NoCheckRequiresTypedVarargs {}).done()?;
                     return Ok(Slot::dummy());
                 } else {
@@ -1708,7 +1708,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             let returns = TySeq::from_kind_seq(returns, &mut self.env)?;
             Frame { vararg: vainfo, returns: Returns::Explicit(returns) }
         } else if let Some(hint) = hintreturns {
-            // use a hint if possible ([no_check] can rely on this hint as well)
+            // use a hint if possible ([NO_CHECK] can rely on this hint as well)
             Frame { vararg: vainfo, returns: Returns::Explicit(hint) }
         } else if no_check {
             self.env.error(declspan, m::NoCheckRequiresTypedReturns {}).done()?;
@@ -1740,11 +1740,11 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 let flex = F::from(param.modf);
                 sty = Slot::new(flex, ty.clone());
             } else if let Some(hint) = hint {
-                // use a hint instead ([no_check] can rely on this hint as well)
+                // use a hint instead ([NO_CHECK] can rely on this hint as well)
                 ty = hint;
                 sty = Slot::new(F::Var, ty.clone());
             } else if no_check {
-                // [no_check] always requires a type
+                // [NO_CHECK] always requires a type
                 scope.env.error(&param.base, m::NoCheckRequiresTypedArgs {}).done()?;
                 return Ok(Slot::dummy());
             } else {
