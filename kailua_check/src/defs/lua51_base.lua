@@ -2,7 +2,7 @@
 
 --# -- TODO return generics
 --# assume global `assert`:
---#     [assert] function(any, string?)
+--#     --[[ [assert] ]] function(any, string?)
 --#
 --# assume global `collectgarbage`:
 --#     function(string?, any?) --> any

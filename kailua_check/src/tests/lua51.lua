@@ -15,14 +15,14 @@ print('hello')
 print('hello') --@< Error: Global or local variable `print` is not defined
 --! error
 
---8<-- lua51-assert-truthy
+-->8-- lua51-assert-truthy
 --# open lua51
 --# assume p: integer?
 assert(p)
 print(p + 5)
 --! ok
 
---8<-- lua51-assert-disjunctive
+-->8-- lua51-assert-disjunctive
 --# open lua51
 --# assume p: integer?
 --# assume q: integer?
@@ -31,7 +31,7 @@ print(p + 5) --@< Error: Cannot apply + operator to `integer?` and `5`
              --@^ Cause: `integer?` is not a subtype of `number`
 --! error
 
---8<-- lua51-assert-conjunctive
+-->8-- lua51-assert-conjunctive
 --# open lua51
 --# assume p: integer?
 --# assume q: integer?
@@ -39,7 +39,7 @@ assert(p and q)
 print(p + q)
 --! ok
 
---8<-- lua51-assert-conjunctive-partial-1
+-->8-- lua51-assert-conjunctive-partial-1
 --# open lua51
 --# assume p: integer?
 --# assume q: integer?
@@ -47,7 +47,7 @@ assert(p and not q)
 print(p + 5)
 --! ok
 
---8<-- lua51-assert-conjunctive-partial-2
+-->8-- lua51-assert-conjunctive-partial-2
 --# open lua51
 --# assume p: integer?
 --# assume q: integer?
@@ -56,7 +56,7 @@ print(q + 5) --@< Error: Cannot apply + operator to `nil` and `5`
              --@^ Cause: `nil` is not a subtype of `number`
 --! error
 
---8<-- lua51-assert-conjunctive-partial-dynamic
+-->8-- lua51-assert-conjunctive-partial-dynamic
 --# open lua51
 --# assume p: WHATEVER
 --# assume q: WHATEVER
@@ -65,33 +65,33 @@ print(p + 5)
 print(q + 5) -- should not alter dynamic types
 --! ok
 
---8<-- lua51-assert-number-type-1
+-->8-- lua51-assert-number-type-1
 --# open lua51
 --# assume p: integer|string
 assert(type(p) == 'number')
 print(p + 5)
 --! ok
 
---8<-- lua51-assert-number-type-2
+-->8-- lua51-assert-number-type-2
 --# open lua51
 --# assume p: integer|string
 assert('number' == type(p))
 print(p + 5)
 --! ok
 
---8<-- lua51-assert-integer-type
+-->8-- lua51-assert-integer-type
 --# open lua51
 --# assume p: integer|string
 assert(type(p) == 'integer') -- no such type in Lua 5.1
 --@^ Error: The literal cannot appear as a return type name for `type`
 --! error
 
---8<-- lua51-assert-same-type
+-->8-- lua51-assert-same-type
 --# open lua51
 assert(type(13) == type('string')) -- no-op
 --! ok
 
---8<-- lua51-assert-not-1
+-->8-- lua51-assert-not-1
 --# open lua51
 --# assume assert_not: const [assert_not] function(any)
 --# assume p: integer?
@@ -100,7 +100,7 @@ assert_not(p or not q) -- i.e. assert(not p and q)
 print(q + 5)
 --! ok
 
---8<-- lua51-assert-not-2
+-->8-- lua51-assert-not-2
 --# open lua51
 --# assume assert_not: const [assert_not] function(any)
 --# assume p: integer?
@@ -110,7 +110,7 @@ print(p + 5) --@< Error: Cannot apply + operator to `nil` and `5`
              --@^ Cause: `nil` is not a subtype of `number`
 --! error
 
---8<-- lua51-assert-type
+-->8-- lua51-assert-type
 --# open lua51
 --# assume assert_type: const [assert_type] function(any, string)
 --# assume p: integer|string
@@ -416,4 +416,20 @@ local m = table.maxn(y) --: integer
 --# open lua51
 local x = _G.x --@< Error: Cannot index `[genv] table` without further type information; specify more detailed type, or use `--# assume` as a last resort
 --! error
+
+--8<-- lua51-assert-class-instance
+--# open lua51
+--# assume `class`: [make_class] function() --> table
+Hello = class()
+
+--v function(self)
+function Hello:init()
+    self.foo = 'bar'
+end
+
+function Hello:put() --> string
+    assert(self.foo)
+    return self.foo
+end
+--! ok
 

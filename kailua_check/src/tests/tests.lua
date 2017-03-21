@@ -1311,6 +1311,17 @@ local function p() return {a=4} end
 local x = p().a + 5
 --! ok
 
+-->8-- func-implicit-returns-rec-union -- feature:!no_implicit_func_sig
+function f(v) --: boolean
+    if v then
+        local x = {} --: vector<integer>
+        return {a = x}
+    else
+        return {a = {}}
+    end
+end
+--! ok
+
 --8<-- func-returns-seq
 --v function() --> (integer, integer)
 local function p()
