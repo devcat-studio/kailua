@@ -338,7 +338,7 @@ fn main_loop(server: Server, workspace: Arc<RwLock<Workspace>>) {
 
                 let ws = workspace.write();
                 try_or_notify!(ws.open_file(params.textDocument));
-                debug!("workspace: {:#?}", *ws);
+                trace!("workspace: {:#?}", *ws);
 
                 let pool = ws.pool().clone();
                 let file = ws.file(&uri).unwrap();
@@ -363,13 +363,13 @@ fn main_loop(server: Server, workspace: Arc<RwLock<Workspace>>) {
 
                     on_file_changed(&file, server.clone(), &pool);
                 }
-                debug!("workspace: {:#?}", *ws);
+                trace!("workspace: {:#?}", *ws);
             }
 
             Received::Notification(Notification::DidCloseTextDocument(params)) => {
                 let ws = workspace.write();
                 try_or_notify!(ws.close_file(&params.textDocument.uri));
-                debug!("workspace: {:#?}", *ws);
+                trace!("workspace: {:#?}", *ws);
             }
 
             Received::Notification(Notification::DidChangeWatchedFiles(params)) => {
@@ -381,7 +381,7 @@ fn main_loop(server: Server, workspace: Arc<RwLock<Workspace>>) {
                         FileChangeType::Deleted => { ws.on_file_deleted(&ev.uri); }
                     }
                 }
-                debug!("workspace: {:#?}", *ws);
+                trace!("workspace: {:#?}", *ws);
             }
 
             Received::Request(id, Request::Completion(params)) => {
@@ -426,6 +426,10 @@ fn main_loop(server: Server, workspace: Arc<RwLock<Workspace>>) {
                         },
                         None => None,
                     };
+                    debug!("completion items: {:?}",
+                           items.as_ref().map(|items| {
+                               items.iter().map(|i| i.label.clone()).collect::<Vec<_>>()
+                           }));
 
                     let _ = server.send_ok(id, items.unwrap_or(Vec::new()));
                     Ok(())

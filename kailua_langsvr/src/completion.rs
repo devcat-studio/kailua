@@ -108,7 +108,7 @@ pub fn classify(tokens: &[NestedToken], pos: Pos) -> Option<CompletionClass> {
         (_, true, Some(&Tok::Punct(Punct::Dot)), Some(&Tok::Keyword(_))) |
         (_, true, Some(&Tok::Punct(Punct::Colon)), Some(&Tok::Name(_))) |
         (_, true, Some(&Tok::Punct(Punct::Colon)), Some(&Tok::Keyword(_))) => {
-            Some(CompletionClass::Field(idx))
+            Some(CompletionClass::Field(idx - 1)) // should point to `ptok`
         },
 
         // ... NAME | ... (ditto)
