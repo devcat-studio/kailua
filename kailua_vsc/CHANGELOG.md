@@ -1,3 +1,13 @@
+## 0.0.12
+
+* Experimentally separated an inextensible record type (`{a: T, b: U}`) from an extensible record type (`{a: T, b: U, ...}`). The checker already had this distinction (for example, assigning an extensible record type to the mapping will make it inextensible, because from that point adding a non-conforming key will break the type check!) but this change makes this explicit. The bare expression `{}` still generates an extensible record type (the distinction is only for Kailua blocks), and not all error messages have been changed as this can be reverted later.
+
+* Removed a remaining special treatment for `assert` (mistakenly left after the abandonment).
+
+* Reworded and partially simplified several error messages.
+
+* Fixed a couple of edge case bugs.
+
 ## 0.0.11
 
 * Function arguments and returns are now checked for the arity mismatch. Previously omitted arguments and returns are treated as (noisy) nils that can be matched against other nils, but this is now forbidden. Use an explicit `T?` to allow the omission.
