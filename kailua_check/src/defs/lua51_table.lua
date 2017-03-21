@@ -10,5 +10,6 @@
 --#         `maxn`: function(vector<const any>) --> integer;
 --#         `remove`: function(vector<WHATEVER>, integer?) --> any;
 --#         `sort`: function(vector<WHATEVER>, (function(WHATEVER, WHATEVER) --> boolean)?);
+--#         ...
 --#     }
 

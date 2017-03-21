@@ -17,5 +17,6 @@
 --#         `setmetatable`: function;
 --#         `setupvalue`: function;
 --#         `traceback`: function;
+--#         ...
 --#     }
 

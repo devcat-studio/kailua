@@ -22,5 +22,6 @@
 --#         `reverse`: function(string) --> string;
 --#         `sub`: function(string, integer, integer?) --> string;
 --#         `upper`: function(string) --> string;
+--#         ...
 --#     }
 

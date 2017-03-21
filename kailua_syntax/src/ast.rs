@@ -591,7 +591,7 @@ pub enum K {
     StringLit(Str),
     Table,
     EmptyTable,
-    Record(Vec<(Spanned<Str>, Spanned<SlotKind>)>),
+    Record(Vec<(Spanned<Str>, Spanned<SlotKind>)>, bool /*extensible*/),
     Tuple(Vec<Spanned<SlotKind>>),
     Array(Spanned<SlotKind>),
     Map(Spanned<Kind>, Spanned<SlotKind>),
@@ -635,11 +635,14 @@ impl fmt::Debug for K {
             K::Error(None)        => write!(f, "Error"),
             K::Error(Some(ref s)) => write!(f, "Error({:?})", *s),
 
-            K::Record(ref fields) => {
+            K::Record(ref fields, extensible) => {
                 write!(f, "Record([")?;
                 let comma = Comma::new();
                 for &(ref name, ref value) in fields {
                     write!(f, "{}{:?}: {:?}", comma, name, value)?;
+                }
+                if extensible {
+                    write!(f, "{}...", comma)?;
                 }
                 write!(f, "])")?;
                 Ok(())

@@ -835,6 +835,29 @@ local x --: {a: const function (), b: string,
 --!                          "c": Const Func((String, Integer) --> Number)\
 --!                         ])?], [])$1]
 
+--8<-- kind-rec-extensible
+local x --: {a: string, ...}
+local y --: {b: integer;
+        --:  a: string;
+        --:  ...
+        --: }
+local z --: {...}
+--! [Local([`x`$1: _ Record(["a": _ String, ...])], [])$1, \
+--!  Local([`y`$2: _ Record(["b": _ Integer, "a": _ String, ...])], [])$2, \
+--!  Local([`z`$3: _ Record([...])], [])$3]
+
+--8<-- kind-rec-extensible-recover-1
+local x --: {a: string, ... --@<-v Error: Expected `}`, got a newline
+local y --: {b: string, ...}
+--! [Local([`x`$1: _ Record(["a": _ String, ...])], [])$1, \
+--!  Local([`y`$2: _ Record(["b": _ String, ...])], [])$2]
+
+--8<-- kind-rec-extensible-recover-2
+local x --: {a: string, ... | nil --@< Error: Expected `}`, got `|`
+local y --: {b: string, ...}
+--! [Local([`x`$1: _ Record(["a": _ String, ...])], [])$1, \
+--!  Local([`y`$2: _ Record(["b": _ String, ...])], [])$2]
+
 --8<-- kind-tuple
 local x --: {const function (); string;
         --:  const function (string, integer) --> number;

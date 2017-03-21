@@ -16,5 +16,6 @@
 --#         `preload`: vector<function(string) --> (function|string)?>;
 --#         -- TODO error type not yet supported (should it be a slot?)
 --#         --`seeall`: error "package.seeall is discouraged, use _G instead";
+--#         ...
 --#     }
 

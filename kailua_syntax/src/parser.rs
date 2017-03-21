@@ -1493,12 +1493,20 @@ impl<'a> Parser<'a> {
         Ok(Some((selfparam, sig, scope, block)))
     }
 
-    fn scan_tabular_body<Scan, Item>(&mut self, mut scan: Scan) -> Result<Vec<Item>>
+    fn scan_tabular_body<Scan, Item>(&mut self, allow_ellipsis: bool,
+                                     mut scan: Scan) -> Result<(bool /*ellipsis*/, Vec<Item>)>
             where Scan: FnMut(&mut Self) -> Result<Item> {
+        let mut ellipsis = false;
         let mut items = Vec::new();
 
         self.recover(|parser| {
             while !parser.may_expect(Punct::RBrace) {
+                if allow_ellipsis && parser.may_expect(Punct::DotDotDot) {
+                    // this should be the last token before RBrace
+                    ellipsis = true;
+                    parser.expect(Punct::RBrace)?;
+                    break;
+                }
                 let item = scan(parser)?;
                 items.push(item);
 
@@ -1521,11 +1529,11 @@ impl<'a> Parser<'a> {
             Ok(())
         }, DelimAlreadyRead)?;
 
-        Ok(items)
+        Ok((ellipsis, items))
     }
 
     fn parse_table_body(&mut self) -> Result<Vec<(Option<Spanned<Exp>>, Spanned<Exp>)>> {
-        self.scan_tabular_body(|parser| {
+        let (_ellipsis, items) = self.scan_tabular_body(false, |parser| {
             parser.recover_upto(|parser| {
                 if parser.may_expect(Punct::LBracket) {
                     let key = parser.recover(Self::parse_exp, Punct::RBracket)?;
@@ -1554,7 +1562,8 @@ impl<'a> Parser<'a> {
                     Ok((key, value))
                 }
             })
-        })
+        })?;
+        Ok(items)
     }
 
     fn try_parse_args(&mut self) -> Result<Option<Spanned<Args>>> {
@@ -2196,6 +2205,12 @@ impl<'a> Parser<'a> {
                     (_, Spanned { base: Tok::Punct(Punct::RBrace), .. }) =>
                         Box::new(K::EmptyTable),
 
+                    // "{" "..." "}"
+                    (_, Spanned { base: Tok::Punct(Punct::DotDotDot), .. }) => {
+                        self.expect(Punct::RBrace)?;
+                        Box::new(K::Record(Vec::new(), true))
+                    },
+
                     // tuple or record -- distinguished by the secondary lookahead
                     tok => {
                         let is_record = if let Tok::Name(_) = tok.1.base {
@@ -2206,9 +2221,9 @@ impl<'a> Parser<'a> {
                         self.unread(tok);
 
                         if is_record {
-                            // "{" NAME ":" MODF KIND {"," NAME ":" MODF KIND} "}"
+                            // "{" NAME ":" MODF KIND {"," NAME ":" MODF KIND} ["," "..."] "}"
                             let mut seen = HashMap::new(); // value denotes the first span
-                            let fields = self.scan_tabular_body(|parser| {
+                            let (extensible, fields) = self.scan_tabular_body(true, |parser| {
                                 let name = parser.parse_name()?;
                                 match seen.entry(name.base.clone()) {
                                     hash_map::Entry::Occupied(e) => {
@@ -2227,10 +2242,10 @@ impl<'a> Parser<'a> {
                                 let slotkind = parser.parse_kailua_slotkind()?;
                                 Ok((name, slotkind))
                             })?;
-                            Box::new(K::Record(fields))
+                            Box::new(K::Record(fields, extensible))
                         } else {
                             // "{" MODF KIND "," [MODF KIND {"," MODF KIND}] "}"
-                            let fields = self.scan_tabular_body(|parser| {
+                            let (_ellipsis, fields) = self.scan_tabular_body(false, |parser| {
                                 parser.parse_kailua_slotkind()
                             })?;
                             Box::new(K::Tuple(fields))

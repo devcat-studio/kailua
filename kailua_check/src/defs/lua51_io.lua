@@ -31,5 +31,6 @@
 --#         `tmpfile`: function() --> file;
 --#         `type`: function(any) --> 'file'|'closed file';
 --#         `write`: function(string|number);
+--#         ...
 --#     }
 

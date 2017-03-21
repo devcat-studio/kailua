@@ -492,8 +492,18 @@ local z = x or y --: {a: string, b: integer, c: boolean}
 --! error
 
 --8<-- disjunctive-type-erasure-rec-2
+-- records are still not extensible
 --# assume x: {a: string?, b: integer}?
 --# assume y: {b: integer, c: boolean?}
+local z = x or y --: {a: string?, b: integer, c: boolean?}
+--@^ Error: Cannot apply or operator to `{a: string?, b: integer}?` and `{b: integer, c: boolean?}`
+--@^^ Cause: Cannot create a union type of `{a: string?, b: integer}` and `{b: integer, c: boolean?}`
+--@^^^ Note: The other type originates here
+--! error
+
+--8<-- disjunctive-type-erasure-rec-3
+--# assume x: {a: string?, b: integer, ...}?
+--# assume y: {b: integer, c: boolean?, ...}
 local z = x or y --: {a: string?, b: integer, c: boolean?}
 --! ok
 
@@ -3095,7 +3105,7 @@ local z --@< Warning: This code will never execute
 --! error
 
 --8<-- funccall-no-rvar-extension-args
---v function(a: {x: string?, y: string?})
+--v function(a: {x: string?, y: string?, ...})
 function f(a) end
 
 -- these two calls do not interfere with each other!
@@ -3109,7 +3119,7 @@ f({x = 54, z = 42}) --@< Error: The type `function({x: string?, y: string?}) -->
 --! error
 
 --8<-- funccall-no-rvar-extension-returns
---v function() --> {x: string}
+--v function() --> {x: string, ...}
 function f() return {x = 'string'} end
 
 -- these two uses do not interfere with each other!
@@ -3122,25 +3132,66 @@ b.z = 42
 -- this is still an error
 local c = f() --: {x: integer} --@< Error: Cannot assign `{x: string}` into `{x: integer}`
                                --@^ Note: The other type originates here
+local d = f() --: {x: integer, ...} --@< Error: Cannot assign `{x: string}` into `{x: integer}`
+                                    --@^ Note: The other type originates here
 --! error
 
---8<-- funccall-table-args
+--8<-- funccall-table-args-1
 --v function(opts: {mandatory: string, optional: string?})
 function f(opts) end
 
-f{} --@< Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
-    --@^ Cause: First function argument `{}` is not a subtype of `{mandatory: string, optional: string?}`
-    --@^^ Note: The other type originates here
+f{}
+--@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+--@^^ Cause: First function argument `{}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^^^ Note: The other type originates here
 f{mandatory = nil}
-f{mandatory = 42} --@< Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
-                  --@^ Cause: First function argument `{mandatory: 42}` is not a subtype of `{mandatory: string, optional: string?}`
-                  --@^^ Note: The other type originates here
+f{mandatory = 42}
+--@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+--@^^ Cause: First function argument `{mandatory: 42}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^^^ Note: The other type originates here
 f{mandatory = 'foo'}
 f{mandatory = 'foo', optional = nil}
 f{mandatory = 'foo', optional = 'bar'}
-f{mandatory = 'foo', optional = 54} --@< Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
-                                    --@^ Cause: First function argument `{mandatory: "foo", optional: 54}` is not a subtype of `{mandatory: string, optional: string?}`
-                                    --@^^ Note: The other type originates here
+f{mandatory = 'foo', optional = 54}
+--@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+--@^^ Cause: First function argument `{mandatory: "foo", optional: 54}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^^^ Note: The other type originates here
+-- XXX for those cases, additional `optional: string?` fields would be confusing
+f{mandatory = 'foo', additional = nil}
+--@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+--@^^ Cause: First function argument `{additional: nil, mandatory: "foo", optional: string?}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^^^ Note: The other type originates here
+f{mandatory = 'foo', additional = true}
+--@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+--@^^ Cause: First function argument `{additional: true, mandatory: "foo", optional: string?}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^^^ Note: The other type originates here
+f{mandatory = 'foo', optional = 'bar', additional = true}
+--@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+--@^^ Cause: First function argument `{additional: true, mandatory: "foo", optional: "bar"}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^^^ Note: The other type originates here
+
+--! error
+
+--8<-- funccall-table-args-2
+--v function(opts: {mandatory: string, optional: string?, ...})
+function f(opts) end
+
+f{}
+--@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+--@^^ Cause: First function argument `{}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^^^ Note: The other type originates here
+f{mandatory = nil}
+f{mandatory = 42}
+--@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+--@^^ Cause: First function argument `{mandatory: 42}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^^^ Note: The other type originates here
+f{mandatory = 'foo'}
+f{mandatory = 'foo', optional = nil}
+f{mandatory = 'foo', optional = 'bar'}
+f{mandatory = 'foo', optional = 54}
+--@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+--@^^ Cause: First function argument `{mandatory: "foo", optional: 54}` is not a subtype of `{mandatory: string, optional: string?}`
+--@^^^ Note: The other type originates here
 f{mandatory = 'foo', additional = nil}
 f{mandatory = 'foo', additional = true}
 f{mandatory = 'foo', optional = 'bar', additional = true}

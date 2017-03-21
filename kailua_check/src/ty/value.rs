@@ -1073,7 +1073,7 @@ impl Ty {
                 Ty::new(T::Tables(Cow::Owned(Tables::Fields(resolv.context().gen_rvar()))))
             },
 
-            K::Record(ref fields) => {
+            K::Record(ref fields, extensible) => {
                 // while the parser checks for duplicates, AST does not actually prevent them
                 let mut newfields = Vec::new();
                 let mut seen = HashMap::new(); // value denotes the first span
@@ -1098,6 +1098,11 @@ impl Ty {
                 resolv.context().assert_rvar_includes(rvar.clone(), &newfields).expect(
                     "cannot insert disjoint fields into a fresh row variable"
                 );
+                if !extensible {
+                    resolv.context().assert_rvar_closed(rvar.clone()).expect(
+                        "cannot make a fresh row variable not extensible"
+                    );
+                }
                 Ty::new(T::Tables(Cow::Owned(Tables::Fields(rvar))))
             }
 
@@ -1111,6 +1116,10 @@ impl Ty {
                 let rvar = resolv.context().gen_rvar();
                 resolv.context().assert_rvar_includes(rvar.clone(), &newfields).expect(
                     "cannot insert disjoint fields into a fresh row variable"
+                );
+                // tuples are always not extensible
+                resolv.context().assert_rvar_closed(rvar.clone()).expect(
+                    "cannot make a fresh row variable not extensible"
                 );
                 Ty::new(T::Tables(Cow::Owned(Tables::Fields(rvar))))
             },

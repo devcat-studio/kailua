@@ -27,5 +27,6 @@
 --#         `setlocale`: function(string?, string?) --> string;
 --#         `time`: function(tm?) --> number;
 --#         `tmpname`: function() --> string;
+--#         ...
 --#     }
 

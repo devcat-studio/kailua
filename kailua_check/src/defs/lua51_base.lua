@@ -107,5 +107,6 @@
 --#         -- TODO genericity
 --#         `wrap`: function(function) --> thread;
 --#         `yield`: function(any...) --> (any...);
+--#         ...
 --#     }
 

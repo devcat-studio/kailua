@@ -35,5 +35,6 @@
 --#         `sqrt`: function(number) --> number;
 --#         `tan`: function(number) --> number;
 --#         `tanh`: function(number) --> number;
+--#         ...
 --#     }
 
