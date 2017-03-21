@@ -1116,6 +1116,12 @@ a[2] = 54
 
 --8<-- table-update-with-integer-2
 local a = {} --: {}
+a[1] = 42 --@< Error: Cannot index `{}` with `1`
+a[2] = 54 --@< Error: Cannot index `{}` with `2`
+--! error
+
+--8<-- table-update-with-integer-3
+local a = {} --: {...}
 a[1] = 42 -- now valid to do so
 a[2] = 54
 --! ok
@@ -1744,9 +1750,17 @@ t.a = 42
 local x = t.a --: integer
 --! ok
 
---8<-- assign-record-extension
+--8<-- assign-record-extension-1
 local t = {}
 local u = {} --: {}
+t.a = 42
+u.b = 54 --@< Error: Missing key "b" in `{}`
+local x = t.a + u.b --: integer --@< Error: Missing key "b" in `{}`
+--! error
+
+--8<-- assign-record-extension-2
+local t = {}
+local u = {} --: {...}
 t.a = 42
 u.b = 54
 local x = t.a + u.b --: integer
@@ -2799,8 +2813,14 @@ local p = {} --: const {}
 p.a = 42 --@< Error: Cannot update the immutable type `const {}` by indexing
 --! error
 
---8<-- table-assign-const-nested
+--8<-- table-assign-const-nested-1
 local p = {a = {}, b = {}} --: {a: {}, b: const {}}
+p.a.x = 42 --@< Error: Missing key "x" in `{}`
+p.b.y = 54 --@< Error: Cannot update the immutable type `const {}` by indexing
+--! error
+
+--8<-- table-assign-const-nested-2
+local p = {a = {}, b = {}} --: {a: {...}, b: const {...}}
 p.a.x = 42
 p.b.y = 54 --@< Error: Cannot update the immutable type `const {}` by indexing
 --! error

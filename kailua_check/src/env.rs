@@ -1228,6 +1228,8 @@ impl<R: Report> TypeContext for Context<R> {
     }
 
     fn assert_rvar_closed(&mut self, mut rvar: RVar) -> TypeResult<()> {
+        trace!("{:?} should not be extensible", rvar);
+
         // detect a cycle by advancing slowrvar 1/2x slower than rvar;
         // if rvar == slowrvar is true after the initial loop, it's a cycle
         let mut slowrvar = rvar.clone();

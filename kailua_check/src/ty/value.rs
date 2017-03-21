@@ -1070,7 +1070,11 @@ impl Ty {
             },
 
             K::EmptyTable => {
-                Ty::new(T::Tables(Cow::Owned(Tables::Fields(resolv.context().gen_rvar()))))
+                let rvar = resolv.context().gen_rvar();
+                resolv.context().assert_rvar_closed(rvar.clone()).expect(
+                    "cannot make a fresh row variable not extensible"
+                );
+                Ty::new(T::Tables(Cow::Owned(Tables::Fields(rvar))))
             },
 
             K::Record(ref fields, extensible) => {
