@@ -141,6 +141,51 @@ function Hello:new(x, y, z) --@< Error: `new` method is reserved and cannot be d
 end
 --! error
 
+--8<-- class-method-bad-arity-1
+--# assume `class`: [make_class] function() --> table
+Hello = class()
+
+function Hello:init() end
+
+--v method(x: integer, y: integer)
+function Hello:foo(x, y) end
+
+local h = Hello.new()
+h:foo(3) --@< Error: The type `function(self: Hello, x: integer, y: integer) --> ()` cannot be called
+         --@^ Cause: Third method argument cannot be omitted because its type is `integer`
+         --@^^ Note: The other type originates here
+--! error
+
+--8<-- class-method-bad-arity-2
+--# assume `class`: [make_class] function() --> table
+Hello = class()
+
+function Hello:init() end
+
+--v method(x: integer, y: integer)
+function Hello:foo(x, y) end
+
+local h = Hello.new()
+h:foo(3, 4, 5) --@< Error: The type `function(self: Hello, x: integer, y: integer) --> ()` cannot be called
+               --@^ Cause: Cannot give more than 3 argument(s) including `self` to the method
+               --@^^ Note: The other type originates here
+--! error
+
+--8<-- class-method-bad-arity-3
+--# assume `class`: [make_class] function() --> table
+Hello = class()
+
+function Hello:init() end
+
+--v method(x: integer, y: integer)
+function Hello:foo(x, y) end
+
+local h = Hello.new()
+h.foo() --@< Error: The type `function(self: Hello, x: integer, y: integer) --> ()` cannot be called
+        --@^ Cause: First function argument cannot be omitted because its type is `Hello`
+        --@^^ Note: The other type originates here
+--! error
+
 --8<-- class-fields-after-ctor
 --# assume `class`: [make_class] function() --> table
 Hello = class()

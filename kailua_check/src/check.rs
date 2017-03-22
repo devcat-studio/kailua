@@ -1432,25 +1432,21 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 // now prepare the right-hand side (i.e. method decl)
                 let method = meths.last().unwrap();
                 let selfinfo = if let Some(ref selfparam) = *selfparam {
-                    let given = if let Some(ref kind) = selfparam.kind {
-                        let ty = Ty::from_kind(kind, &mut self.env)?;
-                        let flex = F::from(selfparam.modf);
-                        Some((flex, ty))
-                    } else {
-                        None
-                    };
-
-                    // if `info` is a class prototype we know the exact type for `self`
-                    let inferred = if info.unlift().nil() != Nil::Noisy {
+                    // try to infer the type for `self`:
+                    // - if `info` is a class prototype `self` should be a corresponding instance
+                    // - if `info` is a string metatable `self` should be a string
+                    let inferred = if info.nil() != Nil::Noisy {
                         // (except when it is unioned with nil)
-                        if let T::Class(Class::Prototype(cid)) = **info.unlift() {
+                        if info.tag() == Some(Tag::StringMeta) {
+                            Some(Ty::new(T::String))
+                        } else if let T::Class(Class::Prototype(cid)) = **info.unlift() {
                             let inst = T::Class(Class::Instance(cid));
                             if *method.base == *b"init" {
-                                // var [constructible] <class instance #cid>
-                                Some((F::Var, Ty::new(inst).with_tag(Tag::Constructible)))
+                                // [constructible] <class instance #cid>
+                                Some(Ty::new(inst).with_tag(Tag::Constructible))
                             } else {
-                                // var <class instance #cid>
-                                Some((F::Var, Ty::new(inst)))
+                                // <class instance #cid>
+                                Some(Ty::new(inst))
                             }
                         } else {
                             None
@@ -1459,40 +1455,22 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         None
                     };
 
-                    let slot = match (given, inferred) {
-                        // if both `given` and `inferred` are present, try to unify them
-                        (Some(given), Some(inferred)) => {
-                            if given.1.assert_eq(&inferred.1, self.context()).is_err() {
-                                let span = selfparam.kind.as_ref().unwrap().span;
-                                self.env.error(span, m::BadSelfTypeInMethod {}).done()?;
-                            }
-
-                            // they may have the same type but different flex.
-                            // as given flex is no less stringent than inferred flex,
-                            // we overwrite the inferred flex to the given flex.
-                            Slot::new(given.0, inferred.1)
+                    // if we couldn't infer the type we try to use a fresh type variable,
+                    // except when [NO_CHECK] is requested (requires a fixed type)
+                    let slot = if let Some(ty) = inferred {
+                        Slot::var(ty)
+                    } else {
+                        if sig.attrs.iter().any(|a| *a.name.base == *b"NO_CHECK") {
+                            self.env.error(selfparam, m::NoCheckRequiresTypedSelf {})
+                                    .done()?;
                         }
 
-                        // if only one of them is present, use that
-                        (Some((flex, ty)), None) | (None, Some((flex, ty))) => {
-                            Slot::new(flex, ty)
-                        }
-
-                        // if both are missing, we try to use a fresh type variable,
-                        // except when [NO_CHECK] is requested (requires a fixed type)
-                        (None, None) => {
-                            if sig.attrs.iter().any(|a| *a.name.base == *b"NO_CHECK") {
-                                self.env.error(&selfparam.base, m::NoCheckRequiresTypedSelf {})
-                                        .done()?;
-                            }
-
-                            // var <fresh type variable>
-                            let tv = T::TVar(self.context().gen_tvar());
-                            Slot::new(F::Var, Ty::new(tv))
-                        }
+                        // <fresh type variable>
+                        let tv = T::TVar(self.context().gen_tvar());
+                        Slot::var(Ty::new(tv))
                     };
 
-                    Some((&selfparam.base, slot))
+                    Some((selfparam, slot))
                 } else {
                     None
                 };

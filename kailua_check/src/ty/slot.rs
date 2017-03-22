@@ -323,6 +323,7 @@ impl Slot {
     pub fn get_tvar(&self) -> Option<TVar> { self.unlift().get_tvar() }
     pub fn can_omit(&self) -> bool { self.unlift().can_omit() }
     pub fn tag(&self) -> Option<Tag> { self.unlift().tag() }
+    pub fn nil(&self) -> Nil { self.unlift().nil() }
 
     pub fn with_nil(&self) -> Slot {
         let s = self.0.read();

@@ -550,16 +550,11 @@ define_msg! { pub CannotAddFieldsToInstance:
     _    => "Cannot add a new field to the class instance outside of the constructor",
 }
 
-define_msg! { pub BadSelfTypeInMethod:
-    "ko" => "메소드의 `self` 타입이 주어질 경우 그 타입은 \
-             항상 클래스 인스턴스 타입이어야 합니다",
-    _    => "The type of `self` argument to the method, if present, \
-             should be a corresponding class instance type",
-}
-
 define_msg! { pub NoCheckRequiresTypedSelf:
-    "ko" => "[NO_CHECK] 속성이 주어졌을 경우 `self` 인자에 타입이 주어져야 합니다",
-    _    => "[NO_CHECK] attribute requires the `self` argument to be typed",
+    "ko" => "[NO_CHECK] 속성이 주어졌을 경우 `self` 인자의 타입이 명백해야 합니다. \
+             대신 함수 선언 문법으로 타입을 직접 지정하십시오",
+    _    => "[NO_CHECK] attribute requires that the type for `self` argument is clear; \
+             directly specify the type for `self` with the function declaration instead",
 }
 
 define_msg! { pub NoCheckRequiresTypedArgs:

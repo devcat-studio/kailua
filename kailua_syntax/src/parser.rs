@@ -1057,17 +1057,15 @@ impl<'a> Parser<'a> {
                     names.push(self.parse_name()?);
                 }
 
-                let mut selfparam = None;
-                if self.may_expect(Punct::Colon) {
+                let selfparam = self.may_expect(Punct::Colon);
+                if selfparam {
                     names.push(self.parse_name()?);
-                    selfparam = Some(TypeSpec { base: Span::dummy(),
-                                                modf: M::None, kind: None });
                 }
                 let namesend = self.last_pos();
 
                 // check for the prefix mismatch
                 if let Some(Spanned { base: (_, Some(ref presig)), .. }) = funcspec {
-                    match (presig.prefix.base, selfparam.is_some()) {
+                    match (presig.prefix.base, selfparam) {
                         (true, false) => {
                             self.error(presig.prefix.span, m::FunctionWithMethodSig {}).done()?;
                         }
@@ -1099,7 +1097,8 @@ impl<'a> Parser<'a> {
                     // local function ...
                     (_, Spanned { base: Tok::Keyword(Keyword::Function), .. }) => {
                         let name = self.parse_name()?;
-                        if let Some((_, sig, scope, body)) = self.parse_func_body(None, funcspec)? {
+                        if let Some((_, sig, scope, body)) = self.parse_func_body(false,
+                                                                                  funcspec)? {
                             let sibling_scope = self.generate_sibling_scope();
                             self.push_scope(sibling_scope);
                             let name = self.add_spanned_local_name(sibling_scope, name);
@@ -1293,10 +1292,9 @@ impl<'a> Parser<'a> {
         Ok(Box::new(St::ForIn(names, exps, scope, block)))
     }
 
-    fn parse_func_body(&mut self,
-                       selfparam: Option<TypeSpec<Span>>,
+    fn parse_func_body(&mut self, selfparam: bool,
                        funcspec: Option<Spanned<(Vec<Spanned<Attr>>, Option<Spanned<Presig>>)>>)
-            -> Result<Option<(Option<TypeSpec<Spanned<SelfParam>>>, Sig, Scope, Spanned<Block>)>> {
+            -> Result<Option<(Option<Spanned<SelfParam>>, Sig, Scope, Spanned<Block>)>> {
         let mut args = Vec::new();
         let mut varargs = None;
         let returns; // to check the error case
@@ -1468,12 +1466,13 @@ impl<'a> Parser<'a> {
             // attach all arguments to the function body scope
             // XXX should also mention all excess arguments
             // TODO should we add varargs?
-            let selfparam = selfparam.map(|paramspec: TypeSpec<Span>| {
-                paramspec.map(|span| {
-                    let selfname = Name::from(b"self"[..].to_owned()).with_loc(span);
-                    parser.add_spanned_local_name(scope, selfname).map(SelfParam)
-                })
-            });
+            let selfparam = if selfparam {
+                // use `begin` (that is, right after `(`) as an implicit span
+                let selfname = Name::from(b"self"[..].to_owned()).with_loc(begin);
+                Some(parser.add_spanned_local_name(scope, selfname).map(SelfParam))
+            } else {
+                None
+            };
             let args = args.map(|args: Seq<_, _>| {
                 args.map(|argspec: TypeSpec<_>| {
                     argspec.map(|arg: Spanned<Name>| {
@@ -1726,7 +1725,7 @@ impl<'a> Parser<'a> {
                 Ok(Some(Box::new(Ex::Varargs).with_loc(span))),
 
             (_, Spanned { base: Tok::Keyword(Keyword::Function), .. }) => {
-                let exp = match self.parse_func_body(None, funcspec)? {
+                let exp = match self.parse_func_body(false, funcspec)? {
                     Some((_, sig, scope, body)) => Ex::Func(sig, scope, body),
                     None => Ex::Oops,
                 };

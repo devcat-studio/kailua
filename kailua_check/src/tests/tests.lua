@@ -2494,35 +2494,6 @@ local c = foo('hi') --: integer
 
 --! error
 
---8<-- no-check-method-type-1
-foo = {}
-
---v [NO_CHECK]
---v method(x: integer) --> integer
-function foo:bar(x)
-    return x + "string"
-end
-
-local a = foo:bar(3) --: integer
---! ok
-
---8<-- no-check-method-type-2
-foo = {}
-
---v [NO_CHECK]
---v method(x: integer) --> integer
-function foo:bar(x)
-    return x + "string"
-end
-
--- this is an error because `self` type is not affected by [NO_CHECK]
---@vvv Error: The type `function(integer, integer) --> integer` cannot be called
---@vv Cause: `{bar: function(integer, integer) --> integer, ...}` in the `self` position is not a subtype of `integer`
---@v Note: The other type originates here
-local a = foo:bar(3) --: integer
-
---! error
-
 --8<-- no-check-untyped-args -- feature:!no_implicit_func_sig
 --v [NO_CHECK]
 function foo(x) --> boolean --@< Error: [NO_CHECK] attribute requires the arguments to be typed
@@ -2549,11 +2520,16 @@ end
 
 --8<-- no-check-untyped-self
 foo = {}
+
+--@vvv Error: [NO_CHECK] attribute requires that the type for `self` argument is clear; directly specify the type for `self` with the function declaration instead
 --v [NO_CHECK]
---v method(x: integer) --> boolean --@< Error: [NO_CHECK] attribute requires the `self` argument to be typed
+--v method(x: integer) --> boolean
 function foo:bar(x)
     return x + "string"
 end
+
+local a = foo:bar(4) --: integer --@< Error: Cannot assign `boolean` into `integer`
+                                 --@^ Note: The other type originates here
 --! error
 
 --8<-- no-check-func-hint
