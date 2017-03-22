@@ -226,6 +226,7 @@ impl<T: fmt::Debug> fmt::Debug for TypeSpec<T> {
 // more spanned version of Sig, only used during the parsing
 #[derive(Clone, PartialEq)]
 pub struct Presig {
+    pub prefix: Spanned<bool>, // true for `method`, false for `function` (span included)
     pub args: Spanned<Seq<Spanned<TypeSpec<Spanned<Name>>>, Spanned<Option<Spanned<Kind>>>>>,
     pub returns: Option<Seq<Spanned<Kind>>>,
 }
@@ -559,13 +560,27 @@ impl fmt::Debug for SlotKind {
 
 #[derive(Clone, PartialEq)]
 pub struct FuncKind {
-    pub args: Seq<Spanned<Kind>>,
+    // the name is purely for description and has no effect in the type.
+    // in a valid code all of them (and all unique) or none of them would be present.
+    pub args: Seq<(Option<Spanned<Name>>, Spanned<Kind>), Spanned<Kind>>,
     pub returns: Seq<Spanned<Kind>>,
 }
 
 impl fmt::Debug for FuncKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "({:-?})", self.args)?;
+        write!(f, "(")?;
+        let comma = Comma::new();
+        for &(ref name, ref arg) in &self.args.head {
+            write!(f, "{}", comma)?;
+            if let &Some(ref name) = name {
+                write!(f, "{:?}: ", name)?;
+            }
+            write!(f, "{:?}", arg)?;
+        }
+        if let Some(ref varargs) = self.args.tail {
+            write!(f, "{}{:?}...", comma, varargs)?;
+        }
+        write!(f, ")")?;
         if self.returns.head.len() == 1 && self.returns.tail.is_none() {
             write!(f, " --> {:?}", self.returns.head[0])?;
         } else {

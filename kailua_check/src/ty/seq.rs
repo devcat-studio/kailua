@@ -151,11 +151,11 @@ macro_rules! define_tyseq {
                 $tyseq { head: Vec::new(), tail: None, $($span: $span,)* }
             }
 
-            pub fn from_kind_seq(seq: &Seq<Spanned<Kind>>,
-                                 resolv: &mut TypeResolver,
-                                 $($span: $spanty,)*) -> kailua_diag::Result<$tyseq> {
+            pub fn from_kind_seq<T, F: for<'a> Fn(&'a T) -> &'a Spanned<Kind>>(
+                seq: &Seq<T, Spanned<Kind>>, map: F, resolv: &mut TypeResolver, $($span: $spanty,)*
+            ) -> kailua_diag::Result<$tyseq> {
                 let head = seq.head.iter()
-                                   .map(|k| $spanned_kind_to_ty(k, resolv))
+                                   .map(|k| $spanned_kind_to_ty(map(k), resolv))
                                    .collect::<Result<_,_>>()?;
                 let tail = if let Some(ref k) = seq.tail {
                     Some($spanned_kind_to_ty(k, resolv)?)

@@ -1318,6 +1318,10 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         &self.opts
     }
 
+    pub fn scope_map(&self) -> &ScopeMap<Name> {
+        &self.context.scope_maps[self.map_index]
+    }
+
     // convenience function to avoid mutable references
     pub fn display<'a, 'c, T: Display>(&'c self, x: &'a T) -> Displayed<'a, T, &'c TypeContext> {
         x.display(self.context)
@@ -1494,10 +1498,15 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             }
         }
         if let Some(cid) = cid {
+            if !func.argnames.is_empty() {
+                func.argnames.remove(0);
+            }
+
             // now `init` is: function(/* removed: [constructible] <%cid> */, ...) -> any
             // fix the return type to make a signature for the `new` method
             let returns = T::Class(Class::Instance(cid));
-            let ctor = Function { args: func.args, returns: TySeq::from(returns) };
+            let ctor = Function { args: func.args, argnames: func.argnames,
+                                  returns: TySeq::from(returns) };
             let ctor = Slot::new(F::Const, Ty::new(T::func(ctor)));
 
             debug!("implicitly setting the `new` method of {:?} as {:?}", cid, ctor);

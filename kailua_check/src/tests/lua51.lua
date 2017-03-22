@@ -354,12 +354,12 @@ function string.hello() --> string
     return 'hello'
 end
 
---v function(self: string, n: integer) --> string
+--v method(n: integer) --> string
 function string:suffix(n)
     return self:sub(-n)
 end
 
---v function(self: string) --> string
+--v method() --> string
 function string:trim()
     return self:gsub('^%s+', ''):gsub('%s+$', '')
 end
@@ -422,7 +422,7 @@ local x = _G.x --@< Error: Cannot index `[genv] table` without further type info
 --# assume `class`: [make_class] function() --> table
 Hello = class()
 
---v function(self)
+--v method()
 function Hello:init()
     self.foo = 'bar'
 end

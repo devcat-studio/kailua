@@ -1057,31 +1057,27 @@ impl<'a> Parser<'a> {
                     names.push(self.parse_name()?);
                 }
 
-                let mut funcspec = funcspec;
                 let mut selfparam = None;
                 if self.may_expect(Punct::Colon) {
                     names.push(self.parse_name()?);
-
-                    // if this is a method, the pre-signature (if any) should have `self`
-                    // as the first argument, either typed or not.
-                    // (`parse_func_body` doesn't like untyped params, so we need to pop it)
-                    if let Some(Spanned { base: (_, Some(ref mut presig)), .. }) = funcspec {
-                        if !presig.args.head.is_empty() &&
-                                **presig.args.head[0].base.base == *b"self" {
-                            let Spanned { base: arg, span } = presig.args.head.remove(0);
-                            selfparam = Some(TypeSpec { base: span,
-                                                        modf: arg.modf, kind: arg.kind });
-                        } else {
-                            self.error(presig, m::MissingSelfInFuncSpec {}).done()?;
-                            // and assume that there *were* a `self` without a type
-                        }
-                    }
-                    if selfparam.is_none() {
-                        selfparam = Some(TypeSpec { base: Span::dummy(),
-                                                    modf: M::None, kind: None });
-                    }
+                    selfparam = Some(TypeSpec { base: Span::dummy(),
+                                                modf: M::None, kind: None });
                 }
                 let namesend = self.last_pos();
+
+                // check for the prefix mismatch
+                if let Some(Spanned { base: (_, Some(ref presig)), .. }) = funcspec {
+                    match (presig.prefix.base, selfparam.is_some()) {
+                        (true, false) => {
+                            self.error(presig.prefix.span, m::FunctionWithMethodSig {}).done()?;
+                        }
+                        (false, true) => {
+                            self.error(presig.prefix.span, m::MethodWithFuncSig {}).done()?;
+                        }
+                        (true, true) | (false, false) => {}
+                    }
+                    // otherwise the prefix is ignored
+                }
 
                 if let Some((selfparam, sig, scope, body)) = self.parse_func_body(selfparam,
                                                                                   funcspec)? {
@@ -1997,55 +1993,111 @@ impl<'a> Parser<'a> {
         Ok(SlotKind { modf: modf, kind: kind }.with_loc(begin..self.last_pos()))
     }
 
-    // may contain ellipsis, the caller is expected to error on unwanted cases
-    fn parse_kailua_kindlist(&mut self) -> Result<Seq<Spanned<Kind>>> {
-        let mut kinds = Vec::new();
-        // KIND {"," KIND} ["..."] or empty
-        // try to read the first KIND
-        let kind = match self.try_parse_kailua_kind()? {
-            Some(kind) => kind,
+    // parses either [NAME ":"] KIND {"," [NAME ":"] KIND} ["," KIND "..."]; or [KIND "..."].
+    // used for kind sequences after `--:` (without names) or function types (with names).
+    // names should be unique if present.
+    //
+    // the caller is expected to error on unwanted cases.
+    fn parse_kailua_kindlist(&mut self, allow_name: bool)
+        -> Result<Seq<(Option<Spanned<Name>>, Spanned<Kind>), Spanned<Kind>>>
+    {
+        let mut head = Vec::new();
+        let mut seen = HashMap::new(); // value denotes the first span
+
+        let mut try_parse_named_kind = |parser: &mut Self| -> Result<Option<(Option<Spanned<Name>>,
+                                                                             Spanned<Kind>)>> {
+            if !allow_name {
+                return Ok(parser.try_parse_kailua_kind()?.map(|kind| (None, kind)));
+            }
+
+            // NAME is a subset of KIND; distinguish by a secondary lookahead
+            let mut tok = parser.read();
+            if let Tok::Name(name) = tok.1.base {
+                if parser.lookahead(Punct::Colon) {
+                    let name = Name::from(name);
+                    match seen.entry(name.clone()) {
+                        hash_map::Entry::Occupied(e) => {
+                            parser.error(tok.1.span, m::DuplicateArgNameInFuncKind { name: &name })
+                                  .note(*e.get(), m::FirstArgNameInFuncKind {})
+                                  .done()?;
+                        }
+                        hash_map::Entry::Vacant(e) => {
+                            e.insert(tok.1.span);
+                        }
+                    }
+
+                    parser.expect(Punct::Colon)?;
+                    let kind = parser.parse_kailua_kind()?;
+                    return Ok(Some((Some(name.with_loc(tok.1.span)), kind)));
+                }
+                tok.1.base = Tok::Name(name); // put name back
+            }
+
+            parser.unread(tok);
+            let kind = parser.try_parse_kailua_kind()?;
+            Ok(kind.map(|kind| (None, kind)))
+        };
+
+        // try to read the first [NAME ":"] KIND
+        let namekind = match try_parse_named_kind(self)? {
+            Some(namekind) => namekind,
             None => match self.read() {
                 (_, Spanned { base: Tok::Punct(Punct::DotDotDot), span }) => {
                     self.error(span, m::NoKindBeforeEllipsis {}).done()?;
                     // pretend that (an invalid) `(...)` is `(?...)`
-                    return Ok(Seq { head: kinds, tail: Some(Box::new(K::Dynamic).with_loc(span)) });
+                    return Ok(Seq { head: head, tail: Some(Box::new(K::Dynamic).with_loc(span)) });
                 }
                 tok => {
                     self.unread(tok);
-                    return Ok(Seq { head: kinds, tail: None });
+                    return Ok(Seq { head: head, tail: None });
                 }
             },
         };
-        kinds.push(kind);
+        head.push(namekind);
+
+        // continue reading {"," [NAME ":"] KIND}
         while self.may_expect(Punct::Comma) {
-            let kind = match self.try_parse_kailua_kind()? {
-                Some(kind) => kind,
+            let namekind = match try_parse_named_kind(self)? {
+                Some(namekind) => namekind,
                 None => match self.read() {
                     (_, Spanned { base: Tok::Punct(Punct::DotDotDot), span }) => {
                         self.error(span, m::NoKindBeforeEllipsis {}).done()?;
                         // pretend that (an invalid) `(<explist>, ...)` is `(<explist>, ?...)`
-                        return Ok(Seq { head: kinds,
+                        return Ok(Seq { head: head,
                                         tail: Some(Box::new(K::Dynamic).with_loc(span)) });
                     }
                     tok => {
                         self.error(tok.1.span, m::NoKind { read: &tok.1.base }).done()?;
                         self.unread(tok);
-                        Box::new(K::Oops).without_loc()
+                        (None, Box::new(K::Oops).without_loc())
                     }
                 },
             };
-            kinds.push(kind);
+            head.push(namekind);
         }
-        if self.may_expect(Punct::DotDotDot) {
-            let last = kinds.pop();
-            Ok(Seq { head: kinds, tail: last })
+
+        // if "..." appears, the last KIND should be a tail kind (and no [NAME ":"] should appear)
+        let tail = if self.may_expect(Punct::DotDotDot) {
+            if let Some((name, kind)) = head.pop() {
+                if let Some(name) = name {
+                    self.error(name.span, m::VarargsNameInFuncKind {}).done()?;
+                    // ignore the name
+                }
+                Some(kind)
+            } else {
+                None
+            }
         } else {
-            Ok(Seq { head: kinds, tail: None })
-        }
+            None
+        };
+
+        Ok(Seq { head: head, tail: tail })
     }
 
-    // the first argument may be `self`, which can have its type omitted
-    // may also contain ellipsis, the caller is expected to error on unwanted cases
+    // parses either NAME ":" KIND {"," NAME ":" KIND} ["," "..." [":" KIND]];
+    // or ["..." [":" KIND]]. this is used for function type specification.
+    //
+    // the caller is expected to error on unwanted cases.
     fn parse_kailua_namekindlist(&mut self)
             -> Result<Spanned<Seq<Spanned<TypeSpec<Spanned<Name>>>,
                                   Spanned<Option<Spanned<Kind>>>>>> {
@@ -2056,30 +2108,20 @@ impl<'a> Parser<'a> {
         if self.may_expect(Punct::DotDotDot) { // "..." [":" KIND]
             variadic = Some(begin);
         } else { // NAME ":" KIND {"," NAME ":" KIND} ["," "..." [":" KIND]] or empty
-            let name = match self.try_parse_name() {
-                Some(name) => name,
-                None => {
-                    return Ok(Seq { head: specs, tail: None }.with_loc(begin..self.last_pos()));
-                },
+            let parse_named_type_spec = |parser: &mut Self, name: Spanned<Name>,
+                                         begin: Pos| -> Result<Spanned<TypeSpec<Spanned<Name>>>> {
+                parser.expect(Punct::Colon)?;
+                let modf = parser.parse_kailua_mod();
+                let kind = parser.parse_kailua_kind()?;
+                let spec = TypeSpec { base: name, modf: modf, kind: Some(kind) };
+                Ok(spec.with_loc(begin..parser.last_pos()))
             };
-            let modf;
-            let kind;
-            if *name.base == *b"self" {
-                // `self` as the first argument can omit its type
-                if self.may_expect(Punct::Colon) {
-                    modf = self.parse_kailua_mod();
-                    kind = Some(self.parse_kailua_kind()?);
-                } else {
-                    modf = M::None;
-                    kind = None;
-                }
+
+            if let Some(name) = self.try_parse_name() {
+                specs.push(parse_named_type_spec(self, name, begin)?);
             } else {
-                self.expect(Punct::Colon)?;
-                modf = self.parse_kailua_mod();
-                kind = Some(self.parse_kailua_kind()?);
+                return Ok(Seq { head: specs, tail: None }.with_loc(begin..self.last_pos()));
             }
-            let spec = TypeSpec { base: name, modf: modf, kind: kind };
-            specs.push(spec.with_loc(begin..self.last_pos()));
 
             while self.may_expect(Punct::Comma) {
                 let begin = self.pos();
@@ -2088,11 +2130,7 @@ impl<'a> Parser<'a> {
                     break;
                 }
                 let name = self.parse_name()?;
-                self.expect(Punct::Colon)?;
-                let modf = self.parse_kailua_mod();
-                let kind = self.parse_kailua_kind()?;
-                let spec = TypeSpec { base: name, modf: modf, kind: Some(kind) };
-                specs.push(spec.with_loc(begin..self.last_pos()));
+                specs.push(parse_named_type_spec(self, name, begin)?);
             }
         }
 
@@ -2115,9 +2153,18 @@ impl<'a> Parser<'a> {
 
     fn parse_kailua_funckind(&mut self) -> Result<Spanned<FuncKind>> {
         let begin = self.pos();
+
         self.expect(Punct::LParen)?;
-        let args = self.parse_kailua_kindlist()?;
+        let args = self.parse_kailua_kindlist(true)?;
         self.expect(Punct::RParen)?;
+
+        // error on partially named arguments (delay til here so that we have a parenthesized span)
+        let namedcount = args.head.iter().filter(|&&(ref name, _)| name.is_some()).count();
+        if namedcount > 0 && namedcount < args.head.len() {
+            let span = begin..self.last_pos();
+            self.error(span, m::PartiallyNamedFieldsInFuncKind {}).done()?;
+        }
+
         let returns = if self.may_expect(Punct::DashDashGt) {
             // "(" ... ")" "-->" ...
             self.parse_kailua_kind_seq()?
@@ -2125,6 +2172,7 @@ impl<'a> Parser<'a> {
             // "(" ... ")"
             Seq { head: Vec::new(), tail: None }
         };
+
         let span = begin..self.last_pos();
         Ok(FuncKind { args: args, returns: returns }.with_loc(span))
     }
@@ -2189,13 +2237,17 @@ impl<'a> Parser<'a> {
             }
 
             (_, Spanned { base: Tok::Punct(Punct::LParen), .. }) => {
-                let mut args = self.parse_kailua_kindlist()?;
+                let mut args = self.parse_kailua_kindlist(false)?;
                 self.expect(Punct::RParen)?;
                 if args.head.len() != 1 || args.tail.is_some() {
                     // cannot be followed by postfix operators - XXX really?
+                    let args = Seq {
+                        head: args.head.into_iter().map(|(_name, kind)| kind).collect(),
+                        tail: args.tail,
+                    };
                     return Ok(Some(AtomicKind::Seq(args)));
                 } else {
-                    args.head.pop().unwrap()
+                    args.head.pop().unwrap().1
                 }
             }
 
@@ -2588,14 +2640,23 @@ impl<'a> Parser<'a> {
 
                 // function "(" [NAME ":" KIND] {"," NAME ":" KIND} ["," "..."] ")" ["-->" KIND]
                 let begin = parser.pos();
-                let has_sig = if !attrs_seen {
-                    // force reading signatures if no attributes are present
-                    parser.expect(Keyword::Function)?;
-                    true
-                } else {
-                    parser.may_expect(Keyword::Function)
+                let sigprefix = match parser.read() {
+                    (_, Spanned { base: Tok::Keyword(Keyword::Function), span }) =>
+                        Some(false.with_loc(span)),
+                    (_, Spanned { base: Tok::Keyword(Keyword::Method), span }) =>
+                        Some(true.with_loc(span)),
+                    tok => {
+                        if !attrs_seen {
+                            // force reading signatures if no attributes are present
+                            parser.error(tok.1.span,
+                                         m::NoFunctionOrMethodBeforeSig { read: &tok.1.base })
+                                  .done()?;
+                        }
+                        parser.unread(tok);
+                        None
+                    }
                 };
-                let sig = if has_sig {
+                let sig = if let Some(prefix) = sigprefix {
                     parser.expect(Punct::LParen)?;
                     let args = parser.parse_kailua_namekindlist()?;
                     parser.expect(Punct::RParen)?;
@@ -2605,7 +2666,8 @@ impl<'a> Parser<'a> {
                         Seq { head: Vec::new(), tail: None }
                     };
                     let end = parser.last_pos();
-                    Some(Presig { args: args, returns: Some(returns) }.with_loc(begin..end))
+                    let presig = Presig { prefix: prefix, args: args, returns: Some(returns) };
+                    Some(presig.with_loc(begin..end))
                 } else {
                     None
                 };

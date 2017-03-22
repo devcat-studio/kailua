@@ -197,6 +197,11 @@ define_msg! { pub NoFuncOrNameAfterLocal<'a> { read: &'a Tok }:
     _    => "Expected a name or `function` after `local`, got {read}",
 }
 
+define_msg! { pub NoFunctionOrMethodBeforeSig<'a> { read: &'a Tok }:
+    "ko" => "함수 명세 앞에 `function`이나 `method`가 나와야 하는데 {read}이(가) 나왔습니다",
+    _    => "Expected a `function` or `method` before the function specification, got {read}",
+}
+
 define_msg! { pub DuplicateTypeSpecInLocal:
     "ko" => "타입이 변수 이름과 `local` 선언의 뒷쪽에 동시에 나왔습니다",
     _    => "The type specification cannot appear both at variable names and \
@@ -307,8 +312,13 @@ define_msg! { pub PriorFuncSpec:
 }
 
 define_msg! { pub NoKindBeforeEllipsis:
-    "ko" => "함수 타입이 아닌 곳에서는 `...` 앞에 항상 타입이 존재해야 합니다",
-    _    => "`...` should be preceded with a kind in the ordinary kinds",
+    "ko" => "함수 명세가 아닌 곳에서는 `...` 앞에 항상 타입이 존재해야 합니다",
+    _    => "`...` should be preceded with a kind outside of the function specification",
+}
+
+define_msg! { pub VarargsNameInFuncKind:
+    "ko" => "가변 인자에는 이름이 붙을 수 없습니다",
+    _    => "Variadic arguments cannot have a name",
 }
 
 define_msg! { pub DuplicateFieldNameInRec<'a> { name: &'a Name }:
@@ -319,6 +329,31 @@ define_msg! { pub DuplicateFieldNameInRec<'a> { name: &'a Name }:
 define_msg! { pub FirstFieldNameInRec:
     "ko" => "여기서 처음 나왔습니다",
     _    => "The first duplicate appeared here",
+}
+
+define_msg! { pub DuplicateArgNameInFuncKind<'a> { name: &'a Name }:
+    "ko" => "타입에서 인자 이름 {name}이 중복됩니다",
+    _    => "Duplicate argument name {name} in the type specification",
+}
+
+define_msg! { pub FirstArgNameInFuncKind:
+    "ko" => "여기서 처음 나왔습니다",
+    _    => "The first duplicate appeared here",
+}
+
+define_msg! { pub PartiallyNamedFieldsInFuncKind:
+    "ko" => "타입에서 일부 인자에만 이름이 붙어 있습니다",
+    _    => "Not all but only some arguments in the type are named",
+}
+
+define_msg! { pub FunctionWithMethodSig:
+    "ko" => "일반 함수의 명세는 `function`으로 시작해야 합니다",
+    _    => "A function specification for ordinary functions should start with `function`",
+}
+
+define_msg! { pub MethodWithFuncSig:
+    "ko" => "메소드의 함수 명세는 `method`로 시작해야 합니다",
+    _    => "A function specification for methods should start with `method`",
 }
 
 define_msg! { pub NoTypeSeqInUnion:
@@ -339,11 +374,6 @@ define_msg! { pub CannotRedefineBuiltin:
 define_msg! { pub AttrToKindSeq:
     "ko" => "[name] 꼴의 타입 속성 선언은 타입열에는 붙일 수 없습니다",
     _    => "Cannot attach the type attribute (like [name]) to the type sequence",
-}
-
-define_msg! { pub MissingSelfInFuncSpec:
-    "ko" => "메소드의 함수 타입에서 첫 인자가 `self`가 아닙니다",
-    _    => "The first argument in the function specification for a method is not `self`",
 }
 
 define_msg! { pub StmtAfterReturnOrBreak:

@@ -1140,10 +1140,16 @@ impl Ty {
             },
 
             K::Func(ref func) => {
-                let func = Function {
-                    args: TySeq::from_kind_seq(&func.args, resolv)?,
-                    returns: TySeq::from_kind_seq(&func.returns, resolv)?,
-                };
+                let args = TySeq::from_kind_seq(&func.args, |namekind| &namekind.1, resolv)?;
+                let mut argnames = Vec::new();
+                for (i, &(ref name, _)) in func.args.head.iter().enumerate() {
+                    if let Some(ref name) = *name {
+                        argnames.resize(i, None);
+                        argnames.push(Some(name.clone()));
+                    }
+                }
+                let returns = TySeq::from_kind_seq(&func.returns, |kind| kind, resolv)?;
+                let func = Function { args: args, argnames: argnames, returns: returns };
                 Ty::new(T::Functions(Cow::Owned(Functions::Simple(func))))
             }
 

@@ -785,6 +785,40 @@ local
 do end --@< Error: Expected a name or `function` after `local`, got a keyword `do`
 --! [Local([`x`$1: _ Function], [])$1, Oops, Do([])]
 
+--8<-- kind-func-named-args
+local x --: function(a: string, b: integer) --> (integer, string)
+--! [Local([`x`$1: _ Func((`a`: String, `b`: Integer) --> (Integer, String))], [])$1]
+
+--8<-- kind-func-named-args-partial
+local x --: function(a: string, integer) --> (integer, string)
+--@^ Error: Not all but only some arguments in the type are named
+local y --: function(string, b: integer) --> (integer, string)
+--@^ Error: Not all but only some arguments in the type are named
+--! [Local([`x`$1: _ Func((`a`: String, Integer) --> (Integer, String))], [])$1, \
+--!  Local([`y`$2: _ Func((String, `b`: Integer) --> (Integer, String))], [])$2]
+
+--8<-- kind-func-named-args-dup
+local x --: function(x: string, --@< Note: The first duplicate appeared here
+        --:          y: integer,
+        --:          x: boolean) --@< Error: Duplicate argument name `x` in the type specification
+--! [Local([`x`$1: _ Func((`x`: String, `y`: Integer, `x`: Boolean) --> ())], [])$1]
+
+--8<-- kind-func-named-args-quoted
+local x --: function(`some arg here`: any)
+--! [Local([`x`$1: _ Func((`some arg here`: Any) --> ())], [])$1]
+
+--8<-- kind-func-named-args-varargs
+local x --: function(a: any, any...)
+local y --: function(a: any...) --@< Error: Variadic arguments cannot have a name
+--! [Local([`x`$1: _ Func((`a`: Any, Any...) --> ())], [])$1, \
+--!  Local([`y`$2: _ Func((Any...) --> ())], [])$2]
+
+--8<-- kind-func-no-named-returns
+local x --: function(string, integer) --> (a: integer, b: string)
+--@^ Error: Expected `)`, got `:`
+--@^^ Error: Expected a newline, got `)`
+--! [Local([`x`$1: _ Oops], [])$1]
+
 --8<-- kind-thread
 local x --: thread
 --! [Local([`x`$1: _ Thread], [])$1]
@@ -1123,12 +1157,13 @@ function foo() end
 --! [FuncDecl(`foo`_, [] --> _, $1[])]
 
 --8<-- funcspec-no-empty
---v --@<-v Error: Expected a keyword `function`, got a newline
+--v --@<-v Error: Expected a `function` or `method` before the function specification, got a newline
 function foo() end
 --! [FuncDecl(`foo`_, [] --> _, $1[])]
 
 --8<-- funcspec-no-bare-parens
---v () --@< Error: Expected a keyword `function`, got `(`
+--v () --@< Error: Expected a `function` or `method` before the function specification, got `(`
+       --@^ Error: Expected a newline, got `(`
 function foo() end
 --! [FuncDecl(`foo`_, [] --> _, $1[])]
 
@@ -1264,55 +1299,33 @@ local function foo(...)
 end
 --! [FuncDecl(`foo`$2, [...: String], $1[])$2]
 
---8<-- funcspec-method-no-self-1
---v function() --@< Error: The first argument in the function specification for a method is not `self`
+--8<-- funcspec-method-wrong-prefix-1
+--v function() --@< Error: A function specification for methods should start with `method`
 function foo:bar() end
 --! [MethodDecl((`foo`_.`bar`), Some(self=`self`$1), [], $1[])]
 
---8<-- funcspec-method-no-self-2
---@v-vv Error: The first argument in the function specification for a method is not `self`
---v function(x: integer,
+--8<-- funcspec-method-wrong-prefix-2
+--v function(x: integer, --@< Error: A function specification for methods should start with `method`
 --v          y: string)
 function foo:bar(x, y) end
 --! [MethodDecl((`foo`_.`bar`), Some(self=`self`$1), [`x`$1: _ Integer, `y`$1: _ String], $1[])]
 
---8<-- funcspec-method-self
---v function(self)
+--8<-- funcspec-method
+--v method()
 function foo:bar() end
 --! [MethodDecl((`foo`_.`bar`), Some(self=`self`$1), [], $1[])]
 
---8<-- funcspec-method-self-typed
---v function(self: table)
-function foo:bar() end
---! [MethodDecl((`foo`_.`bar`), Some(self=`self`$1: _ Table), [], $1[])]
+--8<-- funcspec-non-method-wrong-prefix-1
+--v method(x: integer) --@< Error: A function specification for ordinary functions should start with `function`
+function foo.bar(x) end
+--! [MethodDecl((`foo`_.`bar`), None, [`x`$1: _ Integer], $1[])]
 
---8<-- funcspec-method-self-typed-with-modf
---v function(self: const table)
-function foo:bar() end
---! [MethodDecl((`foo`_.`bar`), Some(self=`self`$1: Const Table), [], $1[])]
-
---8<-- funcspec-non-method-self-1
---v function(self, x: integer) --@< Error: Arguments in the function specification are missing their types
-                               --@^ Error: Excess arguments in the function specification
-function foo.bar(x) end --@< Error: Mismatching argument name in the function specification
-                        --@^^^ Note: The corresponding argument was here
---! [MethodDecl((`foo`_.`bar`), None, [`self`$1, `x`$1: _ Integer], $1[])]
-
---8<-- funcspec-non-method-self-2
---v function(self, x: integer) --@< Error: Arguments in the function specification are missing their types
-function foo.bar(self, x) end
---! [MethodDecl((`foo`_.`bar`), None, [`self`$1, `x`$1: _ Integer], $1[])]
-
---8<-- funcspec-non-method-self-typed-1
---v function(self: table, x: integer) --@< Error: Excess arguments in the function specification
-function foo.bar(x) end --@< Error: Mismatching argument name in the function specification
-                        --@^^ Note: The corresponding argument was here
---! [MethodDecl((`foo`_.`bar`), None, [`self`$1: _ Table, `x`$1: _ Integer], $1[])]
-
---8<-- funcspec-non-method-self-typed-2
---v function(self: table, x: integer)
-function foo.bar(self, x) end
---! [MethodDecl((`foo`_.`bar`), None, [`self`$1: _ Table, `x`$1: _ Integer], $1[])]
+--8<-- funcspec-non-method-wrong-prefix-2
+--v method(x: integer) --@< Error: A function specification for ordinary functions should start with `function`
+function foo.bar(self, x) end --@< Error: Excess arguments in the function declaration
+                              --@^ Error: Mismatching argument name in the function specification
+                              --@^^^ Note: The corresponding argument was here
+--! [MethodDecl((`foo`_.`bar`), None, [`x`$1: _ Integer], $1[])]
 
 --8<-- assume-multiline-recover
 --# assume a: { integer, string
@@ -1688,7 +1701,7 @@ f()
 --! [KailuaAssume(`x`$1, `x`_, _, Oops)$1, Void(`f`_())]
 
 --8<-- assume-seq-varargs-1
---# assume x: (...) --@< Error: `...` should be preceded with a kind in the ordinary kinds
+--# assume x: (...) --@< Error: `...` should be preceded with a kind outside of the function specification
                     --@^ Error: Expected a single type, not type sequence
 f()
 --! [KailuaAssume(`x`$1, `x`_, _, Oops)$1, Void(`f`_())]
@@ -1699,7 +1712,7 @@ f()
 --! [KailuaAssume(`x`$1, `x`_, _, Oops)$1, Void(`f`_())]
 
 --8<-- assume-seq-varargs-2
---# assume x: (integer, ...) --@< Error: `...` should be preceded with a kind in the ordinary kinds
+--# assume x: (integer, ...) --@< Error: `...` should be preceded with a kind outside of the function specification
                              --@^ Error: Expected a single type, not type sequence
 f()
 --! [KailuaAssume(`x`$1, `x`_, _, Oops)$1, Void(`f`_())]
@@ -2033,7 +2046,7 @@ end --@< Error: Expected an expression, got a keyword `end`
 g()
 --! [Do([Void(`f`_[Oops])]), Void(`g`_())]
 
---8<-- multibyte-invalid-chars
+--8<-- multibyte-invalid-chars -- exact
 -- should result in only one error
 do아햏햏end --@< Error: Unexpected character
 --! [Do([])]

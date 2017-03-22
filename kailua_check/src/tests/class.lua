@@ -68,11 +68,11 @@ local h = Hello.new() --: Hello
 --8<-- class-init-bad-arity
 --# assume `class`: [make_class] function() --> table
 Hello = class()
---v function(self, x: integer, y: integer, z: integer)
+--v method(x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
 end
 local h = Hello.new(3, 4, 5, 6)
---@^ Error: The type `function(integer, integer, integer) --> Hello` cannot be called
+--@^ Error: The type `function(x: integer, y: integer, z: integer) --> Hello` cannot be called
 --@^^ Cause: Cannot give more than 3 argument(s) to the function
 --@^^^ Note: The other type originates here
 --! error
@@ -80,7 +80,7 @@ local h = Hello.new(3, 4, 5, 6)
 --8<-- class-init-fields
 --# assume `class`: [make_class] function() --> table
 Hello = class()
---v function(self, x: integer, y: integer, z: integer)
+--v method(x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
     self.x = x
     self.y = y
@@ -93,7 +93,7 @@ local a = h.x + h.y + h.z --: integer
 --8<-- class-init-fields-2
 --# assume `class`: [make_class] function() --> table
 Hello = class()
---v function(self, x: integer, y: integer, z: integer)
+--v method(x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
     self.x = x --: integer|string
     self.y = y
@@ -110,7 +110,7 @@ local c = h.x + 42 --@< Error: Cannot apply + operator to `(integer|string)` and
 --8<-- class-init-fields-3
 --# assume `class`: [make_class] function() --> table
 Hello = class()
---v function(self, x: integer, y: integer, z: integer)
+--v method(x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
     self.x = x
     self.y = y
@@ -136,7 +136,7 @@ end
 --8<-- class-new-assign
 --# assume `class`: [make_class] function() --> table
 Hello = class()
---v function(self, x: integer, y: integer, z: integer)
+--v method(x: integer, y: integer, z: integer)
 function Hello:new(x, y, z) --@< Error: `new` method is reserved and cannot be defined
 end
 --! error
@@ -145,7 +145,7 @@ end
 --# assume `class`: [make_class] function() --> table
 Hello = class()
 
---v function(self, x: integer, y: integer, z: integer)
+--v method(x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
     self.x = x
     self.y = y
@@ -164,7 +164,7 @@ local a = h:sum() --: integer
 --# assume `class`: [make_class] function() --> table
 Hello = class()
 
---v function(self, x: integer, y: integer, z: integer)
+--v method(x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
     self.x = x
     self.y = y
@@ -189,14 +189,14 @@ h:add()
 --# assume `class`: [make_class] function() --> table
 Hello = class()
 
---v function(self, x: integer, y: integer, z: integer)
+--v method(x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
     self.x = x
     self.y = y
     self.z = z
 end
 
---v function(self, n: integer)
+--v method(n: integer)
 function Hello:add(n)
     self.x = self.x + n
     self.y = self.y + n
@@ -211,7 +211,7 @@ h:add(8)
 --# assume `class`: [make_class] function() --> table
 Hello = class()
 
---v function(self, x: integer, y: integer, z: integer)
+--v method(x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
     self.x = x
     self.y = y
@@ -236,7 +236,7 @@ h:stringify()
 --# assume `class`: [make_class] function() --> table
 Hello = class()
 
---v function(self, x: integer, y: integer, z: integer)
+--v method(x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
     self.x = x
     self.y = y
@@ -256,7 +256,7 @@ local x = h.sum --: integer --@< Error: Cannot index `Hello` with `"sum"`
 --# assume `class`: [make_class] function() --> table
 Hello = class()
 
---v function(self, x: integer, y: integer, z: integer)
+--v method(x: integer, y: integer, z: integer)
 function Hello:init(x, y, z)
     --@v Error: Cannot index `[internal constructible] Hello` with `"sum"`
     local n = self:sum()
@@ -315,63 +315,6 @@ function Hello:init() end
 local h = Hello.new()
 h:init()      --@< Error: The constructor (`init` method) is only internally called and should not be called outside
 Hello.init(h) --@< Error: The constructor (`init` method) is only internally called and should not be called outside
-
---! error
-
---8<-- class-self-type-1
---# assume `class`: [make_class] function() --> table
-Hello = class()
-function Hello:init() end
-
---v function(self: string) --@< Error: The type of `self` argument to the method, if present, should be a corresponding class instance type
-function Hello:foo() end
-
--- should not be an error
-local h = Hello.new()
-Hello.foo(h)
-
---! error
-
---8<-- class-self-type-2
---# assume `class`: [make_class] function() --> table
-Hello = class()
-function Hello:init() end
-
---v function(self: Hello)
-function Hello:foo() end
-
-local h = Hello.new()
-Hello.foo(h)
-
---! ok
-
---8<-- class-self-type-inferred
---# assume `class`: [make_class] function() --> table
-Hello = class()
-function Hello:init() end
-
---v function(self)
-function Hello:foo() end
-
-local h = Hello.new()
-Hello.foo(h)
-
---! ok
-
---8<-- class-self-type-const
---# assume `class`: [make_class] function() --> table
-Hello = class()
-function Hello:init()
-    self.x = 42
-end
-
---v function(self: const Hello)
-function Hello:foo()
-    self.x = self.x + 1 --@< Error: Cannot update the immutable type `const Hello` by indexing
-end
-
-local h = Hello.new()
-Hello.foo(h)
 
 --! error
 
@@ -455,7 +398,7 @@ function Hello:init() end
 --# assume Hello.x: integer
 --# assume static Hello.y: string
 
---v function(self, n: integer)
+--v method(n: integer)
 function Hello:set(n)
     self.x = n
     self.y = n .. '' --@< Error: Cannot add a new field to the class instance outside of the constructor

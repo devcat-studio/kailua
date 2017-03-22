@@ -455,6 +455,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 let v = v.unlift().clone().without_nil();
                 *returns.ensure_at_mut(0) = Ty::new(T::func(Function {
                     args: TySeq { head: vec![tab.clone(), k.clone()], tail: None },
+                    argnames: Vec::new(),
                     returns: TySeq { head: vec![knil, v], tail: None },
                 }));
                 *returns.ensure_at_mut(1) = tab;
@@ -1705,7 +1706,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         // TODO the exception should be made to the recursive usage;
         // we probably need to put a type variable that is later equated to the actual returns
         let frame = if let Some(ref returns) = sig.returns {
-            let returns = TySeq::from_kind_seq(returns, &mut self.env)?;
+            let returns = TySeq::from_kind_seq(returns, |kind| kind, &mut self.env)?;
             Frame { vararg: vainfo, returns: Returns::Explicit(returns) }
         } else if let Some(hint) = hintreturns {
             // use a hint if possible ([NO_CHECK] can rely on this hint as well)
@@ -1718,6 +1719,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         };
 
         let mut argshead = Vec::new();
+        let mut argnames = Vec::new();
 
         let mut scope = self.scoped(Scope::new_function(frame));
         if let Some((selfparam, selfinfo)) = selfparam {
@@ -1725,6 +1727,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             let selfid = selfparam.clone().map(|param| param.0);
             scope.env.add_local_var_already_set(&selfid, selfinfo.without_loc())?;
             argshead.push(ty);
+            argnames.push(Some(Name::from(&b"self"[..]).with_loc(selfparam)));
         }
 
         let mut hinthead = hinthead.map(|tys| tys.into_iter());
@@ -1764,6 +1767,9 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
             scope.env.add_local_var_already_set(&param.base, sty.without_loc())?;
             argshead.push(ty);
+
+            let name = param.base.name(scope.env.scope_map());
+            argnames.push(Some(name.clone().with_loc(&param.base)));
         }
         let args = TySeq { head: argshead, tail: vatype };
 
@@ -1785,7 +1791,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 TySeq { head: Vec::new(), tail: Some(bottom) }
             },
         };
-        Ok(Slot::just(Ty::new(T::func(Function { args: args, returns: returns }))))
+        let func = Function { args: args, argnames: argnames, returns: returns };
+        Ok(Slot::just(Ty::new(T::func(func))))
     }
 
     fn visit_func_call(&mut self, functy: &Spanned<Ty>, selfinfo: Option<Spanned<Slot>>,

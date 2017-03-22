@@ -1,11 +1,14 @@
 use std::fmt;
+use kailua_env::Spanned;
+use kailua_syntax::Name;
 
-use diag::{Origin, TypeReport, TypeResult};
-use super::{Display, DisplayState, T, TySeq, TypeContext, Lattice};
+use diag::{Origin, TypeReport, TypeResult, unquotable_name};
+use super::{Display, DisplayState, Ty, TySeq, TypeContext, Lattice};
 
 #[derive(Clone, PartialEq)]
 pub struct Function {
     pub args: TySeq,
+    pub argnames: Vec<Option<Spanned<Name>>>, // diagnostics only
     pub returns: TySeq,
 }
 
@@ -25,15 +28,37 @@ impl Function {
     fn fmt_generic<WriteTy, WriteTySeq>(&self, f: &mut fmt::Formatter,
                                         mut write_ty: WriteTy,
                                         mut write_tyseq: WriteTySeq) -> fmt::Result
-            where WriteTy: FnMut(&T, &mut fmt::Formatter) -> fmt::Result,
+            where WriteTy: FnMut(&Ty, &mut fmt::Formatter, bool) -> fmt::Result,
                   WriteTySeq: FnMut(&TySeq, &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "function")?;
-        write_tyseq(&self.args, f)?;
+        // we cannot directly print self.args as they should be interleaved with self.argnames
+        write!(f, "function(")?;
+        let mut first = true;
+        let mut names = self.argnames.iter();
+        for t in &self.args.head {
+            if first { first = false; } else { write!(f, ", ")?; }
+            if let Some(name) = names.next() {
+                if let Some(ref name) = *name {
+                    if unquotable_name(name) {
+                        write!(f, "{:-?}: ", name)?;
+                    } else {
+                        write!(f, "`{:-?}`: ", name)?;
+                    }
+                }
+            }
+            write_ty(t, f, false)?;
+        }
+        if let Some(ref t) = self.args.tail {
+            if !first { write!(f, ", ")?; }
+            write_ty(t, f, true)?;
+            write!(f, "...")?;
+        }
+        write!(f, ")")?;
+
         match (self.returns.head.len(), self.returns.tail.is_some()) {
             (0, false) => write!(f, " --> ()"),
             (1, false) => {
                 write!(f, " --> ")?;
-                write_ty(&self.returns.head[0], f)
+                write_ty(&self.returns.head[0], f, false)
             },
             (_, _) => {
                 write!(f, " --> ")?;
@@ -45,14 +70,26 @@ impl Function {
 
 impl Display for Function {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
-        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(st), f),
-                            |s, f| fmt::Display::fmt(&s.display(st), f))
+        self.fmt_generic(
+            f,
+            |t, f, without_nil| {
+                let t = t.display(st);
+                if without_nil { write!(f, "{:#}", t) } else { write!(f, "{}", t) }
+            },
+            |s, f| fmt::Display::fmt(&s.display(st), f),
+        )
     }
 }
 
 impl fmt::Debug for Function {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.fmt_generic(f, |t, f| fmt::Debug::fmt(t, f), fmt::Debug::fmt)
+        self.fmt_generic(
+            f,
+            |t, f, without_nil| {
+                if without_nil { write!(f, "{:#?}", t) } else { write!(f, "{:?}", t) }
+            },
+            fmt::Debug::fmt,
+        )
     }
 }
 

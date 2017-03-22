@@ -21,7 +21,7 @@ p(3) --@< Error: The type `function() --> ()` cannot be called
 local function p(x)
     x = x + 1
 end
-p() --@< Error: The type `function(<unknown type>) --> ()` cannot be called
+p() --@< Error: The type `function(x: <unknown type>) --> ()` cannot be called
     --@^ Cause: First function argument cannot be omitted because its type is `<unknown type>`
     --@^^ Note: The other type originates here
 --! error
@@ -30,7 +30,7 @@ p() --@< Error: The type `function(<unknown type>) --> ()` cannot be called
 local function p(x) --: integer
     x = x + 1
 end
-p() --@< Error: The type `function(integer) --> ()` cannot be called
+p() --@< Error: The type `function(x: integer) --> ()` cannot be called
     --@^ Cause: First function argument cannot be omitted because its type is `integer`
     --@^^ Note: The other type originates here
 --! error
@@ -49,7 +49,7 @@ p()
 local function p(x) --: integer!
     x = x + 1
 end
-p() --@< Error: The type `function(integer!) --> ()` cannot be called
+p() --@< Error: The type `function(x: integer!) --> ()` cannot be called
     --@^ Cause: First function argument cannot be omitted because its type is `integer!`
     --@^^ Note: The other type originates here
 --! error
@@ -335,7 +335,7 @@ local p = x:hello()
 --8<-- methodcall-rec-2
 local x = {hello = --v function(a: table!, b: integer!)
                    function(a, b) end}
-local p = x:hello() --@< Error: The type `function(table!, integer!) --> ()` cannot be called
+local p = x:hello() --@< Error: The type `function(a: table!, b: integer!) --> ()` cannot be called
                     --@^ Cause: Second method argument cannot be omitted because its type is `integer!`
                     --@^^ Note: The other type originates here
 --! error
@@ -349,7 +349,7 @@ local p = x:hello(4)
 --8<-- methodcall-rec-4
 local x = {hello = --v function(a: table!, b: integer!)
                    function(a, b) end}
-local p = x:hello('string') --@< Error: The type `function(table!, integer!) --> ()` cannot be called
+local p = x:hello('string') --@< Error: The type `function(a: table!, b: integer!) --> ()` cannot be called
                             --@^ Cause: First method argument `"string"` is not a subtype of `integer!`
                             --@^^ Note: The other type originates here
 --! error
@@ -841,8 +841,8 @@ function p(a) end
 
 p(function(x) end)
 --@^ Error: The type for this argument in the anonymous function is missing but couldn't be inferred from the calls
---@^^ Error: The type `function(string) --> ()` cannot be called
---@^^^ Cause: First function argument `function(<error>) --> ()` is not a subtype of `string`
+--@^^ Error: The type `function(a: string) --> ()` cannot be called
+--@^^^ Cause: First function argument `function(x: <error>) --> ()` is not a subtype of `string`
 --@^^^^ Note: The other type originates here
 --! error
 
@@ -851,8 +851,8 @@ p(function(x) end)
 function p(a) end
 
 -- the hint doesn't directly affect the diagnostics
---@vvv Error: The type `function(function(integer, integer) --> integer) --> ()` cannot be called
---@vv-vvvv Cause: First function argument `function(integer) --> integer` is not a subtype of `function(integer, integer) --> integer`
+--@vvv Error: The type `function(a: function(integer, integer) --> integer) --> ()` cannot be called
+--@vv-vvvv Cause: First function argument `function(x: integer) --> integer` is not a subtype of `function(integer, integer) --> integer`
 --@v Note: The other type originates here
 p(function(x)
     return x * 2
@@ -904,7 +904,7 @@ end)
 --8<-- methodcall-func-hint
 local tab = {}
 
---v function(self, a: function(int, int) --> int)
+--v method(a: function(int, int) --> int)
 function tab:p(a) end
 
 tab.p(tab, function(x, y)
@@ -919,37 +919,37 @@ end)
 --8<-- methodcall-func-hint-not-func -- feature:no_implicit_func_sig
 local tab = {}
 
---v function(self, a: string)
+--v method(a: string)
 function tab:p(a) end
 
 tab.p(tab, function(x) end)
 --@^ Error: The type for this argument in the anonymous function is missing but couldn't be inferred from the calls
---@^^ Error: The type `function(<unknown type>, string) --> ()` cannot be called
---@^^^ Cause: Second function argument `function(<error>) --> ()` is not a subtype of `string`
+--@^^ Error: The type `function(self: <unknown type>, a: string) --> ()` cannot be called
+--@^^^ Cause: Second function argument `function(x: <error>) --> ()` is not a subtype of `string`
 --@^^^^ Note: The other type originates here
 
 tab:p(function(x) end)
 --@^ Error: The type for this argument in the anonymous function is missing but couldn't be inferred from the calls
---@^^ Error: The type `function(<unknown type>, string) --> ()` cannot be called
---@^^^ Cause: First method argument `function(<error>) --> ()` is not a subtype of `string`
+--@^^ Error: The type `function(self: <unknown type>, a: string) --> ()` cannot be called
+--@^^^ Cause: First method argument `function(x: <error>) --> ()` is not a subtype of `string`
 --@^^^^ Note: The other type originates here
 --! error
 
 --8<-- methodcall-func-hint-less-arity -- feature:no_implicit_func_sig
 local tab = {}
 
---v function(self, a: function(integer, integer) --> integer)
+--v method(a: function(integer, integer) --> integer)
 function tab:p(a) end
 
---@vvv Error: The type `function(<unknown type>, function(integer, integer) --> integer) --> ()` cannot be called
---@vv-vvvv Cause: Second function argument `function(integer) --> integer` is not a subtype of `function(integer, integer) --> integer`
+--@vvv Error: The type `function(self: <unknown type>, a: function(integer, integer) --> integer) --> ()` cannot be called
+--@vv-vvvv Cause: Second function argument `function(x: integer) --> integer` is not a subtype of `function(integer, integer) --> integer`
 --@v Note: The other type originates here
 tab.p(tab, function(x)
     return x * 2
 end)
 
---@vvv Error: The type `function(<unknown type>, function(integer, integer) --> integer) --> ()` cannot be called
---@vv-vvvv Cause: First method argument `function(integer) --> integer` is not a subtype of `function(integer, integer) --> integer`
+--@vvv Error: The type `function(self: <unknown type>, a: function(integer, integer) --> integer) --> ()` cannot be called
+--@vv-vvvv Cause: First method argument `function(x: integer) --> integer` is not a subtype of `function(integer, integer) --> integer`
 --@v Note: The other type originates here
 tab:p(function(x)
     return x * 2
@@ -959,7 +959,7 @@ end)
 --8<-- methodcall-func-hint-more-arity -- feature:no_implicit_func_sig
 local tab = {}
 
---v function(self, a: function(integer, integer) --> integer)
+--v method(a: function(integer, integer) --> integer)
 function tab:p(a) end
 
 tab.p(tab, function(x, y, z)
@@ -984,7 +984,7 @@ end)
 --8<-- methodcall-func-hint-varargs
 local tab = {}
 
---v function(self, a: function(integer, integer, integer...) --> integer)
+--v method(a: function(integer, integer, integer...) --> integer)
 function tab:p(a) end
 
 tab.p(tab, function(x, y, ...)
@@ -999,7 +999,7 @@ end)
 --8<-- methodcall-func-hint-varargs-less-arity -- feature:no_implicit_func_sig
 local tab = {}
 
---v function(self, a: function(integer, integer, integer...) --> integer)
+--v method(a: function(integer, integer, integer...) --> integer)
 function tab:p(a) end
 
 --@v-vvv Error: The type for variadic arguments in the anonymous function is missing but couldn't be inferred from the calls
@@ -1016,7 +1016,7 @@ end)
 --8<-- methodcall-func-hint-varargs-more-arity
 local tab = {}
 
---v function(self, a: function(integer, integer, integer...) --> integer)
+--v method(a: function(integer, integer, integer...) --> integer)
 function tab:p(a) end
 
 tab.p(tab, function(x, y, z, ...)
@@ -1069,7 +1069,7 @@ local x = p(4.5)
 
 --8<-- func-number-arg-implicit -- feature:!no_implicit_func_sig
 function p(a) return a + 3 end
-local x = p('what') --@< Error: The type `function(<unknown type>) --> integer` cannot be called
+local x = p('what') --@< Error: The type `function(a: <unknown type>) --> integer` cannot be called
                     --@^ Cause: First function argument `"what"` is not a subtype of `<unknown type>`
                     --@^^ Note: The other type originates here
 --! error
@@ -2488,7 +2488,7 @@ local b = foo(4) --: string
 --@^^ Note: The other type originates here
 
 local c = foo('hi') --: integer
---@^ Error: The type `function(integer) --> integer` cannot be called
+--@^ Error: The type `function(x: integer) --> integer` cannot be called
 --@^^ Cause: First function argument `"hi"` is not a subtype of `integer`
 --@^^^ Note: The other type originates here
 
@@ -2498,7 +2498,7 @@ local c = foo('hi') --: integer
 foo = {}
 
 --v [NO_CHECK]
---v function(self: table, x: integer) --> integer
+--v method(x: integer) --> integer
 function foo:bar(x)
     return x + "string"
 end
@@ -2510,7 +2510,7 @@ local a = foo:bar(3) --: integer
 foo = {}
 
 --v [NO_CHECK]
---v function(self: integer, x: integer) --> integer
+--v method(x: integer) --> integer
 function foo:bar(x)
     return x + "string"
 end
@@ -2550,14 +2550,14 @@ end
 --8<-- no-check-untyped-self
 foo = {}
 --v [NO_CHECK]
---v function(self, x: integer) --> boolean --@< Error: [NO_CHECK] attribute requires the `self` argument to be typed
+--v method(x: integer) --> boolean --@< Error: [NO_CHECK] attribute requires the `self` argument to be typed
 function foo:bar(x)
     return x + "string"
 end
 --! error
 
 --8<-- no-check-func-hint
---v function(f: function(integer) --> boolean)
+--v function(f: function(a: integer) --> boolean)
 function foo(f) end
 
 foo(--v [NO_CHECK]
@@ -2565,7 +2565,7 @@ foo(--v [NO_CHECK]
 --! ok
 
 --8<-- no-check-func-hint-ignored
---v function(f: function(integer) --> boolean)
+--v function(f: function(a: integer) --> boolean)
 function foo(f) end
 
 foo(--v [NO_CHECK]
@@ -2574,19 +2574,19 @@ foo(--v [NO_CHECK]
 --! ok
 
 --8<-- no-check-func-hint-partial
---v function(f: function(integer) --> boolean)
+--v function(f: function(a: integer) --> boolean)
 function foo(f) end
 
---@vvv Error: The type `function(function(integer) --> boolean) --> ()` cannot be called
---@vv-vvvvv Cause: First function argument `function(integer) --> string` is not a subtype of `function(integer) --> boolean`
+--@vvv Error: The type `function(f: function(a: integer) --> boolean) --> ()` cannot be called
+--@vv-vvvvv Cause: First function argument `function(x: integer) --> string` is not a subtype of `function(a: integer) --> boolean`
 --@v Note: The other type originates here
 foo(--v [NO_CHECK]
     function(x) --> string
         return x + "string"
     end)
 
---@vvv Error: The type `function(function(integer) --> boolean) --> ()` cannot be called
---@vv-vvvvv Cause: First function argument `function(string) --> boolean` is not a subtype of `function(integer) --> boolean`
+--@vvv Error: The type `function(f: function(a: integer) --> boolean) --> ()` cannot be called
+--@vv-vvvvv Cause: First function argument `function(x: string) --> boolean` is not a subtype of `function(a: integer) --> boolean`
 --@v Note: The other type originates here
 foo(--v [NO_CHECK]
     function(x) --: string
@@ -2643,7 +2643,7 @@ end
 --v function(a: integer, b: integer)
 local function g(a, b)
 end
-g(0, f()) --@< Error: The type `function(integer, integer) --> ()` cannot be called
+g(0, f()) --@< Error: The type `function(a: integer, b: integer) --> ()` cannot be called
           --@^ Cause: Cannot give more than 2 argument(s) to the function
           --@^^ Note: The other type originates here
 --! error
@@ -2799,7 +2799,7 @@ function x(q, a)
     end
 end
 local y = x(true, false)
---@^ Error: The type `function(<unknown type>, integer) --> integer` cannot be called
+--@^ Error: The type `function(q: <unknown type>, a: integer) --> integer` cannot be called
 --@^^ Cause: Second function argument `false` is not a subtype of `integer`
 --@^^^ Note: The other type originates here
 --! error
@@ -2887,7 +2887,7 @@ local function f(x, y, z)
     z = false  --@< Error: Cannot assign `false` into `<unknown type>`
                --@^ Note: The other type originates here
 end
-f(0, '', false) --@< Error: The type `function(<unknown type>, <unknown type>, <unknown type>) --> ()` cannot be called
+f(0, '', false) --@< Error: The type `function(x: <unknown type>, y: <unknown type>, z: <unknown type>) --> ()` cannot be called
                 --@^ Cause: First function argument `0` is not a subtype of `<unknown type>`
                 --@^^ Note: The other type originates here
 --! error
@@ -2930,7 +2930,7 @@ local function f(x, y, z)
     z = false --@< Error: Cannot assign `false` into `true`
               --@^ Note: The other type originates here
 end
-f(0, '', false) --@< Error: The type `function(42, "string", true) --> ()` cannot be called
+f(0, '', false) --@< Error: The type `function(x: 42, y: "string", z: true) --> ()` cannot be called
                 --@^ Cause: First function argument `0` is not a subtype of `42`
                 --@^^ Note: The other type originates here
 --! error
@@ -2945,7 +2945,7 @@ local function f(x, y, z)
     z = true
     z = false
 end
-f(0, '', false) --@< Error: The type `function((42|54), ("another string"|"string"), boolean) --> ()` cannot be called
+f(0, '', false) --@< Error: The type `function(x: (42|54), y: ("another string"|"string"), z: boolean) --> ()` cannot be called
                 --@^ Cause: First function argument `0` is not a subtype of `(42|54)`
                 --@^^ Note: The other type originates here
 --! error
@@ -3133,7 +3133,7 @@ f({x = 'string', z = 'f'})
 f({x = 'string', z = 42})
 
 -- this is still an error
-f({x = 54, z = 42}) --@< Error: The type `function({x: string?, y: string?, ...}) --> ()` cannot be called
+f({x = 54, z = 42}) --@< Error: The type `function(a: {x: string?, y: string?, ...}) --> ()` cannot be called
                     --@^ Cause: First function argument `{x: 54, z: 42, ...}` is not a subtype of `{x: string?, y: string?, ...}`
                     --@^^ Note: The other type originates here
 --! error
@@ -3161,32 +3161,32 @@ local d = f() --: {x: integer, ...} --@< Error: Cannot assign `{x: string, ...}`
 function f(opts) end
 
 f{}
---@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+--@^ Error: The type `function(opts: {mandatory: string, optional: string?}) --> ()` cannot be called
 --@^^ Cause: First function argument `{...}` is not a subtype of `{mandatory: string, optional: string?}`
 --@^^^ Note: The other type originates here
 f{mandatory = nil}
 f{mandatory = 42}
---@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+--@^ Error: The type `function(opts: {mandatory: string, optional: string?}) --> ()` cannot be called
 --@^^ Cause: First function argument `{mandatory: 42, ...}` is not a subtype of `{mandatory: string, optional: string?}`
 --@^^^ Note: The other type originates here
 f{mandatory = 'foo'}
 f{mandatory = 'foo', optional = nil}
 f{mandatory = 'foo', optional = 'bar'}
 f{mandatory = 'foo', optional = 54}
---@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+--@^ Error: The type `function(opts: {mandatory: string, optional: string?}) --> ()` cannot be called
 --@^^ Cause: First function argument `{mandatory: "foo", optional: 54, ...}` is not a subtype of `{mandatory: string, optional: string?}`
 --@^^^ Note: The other type originates here
 -- XXX for those cases, additional `optional: string?` fields would be confusing
 f{mandatory = 'foo', additional = nil}
---@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+--@^ Error: The type `function(opts: {mandatory: string, optional: string?}) --> ()` cannot be called
 --@^^ Cause: First function argument `{additional: nil, mandatory: "foo", optional: string?, ...}` is not a subtype of `{mandatory: string, optional: string?}`
 --@^^^ Note: The other type originates here
 f{mandatory = 'foo', additional = true}
---@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+--@^ Error: The type `function(opts: {mandatory: string, optional: string?}) --> ()` cannot be called
 --@^^ Cause: First function argument `{additional: true, mandatory: "foo", optional: string?, ...}` is not a subtype of `{mandatory: string, optional: string?}`
 --@^^^ Note: The other type originates here
 f{mandatory = 'foo', optional = 'bar', additional = true}
---@^ Error: The type `function({mandatory: string, optional: string?}) --> ()` cannot be called
+--@^ Error: The type `function(opts: {mandatory: string, optional: string?}) --> ()` cannot be called
 --@^^ Cause: First function argument `{additional: true, mandatory: "foo", optional: "bar", ...}` is not a subtype of `{mandatory: string, optional: string?}`
 --@^^^ Note: The other type originates here
 
@@ -3197,19 +3197,19 @@ f{mandatory = 'foo', optional = 'bar', additional = true}
 function f(opts) end
 
 f{}
---@^ Error: The type `function({mandatory: string, optional: string?, ...}) --> ()` cannot be called
+--@^ Error: The type `function(opts: {mandatory: string, optional: string?, ...}) --> ()` cannot be called
 --@^^ Cause: First function argument `{...}` is not a subtype of `{mandatory: string, optional: string?, ...}`
 --@^^^ Note: The other type originates here
 f{mandatory = nil}
 f{mandatory = 42}
---@^ Error: The type `function({mandatory: string, optional: string?, ...}) --> ()` cannot be called
+--@^ Error: The type `function(opts: {mandatory: string, optional: string?, ...}) --> ()` cannot be called
 --@^^ Cause: First function argument `{mandatory: 42, ...}` is not a subtype of `{mandatory: string, optional: string?, ...}`
 --@^^^ Note: The other type originates here
 f{mandatory = 'foo'}
 f{mandatory = 'foo', optional = nil}
 f{mandatory = 'foo', optional = 'bar'}
 f{mandatory = 'foo', optional = 54}
---@^ Error: The type `function({mandatory: string, optional: string?, ...}) --> ()` cannot be called
+--@^ Error: The type `function(opts: {mandatory: string, optional: string?, ...}) --> ()` cannot be called
 --@^^ Cause: First function argument `{mandatory: "foo", optional: 54, ...}` is not a subtype of `{mandatory: string, optional: string?, ...}`
 --@^^^ Note: The other type originates here
 f{mandatory = 'foo', additional = nil}
