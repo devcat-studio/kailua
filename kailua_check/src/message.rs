@@ -616,9 +616,11 @@ define_msg! { pub AssumeFieldNestedToClass<'a> { cls: T<'a> }:
              in the class prototype of `{cls}`",
 }
 
+// this error can also occur for `--# assume C.x: method()`,
+// so we have to avoid a mention to `--# assume static`
 define_msg! { pub AssumeFieldStaticToNonClass<'a> { slot: Slot<'a> }:
-    "ko" => "`--# assume static`은 클래스가 아닌 `{slot}` 타입에 쓸 수 없습니다",
-    _    => "`--# assume static` cannot be used for a non-class type `{slot}`",
+    "ko" => "`--# assume`으로 클래스가 아닌 `{slot}` 타입에 정적 필드를 추가할 수 없습니다",
+    _    => "`--# assume` cannot be used to add a static field to a non-class type `{slot}`",
 }
 
 define_msg! { pub AssumeFieldToNonRecord<'a> { slot: Slot<'a> }:

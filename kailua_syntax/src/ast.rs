@@ -468,6 +468,7 @@ pub enum St {
                  M, Spanned<Kind>, Option<Scope>),
     KailuaAssumeField(bool /*static*/, Spanned<(Spanned<NameRef>, Vec<Spanned<Name>>)>,
                       M, Spanned<Kind>),
+    KailuaAssumeMethod(Spanned<(Spanned<NameRef>, Vec<Spanned<Name>>)>, M, Spanned<FuncKind>),
 }
 
 impl fmt::Debug for St {
@@ -523,6 +524,11 @@ impl fmt::Debug for St {
                 write!(f, "KailuaAssumeField({}, ({:?}", static_, i)?;
                 for i in ii { write!(f, ".{:?}", i)?; }
                 write!(f, "){:?}, {:?}, {:?})", span, m, k)
+            },
+            St::KailuaAssumeMethod(Spanned { base: (ref i, ref ii), span }, m, ref fk) => {
+                write!(f, "KailuaAssumeMethod(({:?}", i)?;
+                for i in ii { write!(f, ".{:?}", i)?; }
+                write!(f, "){:?}, {:?}, {:?})", span, m, fk)
             },
         }
     }

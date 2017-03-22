@@ -450,3 +450,9 @@ define_msg! { pub TypeExportInLocalScope:
     _    => "`--# type` with an exported type should be in the top-level scope",
 }
 
+define_msg! { pub AssumeMethodToNonInstanceField:
+    "ko" => "`method(...) --> ...` 타입은 정적이 아닌 필드를 `--# assume` 할 때만 쓸 수 있습니다",
+    _    => "`method(...) --> ...` type is only available when using `--# assume` \
+             to a non-static field",
+}
+

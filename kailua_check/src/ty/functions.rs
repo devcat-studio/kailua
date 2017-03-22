@@ -1,9 +1,10 @@
 use std::fmt;
 use kailua_env::Spanned;
-use kailua_syntax::Name;
+use kailua_diag::Result;
+use kailua_syntax::{Name, FuncKind};
 
 use diag::{Origin, TypeReport, TypeResult, unquotable_name};
-use super::{Display, DisplayState, Ty, TySeq, TypeContext, Lattice};
+use super::{Display, DisplayState, Ty, TySeq, TypeContext, TypeResolver, Lattice};
 
 #[derive(Clone, PartialEq)]
 pub struct Function {
@@ -13,6 +14,19 @@ pub struct Function {
 }
 
 impl Function {
+    pub fn from_kind(func: &Spanned<FuncKind>, resolv: &mut TypeResolver) -> Result<Function> {
+        let args = TySeq::from_kind_seq(&func.args, |namekind| &namekind.1, resolv)?;
+        let mut argnames = Vec::new();
+        for (i, &(ref name, _)) in func.args.head.iter().enumerate() {
+            if let Some(ref name) = *name {
+                argnames.resize(i, None);
+                argnames.push(Some(name.clone()));
+            }
+        }
+        let returns = TySeq::from_kind_seq(&func.returns, |kind| kind, resolv)?;
+        Ok(Function { args: args, argnames: argnames, returns: returns })
+    }
+
     fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
         other.args.assert_sub(&self.args, ctx)?; // contravariant
         self.returns.assert_sub(&other.returns, ctx)?; // covariant

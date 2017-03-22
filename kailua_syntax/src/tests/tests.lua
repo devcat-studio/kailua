@@ -707,6 +707,48 @@ local c = a
 --! [KailuaAssumeField(false, (`a`_.`b`), _, Dynamic), \
 --!  KailuaAssumeField(false, (`a`_.`b`.`c`), _, Dynamic)]
 
+--8<-- assume-field-method
+--# assume a.b: method(x: string, y: integer?) --> boolean
+--# assume a.c: const method(WHATEVER)
+--# assume x.y.z: method() --> ({}...) -- will error in the checker
+--! [KailuaAssumeMethod((`a`_.`b`), _, (`x`: String, `y`: Integer?) --> Boolean), \
+--!  KailuaAssumeMethod((`a`_.`c`), Const, (Dynamic) --> ()), \
+--!  KailuaAssumeMethod((`x`_.`y`.`z`), _, () --> (EmptyTable...))]
+
+--8<-- assume-field-method-recover-1
+--# assume a.b: method(x: string --@<-v Error: Expected `)`, got a newline
+--! [KailuaAssumeField(false, (`a`_.`b`), _, Oops)]
+
+--8<-- assume-field-method-recover-2
+--# assume a.b: [strange] method() --@< Error: Expected a single type, got a keyword `method`
+--! [KailuaAssumeField(false, (`a`_.`b`), _, Oops)]
+
+--8<-- assume-field-method-static
+--# assume static a.b: method(x: string, y: integer?) --> boolean
+--@^ Error: `method(...) --> ...` type is only available when using `--# assume` to a non-static field
+--# assume static a.c: const method(WHATEVER)
+--@^ Error: `method(...) --> ...` type is only available when using `--# assume` to a non-static field
+--! [KailuaAssumeMethod((`a`_.`b`), _, (`x`: String, `y`: Integer?) --> Boolean), \
+--!  KailuaAssumeMethod((`a`_.`c`), Const, (Dynamic) --> ())]
+
+--8<-- assume-field-method-global
+--# assume global a.b: method(x: string, y: integer?) --> boolean
+--@^ Error: `global` is redundant here because a field gets `--# assume`d in place
+--@^^ Error: `method(...) --> ...` type is only available when using `--# assume` to a non-static field
+--# assume global a.c: const method(WHATEVER)
+--@^ Error: `global` is redundant here because a field gets `--# assume`d in place
+--@^^ Error: `method(...) --> ...` type is only available when using `--# assume` to a non-static field
+--! [KailuaAssumeMethod((`a`_.`b`), _, (`x`: String, `y`: Integer?) --> Boolean), \
+--!  KailuaAssumeMethod((`a`_.`c`), Const, (Dynamic) --> ())]
+
+--8<-- assume-field-method-non-field
+--# assume a: method(x: string, y: integer?) --> boolean
+--@^ Error: `method(...) --> ...` type is only available when using `--# assume` to a non-static field
+--# assume b: const method(WHATEVER)
+--@^ Error: `method(...) --> ...` type is only available when using `--# assume` to a non-static field
+--! [KailuaAssume(`a`$1, `a`_, _, Func((`x`: String, `y`: Integer?) --> Boolean))$1, \
+--!  KailuaAssume(`b`$2, `b`_, Const, Func((Dynamic) --> ()))$2]
+
 --8<-- kind-int
 local x --: int
 --! [Local([`x`$1: _ Integer], [])$1]

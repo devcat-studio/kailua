@@ -10,7 +10,7 @@ use kailua_syntax::{K, Kind, SlotKind, Str, Name};
 use kailua_diag::{Result, Reporter};
 use diag::{Origin, TypeReport, TypeResult, TypeReportHint, TypeReportMore};
 use super::{Display, DisplayState, TypeContext, NoTypeContext, TypeResolver};
-use super::{F, Slot, Lattice, Union, TySeq};
+use super::{F, Slot, Lattice, Union};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, Tag, Class};
 use super::flags::*;
 use message as m;
@@ -1140,16 +1140,7 @@ impl Ty {
             },
 
             K::Func(ref func) => {
-                let args = TySeq::from_kind_seq(&func.args, |namekind| &namekind.1, resolv)?;
-                let mut argnames = Vec::new();
-                for (i, &(ref name, _)) in func.args.head.iter().enumerate() {
-                    if let Some(ref name) = *name {
-                        argnames.resize(i, None);
-                        argnames.push(Some(name.clone()));
-                    }
-                }
-                let returns = TySeq::from_kind_seq(&func.returns, |kind| kind, resolv)?;
-                let func = Function { args: args, argnames: argnames, returns: returns };
+                let func = Function::from_kind(func, resolv)?;
                 Ty::new(T::Functions(Cow::Owned(Functions::Simple(func))))
             }
 

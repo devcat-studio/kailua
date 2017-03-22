@@ -457,3 +457,27 @@ local xx = Hello.x --: integer --@< Error: Cannot index `<prototype for Hello>` 
 local yy = Hello.y --: string
 --! error
 
+--8<-- assume-field-class-method
+--# assume `class`: [make_class] function() --> table
+local Hello = class()
+function Hello:init() end
+--# assume Hello.f: method() --> string
+--# assume Hello.g: method(s: string, base: integer?) --> number
+
+local h = Hello.new()
+local x = h:f() --: string
+local y = h.g(h, "string") --: number
+--! ok
+
+--8<-- assume-field-class-method-nested
+--# assume `class`: [make_class] function() --> table
+local Hello = class()
+function Hello:init() end
+--# assume Hello.f.g: method() --> string
+--@^ Error: Cannot apply `--# assume` directive to the inside of fields in the class prototype of `Hello`
+
+local h = Hello.new()
+local x = h:f() --: string --@< Error: Cannot index `Hello` with `"f"`
+local y = h.g() --: string --@< Error: Cannot index `Hello` with `"g"`
+--! error
+

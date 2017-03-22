@@ -2692,9 +2692,16 @@ impl<'a> Parser<'a> {
                 let stmt = match parser.read() {
                     // assume [global] NAME ":" MODF KIND
                     // assume [static] NAME {"." NAME} ":" MODF KIND
+                    // assume NAME {"." NAME} ":" MODF "method" ...
                     (_, Spanned { base: Tok::Keyword(Keyword::Assume), .. }) => {
                         #[derive(Copy, Clone, Debug, PartialEq, Eq)]
                         enum Scope { Implied, Global, Static }
+
+                        #[derive(Clone, Debug)]
+                        enum Kindlike {
+                            Kind(Spanned<Kind>),
+                            Method(Span, Option<Spanned<FuncKind>>),
+                        }
 
                         let scopebegin = parser.pos();
                         let scope = if parser.may_expect(Keyword::Global) {
@@ -2716,9 +2723,33 @@ impl<'a> Parser<'a> {
 
                         parser.expect(Punct::Colon)?;
                         let modf = parser.parse_kailua_mod();
-                        let kind = parser.recover_upto(Self::parse_kailua_kind)?;
+                        let kindbegin = parser.pos();
+                        let kind = if parser.may_expect(Keyword::Method) {
+                            let funckind = parser.recover_upto(|p| {
+                                p.parse_kailua_funckind().map(Some)
+                            })?;
+                            // if the parsing fails later, we need a span to construct K::Func
+                            Kindlike::Method(Span::new(kindbegin, parser.last_pos()), funckind)
+                        } else {
+                            Kindlike::Kind(parser.recover_upto(Self::parse_kailua_kind)?)
+                        };
 
                         if names.is_empty() {
+                            // method() special form is not available for non-fields;
+                            // assume that it is a typo of function()
+                            let kind = match kind {
+                                Kindlike::Kind(kind) => kind,
+                                Kindlike::Method(kindspan, funckind) => {
+                                    parser.error(kindspan, m::AssumeMethodToNonInstanceField {})
+                                          .done()?;
+                                    if let Some(funckind) = funckind {
+                                        Box::new(K::Func(funckind)).with_loc(kindspan)
+                                    } else {
+                                        Kind::recover().with_loc(kindspan)
+                                    }
+                                }
+                            };
+
                             let (newnameref, rootname) = if scope.base == Scope::Global {
                                 // assume global NAME ":" MODF KIND
                                 let local_shadowing =
@@ -2772,10 +2803,26 @@ impl<'a> Parser<'a> {
                                           .done()?;
                                 }
                             }
-                            Some(Box::new(St::KailuaAssumeField(
-                                scope.base == Scope::Static,
-                                (rootname, names).with_loc(namesbegin..namesend), modf, kind,
-                            )))
+
+                            let is_static = scope.base == Scope::Static;
+                            let names = (rootname, names).with_loc(namesbegin..namesend);
+                            let st = match kind {
+                                Kindlike::Kind(kind) =>
+                                    St::KailuaAssumeField(is_static, names, modf, kind),
+                                Kindlike::Method(kindspan, funckind) =>{
+                                    if scope.base != Scope::Implied {
+                                        parser.error(kindspan, m::AssumeMethodToNonInstanceField {})
+                                              .done()?;
+                                    }
+                                    if let Some(funckind) = funckind {
+                                        St::KailuaAssumeMethod(names, modf, funckind)
+                                    } else {
+                                        St::KailuaAssumeField(is_static, names, modf,
+                                                              Kind::recover().without_loc())
+                                    }
+                                },
+                            };
+                            Some(Box::new(st))
                         }
                     }
 

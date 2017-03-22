@@ -2990,7 +2990,7 @@ local z = x.y + 42 --: integer
 
 --8<-- assume-field-no-ref
 --# assume x.y: integer --@< Error: Global or local variable `x` is not defined
-local z = x.y + 42 --: integer -- this does set `x` to WHATEVER
+local z = x.y + 42 --: integer --@< Error: Global or local variable `x` is not defined
 --! error
 
 --8<-- assume-field-scope
@@ -3063,8 +3063,13 @@ local z = x.y + 42 --: integer --@< Error: Tried to index a non-table type `{}?`
 
 --8<-- assume-field-static
 local x = {}
---# assume static x.y: integer --@< Error: `--# assume static` cannot be used for a non-class type `{...}`
+--# assume static x.y: integer --@< Error: `--# assume` cannot be used to add a static field to a non-class type `{...}`
 local z = x.y + 42 --: integer
+--! error
+
+--8<-- assume-field-non-class-method
+local a = {}
+--# assume a.f: method() --> string --@< Error: `--# assume` cannot be used to add a static field to a non-class type `{...}`
 --! error
 
 --8<-- dead-code -- feature:warn_on_dead_code

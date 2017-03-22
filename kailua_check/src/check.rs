@@ -8,7 +8,7 @@ use take_mut::take;
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag::{self, Result, Report, Reporter};
 use kailua_syntax::{Str, Name, NameRef, Var, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
-use kailua_syntax::{SelfParam, TypeScope, Args, St, Stmt, Block, K};
+use kailua_syntax::{SelfParam, TypeScope, Args, St, Stmt, Block, K, Attr};
 use diag::{TypeReport, TypeReportHint, TypeReportMore};
 use ty::{Displayed, Display};
 use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, TypeContext};
@@ -843,7 +843,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         Ok(())
     }
 
-    fn assume_field_slot(&mut self, static_: bool, rootname: &Spanned<NameRef>,
+    fn assume_field_slot(&mut self, static_: bool, rootslot: Spanned<Slot>,
                          names: &[Spanned<Name>], namespan: Span, slot: Slot) -> Result<Slot> {
         assert!(!names.is_empty());
 
@@ -857,7 +857,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             // all fields except `next_key` and the slot for `next_key` if any
             Rec(F, Nil, Vec<(Key, Slot)>, Option<Slot>),
 
-            // a class prototype, only possible at the rootname
+            // a class prototype, only possible at the root
             Proto(ClassId),
         }
 
@@ -921,17 +921,9 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             }
         };
 
-        // resolve rootname
-        // (we are keeping root to return it on an error---the new scoped id should retain that)
-        let root = if self.env.get_var(rootname).is_some() {
-            self.env.ensure_var(rootname)?
-        } else {
-            self.env.error(rootname, m::NoVar { name: self.env.get_name(rootname) }).done()?;
-            return Ok(Slot::dummy());
-        };
-
+        let root = rootslot.base; // will be returned on error
         let mut table;
-        let mut span = rootname.span; // `a`, `a.b`, `a.b.c`, ...
+        let mut span = rootslot.span; // `a`, `a.b`, `a.b.c`, ...
         let mut tables = Vec::new();
 
         // handle the first table, which can be a class prototype
@@ -1432,44 +1424,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 // now prepare the right-hand side (i.e. method decl)
                 let method = meths.last().unwrap();
                 let selfinfo = if let Some(ref selfparam) = *selfparam {
-                    // try to infer the type for `self`:
-                    // - if `info` is a class prototype `self` should be a corresponding instance
-                    // - if `info` is a string metatable `self` should be a string
-                    let inferred = if info.nil() != Nil::Noisy {
-                        // (except when it is unioned with nil)
-                        if info.tag() == Some(Tag::StringMeta) {
-                            Some(Ty::new(T::String))
-                        } else if let T::Class(Class::Prototype(cid)) = **info.unlift() {
-                            let inst = T::Class(Class::Instance(cid));
-                            if *method.base == *b"init" {
-                                // [constructible] <class instance #cid>
-                                Some(Ty::new(inst).with_tag(Tag::Constructible))
-                            } else {
-                                // <class instance #cid>
-                                Some(Ty::new(inst))
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
-
-                    // if we couldn't infer the type we try to use a fresh type variable,
-                    // except when [NO_CHECK] is requested (requires a fixed type)
-                    let slot = if let Some(ty) = inferred {
-                        Slot::var(ty)
-                    } else {
-                        if sig.attrs.iter().any(|a| *a.name.base == *b"NO_CHECK") {
-                            self.env.error(selfparam, m::NoCheckRequiresTypedSelf {})
-                                    .done()?;
-                        }
-
-                        // <fresh type variable>
-                        let tv = T::TVar(self.context().gen_tvar());
-                        Slot::var(Ty::new(tv))
-                    };
-
+                    let slot = self.visit_self_param(selfparam.span, &info, &sig.attrs, &method)?;
                     Some((selfparam, slot))
                 } else {
                     None
@@ -1604,11 +1559,90 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
             St::KailuaAssumeField(static_, Spanned { base: (ref rootname, ref names), span },
                                   kindm, ref kind) => {
-                let slot = self.visit_kind(F::from(kindm), kind)?;
-                let newslot = self.assume_field_slot(static_, rootname, names, span, slot.base)?;
-                self.env.assume_var(rootname, newslot.with_loc(rootname))?;
+                if self.env.get_var(rootname).is_some() {
+                    let slot = self.visit_kind(F::from(kindm), kind)?;
+                    let rootslot = self.env.ensure_var(rootname)?.with_loc(rootname);
+                    let newslot = self.assume_field_slot(static_, rootslot, names, span,
+                                                         slot.base)?;
+                    self.env.assume_var(rootname, newslot.with_loc(rootname))?;
+                } else {
+                    self.env.error(rootname, m::NoVar { name: self.env.get_name(rootname) })
+                            .done()?;
+                }
                 Ok(Exit::None)
             }
+
+            St::KailuaAssumeMethod(Spanned { base: (ref rootname, ref names), span },
+                                   kindm, ref funckind) => {
+                assert!(!names.is_empty());
+
+                if self.env.get_var(rootname).is_some() {
+                    let flex = F::from(kindm);
+                    let mut func = Function::from_kind(funckind, &mut self.env)?;
+
+                    let rootslot = self.env.ensure_var(rootname)?.with_loc(rootname);
+
+                    // convert `method(...) --> ...` to `function(self: Self, ...) --> ...`
+                    // where `Self` is an inferred type from `rootslot`
+                    let selfinfo = self.visit_self_param(stmt.span, &rootslot, &[], &names[0])?;
+                    func.args.head.insert(0, selfinfo.unlift().clone());
+                    func.argnames.insert(0, Some(Name::from(&b"self"[..]).without_loc()));
+
+                    let slot = Slot::new(
+                        flex, Ty::new(T::Functions(Cow::Owned(Functions::Simple(func)))),
+                    );
+
+                    // the final slot should be static
+                    let newslot = self.assume_field_slot(true, rootslot, names, span, slot)?;
+                    self.env.assume_var(rootname, newslot.with_loc(rootname))?;
+                } else {
+                    self.env.error(rootname, m::NoVar { name: self.env.get_name(rootname) })
+                            .done()?;
+                }
+
+                Ok(Exit::None)
+            }
+        }
+    }
+
+    fn visit_self_param(&mut self, selfparamspan: Span, tableinfo: &Spanned<Slot>,
+                        attrs: &[Spanned<Attr>], method: &Spanned<Name>) -> Result<Slot> {
+        // try to infer the type for `self`:
+        // - if `tableinfo` is a class prototype `self` should be a corresponding instance
+        // - if `tableinfo` is a string metatable `self` should be a string
+        let inferred = if tableinfo.nil() != Nil::Noisy {
+            // (except when it is unioned with nil)
+            if tableinfo.tag() == Some(Tag::StringMeta) {
+                Some(Ty::new(T::String))
+            } else if let T::Class(Class::Prototype(cid)) = **tableinfo.unlift() {
+                let inst = T::Class(Class::Instance(cid));
+                if *method.base == *b"init" {
+                    // [constructible] <class instance #cid>
+                    Some(Ty::new(inst).with_tag(Tag::Constructible))
+                } else {
+                    // <class instance #cid>
+                    Some(Ty::new(inst))
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // if we couldn't infer the type we try to use a fresh type variable,
+        // except when [NO_CHECK] is requested (requires a fixed type)
+        if let Some(ty) = inferred {
+            Ok(Slot::var(ty))
+        } else {
+            if attrs.iter().any(|a| *a.name.base == *b"NO_CHECK") {
+                self.env.error(selfparamspan, m::NoCheckRequiresTypedSelf {})
+                        .done()?;
+            }
+
+            // <fresh type variable>
+            let tv = T::TVar(self.context().gen_tvar());
+            Ok(Slot::var(Ty::new(tv)))
         }
     }
 
