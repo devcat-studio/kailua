@@ -1,6 +1,6 @@
 use std::str;
 use std::ascii::AsciiExt;
-use std::path::{Path, PathBuf};
+use std::path::{Path, PathBuf, MAIN_SEPARATOR};
 
 use kailua_diag::Stop;
 use kailua_syntax::Chunk;
@@ -58,7 +58,11 @@ impl<S: FsSource> FsOptions<S> {
         for template in search_paths {
             let mut newpath = Vec::new();
             for (i, e) in template.split(|&b| b == b'?').enumerate() {
-                if i > 0 { newpath.extend_from_slice(path); }
+                if i > 0 {
+                    newpath.extend(path.iter().map(|&b| {
+                        if b == b'.' { MAIN_SEPARATOR as u8 } else { b }
+                    }));
+                }
                 newpath.extend_from_slice(e);
             }
             newpath.extend_from_slice(suffix);
