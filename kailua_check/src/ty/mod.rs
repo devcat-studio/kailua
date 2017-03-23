@@ -215,6 +215,10 @@ impl<A: Display, B: Display> Lattice<Spanned<B>> for Spanned<A> where A: Lattice
     }
 }
 
+pub trait Dummy {
+    fn dummy() -> Self;
+}
+
 // used when operands should not have any type variables
 struct NoTypeContext;
 

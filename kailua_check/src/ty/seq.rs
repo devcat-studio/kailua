@@ -8,7 +8,7 @@ use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag;
 use kailua_syntax::{Seq, Kind};
 use diag::{Origin, TypeReport, TypeResult};
-use super::{T, Ty, Slot, Lattice, Union};
+use super::{T, Ty, Slot, Lattice, Union, Dummy};
 use super::{Display, DisplayState, TypeContext, TypeResolver};
 
 pub struct SeqIter<Item: Clone> {
@@ -240,6 +240,10 @@ macro_rules! define_tyseq {
             }
         }
 
+        impl Dummy for $tyseq {
+            fn dummy() -> $tyseq { Self::dummy() }
+        }
+
         impl Union for $tyseq {
             type Output = $tyseq;
 
@@ -458,6 +462,10 @@ macro_rules! define_slotseq {
                 $(fmt::Debug::fmt(&self.$span, f)?;)*
                 Ok(())
             }
+        }
+
+        impl Dummy for $slotseq {
+            fn dummy() -> $slotseq { Self::dummy() }
         }
 
         impl Union for $slotseq {

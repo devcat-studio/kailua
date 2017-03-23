@@ -780,6 +780,20 @@ for i = 1, 9, 2.1 do
 end
 --! error
 
+--8<-- for-diverges-1
+--# assume f: function() --> !
+for i = 1, f(), 2 do --@< Warning: A portion of this expression won't be evaluated because it contains a call to a function that never returns
+end
+--! ok
+
+--8<-- for-diverges-2 -- feature:warn_on_dead_code exact
+--# assume f: function() --> !
+for i = f(), f(), f() do -- this will no longer warn
+    local a = 42 --@<-v Warning: This code will never execute
+    local b = 54
+end
+--! ok
+
 --8<-- func-diverges
 function f()
     while true do end
@@ -868,10 +882,25 @@ function g()
 end
 --! ok
 
+--8<-- func-diverges-chain-8
+--# assume f: function() --> !
+--v function(a: boolean, b: boolean) --> string
+function g(a, b)
+    if a then
+        return 'a'
+    elseif b then
+        return 'b'
+    else
+        f()
+    end
+end
+--! ok
+
 --8<-- func-diverges-in-expr-1
 --# assume f: function() --> !
 function g() --> !
     local x = f() + f() * f()
+    --@^ Warning: A portion of this expression won't be evaluated because it contains a call to a function that never returns
 end
 --! ok
 
@@ -879,6 +908,7 @@ end
 --# assume f: function() --> !
 function g() --> !
     local x = f() + f() * f()
+    --@^ Warning: A portion of this expression won't be evaluated because it contains a call to a function that never returns
     local y = x --@<-v Warning: This code will never execute
     local z = y
 end
@@ -889,7 +919,7 @@ end
 --v function(x: integer, y: integer)
 function g(x, y) end
 function h() --> !
-    g(f(), 0)
+    g(f(), 0) --@< Warning: A portion of this expression won't be evaluated because it contains a call to a function that never returns
 end
 --! ok
 
@@ -898,7 +928,7 @@ end
 --v function(x: integer, y: integer)
 function g(x, y) end
 function h() --> !
-    g(f(), 0)
+    g(f(), 0) --@< Warning: A portion of this expression won't be evaluated because it contains a call to a function that never returns
     local y = 42 --@<-v Warning: This code will never execute
     local z = 54
 end
@@ -2186,6 +2216,7 @@ return p
 --8<-- require-diverges-1
 --# assume global `require`: [require] function(string) --> any
 x = require 'a' --: nil -- it's really WHATEVER
+--@^-< Warning: A portion of this expression won't be evaluated because it contains a call to a function that never returns
 
 --& a
 while true do end
@@ -2193,7 +2224,7 @@ while true do end
 
 --8<-- require-diverges-2 -- feature:warn_on_dead_code
 --# assume global `require`: [require] function(string) --> any
-x = require 'a' --: nil -- it's really WHATEVER
+require 'a'
 y = 42 --@< Warning: This code will never execute
 
 --& a
@@ -2204,10 +2235,10 @@ while true do end
 --# assume global `require`: [require] function(string) --> any
 local cond = true
 if cond then
-    x = require 'a' --: nil
+    require 'a'
 else
     -- this will correctly diverge as cached above
-    y = require 'a' --: nil
+    require 'a'
 end
 z = 42 --@< Warning: This code will never execute
 
@@ -2301,13 +2332,13 @@ end
 --8<-- for-in-diverges-1
 --# assume func: const function(nil, nil) --> !
 for x in func do
-    local y = x * 42 .. x
 end
 --! ok
 
 --8<-- for-in-diverges-2 -- feature:warn_on_dead_code
 --# assume func: const function(nil, nil) --> !
 for x in func do
+    local y = x * 42 .. x --@< Warning: This code will never execute
 end
 local x = 42 --@< Warning: This code will never execute
 --! ok
@@ -2523,6 +2554,14 @@ end
 --v function() --> (string, string...)
 function f() return 'foo' end
 if f() then --@< Warning: This condition always evaluates to a truthy value
+end
+--! ok
+
+--8<-- while-false-warning -- feature:warn_on_dead_code
+while false do
+    local a --@<-vv Warning: This code will never execute
+    local b
+    local c
 end
 --! ok
 
@@ -3315,6 +3354,27 @@ do
 end
 local z --@< Warning: This code will never execute
 --! error
+
+--8<-- dead-code-nested-break-1 -- feature:warn_on_dead_code exact
+--# assume x: boolean
+--# assume y: boolean
+while x do
+    while y do
+        break
+    end
+    local z = 0
+end
+--! ok
+
+--8<-- dead-code-nested-break-2 -- feature:warn_on_dead_code exact
+--# assume x: boolean
+while x do
+    while true do
+        break
+    end
+    local z = 0
+end
+--! ok
 
 --8<-- funccall-no-rvar-extension-args
 --v function(a: {x: string?, y: string?, ...})

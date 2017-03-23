@@ -11,7 +11,7 @@ use kailua_syntax::{self, Str, Name, NameRef, Var, TypeSpec, Kind, Sig, Ex, Exp,
 use kailua_syntax::{SelfParam, TypeScope, Args, St, Stmt, Block, K, Attr};
 use diag::{TypeReport, TypeReportHint, TypeReportMore};
 use ty::{Displayed, Display};
-use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, TypeContext};
+use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, Dummy, TypeContext};
 use ty::{Key, Tables, Function, Functions};
 use ty::{F, Slot, SlotSeq, SpannedSlotSeq, Tag, Class, ClassId};
 use ty::flags::*;
@@ -20,18 +20,19 @@ use message as m;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Exit {
-    None,   // keeps going
-    Break,  // exits the current loop
-    Return, // exits the current function
-    Stop,   // never executes further statements (infinite loop or error)
+    None = 0,   // keeps going
+    Break = 1,  // exits the current loop
+    Return = 2, // exits the current function
+    Stop = 3,   // never executes further statements (infinite loop or error)
 }
 
 impl Exit {
-    fn loop_boundary(&self, exit_if_not_returns: Exit) -> Exit {
-        if *self >= Exit::Return {
-            *self
-        } else {
-            exit_if_not_returns
+    fn loop_boundary(&self, normal_exit: Exit) -> Exit {
+        match *self {
+            Exit::None => normal_exit,
+            Exit::Break => Exit::None,
+            Exit::Return => Exit::Return,
+            Exit::Stop => Exit::Stop,
         }
     }
 }
@@ -54,6 +55,73 @@ impl ops::BitAnd for Exit {
 
 impl ops::BitAndAssign for Exit {
     fn bitand_assign(&mut self, other: Exit) { *self = *self & other }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum ExprExit {
+    None = 0,
+    Stop = 3,
+    StopInside = 7, // indicates that the diverging expr is not the top-level (should warn)
+}
+
+#[derive(Clone, Debug)]
+struct Exitable<T>(ExprExit, T);
+
+impl ExprExit {
+    // this is used to check if a single expression contains both converging and
+    // diverging subexpressions; otherwise `with*` or `then` should be used.
+    fn collide(self, other: ExprExit) -> ExprExit {
+        match (self, other) {
+            (ExprExit::None, ExprExit::None) => ExprExit::None,
+            (ExprExit::Stop, ExprExit::Stop) => ExprExit::Stop,
+            (_, _) => ExprExit::StopInside,
+        }
+    }
+
+    fn with<T>(self, base: T) -> Exitable<T> {
+        Exitable(self, base)
+    }
+
+    fn with_dummy<T: Dummy>(self) -> Exitable<T> {
+        Exitable(self, T::dummy())
+    }
+
+    fn with_diverging<T: Dummy>(self) -> Exitable<T> {
+        Exitable(cmp::max(self, ExprExit::Stop), T::dummy())
+    }
+
+    fn then<T>(self, next: Exitable<T>) -> Exitable<T> {
+        Exitable(cmp::max(self, next.0), next.1)
+    }
+
+    fn to_stmt(self, span: Span, report: &Report) -> Result<Exit> {
+        match self {
+            ExprExit::None => Ok(Exit::None),
+            ExprExit::Stop => Ok(Exit::Stop),
+            ExprExit::StopInside => {
+                report.warn(span, m::DivergingInExpr {}).done()?;
+                Ok(Exit::Stop)
+            },
+        }
+    }
+}
+
+impl<T> Exitable<T> {
+    fn new(base: T) -> Exitable<T> {
+        Exitable(ExprExit::None, base)
+    }
+
+    fn dummy() -> Exitable<T> where T: Dummy {
+        Exitable(ExprExit::None, T::dummy())
+    }
+
+    fn diverging() -> Exitable<T> where T: Dummy {
+        Exitable(ExprExit::Stop, T::dummy())
+    }
+
+    fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Exitable<U> {
+        Exitable(self.0, f(self.1))
+    }
 }
 
 struct ScopedChecker<'chk, 'envr: 'chk, 'env: 'envr, R: 'env + Report> {
@@ -385,7 +453,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     fn check_callable(&mut self, func: &Spanned<Ty>, args: &SpannedTySeq,
-                      methodcall: bool) -> Result<(Exit, TySeq)> {
+                      methodcall: bool) -> Result<Exitable<TySeq>> {
         debug!("checking if {:?} can be called with {:?} ({})",
                func, args, if methodcall { "method call" } else { "func call" });
 
@@ -393,14 +461,14 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         // (should be done before the resolution, as it is likely to fail!)
         if func.tag() == Some(Tag::Constructor) {
             self.env.error(func, m::CannotCallCtor {}).done()?;
-            return Ok((Exit::None, TySeq::dummy()));
+            return Ok(Exitable::dummy());
         }
 
         let functy = if let Some(func) = self.env.resolve_exact_type(&func) {
             func
         } else {
             self.env.error(func, m::CallToInexactType { func: self.display(func) }).done()?;
-            return Ok((Exit::None, TySeq::dummy()));
+            return Ok(Exitable::dummy());
         };
 
         // check if generalize(func.args) :> args and gather generalize(func.returns)
@@ -422,19 +490,19 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     self.env.error(func, m::CallToWrongType { func: self.display(func) })
                             .report_types(r, hint)
                             .done()?;
-                    return Ok((Exit::None, TySeq::dummy()));
+                    return Ok(Exitable::dummy());
                 }
 
                 if let Some(ref returns) = f.returns {
                     generalize_tyseq(returns, self.context())
                 } else {
-                    return Ok((Exit::Stop, TySeq::dummy()));
+                    return Ok(Exitable::diverging());
                 }
             },
 
             Functions::All => {
                 self.env.error(func, m::CallToAnyFunc { func: self.display(func) }).done()?;
-                return Ok((Exit::None, TySeq::dummy()));
+                return Ok(Exitable::dummy());
             },
         };
 
@@ -494,7 +562,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             })();
         }
 
-        Ok((Exit::None, returns))
+        Ok(Exitable::new(returns))
     }
 
     fn cannot_index(&self, span: Span, tab: &Slot, key: &Slot) -> Result<()> {
@@ -1031,7 +1099,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     fn check_assign(&mut self, vars: &Spanned<Vec<TypeSpec<Spanned<Var>>>>,
-                    exps: Option<&Spanned<Vec<Spanned<Exp>>>>) -> Result<Exit> {
+                    exps: Option<&Spanned<Vec<Spanned<Exp>>>>, stmtspan: Span) -> Result<Exit> {
         #[derive(Debug)]
         enum VarRef<'a> {
             Name(&'a Spanned<NameRef>),
@@ -1039,15 +1107,15 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             Slot(bool, Spanned<Slot>, Spanned<Slot>, Spanned<Slot>),
         }
 
-        let mut exit = Exit::None;
+        let mut exprexit = ExprExit::None;
         let varrefspecs = vars.iter().map(|varspec| {
             let varref = match varspec.base.base {
                 Var::Name(ref nameref) => VarRef::Name(nameref),
 
                 Var::Index(ref e, ref key) => {
-                    let (exit1, ty) = self.visit_exp(e, None)?;
-                    let (exit2, kty) = self.visit_exp(key, None)?;
-                    exit &= exit1 & exit2;
+                    let Exitable(exit1, ty) = self.visit_exp(e, None)?;
+                    let Exitable(exit2, kty) = self.visit_exp(key, None)?;
+                    exprexit = exprexit.collide(exit1).collide(exit2);
                     let ty = ty.into_first();
                     let kty = kty.into_first();
                     let (found, slot) = self.check_lval_index(&ty, &kty, varspec.base.span)?;
@@ -1055,8 +1123,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 },
 
                 Var::IndexName(ref e, ref key) => {
-                    let (exit_, ty) = self.visit_exp(e, None)?;
-                    exit &= exit_;
+                    let Exitable(exit, ty) = self.visit_exp(e, None)?;
+                    exprexit = exprexit.collide(exit);
                     let ty = ty.into_first();
                     let keystr = Str::from(key.base[..].to_owned());
                     let kty = Slot::just(Ty::new(T::Str(Cow::Owned(keystr)))).with_loc(key);
@@ -1098,8 +1166,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             }).collect();
 
             let hint = SpannedSlotSeq { head: knowntypes, tail: None, span: vars.span };
-            let (exit_, slotseq) = self.visit_explist(exps, Some(hint))?;
-            exit &= exit_;
+            let Exitable(exit, slotseq) = self.visit_explist(exps, Some(hint))?;
+            exprexit = exprexit.collide(exit);
             Some(slotseq.into_iter_with_nil())
         } else {
             None
@@ -1151,7 +1219,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             }
         }
 
-        Ok(exit)
+        exprexit.to_stmt(stmtspan, self.env)
     }
 
     #[cfg(feature = "no_implicit_func_sig")]
@@ -1201,35 +1269,44 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             St::Oops => Ok(Exit::None),
 
             St::Void(ref exp) => {
-                let (exit, _) = self.visit_exp(exp, None)?;
+                let (exit, _) = self.visit_exp_from_stmt(exp, None)?;
                 Ok(exit)
             },
 
             St::Assign(ref vars, ref exps) => {
-                self.check_assign(vars, exps.as_ref())
+                self.check_assign(vars, exps.as_ref(), stmt.span)
             },
 
             St::Do(ref block) => self.visit_block(block),
 
             St::While(ref cond, ref block) => {
-                let (mut exit, ty) = self.visit_exp(cond, None)?;
+                let (mut exit, ty) = self.visit_exp_from_stmt(cond, None)?;
                 let boolean = self.check_bool(ty.unspan().unlift());
-                match boolean {
-                    Bool::Truthy => { // infinite loop
-                        exit &= self.visit_block(block)?;
-                        exit = exit.loop_boundary(Exit::Stop);
+
+                // the "normal" exit when the loop body doesn't do anything special
+                let normal_exit = match boolean {
+                    Bool::Truthy => Some(Exit::Stop), // infinite loop
+                    Bool::Falsy => None,
+                    Bool::Unknown => Some(Exit::None),
+                };
+
+                // warn if the block has no chance to run
+                #[cfg(feature = "warn_on_dead_code")] {
+                    if normal_exit.is_none() || exit >= Exit::Break {
+                        self.env.warn(block, m::DeadCode {}).done()?;
                     }
-                    Bool::Falsy => {}
-                    Bool::Unknown => {
-                        exit &= self.visit_block(block)?;
-                    }
+                }
+
+                if let Some(normal_exit) = normal_exit {
+                    exit &= self.visit_block(block)?;
+                    exit = exit.loop_boundary(normal_exit);
                 }
                 Ok(exit)
             }
 
             St::Repeat(ref block, ref cond) => {
                 let mut exit = self.visit_block(block)?;
-                let (exit_, ty) = self.visit_exp(cond, None)?;
+                let (exit_, ty) = self.visit_exp_from_stmt(cond, None)?;
                 exit &= exit_;
                 if exit == Exit::None {
                     match self.check_bool(ty.unspan().unlift()) {
@@ -1258,7 +1335,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         continue;
                     }
 
-                    let (condexit_, ty) = self.visit_exp(cond, None)?;
+                    let (condexit_, ty) = self.visit_exp_from_stmt(cond, None)?;
                     condexit &= condexit_;
                     let boolean = self.check_bool(ty.unspan().unlift());
                     match boolean {
@@ -1308,16 +1385,20 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             }
 
             St::For(ref localname, ref start, ref end, ref step, _blockscope, ref block) => {
-                let (exit1, start) = self.visit_exp(start, None)?;
-                let (exit2, end) = self.visit_exp(end, None)?;
-                let (exit3, step) = if let &Some(ref step) = step {
-                    let (exit, step) = self.visit_exp(step, None)?;
-                    (exit, step.into_first().map(|s| s.unlift().clone()))
+                let mut expspan = start.span | end.span;
+
+                // any of them can diverge, we treat them as like a single expression
+                let Exitable(exit1, start) = self.visit_exp(start, None)?;
+                let Exitable(exit2, end) = self.visit_exp(end, None)?;
+                let Exitable(exit3, step) = if let &Some(ref step) = step {
+                    expspan |= step.span;
+                    let step = self.visit_exp(step, None)?;
+                    step.map(|slot| slot.into_first().map(|s| s.unlift().clone()))
                 } else {
-                    (Exit::None, Ty::new(T::Integer).without_loc()) // to simplify the matter
+                    Exitable::new(Ty::new(T::Integer).without_loc()) // to simplify the matter
                 };
 
-                let mut exit = exit1 & exit2 & exit3;
+                let mut exit = exit1.collide(exit2).collide(exit3).to_stmt(expspan, self.env)?;
                 let start = start.into_first().map(|s| s.unlift().clone());
                 let end = end.into_first().map(|s| s.unlift().clone());
 
@@ -1352,16 +1433,24 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     }
                 }
 
+                // warn if the block has no chance to run
+                #[cfg(feature = "warn_on_dead_code")] {
+                    if exit >= Exit::Break {
+                        self.env.warn(block, m::DeadCode {}).done()?;
+                    }
+                }
+
                 let mut scope = self.scoped(Scope::new());
                 let indty = Slot::var(Ty::new(indty));
                 let nameref = NameRef::Local(localname.base.clone()).with_loc(localname);
                 scope.env.add_var(&nameref, None, Some(indty.without_loc()))?;
+
                 exit &= scope.visit_block(block)?;
                 Ok(exit.loop_boundary(Exit::None))
             }
 
             St::ForIn(ref names, ref exps, _blockscope, ref block) => {
-                let (mut exit, infos) = self.visit_explist(exps, None)?;
+                let (mut exit, infos) = self.visit_explist_from_stmt(exps, None)?;
                 let expspan = infos.all_span();
                 let mut infos = infos.into_iter_with_nil();
                 let func = infos.next().unwrap(); // iterator function
@@ -1397,9 +1486,9 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     let args = SpannedTySeq { head: vec![state, indvarty.without_loc()],
                                               tail: None,
                                               span: Span::dummy() };
-                    let (exit_, mut returns) = self.check_callable(&func.clone().with_loc(expspan),
-                                                                   &args, false)?;
-                    exit &= exit_;
+                    let Exitable(exit_, mut returns) =
+                        self.check_callable(&func.clone().with_loc(expspan), &args, false)?;
+                    exit &= exit_.to_stmt(expspan, self.env)?;
 
                     if let Err(r) = last.assert_sub(&indvar, self.context()) {
                         // it is very hard to describe, but it is conceptually
@@ -1416,6 +1505,13 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     take(returns.ensure_at_mut(0), |t| t.without_nil());
 
                     indtys = returns;
+                }
+
+                // warn if the block has no chance to run
+                #[cfg(feature = "warn_on_dead_code")] {
+                    if exit >= Exit::Break {
+                        self.env.warn(block, m::DeadCode {}).done()?;
+                    }
                 }
 
                 let mut scope = self.scoped(Scope::new());
@@ -1519,7 +1615,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     tail: None,
                     span: names.span,
                 };
-                let (exit, infos) = self.visit_explist(exps, Some(hint))?;
+                let (exit, infos) = self.visit_explist_from_stmt(exps, Some(hint))?;
 
                 for ((localname, specinfo), info) in nameinfos.into_iter()
                                                               .zip(infos.into_iter_with_none()) {
@@ -1538,7 +1634,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     Returns::Implicit(ref returns) | Returns::Explicit(ref returns) =>
                         Some(SpannedSlotSeq::from_seq(returns.clone())),
                 };
-                let (exit, seq) = self.visit_explist(exps, hint)?;
+                let (exit, seq) = self.visit_explist_from_stmt(exps, hint)?;
 
                 // function types destroy flexibility, primarily because the return type is
                 // a slot only in the inside view. in the outside it's always Var,
@@ -1902,9 +1998,9 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     fn visit_func_call(&mut self, functy: &Spanned<Ty>, selfinfo: Option<Spanned<Slot>>,
-                       args: &Spanned<Args>, expspan: Span) -> Result<(Exit, SlotSeq)> {
+                       args: &Spanned<Args>, expspan: Span) -> Result<Exitable<SlotSeq>> {
         // should be visited first, otherwise a WHATEVER function will ignore slots in arguments
-        let (nargs, (exit, mut argtys)) = match args.base {
+        let (nargs, Exitable(exit, mut argtys)) = match args.base {
             Args::List(ref ee) => {
                 // at this stage the hint is given at the best effort basis
                 let hint = self.env.resolve_exact_type(functy).and_then(|ty| {
@@ -1923,20 +2019,21 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             },
             Args::Str(ref s) => {
                 let argstr = Str::from(s[..].to_owned());
-                (1, (Exit::None, SpannedSlotSeq::from(T::Str(Cow::Owned(argstr)).with_loc(args))))
+                let strty = T::Str(Cow::Owned(argstr)).with_loc(args);
+                (1, Exitable::new(SpannedSlotSeq::from(strty)))
             },
             Args::Table(ref fields) => {
-                let (exit, table) = self.visit_table(fields)?;
-                (1, (exit, SpannedSlotSeq::from(table.with_loc(args))))
+                let table = self.visit_table(fields)?;
+                (1, table.map(|table| SpannedSlotSeq::from(table.with_loc(args))))
             },
         };
 
         if !self.env.get_type_bounds(functy).1.is_callable() {
             self.env.error(functy, m::CallToNonFunc { func: self.display(functy) }).done()?;
-            return Ok((exit, SlotSeq::dummy()));
+            return Ok(exit.with_dummy());
         }
         if let Some(dyn) = functy.get_dynamic() {
-            return Ok((exit, SlotSeq::from(T::Dynamic(dyn))));
+            return Ok(exit.with(SlotSeq::from(T::Dynamic(dyn))));
         }
 
         // handle tags, which may return different things from the function signature
@@ -1946,7 +2043,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 if nargs < 1 {
                     self.env.error(expspan, m::BuiltinGivenLessArgs { name: "require", nargs: 1 })
                             .done()?;
-                    return Ok((exit, SlotSeq::dummy()));
+                    return Ok(exit.with_dummy());
                 }
 
                 let arg = self.env.resolve_exact_type(&argtys.ensure_at(0).unlift());
@@ -1962,8 +2059,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                             Ok(chunk) => chunk,
                             Err(_) => {
                                 self.env.warn(argtys.ensure_at(0),
-                                m::CannotResolveModName {}).done()?;
-                                return Ok((exit, SlotSeq::from(T::All)));
+                                              m::CannotResolveModName {}).done()?;
+                                return Ok(exit.with(SlotSeq::from(T::All)));
                             }
                         };
                         let mut env = Env::new(self.env.context(), opts, chunk.map);
@@ -1977,16 +2074,16 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     if let Some(module) = module {
                         self.env.import_types(module.exported_types.with_loc(expspan))?;
                         if let Some(ref returns) = module.returns {
-                            return Ok((exit, SlotSeq::from(returns.clone())));
+                            return Ok(exit.with(SlotSeq::from(returns.clone())));
                         } else {
                             // the module never returns, subsequent statements won't execute
-                            return Ok((exit & Exit::Stop, SlotSeq::dummy()));
+                            return Ok(exit.with_diverging())
                         }
                     } else {
-                        return Ok((exit, SlotSeq::dummy()));
+                        return Ok(exit.with_dummy());
                     }
                 } else {
-                    return Ok((exit, SlotSeq::from(T::All)));
+                    return Ok(exit.with(SlotSeq::from(T::All)));
                 }
             }
 
@@ -1996,7 +2093,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     // TODO should display the true name
                     self.env.error(expspan, m::BuiltinGivenLessArgs { name: "assert", nargs: 1 })
                             .done()?;
-                    return Ok((exit, SlotSeq::dummy()));
+                    return Ok(exit.with_dummy());
                 }
 
                 // non-list arguments have no usable conditions (always evaluate to true)
@@ -2014,7 +2111,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     self.env.error(expspan,
                                    m::BuiltinGivenLessArgs { name: "assert-not", nargs: 1 })
                             .done()?;
-                    return Ok((exit, SlotSeq::dummy()));
+                    return Ok(exit.with_dummy());
                 }
 
                 if let Args::List(ref args) = args.base {
@@ -2031,7 +2128,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     self.env.error(expspan,
                                    m::BuiltinGivenLessArgs { name: "assert-type", nargs: 2 })
                             .done()?;
-                    return Ok((exit, SlotSeq::dummy()));
+                    return Ok(exit.with_dummy());
                 }
 
                 if let Some(flags) = self.ext_literal_ty_to_flags(argtys.ensure_at(1))? {
@@ -2043,12 +2140,12 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             // class()
             Some(Tag::MakeClass) => {
                 let cid = self.context().make_class(None, expspan); // TODO parent
-                return Ok((exit, SlotSeq::from(T::Class(Class::Prototype(cid)))));
+                return Ok(exit.with(SlotSeq::from(T::Class(Class::Prototype(cid)))));
             }
 
             // kailua_test.gen_tvar()
             Some(Tag::KailuaGenTvar) => {
-                return Ok((exit, SlotSeq::from(T::TVar(self.context().gen_tvar()))));
+                return Ok(exit.with(SlotSeq::from(T::TVar(self.context().gen_tvar()))));
             }
 
             // kailua_test.assert_tvar()
@@ -2058,7 +2155,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     self.env.error(expspan,
                                    m::BuiltinGivenLessArgs { name: "kailua-assert-tvar", nargs: 1 })
                             .done()?;
-                    return Ok((exit, SlotSeq::dummy()));
+                    return Ok(exit.with_dummy());
                 }
 
                 let is_tvar =
@@ -2067,7 +2164,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     let arg = argtys.ensure_at(0);
                     self.env.error(arg, m::NotTVar { slot: self.display(arg) }).done()?;
                 }
-                return Ok((exit, SlotSeq::new()));
+                return Ok(exit.with(SlotSeq::new()));
             }
 
             _ => {}
@@ -2079,13 +2176,17 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         } else {
             false
         };
-        let (exit_, returns) = self.check_callable(functy, &argtys.unlift(), methodcall)?;
+
+        let Exitable(retexit, returns) = self.check_callable(functy, &argtys.unlift(), methodcall)?;
+
+        // merge exits; do not use `ExprExit::then` as this is the only way to generate Stop.
         // TODO this should be Var instead of Just!!!!!
-        Ok((exit & exit_, SlotSeq::from_seq(returns)))
+        Ok(Exitable(cmp::max(exit, retexit), SlotSeq::from_seq(returns)))
     }
 
-    fn visit_table(&mut self,
-                   fields: &[(Option<Spanned<Exp>>, Spanned<Exp>)]) -> Result<(Exit, T<'static>)> {
+    fn visit_table(&mut self, fields: &[(Option<Spanned<Exp>>, Spanned<Exp>)])
+        -> Result<Exitable<T<'static>>>
+    {
         let mut newfields = Vec::new();
 
         let mut fieldspans = HashMap::new();
@@ -2103,14 +2204,14 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         };
 
         let mut len = 0;
-        let mut exit = Exit::None;
+        let mut exprexit = ExprExit::None;
         for (idx, &(ref key, ref value)) in fields.iter().enumerate() {
             let span = key.as_ref().map_or(Span::dummy(), |k| k.span) | value.span;
 
             // if this is the last entry and no explicit index is set, splice the values
             if idx == fields.len() - 1 && key.is_none() {
-                let (exit_, vty) = self.visit_exp(value, None)?;
-                exit &= exit_;
+                let Exitable(exit, vty) = self.visit_exp(value, None)?;
+                exprexit = exprexit.collide(exit);
                 for ty in vty.head.into_iter() {
                     len += 1;
                     add_field(&mut newfields, &self.env, Key::Int(len), ty.base, span)?;
@@ -2123,8 +2224,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 }
             } else {
                 let litkey = if let Some(ref key) = *key {
-                    let (exit_, key) = self.visit_exp(key, None)?;
-                    exit &= exit_;
+                    let Exitable(exit, key) = self.visit_exp(key, None)?;
+                    exprexit = exprexit.collide(exit);
                     let key = key.into_first();
                     let kty = key.unlift();
                     let kty = if let Some(kty) = self.env.resolve_exact_type(&kty) {
@@ -2150,8 +2251,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     Key::Int(len)
                 };
 
-                let (exit_, vty) = self.visit_exp(value, None)?;
-                exit &= exit_;
+                let Exitable(exit, vty) = self.visit_exp(value, None)?;
+                exprexit = exprexit.collide(exit);
                 let vty = vty.into_first();
                 add_field(&mut newfields, &self.env, litkey, vty.base, span)?;
             }
@@ -2164,14 +2265,22 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 "cannot insert disjoint fields into a fresh row variable"
             );
         }
-        Ok((exit, T::Tables(Cow::Owned(Tables::Fields(rvar)))))
+        Ok(exprexit.with(T::Tables(Cow::Owned(Tables::Fields(rvar)))))
+    }
+
+    fn visit_exp_from_stmt(&mut self, exp: &Spanned<Exp>, hint: Option<SpannedSlotSeq>)
+        -> Result<(Exit, SpannedSlotSeq)>
+    {
+        let Exitable(exit, base) = self.visit_exp(exp, hint)?;
+        Ok((exit.to_stmt(exp.span, self.env)?, base))
     }
 
     // hint is used to drive the inference to the already known type.
     // this is mainly used for anonymous functions.
-    fn visit_exp(&mut self, exp: &Spanned<Exp>,
-                 hint: Option<SpannedSlotSeq>) -> Result<(Exit, SpannedSlotSeq)> {
-        let (exit, slotseq) = self.visit_exp_(exp, hint)?;
+    fn visit_exp(&mut self, exp: &Spanned<Exp>, hint: Option<SpannedSlotSeq>)
+        -> Result<Exitable<SpannedSlotSeq>>
+    {
+        let Exitable(exit, slotseq) = self.visit_exp_(exp, hint)?;
 
         // mark the resulting slot (sequence) to the span
         let slot = if let Some(slot) = slotseq.head.first() {
@@ -2183,133 +2292,141 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         };
         self.context().spanned_slots_mut().insert(slot.with_loc(exp));
 
-        Ok((exit, slotseq.all_with_loc(exp)))
+        Ok(exit.with(slotseq.all_with_loc(exp)))
     }
 
-    fn visit_exp_(&mut self, exp: &Spanned<Exp>,
-                  hint: Option<SpannedSlotSeq>) -> Result<(Exit, SlotSeq)> {
+    fn visit_exp_(&mut self, exp: &Spanned<Exp>, hint: Option<SpannedSlotSeq>)
+        -> Result<Exitable<SlotSeq>>
+    {
         debug!("visiting exp {:?}", *exp);
 
-        let (exit, ret) = match *exp.base {
+        let ret = match *exp.base {
             // it should not happen, but for the purpose of checker, the error nodes are dummies
-            Ex::Oops => (Exit::None, SlotSeq::dummy()),
+            Ex::Oops => Exitable::dummy(),
 
             // the explicit type `nil` is different from `nil` from an implicit expression
-            Ex::Nil => (Exit::None, SlotSeq::from(Ty::silent_nil())),
-            Ex::False => (Exit::None, SlotSeq::from(T::False)),
-            Ex::True => (Exit::None, SlotSeq::from(T::True)),
+            Ex::Nil => Exitable::new(SlotSeq::from(Ty::silent_nil())),
+            Ex::False => Exitable::new(SlotSeq::from(T::False)),
+            Ex::True => Exitable::new(SlotSeq::from(T::True)),
             Ex::Num(v) if v.floor() == v =>
                 if i32::MIN as f64 <= v && v <= i32::MAX as f64 {
-                    (Exit::None, SlotSeq::from(T::Int(v as i32)))
+                    Exitable::new(SlotSeq::from(T::Int(v as i32)))
                 } else {
-                    (Exit::None, SlotSeq::from(T::Integer))
+                    Exitable::new(SlotSeq::from(T::Integer))
                 },
-            Ex::Num(_) => (Exit::None, SlotSeq::from(T::Number)),
+            Ex::Num(_) => Exitable::new(SlotSeq::from(T::Number)),
             Ex::Str(ref s) => {
                 let str = Str::from(s[..].to_owned());
-                (Exit::None, SlotSeq::from(T::Str(Cow::Owned(str))))
+                Exitable::new(SlotSeq::from(T::Str(Cow::Owned(str))))
             },
 
             Ex::Varargs => {
                 if let Some(vararg) = self.env.get_vararg() {
-                    (Exit::None, SlotSeq::from_seq(vararg.clone()))
+                    Exitable::new(SlotSeq::from_seq(vararg.clone()))
                 } else {
                     self.env.error(exp, m::NoVarargs {}).done()?;
-                    (Exit::None, SlotSeq::dummy())
+                    Exitable::dummy()
                 }
             },
             Ex::Var(ref name) => {
                 if self.env.get_var(name).is_some() {
-                    (Exit::None, SlotSeq::from(self.env.ensure_var(name)?))
+                    Exitable::new(SlotSeq::from(self.env.ensure_var(name)?))
                 } else {
                     self.env.error(exp, m::NoVar { name: self.env.get_name(name) }).done()?;
-                    (Exit::None, SlotSeq::dummy())
+                    Exitable::dummy()
                 }
             },
 
             Ex::Exp(ref e) => {
-                let (exit, slotseq) = self.visit_exp(e, hint)?;
-                (exit, SlotSeq::from(slotseq.into_first().base)) // sequence flattens to the first
+                let Exitable(exit, slotseq) = self.visit_exp(e, hint)?;
+                // sequence flattens to the first
+                exit.with(SlotSeq::from(slotseq.into_first().base))
             },
             Ex::Func(ref sig, _scope, ref block) => {
                 let hint = hint.map(|seq| seq.into_first());
                 let (tag, no_check) = self.visit_sig_attrs(&sig.attrs)?;
                 let returns = self.visit_func_body(tag, no_check, None, sig, block,
                                                    exp.span, hint)?;
-                (Exit::None, SlotSeq::from(returns))
+                Exitable::new(SlotSeq::from(returns))
             },
             Ex::Table(ref fields) => {
-                let (exit, slot) = self.visit_table(fields)?;
-                (exit, SlotSeq::from(slot))
+                self.visit_table(fields)?.map(SlotSeq::from)
             },
 
             Ex::FuncCall(ref func, ref args) => {
-                let (exit1, funcinfo) = self.visit_exp(func, None)?;;
+                let Exitable(exit, funcinfo) = self.visit_exp(func, None)?;
                 let funcinfo = funcinfo.into_first().map(|t| t.unlift().clone());
-                let (exit2, slotseq) = self.visit_func_call(&funcinfo, None, args, exp.span)?;
-                (exit1 & exit2, slotseq)
+                exit.then(self.visit_func_call(&funcinfo, None, args, exp.span)?)
             },
 
             Ex::MethodCall(Spanned { base: (ref e, ref method), span }, ref args) => {
                 let keystr = Str::from(method.base[..].to_owned());
-                let (exit1, ty) = self.visit_exp(e, None)?;
+                let Exitable(exit, ty) = self.visit_exp(e, None)?;
                 let ty = ty.into_first();
                 let kty = Slot::just(Ty::new(T::Str(Cow::Owned(keystr)))).with_loc(method.span);
                 let methinfo = self.check_rval_index(&ty, &kty, exp.span)?;
                 self.context().spanned_slots_mut().insert(methinfo.clone().with_loc(span));
                 let methinfo = methinfo.unlift().clone().with_loc(span);
-                let (exit2, slotseq) = self.visit_func_call(&methinfo, Some(ty), args, exp.span)?;
-                (exit1 & exit2, slotseq)
+                exit.then(self.visit_func_call(&methinfo, Some(ty), args, exp.span)?)
             },
 
             Ex::Index(ref e, ref key) => {
-                let (exit1, ty) = self.visit_exp(e, None)?;
-                let (exit2, kty) = self.visit_exp(key, None)?;
+                let Exitable(exit1, ty) = self.visit_exp(e, None)?;
+                let Exitable(exit2, kty) = self.visit_exp(key, None)?;
                 let ty = ty.into_first();
                 let kty = kty.into_first();
-                (exit1 & exit2, SlotSeq::from(self.check_rval_index(&ty, &kty, exp.span)?))
+                let exit = exit1.collide(exit2);
+                exit.with(SlotSeq::from(self.check_rval_index(&ty, &kty, exp.span)?))
             },
             Ex::IndexName(ref e, ref key) => {
                 let keystr = Str::from(key.base[..].to_owned());
-                let (exit, ty) = self.visit_exp(e, None)?;
+                let Exitable(exit, ty) = self.visit_exp(e, None)?;
                 let ty = ty.into_first();
                 let kty = Slot::just(Ty::new(T::Str(Cow::Owned(keystr)))).with_loc(key);
-                (exit, SlotSeq::from(self.check_rval_index(&ty, &kty, exp.span)?))
+                exit.with(SlotSeq::from(self.check_rval_index(&ty, &kty, exp.span)?))
             },
 
             Ex::Un(op, ref e) => {
-                let (exit, info) = self.visit_exp(e, None)?;
+                let Exitable(exit, info) = self.visit_exp(e, None)?;
                 let info = info.into_first();
                 let info = self.check_un_op(op.base, &info, exp.span)?;
-                (exit, SlotSeq::from(info))
+                exit.with(SlotSeq::from(info))
             },
 
             Ex::Bin(ref l, op, ref r) => {
-                let (exit1, lhs) = self.visit_exp(l, None)?;
-                let (exit2, rhs) = self.visit_exp(r, None)?;
+                let Exitable(exit1, lhs) = self.visit_exp(l, None)?;
+                let Exitable(exit2, rhs) = self.visit_exp(r, None)?;
                 let lhs = lhs.into_first();
                 let rhs = rhs.into_first();
                 let info = self.check_bin_op(&lhs, op.base, &rhs, exp.span)?;
-                (exit1 & exit2, SlotSeq::from(info))
+                exit1.collide(exit2).with(SlotSeq::from(info))
             },
         };
 
-        trace!("typed exp {:?} as ({:?}, {:?})", exp, exit, ret);
-        Ok((exit, ret))
+        trace!("typed exp {:?} as {:?}", exp, ret);
+        Ok(ret)
+    }
+
+    fn visit_explist_from_stmt(&mut self, exps: &Spanned<Vec<Spanned<Exp>>>,
+                               hint: Option<SpannedSlotSeq>) -> Result<(Exit, SpannedSlotSeq)> {
+        let Exitable(exit, base) = self.visit_explist(exps, hint)?;
+        Ok((exit.to_stmt(exps.span, self.env)?, base))
     }
 
     fn visit_explist(&mut self, exps: &Spanned<Vec<Spanned<Exp>>>,
-                     hint: Option<SpannedSlotSeq>) -> Result<(Exit, SpannedSlotSeq)> {
+                     hint: Option<SpannedSlotSeq>) -> Result<Exitable<SpannedSlotSeq>> {
         self.visit_explist_with_span(&exps.base, exps.span, hint)
     }
 
     fn visit_explist_with_span(&mut self, exps: &[Spanned<Exp>], expspan: Span,
-                               mut hint: Option<SpannedSlotSeq>) -> Result<(Exit, SpannedSlotSeq)> {
+                               mut hint: Option<SpannedSlotSeq>)
+        -> Result<Exitable<SpannedSlotSeq>>
+    {
         // the last expression is special, so split it first or return the empty sequence
         let (lastexp, exps) = if let Some(exps) = exps.split_last() {
             exps
         } else {
-            return Ok((Exit::None, SpannedSlotSeq::new(expspan)));
+            return Ok(Exitable::new(SpannedSlotSeq::new(expspan)));
         };
 
         // extract first `exps.len()` slots from the hint, copying the tail as needed
@@ -2325,7 +2442,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
         // visit each expression except for the last
         let mut head = Vec::new();
-        let mut exit = Exit::None;
+        let mut exprexit = ExprExit::None;
         for exp in exps {
             let hint = hinthead.as_mut().map(|it| {
                 let slot = it.next().unwrap();
@@ -2336,17 +2453,18 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     span: slotspan,
                 }
             });
-            let (exit_, info) = self.visit_exp(exp, hint)?;
+            let Exitable(exit, info) = self.visit_exp(exp, hint)?;
             head.push(info.into_first());
-            exit &= exit_;
+            exprexit = exprexit.collide(exit);
         }
 
         // for the last expression, use the entire remaining sequence as a hint
         // and expand its result to the final sequence
-        let (exit_, last) = self.visit_exp(lastexp, hint)?;
+        let Exitable(exit, last) = self.visit_exp(lastexp, hint)?;
         head.extend(last.head.into_iter());
-        exit &= exit_;
-        Ok((exit, SpannedSlotSeq { head: head, tail: last.tail, span: expspan }))
+        exprexit = exprexit.collide(exit);
+
+        Ok(exprexit.with(SpannedSlotSeq { head: head, tail: last.tail, span: expspan }))
     }
 
     fn visit_kind(&mut self, flex: F, kind: &Spanned<Kind>) -> Result<Spanned<Slot>> {
@@ -2357,7 +2475,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     fn collect_type_from_exp(&mut self, exp: &Spanned<Exp>)
             -> Result<(Option<Spanned<Slot>>, SpannedSlotSeq)> {
         if let Ex::FuncCall(ref func, ref args) = *exp.base {
-            let (_exit, funcseq) = self.visit_exp(func, None)?;
+            let Exitable(_, funcseq) = self.visit_exp(func, None)?;
             let funcspan = funcseq.all_span();
             let funcinfo = funcseq.into_first();
             let funcinfo = funcinfo.unlift();
@@ -2365,7 +2483,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 // there should be a single argument there
                 match args.base {
                     Args::List(ref args) if args.len() >= 1 => {
-                        let (_exit, info) = self.visit_exp(&args[0], None)?;
+                        let Exitable(_, info) = self.visit_exp(&args[0], None)?;
                         Some(info.into_first())
                     },
                     Args::List(_) => {
@@ -2378,18 +2496,18 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         Some(Slot::just(Ty::new(T::Str(Cow::Owned(argstr)))).with_loc(args))
                     },
                     Args::Table(ref fields) => {
-                        let (_exit, table) = self.visit_table(fields)?;
+                        let Exitable(_, table) = self.visit_table(fields)?;
                         Some(Slot::just(Ty::new(table)).with_loc(args))
                     },
                 }
             } else {
                 None
             };
-            let (_exit, seq) = self.visit_func_call(&funcinfo.clone().with_loc(funcspan), None,
-                                                    args, exp.span)?;
+            let Exitable(_, seq) = self.visit_func_call(&funcinfo.clone().with_loc(funcspan),
+                                                        None, args, exp.span)?;
             Ok((typeofexp, seq.all_with_loc(exp)))
         } else {
-            let (_exit, seq) = self.visit_exp(exp, None)?;
+            let Exitable(_, seq) = self.visit_exp(exp, None)?;
             Ok((None, seq))
         }
     }
@@ -2503,7 +2621,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             }
 
             _ => {
-                let (_exit, seq) = self.visit_exp(exp, None)?;
+                let Exitable(_, seq) = self.visit_exp(exp, None)?;
                 let info = seq.into_first();
                 // XXX should detect non-local slots and reject them!
                 // probably we can do that via proper weakening, but who knows.

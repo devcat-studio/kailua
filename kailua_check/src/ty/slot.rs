@@ -7,7 +7,7 @@ use parking_lot::{RwLock, RwLockReadGuard};
 use kailua_env::{Span, Spanned};
 use kailua_syntax::M;
 use diag::Origin;
-use super::{Dyn, Nil, T, Ty, TypeContext, Lattice, Union, TVar, Tag};
+use super::{Dyn, Nil, T, Ty, TypeContext, Lattice, Union, Dummy, TVar, Tag};
 use super::{Display, DisplayState, TypeReport, TypeResult};
 use super::flags::Flags;
 
@@ -344,6 +344,10 @@ impl Slot {
         let s = self.0.read();
         Slot::from(s.clone().generalize(ctx))
     }
+}
+
+impl Dummy for Slot {
+    fn dummy() -> Slot { Self::dummy() }
 }
 
 impl Union for Slot {

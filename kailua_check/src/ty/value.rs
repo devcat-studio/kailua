@@ -10,7 +10,7 @@ use kailua_syntax::{K, Kind, SlotKind, Str, Name};
 use kailua_diag::{Result, Reporter};
 use diag::{Origin, TypeReport, TypeResult, TypeReportHint, TypeReportMore};
 use super::{Display, DisplayState, TypeContext, NoTypeContext, TypeResolver};
-use super::{F, Slot, Lattice, Union};
+use super::{F, Slot, Lattice, Union, Dummy};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, Tag, Class};
 use super::flags::*;
 use message as m;
@@ -461,6 +461,10 @@ impl<'a> T<'a> {
             },
         }
     }
+}
+
+impl<'a> Dummy for T<'a> {
+    fn dummy() -> T<'a> { Self::dummy() }
 }
 
 impl<'a> Union<Unioned> for T<'a> {
@@ -1291,6 +1295,10 @@ impl Ty {
     pub fn unwrap(self) -> T<'static> {
         self.inner.unwrap_ty()
     }
+}
+
+impl Dummy for Ty {
+    fn dummy() -> Ty { Self::dummy() }
 }
 
 impl<'a> From<T<'a>> for Ty {

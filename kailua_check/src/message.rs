@@ -668,6 +668,12 @@ define_msg! { pub ImplicitVarargsTypeOnAnonymousFunc:
              but couldn't be inferred from the calls",
 }
 
+define_msg! { pub DivergingInExpr:
+    "ko" => "중간에 반환하지 않는 함수 호출이 있어서 일부 수식은 영원히 평가되지 않습니다",
+    _    => "A portion of this expression won't be evaluated \
+             because it contains a call to a function that never returns",
+}
+
 define_msg! { pub ReturnInDivergingFunc:
     "ko" => "반환하지 않도록 지정된 함수 안에서 반환하려고 했습니다",
     _    => "Tried to return from a function that is marked that it never returns",
