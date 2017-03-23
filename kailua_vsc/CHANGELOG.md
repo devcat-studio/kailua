@@ -1,3 +1,17 @@
+## 0.0.13
+
+* The function type declaration has been changed. Previously `--v function(self, ...)` (without a type for `self`) is allowed for methods; this is now `--v method(...)` and no type for `self` can be declared. As before, `--v function(...)` should be used for functions and `--v method(...)` should be used for methods; since the only difference between function and method declaration is the implied type for `self`, you can freely use a function declaration if you *do* need to specify the type for `self`.
+
+* `--# assume C.f: method(...) --> ...` is now accepted as a special form equivalent to `--# assume static C.f: function(self: Self, ...) --> ...` where `Self` is an inferred self type. This draws a parallel to the method declaration syntax.
+
+* Function types can now have optional argument names like `function(x: T, y: U)`. This is purely for the documentation purpose and does not affect the type checking. The names, if present, should be present for all non-variadic arguments, and should be unique to each other (though this only results in an error and doesn't stop the checking). Function specifications are automatically named, improving error messages.
+
+* Renamed `[no_check]` to `[NO_CHECK]` to signify that this is not a normally desirable code (the same rationale applies to `WHATEVER`).
+
+* In explicit types `{}` is (correctly) no longer extensible. `{...}` remains extensible. This change would make `{}` close to useless, which *is* intentional for consistency.
+
+* A field completion now works correctly when the field name has been partially typed.
+
 ## 0.0.12
 
 * Experimentally separated an inextensible record type (`{a: T, b: U}`) from an extensible record type (`{a: T, b: U, ...}`). The checker already had this distinction (for example, assigning an extensible record type to the mapping will make it inextensible, because from that point adding a non-conforming key will break the type check!) but this change makes this explicit. The bare expression `{}` still generates an extensible record type (the distinction is only for Kailua blocks), and not all error messages have been changed as this can be reverted later.
