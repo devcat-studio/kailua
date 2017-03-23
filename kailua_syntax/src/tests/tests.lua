@@ -861,6 +861,12 @@ local x --: function(string, integer) --> (a: integer, b: string)
 --@^^ Error: Expected a newline, got `)`
 --! [Local([`x`$1: _ Oops], [])$1]
 
+--8<-- kind-func-diverging
+local x --: function() --> !
+local y --: function(string, integer) --> !
+--! [Local([`x`$1: _ Func(() --> !)], [])$1, \
+--!  Local([`y`$2: _ Func((String, Integer) --> !)], [])$2]
+
 --8<-- kind-thread
 local x --: thread
 --! [Local([`x`$1: _ Thread], [])$1]
@@ -1209,6 +1215,11 @@ function foo() end
 function foo() end
 --! [FuncDecl(`foo`_, [] --> _, $1[])]
 
+--8<-- funcspec-diverging
+--v function(msg: string) --> !
+function error(msg) end
+--! [FuncDecl(`error`_, [`msg`$1: _ String] --> !, $1[])]
+
 --8<-- rettype-none
 function foo() --> ()
 end
@@ -1239,6 +1250,11 @@ end
 function foo() -->
 end
 --! [FuncDecl(`foo`_, [] --> Oops, $1[])]
+
+--8<-- rettype-diverging
+function error(msg) --> !
+end
+--! [FuncDecl(`error`_, [`msg`$1] --> !, $1[])]
 
 --8<-- funcspec-and-rettype
 --v function()

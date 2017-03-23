@@ -166,6 +166,10 @@ pub struct Seq<Head, Tail=Head> {
 }
 
 impl<Head, Tail> Seq<Head, Tail> {
+    pub fn empty() -> Seq<Head, Tail> {
+        Seq { head: Vec::new(), tail: None }
+    }
+
     pub fn map<U, V, F: FnMut(Head) -> U, G: FnOnce(Tail) -> V>(self, f: F, g: G) -> Seq<U, V> {
         Seq { head: self.head.into_iter().map(f).collect(), tail: self.tail.map(g) }
     }
@@ -223,12 +227,36 @@ impl<T: fmt::Debug> fmt::Debug for TypeSpec<T> {
     }
 }
 
+#[derive(Clone, PartialEq)]
+pub enum Returns {
+    Seq(Seq<Spanned<Kind>>),
+    Never(Span), // a span for `!`
+}
+
+impl fmt::Debug for Returns {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Returns::Seq(ref seq) => {
+                if seq.head.len() == 1 && seq.tail.is_none() {
+                    write!(f, "{:?}", seq.head[0])
+                } else {
+                    write!(f, "({:-?})", seq)
+                }
+            },
+            Returns::Never(span) => {
+                write!(f, "!")?;
+                fmt::Debug::fmt(&span, f)
+            },
+        }
+    }
+}
+
 // more spanned version of Sig, only used during the parsing
 #[derive(Clone, PartialEq)]
 pub struct Presig {
     pub prefix: Spanned<bool>, // true for `method`, false for `function` (span included)
     pub args: Spanned<Seq<Spanned<TypeSpec<Spanned<Name>>>, Spanned<Option<Spanned<Kind>>>>>,
-    pub returns: Option<Seq<Spanned<Kind>>>,
+    pub returns: Option<Returns>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -236,7 +264,7 @@ pub struct Sig {
     pub attrs: Vec<Spanned<Attr>>,
     pub args: Spanned<Seq<TypeSpec<Spanned<ScopedId>>,
                           Option<Spanned<Kind>>>>, // may have to be inferred; Const only
-    pub returns: Option<Seq<Spanned<Kind>>>, // may have to be inferred
+    pub returns: Option<Returns>, // may have to be inferred
 }
 
 impl fmt::Debug for Sig {
@@ -258,16 +286,22 @@ impl fmt::Debug for Sig {
             }
         }
         write!(f, "]")?;
-        if let Some(ref returns) = self.returns {
-            if returns.head.len() == 1 && returns.tail.is_none() {
-                write!(f, " --> {:?}", returns.head[0])?;
-            } else if !(returns.head.is_empty() && returns.tail.is_none()) {
-                write!(f, " --> {:?}", *returns)?;
-            }
-        } else {
-            write!(f, " --> _")?;
+        match self.returns {
+            Some(Returns::Seq(Seq { ref head, tail: None })) if head.is_empty() => Ok(()),
+            Some(Returns::Seq(Seq { ref head, tail: None })) if head.len() == 1 => {
+                write!(f, " --> {:?}", head[0])
+            },
+            Some(Returns::Seq(ref seq)) => {
+                write!(f, " --> {:?}", seq)
+            },
+            Some(Returns::Never(span)) => {
+                write!(f, " --> !")?;
+                fmt::Debug::fmt(&span, f)
+            },
+            None => {
+                write!(f, " --> _")
+            },
         }
-        Ok(())
     }
 }
 
@@ -569,7 +603,7 @@ pub struct FuncKind {
     // the name is purely for description and has no effect in the type.
     // in a valid code all of them (and all unique) or none of them would be present.
     pub args: Seq<(Option<Spanned<Name>>, Spanned<Kind>), Spanned<Kind>>,
-    pub returns: Seq<Spanned<Kind>>,
+    pub returns: Returns,
 }
 
 impl fmt::Debug for FuncKind {
@@ -586,13 +620,7 @@ impl fmt::Debug for FuncKind {
         if let Some(ref varargs) = self.args.tail {
             write!(f, "{}{:?}...", comma, varargs)?;
         }
-        write!(f, ")")?;
-        if self.returns.head.len() == 1 && self.returns.tail.is_none() {
-            write!(f, " --> {:?}", self.returns.head[0])?;
-        } else {
-            write!(f, " --> ({:-?})", self.returns)?;
-        }
-        Ok(())
+        write!(f, ") --> {:?}", self.returns)
     }
 }
 

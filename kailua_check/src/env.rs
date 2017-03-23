@@ -103,7 +103,8 @@ impl<'a, R: Report> fmt::Display for IdDisplay<'a, R> {
 
 #[derive(Clone, Debug)]
 pub enum Returns<T> {
-    None, // the function does not return and has no rettype spec
+    None, // the function hasn't returned and has no rettype spec
+    Never, // the function has a diverging rettype spec
     Implicit(T), // the function returns but has no rettype spec, returns will be unioned
     Explicit(T), // the function has a rettype spec, cannot be updated
 }
@@ -112,6 +113,7 @@ impl<T> Returns<T> {
     pub fn as_ref(&self) -> Returns<&T> {
         match *self {
             Returns::None => Returns::None,
+            Returns::Never => Returns::Never,
             Returns::Implicit(ref v) => Returns::Implicit(v),
             Returns::Explicit(ref v) => Returns::Explicit(v),
         }
@@ -120,6 +122,7 @@ impl<T> Returns<T> {
     pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Returns<U> {
         match self {
             Returns::None => Returns::None,
+            Returns::Never => Returns::Never,
             Returns::Implicit(v) => Returns::Implicit(f(v)),
             Returns::Explicit(v) => Returns::Explicit(f(v)),
         }
@@ -412,13 +415,13 @@ impl RowInfo {
 
 #[derive(Clone, Debug)]
 pub struct Module {
-    pub returns: Slot,
+    pub returns: Option<Slot>, // None if the module never returns
     pub exported_types: HashMap<Name, TypeDef>,
 }
 
 impl Module {
     pub fn dummy() -> Module {
-        Module { returns: Slot::dummy(), exported_types: HashMap::new() }
+        Module { returns: Some(Slot::dummy()), exported_types: HashMap::new() }
     }
 }
 
@@ -1355,47 +1358,56 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         self.context.resolve_exact_type(ty)
     }
 
-    pub fn return_from_module(mut self, modname: &[u8], span: Span) -> Result<Option<Module>> {
+    pub fn return_from_module(mut self, modname: &[u8], diverging: bool,
+                              span: Span) -> Result<Option<Module>> {
         // note that this scope is distinct from the global scope
         let top_scope = self.scopes.drain(..).next().unwrap();
         let returns = match top_scope.frame.unwrap().returns {
-            Returns::Implicit(returns) | Returns::Explicit(returns) => returns.into_first(),
-            Returns::None => Ty::noisy_nil(), // chunk implicitly returns nil at the end
+            Returns::Implicit(returns) | Returns::Explicit(returns) => Some(returns.into_first()),
+            // chunk implicitly returns nil at the end (unless it's diverging)
+            Returns::None if !diverging => Some(Ty::noisy_nil()),
+            Returns::None | Returns::Never => None,
         };
 
-        if let Some(ty) = self.resolve_exact_type(&returns) {
-            let flags = ty.flags();
+        let modty = if let Some(returns) = returns {
+            if let Some(ty) = self.resolve_exact_type(&returns) {
+                let flags = ty.flags();
 
-            // prepare for the worse
-            if !flags.is_dynamic() && flags.contains(T_FALSE) {
-                self.error(span, m::ModCannotReturnFalse {}).done()?;
+                // prepare for the worse
+                if !flags.is_dynamic() && flags.contains(T_FALSE) {
+                    self.error(span, m::ModCannotReturnFalse {}).done()?;
+                    return Ok(None);
+                }
+
+                // simulate `require` behavior, i.e. nil translates to true
+                let ty = if ty.nil() == Nil::Noisy {
+                    let tywithoutnil = ty.without_nil().with_loc(span);
+                    tywithoutnil.union(&T::True.without_loc(), false, self.context).expect(
+                        "failed to union the module return type with True, this should be \
+                         always possible because we know the return type doesn't have a tvar!"
+                    )
+                } else {
+                    ty
+                };
+
+                Some(ty)
+            } else {
+                // TODO ideally we would want to resolve type variables in this type
+                self.error(span, m::ModCannotReturnInexactType { returns: self.display(&returns) })
+                    .done()?;
                 return Ok(None);
             }
-
-            // simulate `require` behavior, i.e. nil translates to true
-            let ty = if ty.nil() == Nil::Noisy {
-                let tywithoutnil = ty.without_nil().with_loc(span);
-                tywithoutnil.union(&T::True.without_loc(), false, self.context).expect(
-                    "failed to union the module return type with True, this should be \
-                     always possible because we know the return type doesn't have a tvar!"
-                )
-            } else {
-                ty
-            };
-
-            // this has to be Var since the module is shared across the entire program
-            let module = Module {
-                returns: Slot::new(F::Var, ty),
-                exported_types: self.exported_types,
-            };
-            self.context.loaded.insert(modname.to_owned(), LoadStatus::Done(module.clone()));
-            Ok(Some(module))
         } else {
-            // TODO ideally we would want to resolve type variables in this type
-            self.error(span, m::ModCannotReturnInexactType { returns: self.display(&returns) })
-                .done()?;
-            Ok(None)
-        }
+            None
+        };
+
+        // this has to be Var since the module is shared across the entire program
+        let module = Module {
+            returns: modty.map(|ty| Slot::new(F::Var, ty)),
+            exported_types: self.exported_types,
+        };
+        self.context.loaded.insert(modname.to_owned(), LoadStatus::Done(module.clone()));
+        Ok(Some(module))
     }
 
     // not to be called internally; it intentionally reduces the lifetime
@@ -1506,7 +1518,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             // fix the return type to make a signature for the `new` method
             let returns = T::Class(Class::Instance(cid));
             let ctor = Function { args: func.args, argnames: func.argnames,
-                                  returns: TySeq::from(returns) };
+                                  returns: Some(TySeq::from(returns)) };
             let ctor = Slot::new(F::Const, Ty::new(T::func(ctor)));
 
             debug!("implicitly setting the `new` method of {:?} as {:?}", cid, ctor);

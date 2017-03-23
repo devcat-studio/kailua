@@ -1,7 +1,7 @@
 use std::fmt;
 use kailua_env::Spanned;
 use kailua_diag::Result;
-use kailua_syntax::{Name, FuncKind};
+use kailua_syntax::{Name, FuncKind, Returns};
 
 use diag::{Origin, TypeReport, TypeResult, unquotable_name};
 use super::{Display, DisplayState, Ty, TySeq, TypeContext, TypeResolver, Lattice};
@@ -10,7 +10,7 @@ use super::{Display, DisplayState, Ty, TySeq, TypeContext, TypeResolver, Lattice
 pub struct Function {
     pub args: TySeq,
     pub argnames: Vec<Option<Spanned<Name>>>, // diagnostics only
-    pub returns: TySeq,
+    pub returns: Option<TySeq>, // None if diverges
 }
 
 impl Function {
@@ -23,20 +23,40 @@ impl Function {
                 argnames.push(Some(name.clone()));
             }
         }
-        let returns = TySeq::from_kind_seq(&func.returns, |kind| kind, resolv)?;
+        let returns = match func.returns {
+            Returns::Seq(ref seq) => Some(TySeq::from_kind_seq(seq, |kind| kind, resolv)?),
+            Returns::Never(_span) => None,
+        };
         Ok(Function { args: args, argnames: argnames, returns: returns })
     }
 
     fn assert_sub(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
-        other.args.assert_sub(&self.args, ctx)?; // contravariant
-        self.returns.assert_sub(&other.returns, ctx)?; // covariant
-        Ok(())
+        // contravariant
+        other.args.assert_sub(&self.args, ctx)?;
+
+        // covariant, ! <: any seq
+        match (&self.returns, &other.returns) {
+            (&Some(ref lhs), &Some(ref rhs)) => lhs.assert_sub(rhs, ctx),
+            (&Some(ref lhs), &None) => {
+                Err(ctx.gen_report().not_sub(Origin::Functions, lhs, "!", ctx))
+            },
+            (&None, _) => Ok(()),
+        }
     }
 
     fn assert_eq(&self, other: &Self, ctx: &mut TypeContext) -> TypeResult<()> {
         self.args.assert_eq(&other.args, ctx)?;
-        self.returns.assert_eq(&other.returns, ctx)?;
-        Ok(())
+
+        match (&self.returns, &other.returns) {
+            (&Some(ref lhs), &Some(ref rhs)) => lhs.assert_sub(rhs, ctx),
+            (&Some(ref lhs), &None) => {
+                Err(ctx.gen_report().not_sub(Origin::Functions, lhs, "!", ctx))
+            },
+            (&None, &Some(ref rhs)) => {
+                Err(ctx.gen_report().not_sub(Origin::Functions, "!", rhs, ctx))
+            },
+            (&None, &None) => Ok(()),
+        }
     }
 
     fn fmt_generic<WriteTy, WriteTySeq>(&self, f: &mut fmt::Formatter,
@@ -68,16 +88,19 @@ impl Function {
         }
         write!(f, ")")?;
 
-        match (self.returns.head.len(), self.returns.tail.is_some()) {
-            (0, false) => write!(f, " --> ()"),
-            (1, false) => {
-                write!(f, " --> ")?;
-                write_ty(&self.returns.head[0], f, false)
+        match self.returns {
+            Some(ref returns) => match (returns.head.len(), returns.tail.is_some()) {
+                (0, false) => write!(f, " --> ()"),
+                (1, false) => {
+                    write!(f, " --> ")?;
+                    write_ty(&returns.head[0], f, false)
+                },
+                (_, _) => {
+                    write!(f, " --> ")?;
+                    write_tyseq(returns, f)
+                },
             },
-            (_, _) => {
-                write!(f, " --> ")?;
-                write_tyseq(&self.returns, f)
-            },
+            None => write!(f, " --> !"),
         }
     }
 }

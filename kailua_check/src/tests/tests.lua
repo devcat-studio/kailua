@@ -780,9 +780,127 @@ for i = 1, 9, 2.1 do
 end
 --! error
 
---8<-- func-never-returns
+--8<-- func-diverges
 function f()
     while true do end
+end
+--! ok
+
+--8<-- func-diverges-type-1
+function f() --> !
+    while true do end
+end
+--! ok
+
+--8<-- func-diverges-type-2
+function f() --> !
+end --@< Error: Tried to return from a function that is marked that it never returns
+--! error
+
+--8<-- func-diverges-chain-1
+--# assume f: function() --> !
+function g() --> !
+    f()
+end
+--! ok
+
+--8<-- func-diverges-chain-2
+--# assume f: function() --> !
+function g() --> !
+    if f() then
+        -- technically this won't execute, but we report anyway
+        return --@< Error: Tried to return from a function that is marked that it never returns
+    end
+end
+--! error
+
+--8<-- func-diverges-chain-3
+--# assume f: function() --> !
+function g() --> !
+    do return end --@< Error: Tried to return from a function that is marked that it never returns
+    f()
+end
+--! error
+
+--8<-- func-diverges-chain-4
+--# assume f: function() --> !
+--v function(a: boolean, b: boolean) --> !
+function g(a, b)
+    if a then
+        f()
+    elseif b then
+        f()
+    end --@< Error: Tried to return from a function that is marked that it never returns
+end
+--! error
+
+--8<-- func-diverges-chain-5
+--# assume f: function() --> !
+--v function(a: boolean, b: boolean) --> !
+function g(a, b)
+    if a then
+        f()
+    elseif b then
+        f()
+    else
+        f()
+    end
+end
+--! ok
+
+--8<-- func-diverges-chain-6
+--# assume f: function() --> !
+--v function()
+function g()
+    local x = 42
+    local y = 54
+    f()
+end
+--! ok
+
+--8<-- func-diverges-chain-7 -- feature:warn_on_dead_code
+--# assume f: function() --> !
+--v function()
+function g()
+    f()
+    local x = 42 --@<-v Warning: This code will never execute
+    local y = 54
+end
+--! ok
+
+--8<-- func-diverges-in-expr-1
+--# assume f: function() --> !
+function g() --> !
+    local x = f() + f() * f()
+end
+--! ok
+
+--8<-- func-diverges-in-expr-2 -- feature:warn_on_dead_code
+--# assume f: function() --> !
+function g() --> !
+    local x = f() + f() * f()
+    local y = x --@<-v Warning: This code will never execute
+    local z = y
+end
+--! ok
+
+--8<-- func-diverges-in-expr-3
+--# assume f: function() --> !
+--v function(x: integer, y: integer)
+function g(x, y) end
+function h() --> !
+    g(f(), 0)
+end
+--! ok
+
+--8<-- func-diverges-in-expr-4 -- feature:warn_on_dead_code
+--# assume f: function() --> !
+--v function(x: integer, y: integer)
+function g(x, y) end
+function h() --> !
+    g(f(), 0)
+    local y = 42 --@<-v Warning: This code will never execute
+    local z = 54
 end
 --! ok
 
@@ -900,6 +1018,14 @@ p(function(x, y, z, ...)
     return x + y + z
 end)
 --! ok
+
+--8<-- funccall-func-hint-diverges
+--v function(a: function() --> !)
+function p(a) end
+
+p(function()
+end) --@< Error: Tried to return from a function that is marked that it never returns
+--! error
 
 --8<-- methodcall-func-hint
 local tab = {}
@@ -1797,10 +1923,9 @@ local y = x + 4 --@< Error: Cannot apply + operator to `any` and `4`
 
 --8<-- require-unknown-returns-2
 --# assume global `require`: [require] function(string) --> any
---# assume x: integer
-x = require 'A' --@< Warning: Cannot resolve the module name given to `require`
-                --@^ Error: Cannot assign `any` into `integer`
-                --@^^ Note: The other type originates here
+x = require 'A' --: integer --@< Warning: Cannot resolve the module name given to `require`
+                            --@^ Error: Cannot assign `any` into `integer`
+                            --@^^ Note: The other type originates here
 
 --& a
 return 42
@@ -1809,8 +1934,7 @@ return 42
 
 --8<-- require-returns-integer
 --# assume global `require`: [require] function(string) --> any
---# assume x: integer
-x = require 'a'
+x = require 'a' --: integer
 
 --& a
 return 42
@@ -1841,8 +1965,7 @@ return x
 
 --8<-- require-returns-string
 --# assume global `require`: [require] function(string) --> any
---# assume x: string
-x = require 'a'
+x = require 'a' --: string
 
 --& a
 local function p() return 'hello' end
@@ -1871,6 +1994,14 @@ require 'a'
 return kailua_test.gen_tvar()
 
 --! error
+
+--8<-- require-no-returns
+--# assume global `require`: [require] function(string) --> any
+x = require 'a' --: true
+
+--& a
+local a = 54
+--! ok
 
 --8<-- require-nested
 --# assume global `require`: [require] function(string) --> any
@@ -1924,8 +2055,7 @@ require 'a'
 
 --8<-- require-name-expr
 --# assume global `require`: [require] function(string) --> any
---# assume x: number
-x = require('a' .. 'b')
+x = require('a' .. 'b') --: number
 
 --& ab
 return 42
@@ -2053,6 +2183,38 @@ return p
 
 --! error
 
+--8<-- require-diverges-1
+--# assume global `require`: [require] function(string) --> any
+x = require 'a' --: nil -- it's really WHATEVER
+
+--& a
+while true do end
+--! ok
+
+--8<-- require-diverges-2 -- feature:warn_on_dead_code
+--# assume global `require`: [require] function(string) --> any
+x = require 'a' --: nil -- it's really WHATEVER
+y = 42 --@< Warning: This code will never execute
+
+--& a
+while true do end
+--! ok
+
+--8<-- require-diverges-3 -- feature:warn_on_dead_code
+--# assume global `require`: [require] function(string) --> any
+local cond = true
+if cond then
+    x = require 'a' --: nil
+else
+    -- this will correctly diverge as cached above
+    y = require 'a' --: nil
+end
+z = 42 --@< Warning: This code will never execute
+
+--& a
+while true do end
+--! ok
+
 --8<-- index-assign-typed
 local p = {x = 5, y = 6} --: {x:number, y:number}
 p.x = 'string' --@< Error: Cannot assign `"string"` into `number`
@@ -2135,6 +2297,20 @@ for x in 'hello' do
     y() --@< Error: Global or local variable `y` is not defined
 end
 --! error
+
+--8<-- for-in-diverges-1
+--# assume func: const function(nil, nil) --> !
+for x in func do
+    local y = x * 42 .. x
+end
+--! ok
+
+--8<-- for-in-diverges-2 -- feature:warn_on_dead_code
+--# assume func: const function(nil, nil) --> !
+for x in func do
+end
+local x = 42 --@< Warning: This code will never execute
+--! ok
 
 --8<-- redefine-global
 p = 42 --: integer
@@ -2596,6 +2772,14 @@ foo(--v [NO_CHECK]
         return x + "string"
     end)
 --! error
+
+--8<-- no-check-diverges
+--v [NO_CHECK]
+--v function(x: integer) --> !
+function foo(x)
+    return 42
+end
+--! ok
 
 --8<-- local-func-without-sibling-scope-1
 local r

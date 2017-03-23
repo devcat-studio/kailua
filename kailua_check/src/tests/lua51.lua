@@ -433,3 +433,9 @@ function Hello:put() --> string
 end
 --! ok
 
+--8<-- lua51-error-diverges -- feature:warn_on_dead_code
+--# open lua51
+error('whatever')
+print(42) --@< Warning: This code will never execute
+--! ok
+

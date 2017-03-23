@@ -668,3 +668,8 @@ define_msg! { pub ImplicitVarargsTypeOnAnonymousFunc:
              but couldn't be inferred from the calls",
 }
 
+define_msg! { pub ReturnInDivergingFunc:
+    "ko" => "반환하지 않도록 지정된 함수 안에서 반환하려고 했습니다",
+    _    => "Tried to return from a function that is marked that it never returns",
+}
+

@@ -10,9 +10,8 @@
 --# assume global `dofile`:
 --#     [geval] function(string?) --> any
 --#
---# -- TODO diverging function signature
 --# assume global `error`:
---#     function(string, integer?)
+--#     function(string, integer?) --> !
 --#
 --# assume global `_G`:
 --#     [genv] table

@@ -13,7 +13,7 @@ use lang::{Language, Lua, Kailua};
 use lex::{Tok, Punct, Keyword, NestedToken, NestingCategory, NestingSerial};
 use ast::{Name, NameRef, Str, Var, Seq, Presig, Sig, Attr, Args};
 use ast::{Ex, Exp, UnOp, BinOp, SelfParam, TypeScope, St, Stmt, Block};
-use ast::{M, K, Kind, SlotKind, FuncKind, TypeSpec, Chunk};
+use ast::{M, K, Kind, SlotKind, FuncKind, TypeSpec, Returns, Chunk};
 
 pub struct Parser<'a> {
     iter: iter::Fuse<&'a mut Iterator<Item=NestedToken>>,
@@ -2166,10 +2166,10 @@ impl<'a> Parser<'a> {
 
         let returns = if self.may_expect(Punct::DashDashGt) {
             // "(" ... ")" "-->" ...
-            self.parse_kailua_kind_seq()?
+            self.parse_kailua_returns()?
         } else {
             // "(" ... ")"
-            Seq { head: Vec::new(), tail: None }
+            Returns::Seq(Seq::empty())
         };
 
         let span = begin..self.last_pos();
@@ -2521,6 +2521,19 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_kailua_returns(&mut self) -> Result<Returns> {
+        match self.read() {
+            (_, Spanned { base: Tok::Punct(Punct::Bang), span }) => {
+                Ok(Returns::Never(span))
+            },
+            tok => {
+                self.unread(tok);
+                let seq = self.parse_kailua_kind_seq()?;
+                Ok(Returns::Seq(seq))
+            },
+        }
+    }
+
     fn parse_kailua_kind_with_spanned_modf(&mut self) -> Result<(Spanned<M>, Spanned<Kind>)> {
         let begin = self.pos();
         let modf = match self.parse_kailua_mod() {
@@ -2598,17 +2611,17 @@ impl<'a> Parser<'a> {
     }
 
     fn try_parse_kailua_rettype_spec(&mut self)
-            -> Result<Option<Spanned<Seq<Spanned<Kind>>>>> {
+            -> Result<Option<Spanned<Returns>>> {
         trace!("parsing kailua return type spec");
         let begin = self.pos();
         if self.may_expect(Punct::DashDashGt) {
             self.recover_meta(|parser| {
                 parser.begin_meta_comment(Punct::DashDashGt);
-                let kinds = parser.parse_kailua_kind_seq()?;
+                let returns = parser.parse_kailua_returns()?;
                 let end = parser.last_pos();
                 parser.end_meta_comment(Punct::DashDashGt)?;
 
-                Ok(Some(kinds.with_loc(begin..end)))
+                Ok(Some(returns.with_loc(begin..end)))
             }, Recover::recover)
         } else {
             Ok(None)
@@ -2660,9 +2673,9 @@ impl<'a> Parser<'a> {
                     let args = parser.parse_kailua_namekindlist()?;
                     parser.expect(Punct::RParen)?;
                     let returns = if parser.may_expect(Punct::DashDashGt) {
-                        parser.parse_kailua_kind_seq()?
+                        parser.parse_kailua_returns()?
                     } else {
-                        Seq { head: Vec::new(), tail: None }
+                        Returns::Seq(Seq::empty())
                     };
                     let end = parser.last_pos();
                     let presig = Presig { prefix: prefix, args: args, returns: Some(returns) };
