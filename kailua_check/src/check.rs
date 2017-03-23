@@ -1389,7 +1389,9 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     // otherwise it is a new variable.
                     self.env.add_var(name, None, Some(info))?;
                 }
-                let functy = self.visit_func_body(None, sig, block, stmt.span, None)?;
+                let (tag, no_check) = self.visit_sig_attrs(&sig.attrs)?;
+                let functy = self.visit_func_body(tag, no_check, None, sig, block,
+                                                  stmt.span, None)?;
                 if let Err(r) = T::TVar(funcv).assert_eq(&*functy.unlift(), self.context()) {
                     self.env.error(stmt, m::BadRecursiveCall {})
                         .report_types(r, TypeReportHint::None)
@@ -1422,14 +1424,16 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 }
 
                 // now prepare the right-hand side (i.e. method decl)
+                let (tag, no_check) = self.visit_sig_attrs(&sig.attrs)?;
                 let method = meths.last().unwrap();
                 let selfinfo = if let Some(ref selfparam) = *selfparam {
-                    let slot = self.visit_self_param(selfparam.span, &info, &sig.attrs, &method)?;
+                    let slot = self.visit_self_param(selfparam.span, &info, no_check, &method)?;
                     Some((selfparam, slot))
                 } else {
                     None
                 };
-                let methinfo = self.visit_func_body(selfinfo, sig, block, stmt.span, None)?;
+                let methinfo = self.visit_func_body(tag, no_check, selfinfo, sig, block,
+                                                    stmt.span, None)?;
 
                 // finally, go through the ordinary table update
                 let subspan = info.span | method.span;
@@ -1584,7 +1588,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
                     // convert `method(...) --> ...` to `function(self: Self, ...) --> ...`
                     // where `Self` is an inferred type from `rootslot`
-                    let selfinfo = self.visit_self_param(stmt.span, &rootslot, &[], &names[0])?;
+                    let selfinfo = self.visit_self_param(stmt.span, &rootslot, false, &names[0])?;
                     func.args.head.insert(0, selfinfo.unlift().clone());
                     func.argnames.insert(0, Some(Name::from(&b"self"[..]).without_loc()));
 
@@ -1605,8 +1609,36 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         }
     }
 
+    // returns a resolved tag (if any) and a boolean for [NO_CHECK]
+    fn visit_sig_attrs(&mut self, attrs: &[Spanned<Attr>]) -> Result<(Option<Tag>, bool)> {
+        let mut tag = None;
+        let mut no_check = false;
+
+        for attr in attrs {
+            if *attr.name.base == *b"NO_CHECK" {
+                // [NO_CHECK] is special
+                if no_check {
+                    self.env.warn(attr, m::DuplicateAttrInSig {}).done()?;
+                } else {
+                    no_check = true;
+                }
+            } else {
+                // None is simply ignored, `Tag::from` has already reported the error
+                if let Some(tag_) = Tag::from(attr, self.env)? {
+                    if tag.is_some() {
+                        self.env.warn(attr, m::DuplicateAttrInSig {}).done()?;
+                    } else {
+                        tag = Some(tag_);
+                    }
+                }
+            }
+        }
+
+        Ok((tag, no_check))
+    }
+
     fn visit_self_param(&mut self, selfparamspan: Span, tableinfo: &Spanned<Slot>,
-                        attrs: &[Spanned<Attr>], method: &Spanned<Name>) -> Result<Slot> {
+                        no_check: bool, method: &Spanned<Name>) -> Result<Slot> {
         // try to infer the type for `self`:
         // - if `tableinfo` is a class prototype `self` should be a corresponding instance
         // - if `tableinfo` is a string metatable `self` should be a string
@@ -1635,7 +1667,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         if let Some(ty) = inferred {
             Ok(Slot::var(ty))
         } else {
-            if attrs.iter().any(|a| *a.name.base == *b"NO_CHECK") {
+            if no_check {
                 self.env.error(selfparamspan, m::NoCheckRequiresTypedSelf {})
                         .done()?;
             }
@@ -1646,12 +1678,10 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         }
     }
 
-    fn visit_func_body(&mut self, selfparam: Option<(&Spanned<SelfParam>, Slot)>, sig: &Sig,
+    fn visit_func_body(&mut self, tag: Option<Tag>, no_check: bool,
+                       selfparam: Option<(&Spanned<SelfParam>, Slot)>, sig: &Sig,
                        block: &Spanned<Vec<Spanned<Stmt>>>, declspan: Span,
                        hint: Option<Spanned<Slot>>) -> Result<Slot> {
-        // if no check is requested, the signature should be complete
-        let no_check = sig.attrs.iter().any(|a| *a.name.base == *b"NO_CHECK");
-
         // if the hint exists and is a function,
         // collect first `sig.args.head.len()` types for missing argument types,
         // and a repeating part of remaining type sequence for a missing variadic argument type.
@@ -1804,7 +1834,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             },
         };
         let func = Function { args: args, argnames: argnames, returns: returns };
-        Ok(Slot::just(Ty::new(T::func(func))))
+        Ok(Slot::just(Ty::new(T::func(func)).with_tag(tag)))
     }
 
     fn visit_func_call(&mut self, functy: &Spanned<Ty>, selfinfo: Option<Spanned<Slot>>,
@@ -2124,7 +2154,9 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             Ex::Exp(ref e) => Ok(SlotSeq::from(self.visit_exp(e, hint)?.into_first().base)),
             Ex::Func(ref sig, _scope, ref block) => {
                 let hint = hint.map(|seq| seq.into_first());
-                let returns = self.visit_func_body(None, sig, block, exp.span, hint)?;
+                let (tag, no_check) = self.visit_sig_attrs(&sig.attrs)?;
+                let returns = self.visit_func_body(tag, no_check, None, sig, block,
+                                                   exp.span, hint)?;
                 Ok(SlotSeq::from(returns))
             },
             Ex::Table(ref fields) => Ok(SlotSeq::from(self.visit_table(fields)?)),

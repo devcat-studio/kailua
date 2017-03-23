@@ -1070,8 +1070,8 @@ impl Ty {
             },
 
             K::EmptyTable => {
-                let rvar = resolv.context().gen_rvar();
-                resolv.context().assert_rvar_closed(rvar.clone()).expect(
+                let rvar = resolv.context_mut().gen_rvar();
+                resolv.context_mut().assert_rvar_closed(rvar.clone()).expect(
                     "cannot make a fresh row variable not extensible"
                 );
                 Ty::new(T::Tables(Cow::Owned(Tables::Fields(rvar))))
@@ -1098,12 +1098,12 @@ impl Ty {
                         }
                     }
                 }
-                let rvar = resolv.context().gen_rvar();
-                resolv.context().assert_rvar_includes(rvar.clone(), &newfields).expect(
+                let rvar = resolv.context_mut().gen_rvar();
+                resolv.context_mut().assert_rvar_includes(rvar.clone(), &newfields).expect(
                     "cannot insert disjoint fields into a fresh row variable"
                 );
                 if !extensible {
-                    resolv.context().assert_rvar_closed(rvar.clone()).expect(
+                    resolv.context_mut().assert_rvar_closed(rvar.clone()).expect(
                         "cannot make a fresh row variable not extensible"
                     );
                 }
@@ -1117,12 +1117,12 @@ impl Ty {
                     let slot = slot_from_slotkind(slotkind, resolv)?;
                     newfields.push((key, slot));
                 }
-                let rvar = resolv.context().gen_rvar();
-                resolv.context().assert_rvar_includes(rvar.clone(), &newfields).expect(
+                let rvar = resolv.context_mut().gen_rvar();
+                resolv.context_mut().assert_rvar_includes(rvar.clone(), &newfields).expect(
                     "cannot insert disjoint fields into a fresh row variable"
                 );
                 // tuples are always not extensible
-                resolv.context().assert_rvar_closed(rvar.clone()).expect(
+                resolv.context_mut().assert_rvar_closed(rvar.clone()).expect(
                     "cannot make a fresh row variable not extensible"
                 );
                 Ty::new(T::Tables(Cow::Owned(Tables::Fields(rvar))))
@@ -1150,7 +1150,7 @@ impl Ty {
                 let mut ty = Ty::from_kind(&kinds[0], resolv)?.with_loc(kind);
                 for k in &kinds[1..] {
                     let t = Ty::from_kind(k, resolv)?.with_loc(k);
-                    match ty.union(&t, true, resolv.context()) {
+                    match ty.union(&t, true, resolv.context_mut()) {
                         Ok(t) => {
                             ty = t.with_loc(kind);
                         }
@@ -1169,8 +1169,12 @@ impl Ty {
                 let mut ty = Ty::from_kind(kind, resolv)?;
                 // None is simply ignored, `Tag::from` has already reported the error
                 if let Some(tag) = Tag::from(attr, resolv)? {
-                    // XXX check for the duplicate tag
-                    ty.inner.set_tag(Some(tag));
+                    if ty.inner.tag().is_some() {
+                        resolv.warn(attr, m::DuplicateAttr { ty: ty.display(resolv.context()) })
+                              .done()?;
+                    } else {
+                        ty.inner.set_tag(Some(tag));
+                    }
                 }
                 ty
             }

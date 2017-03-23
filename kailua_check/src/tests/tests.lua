@@ -2177,6 +2177,33 @@ local function p() end
 --# }
 --! ok
 
+--8<-- unknown-attr-func
+--v [memoize] --@< Warning: `memoize` is an unknown type attribute and ignored
+--v function(x: boolean)
+function foo(x) end
+--! ok
+
+--8<-- duplicate-attr
+-- `[string_meta] [genv] WHATEVER` is syntactically forbidden
+--# assume foo: [string_meta] ([genv] WHATEVER)
+--@^ Warning: Cannot add an attribute to a type `[genv] WHATEVER` with an existing attribute
+--! ok
+
+--8<-- duplicate-attr-func
+--v [`internal no_subtype`]
+--v [`internal no_subtype2`] --@< Warning: Cannot add an attribute to a function specification with an existing attribute
+--v function(x: boolean)
+function foo(x) end
+--! ok
+
+--8<-- duplicate-attr-func-no-check
+--v [`internal no_subtype`]
+--v [NO_CHECK] -- does not count
+--v [`internal no_subtype2`] --@< Warning: Cannot add an attribute to a function specification with an existing attribute
+--v function(x: boolean)
+function foo(x) end
+--! ok
+
 --8<-- builtin-with-subtyping-1
 --# assume x: [`internal subtype`] number
 --# assume y: number

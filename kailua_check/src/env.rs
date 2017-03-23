@@ -1985,7 +1985,11 @@ impl<'ctx, R: Report> Report for Env<'ctx, R> {
 }
 
 impl<'ctx, R: Report> TypeResolver for Env<'ctx, R> {
-    fn context(&mut self) -> &mut TypeContext {
+    fn context(&self) -> &TypeContext {
+        self.context
+    }
+
+    fn context_mut(&mut self) -> &mut TypeContext {
         self.context
     }
 

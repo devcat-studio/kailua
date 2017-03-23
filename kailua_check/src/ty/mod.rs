@@ -97,13 +97,17 @@ impl fmt::Debug for Class {
 // the type resolver is a superset of more constrained type context
 // and has the name-to-type mapping (which is useless for the type operations themselves)
 pub trait TypeResolver: Report {
-    fn context(&mut self) -> &mut TypeContext;
+    fn context(&self) -> &TypeContext;
+    fn context_mut(&mut self) -> &mut TypeContext;
     fn ty_from_name(&self, name: &Spanned<Name>) -> Result<Ty>;
 }
 
 impl<'a, R: TypeResolver + ?Sized> TypeResolver for &'a mut R {
-    fn context(&mut self) -> &mut TypeContext {
+    fn context(&self) -> &TypeContext {
         (**self).context()
+    }
+    fn context_mut(&mut self) -> &mut TypeContext {
+        (**self).context_mut()
     }
     fn ty_from_name(&self, name: &Spanned<Name>) -> Result<Ty> {
         (**self).ty_from_name(name)

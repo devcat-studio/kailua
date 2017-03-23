@@ -8,6 +8,7 @@ pub enum Tag {
     // only used to test tags requiring subtypes and those not.
     _Subtype,
     _NoSubtype,
+    _NoSubtype2,
 
     // function(string, ...) -> table
     //
@@ -137,8 +138,9 @@ pub enum Tag {
 impl Tag {
     pub fn from(attr: &Attr, resolv: &mut TypeResolver) -> Result<Option<Tag>> {
         match &attr.name.base[..] {
-            b"internal subtype"    => Ok(Some(Tag::_Subtype)),
-            b"internal no_subtype" => Ok(Some(Tag::_NoSubtype)),
+            b"internal subtype"     => Ok(Some(Tag::_Subtype)),
+            b"internal no_subtype"  => Ok(Some(Tag::_NoSubtype)),
+            b"internal no_subtype2" => Ok(Some(Tag::_NoSubtype2)),
 
             b"require"       => Ok(Some(Tag::Require)),
             b"type"          => Ok(Some(Tag::Type)),
@@ -182,6 +184,7 @@ impl Tag {
 
             Tag::_Subtype         => "internal subtype",
             Tag::_NoSubtype       => "internal no_subtype",
+            Tag::_NoSubtype2      => "internal no_subtype2",
             Tag::Constructible    => "internal constructible",
             Tag::Constructor      => "internal constructor",
             Tag::KailuaGenTvar    => "internal kailua_gen_tvar",
@@ -218,6 +221,7 @@ impl Tag {
             // only used for testing
             Tag::_Subtype => true,
             Tag::_NoSubtype => false,
+            Tag::_NoSubtype2 => false,
 
             Tag::PackagePath |
             Tag::PackageCpath |

@@ -416,6 +416,16 @@ define_msg! { pub UnknownAttrName<'a> { name: &'a Name }:
     _    => "{name} is an unknown type attribute and ignored",
 }
 
+define_msg! { pub DuplicateAttr<'a> { ty: Ty<'a> }:
+    "ko" => "이미 속성이 붙어 있는 `{ty}` 타입에 속성을 더 붙일 수 없습니다",
+    _    => "Cannot add an attribute to a type `{ty}` with an existing attribute",
+}
+
+define_msg! { pub DuplicateAttrInSig:
+    "ko" => "이미 속성이 붙어 있는 함수 명세에 속성을 더 붙일 수 없습니다",
+    _    => "Cannot add an attribute to a function specification with an existing attribute",
+}
+
 define_msg! { pub CannotAssignToPackagePath<'a> { name: &'a str }:
     "ko" => "`{name}` 내장 변수에 값을 저장하다 문제가 생겨서 \
              `require` 경로를 찾는데 문제가 있을 수 있습니다",
