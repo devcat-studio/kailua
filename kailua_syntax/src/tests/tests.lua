@@ -855,6 +855,22 @@ local y --: function(a: any...) --@< Error: Variadic arguments cannot have a nam
 --! [Local([`x`$1: _ Func((`a`: Any, Any...) --> ())], [])$1, \
 --!  Local([`y`$2: _ Func((Any...) --> ())], [])$2]
 
+--8<-- kind-func-named-args-recover-1
+local a --: function(a             --@<-v Error: Expected `)`, got a newline
+local b --: function(a:            --@<-v Error: Expected a single type, got a newline
+local c --: function(a: string, b  --@<-v Error: Expected `)`, got a newline
+local d --: function(a: string, b: --@<-v Error: Expected a single type, got a newline
+--! [Local([`a`$1: _ Oops], [])$1, \
+--!  Local([`b`$2: _ Oops], [])$2, \
+--!  Local([`c`$3: _ Oops], [])$3, \
+--!  Local([`d`$4: _ Oops], [])$4]
+
+--8<-- kind-func-named-args-recover-2
+local a --: function(a:)            --@< Error: Expected a single type, got `)`
+local b --: function(a: string, b:) --@< Error: Expected a single type, got `)`
+--! [Local([`a`$1: _ Oops], [])$1, \
+--!  Local([`b`$2: _ Oops], [])$2]
+
 --8<-- kind-func-no-named-returns
 local x --: function(string, integer) --> (a: integer, b: string)
 --@^ Error: Expected `)`, got `:`
@@ -939,6 +955,22 @@ local x --: {a: string, ... | nil --@< Error: Expected `}`, got `|`
 local y --: {b: string, ...}
 --! [Local([`x`$1: _ Record(["a": _ String, ...])], [])$1, \
 --!  Local([`y`$2: _ Record(["b": _ String, ...])], [])$2]
+
+--8<-- kind-rec-name-recover-1
+local a --: {a             --@<-v Error: Expected `,`, `;` or `}`, got a newline
+local b --: {a:            --@<-v Error: Expected a single type, got a newline
+local c --: {a: string, b  --@<-v Error: Expected `:`, got a newline
+local d --: {a: string, b: --@<-v Error: Expected a single type, got a newline
+--! [Local([`a`$1: _ Tuple([_ `a`])], [])$1, \
+--!  Local([`b`$2: _ Record([])], [])$2, \
+--!  Local([`c`$3: _ Record(["a": _ String])], [])$3, \
+--!  Local([`d`$4: _ Record(["a": _ String])], [])$4]
+
+--8<-- kind-rec-name-recover-2
+local a --: {a:}            --@< Error: Expected a single type, got `}`
+local b --: {a: string, b:} --@< Error: Expected a single type, got `}`
+--! [Local([`a`$1: _ Record([])], [])$1, \
+--!  Local([`b`$2: _ Record(["a": _ String])], [])$2]
 
 --8<-- kind-tuple
 local x --: {const function (); string;

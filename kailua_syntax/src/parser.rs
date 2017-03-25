@@ -357,9 +357,7 @@ impl<'a> Parser<'a> {
                 "at most two lookahead tokens are supported");
 
         // this overwrites the prior value, i.e. newlines elided between the first lookahead
-        // and the second lookahead will be ignored.
-        // this is fine, because the secondary lookahead is only used
-        // in `try_parse_kailua_atomic_kind_seq` and is thus fine to be ignored.
+        // and the second lookahead will be ignored (fine as long as we don't use them).
         self.elided_newline = elided;
         if let Some(tok) = self.lookahead.take() {
             self.lookahead2 = Some(tok);
@@ -1992,6 +1990,12 @@ impl<'a> Parser<'a> {
         Ok(SlotKind { modf: modf, kind: kind }.with_loc(begin..self.last_pos()))
     }
 
+    fn parse_kailua_slotkind_after_name(&mut self, begin: Pos,
+                                        name: Spanned<Name>) -> Result<Spanned<SlotKind>> {
+        let kind = self.parse_kailua_kind_after_name(begin, name)?;
+        Ok(SlotKind { modf: M::None, kind: kind }.with_loc(begin..self.last_pos()))
+    }
+
     // parses either [NAME ":"] KIND {"," [NAME ":"] KIND} ["," KIND "..."]; or [KIND "..."].
     // used for kind sequences after `--:` (without names) or function types (with names).
     // names should be unique if present.
@@ -2009,32 +2013,35 @@ impl<'a> Parser<'a> {
                 return Ok(parser.try_parse_kailua_kind()?.map(|kind| (None, kind)));
             }
 
-            // NAME is a subset of KIND; distinguish by a secondary lookahead
-            let mut tok = parser.read();
+            // NAME is a subset of KIND; distinguish by the secondary token
+            let begin = parser.pos();
+            let tok = parser.read();
             if let Tok::Name(name) = tok.1.base {
+                let name = Name::from(name).with_loc(tok.1.span);
                 if parser.lookahead(Punct::Colon) {
-                    let name = Name::from(name);
-                    match seen.entry(name.clone()) {
+                    match seen.entry(name.base.clone()) {
                         hash_map::Entry::Occupied(e) => {
                             parser.error(tok.1.span, m::DuplicateArgNameInFuncKind { name: &name })
                                   .note(*e.get(), m::FirstArgNameInFuncKind {})
                                   .done()?;
                         }
                         hash_map::Entry::Vacant(e) => {
-                            e.insert(tok.1.span);
+                            e.insert(name.span);
                         }
                     }
 
                     parser.expect(Punct::Colon)?;
                     let kind = parser.parse_kailua_kind()?;
-                    return Ok(Some((Some(name.with_loc(tok.1.span)), kind)));
+                    Ok(Some((Some(name), kind)))
+                } else {
+                    let kind = parser.parse_kailua_kind_after_name(begin, name)?;
+                    Ok(Some((None, kind)))
                 }
-                tok.1.base = Tok::Name(name); // put name back
+            } else {
+                parser.unread(tok);
+                let kind = parser.try_parse_kailua_kind()?;
+                Ok(kind.map(|kind| (None, kind)))
             }
-
-            parser.unread(tok);
-            let kind = parser.try_parse_kailua_kind()?;
-            Ok(kind.map(|kind| (None, kind)))
         };
 
         // try to read the first [NAME ":"] KIND
@@ -2217,11 +2224,54 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_kailua_kind_suffix(&mut self, begin: Pos, kind: Spanned<Kind>) -> Spanned<Kind> {
+        // postfix type operators cannot appear twice in a row
+        // (can work around with parens, but still not well-formed and the checker will error)
+        if self.may_expect(Punct::Ques) {
+            Box::new(K::WithNil(kind)).with_loc(begin..self.last_pos())
+        } else if self.may_expect(Punct::Bang) {
+            Box::new(K::WithoutNil(kind)).with_loc(begin..self.last_pos())
+        } else {
+            kind
+        }
+    }
+
+    fn parse_kailua_kind_after_name(&mut self, begin: Pos,
+                                    name: Spanned<Name>) -> Result<Spanned<Kind>> {
+        let kind = if *name.base == b"error"[..] {
+            // may follow an error reason
+            let reason = match self.read() {
+                (_, Spanned { base: Tok::Str(s), span }) => {
+                    Some(Str::from(s).with_loc(span))
+                }
+                tok => {
+                    self.unread(tok);
+                    None
+                }
+            };
+            Box::new(K::Error(reason)).with_loc(name.span)
+        } else {
+            let namespan = name.span;
+            let kind = match self.builtin_kind(&name) {
+                Some(Some(kind)) => kind,
+                Some(None) => {
+                    self.error(&name, m::ReservedKindName { name: &name }).done()?;
+                    K::Oops
+                },
+                None => {
+                    K::Named(name)
+                },
+            };
+            Box::new(kind).with_loc(namespan)
+        };
+        Ok(self.parse_kailua_kind_suffix(begin, kind))
+    }
+
     // returns true if it can be followed by postfix operators
     fn try_parse_kailua_atomic_kind_seq(&mut self) -> Result<Option<AtomicKind>> {
         let begin = self.pos();
 
-        let mut kind = match self.read() {
+        let kind = match self.read() {
             (_, Spanned { base: Tok::Keyword(Keyword::Function), span }) => {
                 // either a "function" type or a function signature
                 if self.lookahead(Punct::LParen) {
@@ -2262,44 +2312,75 @@ impl<'a> Parser<'a> {
                         Box::new(K::Record(Vec::new(), true))
                     },
 
-                    // tuple or record -- distinguished by the secondary lookahead
+                    // tuple or record -- distinguished by the secondary token
                     tok => {
-                        let is_record = if let Tok::Name(_) = tok.1.base {
-                            self.lookahead(Punct::Colon)
-                        } else {
-                            false
-                        };
-                        self.unread(tok);
+                        #[derive(Debug)]
+                        enum TupOrRec { Tup(Spanned<SlotKind>), Rec(Spanned<Name>) }
 
-                        if is_record {
-                            // "{" NAME ":" MODF KIND {"," NAME ":" MODF KIND} ["," "..."] "}"
-                            let mut seen = HashMap::new(); // value denotes the first span
-                            let (extensible, fields) = self.scan_tabular_body(true, |parser| {
-                                let name = parser.parse_name()?;
-                                match seen.entry(name.base.clone()) {
-                                    hash_map::Entry::Occupied(e) => {
-                                        parser.error(name.span,
-                                                     m::DuplicateFieldNameInRec
-                                                         { name: &name.base })
-                                              .note(*e.get(), m::FirstFieldNameInRec {})
-                                              .done()?;
-                                    }
-                                    hash_map::Entry::Vacant(e) => {
-                                        e.insert(name.span);
-                                    }
-                                }
-                                let name = Str::from(name.base).with_loc(name.span);
-                                parser.expect(Punct::Colon)?;
-                                let slotkind = parser.parse_kailua_slotkind()?;
-                                Ok((name, slotkind))
-                            })?;
-                            Box::new(K::Record(fields, extensible))
+                        let tup_or_rec = if let Tok::Name(name) = tok.1.base {
+                            let name = Name::from(name).with_loc(tok.1.span);
+                            if self.lookahead(Punct::Colon) {
+                                TupOrRec::Rec(name)
+                            } else {
+                                TupOrRec::Tup(self.parse_kailua_slotkind_after_name(begin, name)?)
+                            }
                         } else {
+                            self.unread(tok);
+                            TupOrRec::Tup(self.parse_kailua_slotkind()?)
+                        };
+
+                        match tup_or_rec {
+                            // "{" NAME ":" MODF KIND {"," NAME ":" MODF KIND} ["," "..."] "}"
+                            // we have already read up to the first NAME
+                            TupOrRec::Rec(first_name) => {
+                                let mut seen = HashMap::new(); // value denotes the first span
+                                let mut first_name = Some(first_name);
+                                let (extensible, fields) = self.scan_tabular_body(true, |parser| {
+                                    let name = if let Some(name) = first_name.take() {
+                                        name
+                                    } else {
+                                        parser.parse_name()?
+                                    };
+                                    match seen.entry(name.base.clone()) {
+                                        hash_map::Entry::Occupied(e) => {
+                                            parser.error(name.span,
+                                                         m::DuplicateFieldNameInRec
+                                                             { name: &name.base })
+                                                  .note(*e.get(), m::FirstFieldNameInRec {})
+                                                  .done()?;
+                                        }
+                                        hash_map::Entry::Vacant(e) => {
+                                            e.insert(name.span);
+                                        }
+                                    }
+                                    let name = Str::from(name.base).with_loc(name.span);
+                                    parser.expect(Punct::Colon)?;
+                                    let slotkind = parser.parse_kailua_slotkind()?;
+                                    Ok((name, slotkind))
+                                })?;
+                                Box::new(K::Record(fields, extensible))
+                            },
+
                             // "{" MODF KIND "," [MODF KIND {"," MODF KIND}] "}"
-                            let (_ellipsis, fields) = self.scan_tabular_body(false, |parser| {
-                                parser.parse_kailua_slotkind()
-                            })?;
-                            Box::new(K::Tuple(fields))
+                            // we have already read up to the first KIND
+                            TupOrRec::Tup(first_slotkind) => {
+                                let mut first_slotkind = Some(first_slotkind);
+                                let (_, mut fields) = self.scan_tabular_body(false, |parser| {
+                                    // fake the first SlotKind read (but mind that this closure
+                                    // can never be called if the lookahead is `}`)
+                                    if let Some(slotkind) = first_slotkind.take() {
+                                        Ok(slotkind)
+                                    } else {
+                                        parser.parse_kailua_slotkind()
+                                    }
+                                })?;
+                                if let Some(slotkind) = first_slotkind {
+                                    // ...therefore this can happen for a valid code
+                                    assert!(fields.is_empty());
+                                    fields.push(slotkind);
+                                }
+                                Box::new(K::Tuple(fields))
+                            },
                         }
                     }
                 };
@@ -2349,32 +2430,9 @@ impl<'a> Parser<'a> {
             }
 
             (_, Spanned { base: Tok::Name(name), span }) => {
-                if name == b"error" {
-                    // may follow an error reason
-                    let reason = match self.read() {
-                        (_, Spanned { base: Tok::Str(s), span }) => {
-                            Some(Str::from(s).with_loc(span))
-                        }
-                        tok => {
-                            self.unread(tok);
-                            None
-                        }
-                    };
-                    Box::new(K::Error(reason)).with_loc(span)
-                } else {
-                    let name = Name::from(name);
-                    let kind = match self.builtin_kind(&name) {
-                        Some(Some(kind)) => kind,
-                        Some(None) => {
-                            self.error(span, m::ReservedKindName { name: &name }).done()?;
-                            K::Oops
-                        },
-                        None => {
-                            K::Named(name.with_loc(span))
-                        },
-                    };
-                    Box::new(kind).with_loc(span)
-                }
+                let name = Name::from(name).with_loc(span);
+                let kind = self.parse_kailua_kind_after_name(begin, name)?;
+                return Ok(Some(AtomicKind::One(kind)));
             }
 
             (_, Spanned { base: Tok::Num(v), span })
@@ -2392,14 +2450,7 @@ impl<'a> Parser<'a> {
             }
         };
 
-        // postfix type operators cannot appear twice in a row
-        // (can work around with parens, but still not well-formed and the checker will error)
-        if self.may_expect(Punct::Ques) {
-            kind = Box::new(K::WithNil(kind)).with_loc(begin..self.last_pos());
-        } else if self.may_expect(Punct::Bang) {
-            kind = Box::new(K::WithoutNil(kind)).with_loc(begin..self.last_pos());
-        }
-
+        let kind = self.parse_kailua_kind_suffix(begin, kind);
         Ok(Some(AtomicKind::One(kind)))
     }
 
