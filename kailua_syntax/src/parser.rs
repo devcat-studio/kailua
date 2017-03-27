@@ -152,10 +152,7 @@ impl<T> Recover for Vec<T> {
 }
 
 impl<T: Recover> Recover for Spanned<T> {
-    fn recover() -> Self {
-        let v: T = Recover::recover();
-        v.without_loc()
-    }
+    fn recover() -> Self { T::recover().without_loc() }
 }
 
 impl<T: Recover> Recover for Box<T> {
@@ -1975,19 +1972,21 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_kailua_mod(&mut self) -> M {
+    fn parse_kailua_modf(&mut self) -> Result<Spanned<M>> {
+        let begin = self.pos();
         if self.may_expect(Keyword::Const) {
-            M::Const
+            let end = self.last_pos();
+            Ok(M::Const.with_loc(begin..end))
         } else {
-            M::None
+            Ok(M::None.with_loc(begin))
         }
     }
 
     fn parse_kailua_slotkind(&mut self) -> Result<Spanned<SlotKind>> {
         let begin = self.pos();
-        let modf = self.parse_kailua_mod();
+        let modf = self.parse_kailua_modf()?;
         let kind = self.parse_kailua_kind()?;
-        Ok(SlotKind { modf: modf, kind: kind }.with_loc(begin..self.last_pos()))
+        Ok(SlotKind { modf: modf.base, kind: kind }.with_loc(begin..self.last_pos()))
     }
 
     fn parse_kailua_slotkind_after_name(&mut self, begin: Pos,
@@ -2117,9 +2116,9 @@ impl<'a> Parser<'a> {
             let parse_named_type_spec = |parser: &mut Self, name: Spanned<Name>,
                                          begin: Pos| -> Result<Spanned<TypeSpec<Spanned<Name>>>> {
                 parser.expect(Punct::Colon)?;
-                let modf = parser.parse_kailua_mod();
+                let modf = parser.parse_kailua_modf()?;
                 let kind = parser.parse_kailua_kind()?;
-                let spec = TypeSpec { base: name, modf: modf, kind: Some(kind) };
+                let spec = TypeSpec { base: name, modf: modf.base, kind: Some(kind) };
                 Ok(spec.with_loc(begin..parser.last_pos()))
             };
 
@@ -2188,9 +2187,13 @@ impl<'a> Parser<'a> {
         let begin = self.pos();
         if self.may_expect(Punct::Lt) {
             // `<` MODF KIND [`,` MODF KIND] `>`
-            let mut kinds = vec![self.parse_kailua_kind_with_spanned_modf()?];
+            let modf = self.parse_kailua_modf()?;
+            let kind = self.recover_upto(Self::parse_kailua_kind)?;
+            let mut kinds = vec![(modf, kind)];
             while self.may_expect(Punct::Comma) {
-                kinds.push(self.parse_kailua_kind_with_spanned_modf()?);
+                let modf = self.parse_kailua_modf()?;
+                let kind = self.recover_upto(Self::parse_kailua_kind)?;
+                kinds.push((modf, kind));
             }
             if !self.may_expect(Punct::Gt) {
                 // try to match against `>>` as well (Lua 5.2+)
@@ -2264,7 +2267,10 @@ impl<'a> Parser<'a> {
             };
             Box::new(kind).with_loc(namespan)
         };
-        Ok(self.parse_kailua_kind_suffix(begin, kind))
+
+        let kind = self.parse_kailua_kind_suffix(begin, kind); // handle ? or !
+        let kind = self.parse_kailua_kind_after_kind(begin, kind)?; // handle `| KIND ...`
+        Ok(kind)
     }
 
     // returns true if it can be followed by postfix operators
@@ -2497,6 +2503,36 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_kailua_kind_after_kind(&mut self, begin: Pos,
+                                    kind: Spanned<Kind>) -> Result<Spanned<Kind>> {
+        if self.lookahead(Punct::Pipe) { // A | B | ...
+            // TODO the current parser is massively ambiguous about pipes in atomic types
+            let mut kinds = vec![kind];
+            while self.may_expect(Punct::Pipe) {
+                let begin = self.pos();
+                match self.try_parse_kailua_prefixed_kind_seq()? {
+                    Some(AtomicKind::One(kind2)) => {
+                        kinds.push(kind2);
+                    }
+                    Some(AtomicKind::Seq(..)) => {
+                        self.error(begin..self.last_pos(), m::NoTypeSeqInUnion {})
+                            .done()?;
+                        kinds.push(Recover::recover());
+                    }
+                    None => {
+                        let tok = self.read();
+                        self.error(tok.1.span, m::NoType { read: &tok.1.base }).done()?;
+                        self.unread(tok);
+                        break;
+                    }
+                }
+            }
+            Ok(Box::new(K::Union(kinds)).with_loc(begin..self.last_pos()))
+        } else {
+            Ok(kind)
+        }
+    }
+
     fn try_parse_kailua_kind_seq(&mut self) -> Result<Option<Spanned<Seq<Spanned<Kind>>>>> {
         let begin = self.pos();
         match self.try_parse_kailua_prefixed_kind_seq()? {
@@ -2504,31 +2540,8 @@ impl<'a> Parser<'a> {
             Some(AtomicKind::Seq(kindseq)) => {
                 Ok(Some(kindseq.with_loc(begin..self.last_pos())))
             }
-            Some(AtomicKind::One(mut kind)) => {
-                if self.lookahead(Punct::Pipe) { // A | B | ...
-                    // TODO the current parser is massively ambiguous about pipes in atomic types
-                    let mut kinds = vec![kind];
-                    while self.may_expect(Punct::Pipe) {
-                        let begin = self.pos();
-                        match self.try_parse_kailua_prefixed_kind_seq()? {
-                            Some(AtomicKind::One(kind2)) => {
-                                kinds.push(kind2);
-                            }
-                            Some(AtomicKind::Seq(..)) => {
-                                self.error(begin..self.last_pos(), m::NoTypeSeqInUnion {})
-                                    .done()?;
-                                kinds.push(Recover::recover());
-                            }
-                            None => {
-                                let tok = self.read();
-                                self.error(tok.1.span, m::NoType { read: &tok.1.base }).done()?;
-                                self.unread(tok);
-                                break;
-                            }
-                        }
-                    }
-                    kind = Box::new(K::Union(kinds)).with_loc(begin..self.last_pos());
-                }
+            Some(AtomicKind::One(kind)) => {
+                let kind = self.parse_kailua_kind_after_kind(begin, kind)?;
                 let kindseq = Seq { head: vec![kind], tail: None };
                 Ok(Some(kindseq.with_loc(begin..self.last_pos())))
             }
@@ -2585,16 +2598,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_kailua_kind_with_spanned_modf(&mut self) -> Result<(Spanned<M>, Spanned<Kind>)> {
-        let begin = self.pos();
-        let modf = match self.parse_kailua_mod() {
-            M::None => M::None.with_loc(begin), // i.e. the beginning of the kind
-            modf => modf.with_loc(begin..self.last_pos()),
-        };
-        let kind = self.recover_upto(Self::parse_kailua_kind)?;
-        Ok((modf, kind))
-    }
-
     fn try_parse_kailua_type_spec_with_spanned_modf(&mut self)
             -> Result<Option<Spanned<(Spanned<M>, Spanned<Kind>)>>> {
         let metabegin = self.pos();
@@ -2603,7 +2606,10 @@ impl<'a> Parser<'a> {
                 // allow for `--: { a = foo,
                 //            --:   b = bar }`
                 parser.begin_meta_comment(Punct::DashDashColon);
-                let spec = parser.parse_kailua_kind_with_spanned_modf()?;
+
+                let modf = parser.parse_kailua_modf()?;
+                let kind = parser.recover_upto(Self::parse_kailua_kind)?;
+
                 let metaend = parser.last_pos();
                 // allow for `--: last type --> return type` in the function decl
                 if !parser.lookahead(Punct::DashDashGt) {
@@ -2616,7 +2622,7 @@ impl<'a> Parser<'a> {
                     //                         --: --> return_type`. seems harmless though.
                     parser.elided_newline = None;
                 }
-                Ok(Some(spec.with_loc(metabegin..metaend)))
+                Ok(Some((modf, kind).with_loc(metabegin..metaend)))
             }, Recover::recover)
         } else {
             Ok(None)
@@ -2640,8 +2646,9 @@ impl<'a> Parser<'a> {
                 let mut specs = Vec::new();
                 parser.scan_list(|parser| {
                     let begin = parser.pos();
-                    let spec = parser.parse_kailua_kind_with_spanned_modf()?;
-                    Ok(spec.with_loc(begin..parser.last_pos()))
+                    let modf = parser.parse_kailua_modf()?;
+                    let kind = parser.recover_upto(Self::parse_kailua_kind)?;
+                    Ok((modf, kind).with_loc(begin..parser.last_pos()))
                 }, |spec| {
                     specs.push(spec.map(|(m,k)| (m.base, k)));
                 })?;
@@ -2786,7 +2793,7 @@ impl<'a> Parser<'a> {
                         let namesend = parser.last_pos();
 
                         parser.expect(Punct::Colon)?;
-                        let modf = parser.parse_kailua_mod();
+                        let modf = parser.parse_kailua_modf()?.base;
                         let kindbegin = parser.pos();
                         let kind = if parser.may_expect(Keyword::Method) {
                             let funckind = parser.recover_upto(|p| {

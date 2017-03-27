@@ -997,6 +997,10 @@ local x --: {WHATEVER,WHATEVER}
 local x --: {WHATEVER;WHATEVER;}
 --! [Local([`x`$1: _ Tuple([_ Dynamic, _ Dynamic])], [])$1]
 
+--8<-- kind-tuple-or
+local x --: {string?|integer}
+--! [Local([`x`$1: _ Tuple([_ Union([String?, Integer])])], [])$1]
+
 --8<-- kind-array
 local x --: vector<integer>
 local y --: vector<const integer>
