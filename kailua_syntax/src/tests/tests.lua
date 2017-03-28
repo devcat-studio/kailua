@@ -198,6 +198,32 @@ local a = f() --: integer,
               --: const {} --@^-< Error: Excess type specifications after the `local` declaration
 --! [Local([`a`$1], [`f`_()])$1]
 
+--8<-- local-modf-only-1
+local a --: const
+--! [Local([`a`$1: Const], [])$1]
+
+--8<-- local-modf-only-2
+local a, b, c = 1, '2', false --: const, const string, boolean
+--! [Local([`a`$1: Const, `b`$1: Const String, `c`$1: _ Boolean], [1, "2", false])$1]
+
+--8<-- local-modf-only-3
+local a, b, c = 1, 2, 3 --: const, const, const
+--! [Local([`a`$1: Const, `b`$1: Const, `c`$1: Const], [1, 2, 3])$1]
+
+--8<-- local-module-1
+local a = {} --: module
+local b = {} --: module {}
+--! [Local([`a`$1: Module], [{}])$1, \
+--!  Local([`b`$2: Module EmptyTable], [{}])$2]
+
+--8<-- local-module-2
+local a, b, c = {} --: module, {}, module {}
+--! [Local([`a`$1: Module, `b`$1: _ EmptyTable, `c`$1: Module EmptyTable], [{}])$1]
+
+--8<-- local-module-recover
+local a = {} --: module { --@<-v Error: Expected a single type, got a newline
+--! [Local([`a`$1: Module Oops], [{}])$1]
+
 --8<-- assign-1-1
 a = f()
 --! [Assign([`a`_], [`f`_()])]
@@ -296,6 +322,18 @@ c = f() --: const {}
 --@^ Error: The type specification cannot appear both at the left hand side and after the assignment
 --! [Assign([`a`_: _ Integer, `b`_: _ String, `c`_], [`f`_()])]
 
+--8<-- assign-separate-modf-and-kind-in-same-line-1
+a, b, c --: {}
+        = f() --: const, const, const
+--@^ Error: The type specification cannot appear both at the left hand side and after the assignment
+--! [Assign([`a`_, `b`_, `c`_: _ EmptyTable], [`f`_()])]
+
+--8<-- assign-separate-modf-and-kind-in-same-line-2
+a, b, c --: const
+        = f() --: const, const, {}
+--@^ Error: The type specification cannot appear both at the left hand side and after the assignment
+--! [Assign([`a`_, `b`_, `c`_: Const], [`f`_()])]
+
 --8<-- assign-less-types-in-same-line-1
 a, b,
 c --@< Error: Excess type specifications in the left hand side
@@ -331,18 +369,28 @@ a.x, b, c['z'] = 42, 54 --: integer, integer
 --@^ Error: Excess type specifications in the left hand side
 --! [Assign([`a`_.`x`, `b`_, `c`_["z"]], [42, 54])]
 
---8<-- func-argtype
+--8<-- argtype
 local function r(p --: integer
                 )
 
 end
 --! [FuncDecl(`r`$2, [`p`$1: _ Integer] --> _, $1[])$2]
 
---8<-- func-argtype-rettype
+--8<-- argtype-rettype
 local function r(p, q) --: integer --> string
 
 end
 --! [FuncDecl(`r`$2, [`p`$1, `q`$1: _ Integer] --> String, $1[])$2]
+
+--8<-- argtype-modf-only
+function foo(x) --: const
+end
+--! [FuncDecl(`foo`_, [`x`$1: Const] --> _, $1[])]
+
+--8<-- argtype-module
+function foo(x) --: module {...}
+end
+--! [FuncDecl(`foo`_, [`x`$1: Module Record([...])] --> _, $1[])]
 
 --8<-- funccall
 f()
@@ -517,6 +565,18 @@ local c = a .. b
 --!  Assign([`b`_], [`a`$2]), \
 --!  KailuaAssume(`b`$3, `b`_, _, String)$3, \
 --!  Local([`c`$4], [(`a`$2 .. `b`$3)])$4]
+
+--8<-- assume-modf
+--# assume a: const --@<-v Error: Expected a single type, got a newline
+local b = 42
+--# assume b: const string
+--! [KailuaAssume(`a`$1, `a`_, Const, Oops)$1, \
+--!  Local([`b`$2], [42])$2, \
+--!  KailuaAssume(`b`$3, `b`$2, Const, String)$3]
+
+--8<-- assume-module
+--# assume a: module {} --@< Error: `module` can only be used in top-level types of assignments or `local`s
+--! [KailuaAssume(`a`$1, `a`_, _, EmptyTable)$1]
 
 --8<-- assume-scope-1
 local a
@@ -972,6 +1032,14 @@ local b --: {a: string, b:} --@< Error: Expected a single type, got `}`
 --! [Local([`a`$1: _ Record([])], [])$1, \
 --!  Local([`b`$2: _ Record(["a": _ String])], [])$2]
 
+--8<-- kind-rec-modf-only-recover
+local x --: {a: const, b: const} --@< Error: Expected a single type, got `,`
+--! [Local([`x`$1: _ Record([])], [])$1]
+
+--8<-- kind-rec-module
+local x --: {a: module {}} --@< Error: `module` can only be used in top-level types of assignments or `local`s
+--! [Local([`x`$1: _ Record(["a": _ EmptyTable])], [])$1]
+
 --8<-- kind-tuple
 local x --: {const function (); string;
         --:  const function (string, integer) --> number;
@@ -996,6 +1064,14 @@ local x --: {WHATEVER,WHATEVER}
 --8<-- kind-tuple-2-semicolon
 local x --: {WHATEVER;WHATEVER;}
 --! [Local([`x`$1: _ Tuple([_ Dynamic, _ Dynamic])], [])$1]
+
+--8<-- kind-tuple-modf-only-recover
+local x --: {const, const} --@< Error: Expected a single type, got `,`
+--! [Local([`x`$1: _ Oops], [])$1]
+
+--8<-- kind-tuple-module
+local x --: {module {}} --@< Error: `module` can only be used in top-level types of assignments or `local`s
+--! [Local([`x`$1: _ Tuple([_ EmptyTable])], [])$1]
 
 --8<-- kind-tuple-or
 local x --: {string?|integer}
@@ -1047,6 +1123,15 @@ local y --: `vector`<const integer> --@< Error: The type name `vector` is reserv
                                     --@^ Error: Expected a newline, got `<`
 --! [Local([`x`$1: _ Oops], [])$1, \
 --!  Local([`y`$2: _ Oops], [])$2]
+
+--8<-- kind-array-modf-only-recover
+local x --: vector<const, const> --@< Error: Expected a single type, got `,`
+                                 --@^-< Error: Expected `>` or `>>`, got a newline
+--! [Local([`x`$1: _ Array(Const Oops)], [])$1]
+
+--8<-- kind-array-module
+local x --: vector<module {}> --@< Error: `module` can only be used in top-level types of assignments or `local`s
+--! [Local([`x`$1: _ Array(_ EmptyTable)], [])$1]
 
 --8<-- kind-map
 local x --: map<string, const integer>
@@ -1126,7 +1211,7 @@ local x --: [type] function(any)
 --! [Local([`x`$1: _ [`type`] Func((Any) --> ())], [])$1]
 
 --8<-- kind-attr-dup
-local x --: [builtin] [builtin] string --@< Error: Expected a single type, got `[`
+local x --: [builtin] [builtin] string --@< Error: Expected a newline, got `[`
 --! [Local([`x`$1: _ Oops], [])$1]
 
 --8<-- kind-attr-seq
@@ -1139,6 +1224,10 @@ function foo()
     local x --: integer | --@<-v Error: Expected a type, got a newline
 end
 --! [FuncDecl(`foo`_, [] --> _, $1[Local([`x`$2: _ Union([Integer])], [])$2])]
+
+--8<-- kind-modf-or-recover
+local x --: const | integer --@< Error: Expected a newline, got `|`
+--! [Local([`x`$1: Const Oops], [])$1]
 
 --8<-- funcspec
 --v function()
@@ -1255,6 +1344,22 @@ function foo() end
 --v function(msg: string) --> !
 function error(msg) end
 --! [FuncDecl(`error`_, [`msg`$1: _ String] --> !, $1[])]
+
+--8<-- funcspec-modf-only
+--v function(x: const) --@< Error: Expected a single type, got `)`
+function foo(x) end
+--! [FuncDecl(`foo`_, [`x`$1] --> _, $1[])]
+
+--8<-- funcspec-module
+--v function(x: module {})
+function foo(x) end
+--! [FuncDecl(`foo`_, [`x`$1: Module EmptyTable], $1[])]
+
+--8<-- rettype-module
+function foo() --> module {} --@< Error: Expected a single type or type sequence, got a keyword `module`
+                             --@^ Error: Expected a newline, got a keyword `module`
+end
+--! [FuncDecl(`foo`_, [] --> Oops, $1[])]
 
 --8<-- rettype-none
 function foo() --> ()
@@ -1920,6 +2025,12 @@ f()
 --!  KailuaType(Global, `Integer`, Integer), \
 --!  KailuaAssume(`x`$1, `x`_, _, Array(_ `Int`))$1]
 
+--8<-- alias-modf
+--# type A = const integer  --@< Error: Expected a single type, got a keyword `const`
+--# type B = module integer --@< Error: Expected a single type, got a keyword `module`
+--! [KailuaType(Exported, `A`, Oops), \
+--!  KailuaType(Exported, `B`, Oops)]
+
 --8<-- alias-builtin
 --# type any = integer --@< Error: Cannot redefine a builtin type
 --# assume x: vector<any>
@@ -1977,8 +2088,8 @@ f()
 --! [KailuaOpen(`lua51`), KailuaType(Exported, `goto`, Integer)]
 
 --8<-- type-spec-recover-negative-span
-local a = {} --: var { var { } } --@< Error: Expected a single type, got a keyword `var`
-local b --: var { var { } }      --@< Error: Expected a single type, got a keyword `var`
+local a = {} --: var { var { } } --@< Error: Expected a newline, got a keyword `var`
+local b --: var { var { } }      --@< Error: Expected a newline, got a keyword `var`
 --! [Local([`a`$1: _ Oops], [{}])$1, Local([`b`$2: _ Oops], [])$2]
 
 --8<-- non-prefix-expr-at-top-level-1

@@ -8,14 +8,14 @@ use take_mut::take;
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag::{self, Result, Report, Reporter};
 use kailua_syntax::{self, Str, Name, NameRef, Var, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
-use kailua_syntax::{SelfParam, TypeScope, Args, St, Stmt, Block, K, Attr};
+use kailua_syntax::{SelfParam, TypeScope, Args, St, Stmt, Block, K, Attr, M, MM};
 use diag::{TypeReport, TypeReportHint, TypeReportMore};
 use ty::{Displayed, Display};
 use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, Dummy, TypeContext};
 use ty::{Key, Tables, Function, Functions};
 use ty::{F, Slot, SlotSeq, SpannedSlotSeq, Tag, Class, ClassId};
 use ty::flags::*;
-use env::{Env, Returns, Frame, Scope, Context};
+use env::{Env, Returns, Frame, Scope, Context, SlotSpec};
 use message as m;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -124,20 +124,22 @@ impl<T> Exitable<T> {
     }
 }
 
-struct ScopedChecker<'chk, 'envr: 'chk, 'env: 'envr, R: 'env + Report> {
-    checker: &'chk mut Checker<'envr, 'env, R>
+struct ScopedChecker<'chk, 'inp: 'chk, 'envr: 'chk, 'env: 'envr, R: 'env + Report> {
+    checker: &'chk mut Checker<'inp, 'envr, 'env, R>
 }
 
-impl<'chk, 'envr, 'env, R: Report> ops::Deref for ScopedChecker<'chk, 'envr, 'env, R> {
-    type Target = &'chk mut Checker<'envr, 'env, R>;
+impl<'chk, 'inp, 'envr, 'env, R: Report> ops::Deref for ScopedChecker<'chk, 'inp, 'envr, 'env, R> {
+    type Target = &'chk mut Checker<'inp, 'envr, 'env, R>;
     fn deref(&self) -> &Self::Target { &self.checker }
 }
 
-impl<'chk, 'envr, 'env, R: Report> ops::DerefMut for ScopedChecker<'chk, 'envr, 'env, R> {
+impl<'chk, 'inp, 'envr, 'env, R: Report>
+    ops::DerefMut for ScopedChecker<'chk, 'inp, 'envr, 'env, R>
+{
     fn deref_mut(&mut self) -> &mut Self::Target { &mut self.checker }
 }
 
-impl<'chk, 'envr, 'env, R: Report> Drop for ScopedChecker<'chk, 'envr, 'env, R> {
+impl<'chk, 'inp, 'envr, 'env, R: Report> Drop for ScopedChecker<'chk, 'inp, 'envr, 'env, R> {
     fn drop(&mut self) { self.checker.env.leave(); }
 }
 
@@ -170,13 +172,47 @@ impl Index {
     }
 }
 
-pub struct Checker<'envr, 'env: 'envr, R: 'env> {
-    env: &'envr mut Env<'env, R>,
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum NoCheck {
+    User, // user-requested
+    Module, // implied by module indexing
 }
 
-impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
-    pub fn new(env: &'envr mut Env<'env, R>) -> Checker<'envr, 'env, R> {
-        Checker { env: env }
+#[derive(Clone, Debug)]
+struct Lvalue {
+    found: bool,
+    slot: Spanned<Slot>,
+}
+
+#[derive(Clone, Debug)]
+struct PendingFuncBody<'inp> {
+    tag: Option<Tag>,
+    selfparam: Option<(&'inp Spanned<SelfParam>, Slot)>,
+    sig: &'inp Sig,
+    block: &'inp Spanned<Vec<Spanned<Stmt>>>,
+    declspan: Span,
+}
+
+#[derive(Clone, Debug)]
+struct PendingModule<'inp> {
+    slot: Slot,
+    func_bodies: Vec<PendingFuncBody<'inp>>,
+}
+
+impl<'inp> PendingModule<'inp> {
+    fn new(slot: Slot) -> PendingModule<'inp> {
+        PendingModule { slot: slot, func_bodies: Vec::new() }
+    }
+}
+
+pub struct Checker<'inp, 'envr, 'env: 'envr, R: 'env> {
+    env: &'envr mut Env<'env, R>,
+    pending_modules: Vec<HashMap<*const Ty, PendingModule<'inp>>>,
+}
+
+impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
+    pub fn new(env: &'envr mut Env<'env, R>) -> Checker<'inp, 'envr, 'env, R> {
+        Checker { env: env, pending_modules: Vec::new() }
     }
 
     fn context(&mut self) -> &mut Context<R> {
@@ -187,7 +223,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         self.env.display(x)
     }
 
-    fn scoped<'chk>(&'chk mut self, scope: Scope) -> ScopedChecker<'chk, 'envr, 'env, R> {
+    fn scoped<'chk>(&'chk mut self, scope: Scope) -> ScopedChecker<'chk, 'inp, 'envr, 'env, R> {
         self.env.enter(scope);
         ScopedChecker { checker: self }
     }
@@ -606,10 +642,18 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             return Ok(Index::dummy());
         }
 
-        let new_slot = |context: &mut Context<R>| {
+        let new_slot = |flex: F, context: &mut Context<R>| {
             // we don't yet know the exact value type, so generate a new type variable
             let tvar = T::TVar(context.gen_tvar());
-            Slot::new(F::Var, Ty::new(tvar))
+            Slot::new(flex, Ty::new(tvar))
+        };
+
+        let mut ety = if let Some(ety) = self.env.resolve_exact_type(&ety) {
+            ety
+        } else {
+            self.env.error(&*ety0,
+                           m::IndexToInexactType { tab: self.display(&*ety0) }).done()?;
+            return Ok(Index::dummy());
         };
 
         let clsinfo = match *ety {
@@ -625,9 +669,9 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             _ => None,
         };
 
-        let ety = if let Some((cid, proto)) = clsinfo {
-            // nominal types cannot be indexed with non-compile-time values
-            // (in some sense, nominal types are isomorphic to records)
+        // nominal types cannot be indexed with non-compile-time values
+        // (in some sense, nominal types are isomorphic to records)
+        if let Some((cid, proto)) = clsinfo {
             let litkey =
                 if let Some(key) = kty.as_integer() {
                     key.into()
@@ -687,7 +731,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         }
 
                         // prototypes always use Var slots; it is in principle append-only.
-                        let slot = new_slot(self.context());
+                        let slot = new_slot(F::Var, self.context());
                         fields!(class_ty).insert(litkey, slot.clone());
                         (slot, true)
                     }
@@ -702,8 +746,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         self.env.error(expspan, m::CannotAddFieldsToInstance {}).done()?;
                         return Ok(Index::dummy());
                     } else {
-                        // the constructor (checked earlier) can add Currently slots to instances.
-                        let slot = new_slot(self.context());
+                        // the constructor (checked earlier) can add slots to instances.
+                        let slot = new_slot(F::Var, self.context());
                         fields!(instance_ty).insert(litkey, slot.clone());
                         (slot, true)
                     }
@@ -734,9 +778,10 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     return Ok(Index::Missing);
                 }
             }
-        } else if !flags.is_dynamic() && flags.intersects(T_STRING) {
-            // if ety is a string, we go through the previously defined string metatable
-            // note that ety may not be fully resolved here!
+        }
+
+        // if ety is a string, we go through the previously defined string metatable
+        if !flags.is_dynamic() && flags.intersects(T_STRING) {
             if flags.intersects(!T_STRING) {
                 self.env.error(&*ety0,
                                m::IndexedTypeIsBothTableOrStr { indexed: self.display(&*ety0) })
@@ -749,16 +794,16 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 ety0 = Cow::Owned(meta.base.clone().with_loc(ety0.span));
 
                 // still possible that the string metatable itself is not fully resolved (!)
-                if let Some(ety) = self.env.resolve_exact_type(&ety0.unlift()) {
+                if let Some(ety_) = self.env.resolve_exact_type(&ety0.unlift()) {
                     // now the metatable should be a table proper
-                    if !ety.is_dynamic() && ety.flags().intersects(!T_TABLE) {
+                    if !ety_.is_dynamic() && ety_.flags().intersects(!T_TABLE) {
                         self.env.error(&*ety0, m::NonTableStringMeta {})
                                 .note(meta.span, m::PreviousStringMeta {})
                                 .done()?;
                         return Ok(Index::dummy());
                     }
 
-                    ety
+                    ety = ety_;
                 } else {
                     self.env.error(&*ety0, m::IndexToInexactType { tab: self.display(&*ety0) })
                             .done()?;
@@ -768,16 +813,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 self.env.error(&*ety0, m::UndefinedStringMeta {}).done()?;
                 return Ok(Index::dummy());
             }
-        } else {
-            // normal tables, we need to resolve it fully
-            if let Some(ety) = self.env.resolve_exact_type(&ety) {
-                ety
-            } else {
-                self.env.error(&*ety0,
-                               m::IndexToInexactType { tab: self.display(&*ety0) }).done()?;
-                return Ok(Index::dummy());
-            }
-        };
+        }
 
         // this also handles the case where the string metatable itself is dynamic
         if let Some(dyn) = flags.get_dynamic() {
@@ -831,7 +867,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                         // should *not* extend the terminal rvar (from `list_rvar_fields`),
                         // since it has to be instantiated which we can't do without a ref
                         (None, true) => {
-                            let vslot = new_slot(self.context());
+                            let vslot = new_slot(F::Unknown, self.context());
                             check!(self.context().assert_rvar_includes(rvar.clone(),
                                                                        &[(litkey, vslot.clone())]));
                             (vslot, true)
@@ -914,31 +950,36 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
     // this should be followed by assign_to_lval_index
     fn check_lval_index(&mut self, ety: &Spanned<Slot>, kty: &Spanned<Slot>,
-                        expspan: Span) -> Result<(bool, Slot)> {
-        match self.check_index_common(ety, kty, expspan, true)? {
+                        expspan: Span) -> Result<Lvalue> {
+        let (found, slot) = match self.check_index_common(ety, kty, expspan, true)? {
             Index::Missing => unreachable!(),
-            Index::Created(slot) => Ok((false, slot)),
-            Index::Found(slot) => Ok((true, slot)),
-        }
+            Index::Created(slot) => (false, slot),
+            Index::Found(slot) => (true, slot),
+        };
+        Ok(Lvalue { found: found, slot: slot.with_loc(expspan) })
     }
 
     // this should be preceded by check_lval_index with the equal parameters
-    fn assign_to_lval_index(&mut self, found: bool, ety: &Spanned<Slot>, kty: &Spanned<Slot>,
-                            lhs: &Spanned<Slot>, initrhs: &Spanned<Slot>,
-                            specrhs: Option<&Spanned<Slot>>) -> Result<()> {
-        if found {
+    fn assign_to_lval_index(&mut self, ety: &Spanned<Slot>, kty: &Spanned<Slot>, lvalue: &Lvalue,
+                            initrhs: &Spanned<Slot>, specrhs: Option<&SlotSpec>) -> Result<()> {
+        if lvalue.found {
             // ignore specrhs, should have been handled by the caller
-            self.env.assign(lhs, initrhs)?;
+            self.env.assign(&lvalue.slot, initrhs)?;
         } else {
-            if self.env.assign_new(lhs, initrhs, specrhs).is_err() {
-                self.env.error(lhs,
+            if self.env.assign_new(&lvalue.slot, initrhs, specrhs).is_err() {
+                let specrhs = specrhs.map_or(&initrhs.base, |spec| spec.slot());
+                self.env.error(&lvalue.slot,
                                m::CannotCreateIndex {
                                    tab: self.display(ety), key: self.display(kty),
-                                   specrhs: self.display(specrhs.unwrap_or(initrhs)),
+                                   specrhs: self.display(specrhs),
                                })
                         .done()?;
             }
+
+            // assignment can alter its flexibility if the slot is newly created, so we need this
+            self.register_module_if_needed(&lvalue.slot);
         }
+
         Ok(())
     }
 
@@ -1098,13 +1139,14 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         Ok(slot)
     }
 
-    fn check_assign(&mut self, vars: &Spanned<Vec<TypeSpec<Spanned<Var>>>>,
-                    exps: Option<&Spanned<Vec<Spanned<Exp>>>>, stmtspan: Span) -> Result<Exit> {
+    fn check_assign(&mut self, vars: &'inp Spanned<Vec<TypeSpec<Spanned<Var>>>>,
+                    exps: Option<&'inp Spanned<Vec<Spanned<Exp>>>>,
+                    stmtspan: Span) -> Result<Exit> {
         #[derive(Debug)]
         enum VarRef<'a> {
             Name(&'a Spanned<NameRef>),
-            // is not newly created?, table slot, key slot, indexd slot
-            Slot(bool, Spanned<Slot>, Spanned<Slot>, Spanned<Slot>),
+            // table slot, key slot, indexed lvalue
+            Slot(Spanned<Slot>, Spanned<Slot>, Lvalue),
         }
 
         let mut exprexit = ExprExit::None;
@@ -1118,8 +1160,8 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     exprexit = exprexit.collide(exit1).collide(exit2);
                     let ty = ty.into_first();
                     let kty = kty.into_first();
-                    let (found, slot) = self.check_lval_index(&ty, &kty, varspec.base.span)?;
-                    VarRef::Slot(found, ty, kty, slot.with_loc(&varspec.base))
+                    let lvalue = self.check_lval_index(&ty, &kty, varspec.base.span)?;
+                    VarRef::Slot(ty, kty, lvalue)
                 },
 
                 Var::IndexName(ref e, ref key) => {
@@ -1128,17 +1170,12 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     let ty = ty.into_first();
                     let keystr = Str::from(key.base[..].to_owned());
                     let kty = Slot::just(Ty::new(T::Str(Cow::Owned(keystr)))).with_loc(key);
-                    let (found, slot) = self.check_lval_index(&ty, &kty, varspec.base.span)?;
-                    VarRef::Slot(found, ty, kty, slot.with_loc(&varspec.base))
+                    let lvalue = self.check_lval_index(&ty, &kty, varspec.base.span)?;
+                    VarRef::Slot(ty, kty, lvalue)
                 },
             };
 
-            let varspec = if let Some(ref kind) = varspec.kind {
-                Some(self.visit_kind(F::from(varspec.modf), kind)?)
-            } else {
-                None
-            };
-
+            let varspec = self.visit_type_spec(varspec)?;
             Ok((varref, varspec))
         }).collect::<Result<Vec<_>>>()?;
 
@@ -1148,7 +1185,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             // construct hints to derive type inference
             let knowntypes = varrefspecs.iter().map(|&(ref varref, ref varspec)| {
                 if let Some(ref spec) = *varspec {
-                    spec.clone()
+                    spec.slot().clone()
                 } else {
                     // no type spec, use the existing slot type as a substitute
                     match *varref {
@@ -1160,7 +1197,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                             // we just put a dummy so that it would get ignored.
                             defslot.unwrap_or_else(|| Slot::dummy()).with_loc(nameref)
                         },
-                        VarRef::Slot(_, _, _, ref slot) => slot.clone(),
+                        VarRef::Slot(_, _, ref lvalue) => lvalue.slot.clone(),
                     }
                 }
             }).collect();
@@ -1202,19 +1239,18 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 }
 
                 // indexed assignment
-                VarRef::Slot(found, ety, kty, slot) => {
-                    if found {
+                VarRef::Slot(ety, kty, lvalue) => {
+                    if lvalue.found {
                         if let Some(ref specinfo) = specinfo {
                             // now we know that this assignment cannot declare a field
-                            self.env.error(specinfo, m::TypeSpecToIndex {}).done()?;
+                            self.env.error(specinfo.slot(), m::TypeSpecToIndex {}).done()?;
                         }
                     }
                     if let Some(info) = info {
-                        self.assign_to_lval_index(found, &ety, &kty, &slot,
-                                                  &info, specinfo.as_ref())?;
+                        self.assign_to_lval_index(&ety, &kty, &lvalue, &info, specinfo.as_ref())?;
                     }
                     // allow lhs to be recorded even when info is missing (for completion)
-                    self.context().spanned_slots_mut().insert(slot);
+                    self.context().spanned_slots_mut().insert(lvalue.slot);
                 }
             }
         }
@@ -1235,12 +1271,58 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         Ok(())
     }
 
-    pub fn visit(&mut self, chunk: &Spanned<Block>) -> Result<()> {
+    pub fn visit(&mut self, chunk: &'inp Spanned<Block>) -> Result<()> {
         self.visit_block(chunk)?;
         Ok(())
     }
 
-    fn visit_block(&mut self, block: &Spanned<Block>) -> Result<Exit> {
+    fn visit_block(&mut self, block: &'inp Spanned<Block>) -> Result<Exit> {
+        // `self.pending_modules` should be kept in sync, even when the checking fails
+        self.pending_modules.push(HashMap::new());
+        let exit = self.visit_block_(block);
+        let ret = self.check_pending_modules();
+        self.pending_modules.pop().expect("no matching pending module list");
+        let exit = exit?;
+        ret?;
+        Ok(exit)
+    }
+
+    fn check_pending_modules(&mut self) -> Result<()> {
+        // we cannot remove the list of pending modules until we are done,
+        // because pending type checking may refer (or even add) to them.
+        loop {
+            // drain pending declarations
+            let bodies: Vec<_> = {
+                let mut modules = self.pending_modules.last_mut().unwrap();
+                if !modules.is_empty() {
+                    debug!("finishing pending type checking for {:?}", modules.values());
+                }
+                modules.iter_mut().flat_map(|(_, module)| module.func_bodies.drain(..)).collect()
+            };
+
+            if bodies.is_empty() {
+                break; // we are done
+            }
+
+            // handle the pending type checking
+            for body in bodies {
+                // we can discard the output type, because it should be same to the previous type
+                // as long as the signature is explicit and identical
+                self.visit_func_body(body.tag, None, body.selfparam, body.sig,
+                                     body.block, body.declspan, None)?;
+            }
+        }
+
+        // remove the module flexibility from remaining slots
+        // (done here to avoid non-determistic error messages in the test)
+        for (_, module) in self.pending_modules.last().unwrap().iter() {
+            module.slot.unmark_as_module();
+        }
+
+        Ok(())
+    }
+
+    fn visit_block_(&mut self, block: &'inp Spanned<Block>) -> Result<Exit> {
         let mut scope = self.scoped(Scope::new());
         let mut exit = Exit::None;
         let mut ignored_stmts: Option<Span> = None;
@@ -1261,7 +1343,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         Ok(exit)
     }
 
-    fn visit_stmt(&mut self, stmt: &Spanned<Stmt>) -> Result<Exit> {
+    fn visit_stmt(&mut self, stmt: &'inp Spanned<Stmt>) -> Result<Exit> {
         debug!("visiting stmt {:?}", *stmt);
 
         match *stmt.base {
@@ -1573,44 +1655,67 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                     let subspan = info.span | subname.span; // a subexpr for this indexing
                     info = self.check_rval_index(&info, &kty, subspan)?.with_loc(subspan);
                 }
+                let method = meths.last().unwrap();
+
+                // gather the lvalue (this should happen first because we should determine
+                // if this is a module indexing)
+                let subspan = info.span | method.span;
+                let keystr = Str::from(method.base[..].to_owned());
+                let kty = Slot::just(Ty::new(T::Str(Cow::Owned(keystr)))).with_loc(method);
+                let lvalue = self.check_lval_index(&info, &kty, subspan)?;
 
                 // now prepare the right-hand side (i.e. method decl)
-                let (tag, no_check) = self.visit_sig_attrs(&sig.attrs)?;
-                let method = meths.last().unwrap();
+                let (tag, mut no_check) = self.visit_sig_attrs(&sig.attrs)?;
+                if no_check.is_none() && info.flex() == F::Module {
+                    // module indexing causes the rhs not to be checked right now (like NO_CHECK)
+                    no_check = Some(NoCheck::Module);
+                }
                 let selfinfo = if let Some(ref selfparam) = *selfparam {
                     let slot = self.visit_self_param(selfparam.span, &info, no_check, &method)?;
                     Some((selfparam, slot))
                 } else {
                     None
                 };
-                let methinfo = self.visit_func_body(tag, no_check, selfinfo, sig, block,
+                let methinfo = self.visit_func_body(tag, no_check, selfinfo.clone(), sig, block,
                                                     stmt.span, None)?;
 
-                // finally, go through the ordinary table update
-                let subspan = info.span | method.span;
-                let keystr = Str::from(method.base[..].to_owned());
-                let kty = Slot::just(Ty::new(T::Str(Cow::Owned(keystr)))).with_loc(method);
-                let (found, slot) = self.check_lval_index(&info, &kty, subspan)?;
-                self.assign_to_lval_index(found, &info, &kty, &slot.with_loc(subspan),
-                                          &methinfo.with_loc(stmt), None)?;
+                // if this is a module indexing (that is, an assignment to the module field slot
+                // and the declaration was not already [NO_CHECK]), we will keep the arguments to
+                // `visit_func_body` to repeat the checking at the end of scope.
+                //
+                // note that checking in the different position is sane, because all names are
+                // scoped (e.g. `local` after the method declaration won't affect the body).
+                // types are currently not, but probably it should too.
+                if no_check == Some(NoCheck::Module) {
+                    debug!("adding a pending type checking to {:?}", info);
+                    let key = &*info.unlift() as *const Ty;
+                    let modules = self.pending_modules.iter_mut().rev();
+                    let module = modules.filter_map(|modules| modules.get_mut(&key)).next().expect(
+                        "slots with F::Module not registered in the current checker"
+                    );
+                    module.func_bodies.push(PendingFuncBody {
+                        tag: tag, selfparam: selfinfo, sig: sig, block: block, declspan: stmt.span,
+                    });
+                }
 
+                self.assign_to_lval_index(&info, &kty, &lvalue, &methinfo.with_loc(stmt), None)?;
                 Ok(Exit::None)
             }
 
             St::Local(ref names, ref exps, _nextscope) => {
                 // collect specified types first (required for hints)
                 let nameinfos = names.iter().map(|namespec| {
-                    let info = if let Some(ref kind) = namespec.kind {
-                        Some(self.visit_kind(F::from(namespec.modf), kind)?)
-                    } else {
-                        None
-                    };
+                    let info = self.visit_type_spec(namespec)?;
                     Ok((&namespec.base, info))
                 }).collect::<Result<Vec<_>>>()?;
 
                 let hint = SpannedSlotSeq {
                     head: nameinfos.iter().map(|&(name, ref info)| {
-                        info.clone().unwrap_or_else(|| Slot::dummy().with_loc(name))
+                        if let Some(ref spec) = *info {
+                            spec.slot().clone()
+                        } else {
+                            Slot::dummy().with_loc(name)
+                        }
                     }).collect(),
                     tail: None,
                     span: names.span,
@@ -1626,56 +1731,13 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             }
 
             St::Return(ref exps) => {
-                let returns =
-                    self.env.get_frame().returns.as_ref().map(|seq| seq.clone().all_with_loc(stmt));
-
-                let hint = match returns {
+                let hint = match self.env.get_frame().returns {
                     Returns::None | Returns::Never => None,
                     Returns::Implicit(ref returns) | Returns::Explicit(ref returns) =>
-                        Some(SpannedSlotSeq::from_seq(returns.clone())),
+                        Some(SpannedSlotSeq::from_seq(returns.clone().all_with_loc(stmt))),
                 };
                 let (exit, seq) = self.visit_explist_from_stmt(exps, hint)?;
-
-                // function types destroy flexibility, primarily because the return type is
-                // a slot only in the inside view. in the outside it's always Var,
-                // which should be ensured by `visit_func_call`.
-                let seq = seq.unlift();
-                match returns {
-                    Returns::None => {
-                        self.env.get_frame_mut().returns = Returns::Implicit(seq.unspan());
-                    }
-
-                    Returns::Never => {
-                        // we consider this an error even if the return expression stops first,
-                        // as we want to enforce that a diverging function has *no* `return`s
-                        self.env.error(stmt, m::ReturnInDivergingFunc {}).done()?;
-                    }
-
-                    Returns::Implicit(returns) => {
-                        // need to infer the return type, but not _that_ much
-                        match seq.union(&returns, false, self.context()) {
-                            Ok(returns) => {
-                                self.env.get_frame_mut().returns =
-                                    Returns::Implicit(returns.unspan());
-                            }
-                            Err(r) => {
-                                self.env.error(stmt, m::CannotExtendImplicitReturnType {})
-                                        .report_types(r, TypeReportHint::Returns)
-                                        .done()?;
-                            }
-                        };
-                    }
-
-                    Returns::Explicit(returns) => {
-                        if let Err(r) = seq.assert_sub(&returns, self.context()) {
-                            self.env.error(stmt, m::CannotReturn { returns: self.display(&returns),
-                                                                   ty: self.display(&seq) })
-                                    .report_types(r, TypeReportHint::Returns)
-                                    .done()?;
-                        }
-                    }
-                }
-
+                self.visit_return(seq, stmt.span)?;
                 Ok(exit & Exit::Return)
             }
 
@@ -1716,7 +1778,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             }
 
             St::KailuaAssume(ref newname, ref name, kindm, ref kind, _nextscope) => {
-                let slot = self.visit_kind(F::from(kindm), kind)?;
+                let slot = self.visit_kind(kindm, kind)?;
                 self.env.assume_var(&newname.clone().with_loc(name), slot)?;
                 Ok(Exit::None)
             }
@@ -1724,7 +1786,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
             St::KailuaAssumeField(static_, Spanned { base: (ref rootname, ref names), span },
                                   kindm, ref kind) => {
                 if self.env.get_var(rootname).is_some() {
-                    let slot = self.visit_kind(F::from(kindm), kind)?;
+                    let slot = self.visit_kind(kindm, kind)?;
                     let rootslot = self.env.ensure_var(rootname)?.with_loc(rootname);
                     let newslot = self.assume_field_slot(static_, rootslot, names, span,
                                                          slot.base)?;
@@ -1748,7 +1810,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
                     // convert `method(...) --> ...` to `function(self: Self, ...) --> ...`
                     // where `Self` is an inferred type from `rootslot`
-                    let selfinfo = self.visit_self_param(stmt.span, &rootslot, false, &names[0])?;
+                    let selfinfo = self.visit_self_param(stmt.span, &rootslot, None, &names[0])?;
                     func.args.head.insert(0, selfinfo.unlift().clone());
                     func.argnames.insert(0, Some(Name::from(&b"self"[..]).without_loc()));
 
@@ -1769,18 +1831,65 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         }
     }
 
-    // returns a resolved tag (if any) and a boolean for [NO_CHECK]
-    fn visit_sig_attrs(&mut self, attrs: &[Spanned<Attr>]) -> Result<(Option<Tag>, bool)> {
+    fn visit_return(&mut self, seq: SpannedSlotSeq, stmtspan: Span) -> Result<()> {
+        // function types destroy flexibility, primarily because the return type is
+        // a slot only in the inside view. in the outside it's always Var,
+        // which should be ensured by `visit_func_call`.
+        let seq = seq.unlift();
+
+        match self.env.get_frame().returns.clone() {
+            Returns::None => {
+                self.env.get_frame_mut().returns = Returns::Implicit(seq.unspan());
+            }
+
+            Returns::Never => {
+                // we consider this an error even if the return expression stops first,
+                // as we want to enforce that a diverging function has *no* `return`s
+                self.env.error(stmtspan, m::ReturnInDivergingFunc {}).done()?;
+            }
+
+            Returns::Implicit(returns) => {
+                // need to infer the return type, but not _that_ much
+                let returns = returns.all_with_loc(stmtspan);
+                match seq.union(&returns, false, self.context()) {
+                    Ok(returns) => {
+                        self.env.get_frame_mut().returns =
+                            Returns::Implicit(returns.unspan());
+                    }
+                    Err(r) => {
+                        self.env.error(stmtspan, m::CannotExtendImplicitReturnType {})
+                                .report_types(r, TypeReportHint::Returns)
+                                .done()?;
+                    }
+                };
+            }
+
+            Returns::Explicit(returns) => {
+                let returns = returns.all_with_loc(stmtspan);
+                if let Err(r) = seq.assert_sub(&returns, self.context()) {
+                    self.env.error(stmtspan, m::CannotReturn { returns: self.display(&returns),
+                                                               ty: self.display(&seq) })
+                            .report_types(r, TypeReportHint::Returns)
+                            .done()?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn visit_sig_attrs(&mut self,
+                       attrs: &[Spanned<Attr>]) -> Result<(Option<Tag>, Option<NoCheck>)> {
         let mut tag = None;
-        let mut no_check = false;
+        let mut no_check = None;
 
         for attr in attrs {
             if *attr.name.base == *b"NO_CHECK" {
                 // [NO_CHECK] is special
-                if no_check {
+                if no_check.is_some() {
                     self.env.warn(attr, m::DuplicateAttrInSig {}).done()?;
                 } else {
-                    no_check = true;
+                    no_check = Some(NoCheck::User);
                 }
             } else {
                 // None is simply ignored, `Tag::from` has already reported the error
@@ -1798,38 +1907,42 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     fn visit_self_param(&mut self, selfparamspan: Span, tableinfo: &Spanned<Slot>,
-                        no_check: bool, method: &Spanned<Name>) -> Result<Slot> {
+                        no_check: Option<NoCheck>, method: &Spanned<Name>) -> Result<Slot> {
         // try to infer the type for `self`:
         // - if `tableinfo` is a class prototype `self` should be a corresponding instance
         // - if `tableinfo` is a string metatable `self` should be a string
-        let inferred = if tableinfo.nil() != Nil::Noisy {
-            // (except when it is unioned with nil)
-            if tableinfo.tag() == Some(Tag::StringMeta) {
-                Some(Ty::new(T::String))
-            } else if let T::Class(Class::Prototype(cid)) = **tableinfo.unlift() {
-                let inst = T::Class(Class::Instance(cid));
-                if *method.base == *b"init" {
-                    // [constructible] <class instance #cid>
-                    Some(Ty::new(inst).with_tag(Tag::Constructible))
-                } else {
-                    // <class instance #cid>
-                    Some(Ty::new(inst))
+        let mut inferred = None;
+        if let Some(tableinfo) = self.env.resolve_exact_type(&tableinfo.unlift()) {
+            if tableinfo.nil() != Nil::Noisy {
+                // (except when it is unioned with nil)
+                if tableinfo.tag() == Some(Tag::StringMeta) {
+                    inferred = Some(Ty::new(T::String));
+                } else if let T::Class(Class::Prototype(cid)) = *tableinfo {
+                    let inst = T::Class(Class::Instance(cid));
+                    if *method.base == *b"init" {
+                        // [constructible] <class instance #cid>
+                        inferred = Some(Ty::new(inst).with_tag(Tag::Constructible));
+                    } else {
+                        // <class instance #cid>
+                        inferred = Some(Ty::new(inst));
+                    }
                 }
-            } else {
-                None
             }
-        } else {
-            None
-        };
+        }
 
         // if we couldn't infer the type we try to use a fresh type variable,
         // except when [NO_CHECK] is requested (requires a fixed type)
         if let Some(ty) = inferred {
             Ok(Slot::var(ty))
         } else {
-            if no_check {
-                self.env.error(selfparamspan, m::NoCheckRequiresTypedSelf {})
-                        .done()?;
+            match no_check {
+                Some(NoCheck::User) => {
+                    self.env.error(selfparamspan, m::NoCheckRequiresTypedSelf {}).done()?;
+                }
+                Some(NoCheck::Module) => {
+                    self.env.error(selfparamspan, m::ModuleRequiresTypedSelf {}).done()?;
+                }
+                None => {}
             }
 
             // <fresh type variable>
@@ -1838,9 +1951,9 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         }
     }
 
-    fn visit_func_body(&mut self, tag: Option<Tag>, no_check: bool,
+    fn visit_func_body(&mut self, tag: Option<Tag>, no_check: Option<NoCheck>,
                        selfparam: Option<(&Spanned<SelfParam>, Slot)>, sig: &Sig,
-                       block: &Spanned<Vec<Spanned<Stmt>>>, declspan: Span,
+                       block: &'inp Spanned<Vec<Spanned<Stmt>>>, declspan: Span,
                        hint: Option<Spanned<Slot>>) -> Result<Slot> {
         // if the hint exists and is a function,
         // collect first `sig.args.head.len()` types for missing argument types,
@@ -1881,9 +1994,16 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
                 if let Some(hint) = hinttail {
                     // use a hint instead ([NO_CHECK] can rely on this hint as well)
                     Some(hint)
-                } else if no_check {
+                } else if let Some(no_check) = no_check {
                     // [NO_CHECK] always requires a type
-                    self.env.error(declspan, m::NoCheckRequiresTypedVarargs {}).done()?;
+                    match no_check {
+                        NoCheck::User => {
+                            self.env.error(declspan, m::NoCheckRequiresTypedVarargs {}).done()?;
+                        }
+                        NoCheck::Module => {
+                            self.env.error(declspan, m::ModuleRequiresTypedVarargs {}).done()?;
+                        }
+                    }
                     return Ok(Slot::dummy());
                 } else {
                     #[cfg(feature = "no_implicit_func_sig")] {
@@ -1917,8 +2037,15 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         } else if let Some(hint) = hintreturns {
             // use a hint if possible ([NO_CHECK] can rely on this hint as well)
             hint
-        } else if no_check {
-            self.env.error(declspan, m::NoCheckRequiresTypedReturns {}).done()?;
+        } else if let Some(no_check) = no_check {
+            match no_check {
+                NoCheck::User => {
+                    self.env.error(declspan, m::NoCheckRequiresTypedReturns {}).done()?;
+                }
+                NoCheck::Module => {
+                    self.env.error(declspan, m::ModuleRequiresTypedReturns {}).done()?;
+                }
+            }
             return Ok(Slot::dummy());
         } else {
             Returns::None
@@ -1944,18 +2071,30 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
             let ty;
             let sty;
-            if let Some(ref kind) = param.kind {
-                // the type has been specified
-                ty = Ty::from_kind(kind, &mut scope.env)?;
-                let flex = F::from(param.modf);
-                sty = Slot::new(flex, ty.clone());
+            if let Some(slot) = scope.visit_type_spec(param)? {
+                // the type has been specified (can be implicit, but we don't have initializations)
+                #[cfg(feature = "no_implicit_func_sig")] {
+                    // still error for `--: const` or `--: module` when implicit signature disabled
+                    if param.kind.is_none() {
+                        scope.env.error(&param.base, m::ImplicitArgTypeOnAnonymousFunc {}).done()?;
+                    }
+                }
+                sty = slot.unwrap().base;
+                ty = sty.unlift().clone();
             } else if let Some(hint) = hint {
                 // use a hint instead ([NO_CHECK] can rely on this hint as well)
                 ty = hint;
                 sty = Slot::new(F::Var, ty.clone());
-            } else if no_check {
+            } else if let Some(no_check) = no_check {
                 // [NO_CHECK] always requires a type
-                scope.env.error(&param.base, m::NoCheckRequiresTypedArgs {}).done()?;
+                match no_check {
+                    NoCheck::User => {
+                        scope.env.error(&param.base, m::NoCheckRequiresTypedArgs {}).done()?;
+                    }
+                    NoCheck::Module => {
+                        scope.env.error(&param.base, m::ModuleRequiresTypedArgs {}).done()?;
+                    }
+                }
                 return Ok(Slot::dummy());
             } else {
                 #[cfg(feature = "no_implicit_func_sig")] {
@@ -1980,12 +2119,11 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         }
         let args = TySeq { head: argshead, tail: vatype };
 
-        if !no_check {
+        if no_check.is_none() {
             if let Exit::None = scope.visit_block(block)? {
                 // the last statement is an implicit return
-                let pos = block.span.end(); // the span is conceptually at the end of block
-                let ret = Box::new(St::Return(Vec::new().with_loc(pos))).with_loc(pos);
-                scope.visit_stmt(&ret)?;
+                let span = Span::from(block.span.end()); // conceptually at the end of block
+                scope.visit_return(SpannedSlotSeq::new(span), span)?;
             }
         }
 
@@ -1998,7 +2136,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     fn visit_func_call(&mut self, functy: &Spanned<Ty>, selfinfo: Option<Spanned<Slot>>,
-                       args: &Spanned<Args>, expspan: Span) -> Result<Exitable<SlotSeq>> {
+                       args: &'inp Spanned<Args>, expspan: Span) -> Result<Exitable<SlotSeq>> {
         // should be visited first, otherwise a WHATEVER function will ignore slots in arguments
         let (nargs, Exitable(exit, mut argtys)) = match args.base {
             Args::List(ref ee) => {
@@ -2184,7 +2322,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         Ok(Exitable(cmp::max(exit, retexit), SlotSeq::from_seq(returns)))
     }
 
-    fn visit_table(&mut self, fields: &[(Option<Spanned<Exp>>, Spanned<Exp>)])
+    fn visit_table(&mut self, fields: &'inp [(Option<Spanned<Exp>>, Spanned<Exp>)])
         -> Result<Exitable<T<'static>>>
     {
         let mut newfields = Vec::new();
@@ -2268,7 +2406,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         Ok(exprexit.with(T::Tables(Cow::Owned(Tables::Fields(rvar)))))
     }
 
-    fn visit_exp_from_stmt(&mut self, exp: &Spanned<Exp>, hint: Option<SpannedSlotSeq>)
+    fn visit_exp_from_stmt(&mut self, exp: &'inp Spanned<Exp>, hint: Option<SpannedSlotSeq>)
         -> Result<(Exit, SpannedSlotSeq)>
     {
         let Exitable(exit, base) = self.visit_exp(exp, hint)?;
@@ -2277,7 +2415,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
 
     // hint is used to drive the inference to the already known type.
     // this is mainly used for anonymous functions.
-    fn visit_exp(&mut self, exp: &Spanned<Exp>, hint: Option<SpannedSlotSeq>)
+    fn visit_exp(&mut self, exp: &'inp Spanned<Exp>, hint: Option<SpannedSlotSeq>)
         -> Result<Exitable<SpannedSlotSeq>>
     {
         let Exitable(exit, slotseq) = self.visit_exp_(exp, hint)?;
@@ -2295,7 +2433,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         Ok(exit.with(slotseq.all_with_loc(exp)))
     }
 
-    fn visit_exp_(&mut self, exp: &Spanned<Exp>, hint: Option<SpannedSlotSeq>)
+    fn visit_exp_(&mut self, exp: &'inp Spanned<Exp>, hint: Option<SpannedSlotSeq>)
         -> Result<Exitable<SlotSeq>>
     {
         debug!("visiting exp {:?}", *exp);
@@ -2407,18 +2545,18 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         Ok(ret)
     }
 
-    fn visit_explist_from_stmt(&mut self, exps: &Spanned<Vec<Spanned<Exp>>>,
+    fn visit_explist_from_stmt(&mut self, exps: &'inp Spanned<Vec<Spanned<Exp>>>,
                                hint: Option<SpannedSlotSeq>) -> Result<(Exit, SpannedSlotSeq)> {
         let Exitable(exit, base) = self.visit_explist(exps, hint)?;
         Ok((exit.to_stmt(exps.span, self.env)?, base))
     }
 
-    fn visit_explist(&mut self, exps: &Spanned<Vec<Spanned<Exp>>>,
+    fn visit_explist(&mut self, exps: &'inp Spanned<Vec<Spanned<Exp>>>,
                      hint: Option<SpannedSlotSeq>) -> Result<Exitable<SpannedSlotSeq>> {
         self.visit_explist_with_span(&exps.base, exps.span, hint)
     }
 
-    fn visit_explist_with_span(&mut self, exps: &[Spanned<Exp>], expspan: Span,
+    fn visit_explist_with_span(&mut self, exps: &'inp [Spanned<Exp>], expspan: Span,
                                mut hint: Option<SpannedSlotSeq>)
         -> Result<Exitable<SpannedSlotSeq>>
     {
@@ -2467,12 +2605,44 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
         Ok(exprexit.with(SpannedSlotSeq { head: head, tail: last.tail, span: expspan }))
     }
 
-    fn visit_kind(&mut self, flex: F, kind: &Spanned<Kind>) -> Result<Spanned<Slot>> {
+    fn visit_kind(&mut self, modf: M, kind: &Spanned<Kind>) -> Result<Spanned<Slot>> {
         let ty = Ty::from_kind(kind, &mut self.env)?;
-        Ok(Slot::new(flex, ty).with_loc(kind))
+        Ok(Slot::new(F::from(modf), ty).with_loc(kind))
     }
 
-    fn collect_type_from_exp(&mut self, exp: &Spanned<Exp>)
+    fn visit_type_spec<X>(&mut self,
+                          spec: &TypeSpec<Spanned<X>>) -> Result<Option<SlotSpec>> {
+        // no modifier and kind requested, this should be considered a missing type spec
+        if spec.modf == MM::None && spec.kind.is_none() {
+            return Ok(None);
+        }
+
+        let (explicit, ty) = if let Some(ref kind) = spec.kind {
+            (true, Ty::from_kind(kind, &mut self.env)?.with_loc(kind))
+        } else {
+            (false, Ty::new(T::TVar(self.context().gen_tvar())).with_loc(&spec.base))
+        };
+        let slot = ty.map(|ty| Slot::new(F::from(spec.modf), ty));
+
+        self.register_module_if_needed(&slot);
+
+        if explicit {
+            Ok(Some(SlotSpec::Explicit(slot)))
+        } else {
+            Ok(Some(SlotSpec::Implicit(slot)))
+        }
+    }
+
+    fn register_module_if_needed(&mut self, slot: &Slot) {
+        if slot.flex() == F::Module {
+            debug!("registering {:?} to the current scope", slot);
+            let key = &*slot.unlift() as *const Ty;
+            let modules = self.pending_modules.last_mut().unwrap();
+            modules.insert(key, PendingModule::new(slot.clone()));
+        }
+    }
+
+    fn collect_type_from_exp(&mut self, exp: &'inp Spanned<Exp>)
             -> Result<(Option<Spanned<Slot>>, SpannedSlotSeq)> {
         if let Ex::FuncCall(ref func, ref args) = *exp.base {
             let Exitable(_, funcseq) = self.visit_exp(func, None)?;
@@ -2513,7 +2683,7 @@ impl<'envr, 'env, R: Report> Checker<'envr, 'env, R> {
     }
 
     // similar to visit_exp but also tries to collect Cond
-    fn collect_conds_from_exp(&mut self, exp: &Spanned<Exp>)
+    fn collect_conds_from_exp(&mut self, exp: &'inp Spanned<Exp>)
             -> Result<(Option<Cond>, SpannedSlotSeq)> {
         debug!("collecting conditions from exp {:?}", *exp);
 

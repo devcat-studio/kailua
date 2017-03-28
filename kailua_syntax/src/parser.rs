@@ -13,7 +13,7 @@ use lang::{Language, Lua, Kailua};
 use lex::{Tok, Punct, Keyword, NestedToken, NestingCategory, NestingSerial};
 use ast::{Name, NameRef, Str, Var, Seq, Presig, Sig, Attr, Args};
 use ast::{Ex, Exp, UnOp, BinOp, SelfParam, TypeScope, St, Stmt, Block};
-use ast::{M, K, Kind, SlotKind, FuncKind, TypeSpec, Returns, Chunk};
+use ast::{M, MM, K, Kind, SlotKind, FuncKind, TypeSpec, Returns, Chunk};
 
 pub struct Parser<'a> {
     iter: iter::Fuse<&'a mut Iterator<Item=NestedToken>>,
@@ -131,6 +131,10 @@ impl<T1: Recover, T2: Recover, T3: Recover> Recover for (T1, T2, T3) {
     fn recover() -> Self { (Recover::recover(), Recover::recover(), Recover::recover()) }
 }
 
+impl Recover for MM {
+    fn recover() -> Self { MM::None }
+}
+
 impl Recover for K {
     fn recover() -> Self { K::Oops }
 }
@@ -143,8 +147,8 @@ impl Recover for St {
     fn recover() -> Self { St::Oops }
 }
 
-impl<T> Recover for Option<T> {
-    fn recover() -> Self { None }
+impl<T: Recover> Recover for Option<T> {
+    fn recover() -> Self { Some(T::recover()) }
 }
 
 impl<T> Recover for Vec<T> {
@@ -884,14 +888,15 @@ impl<'a> Parser<'a> {
         Ok(stmts.with_loc(begin..self.last_pos()))
     }
 
-    fn update_type_specs_with_typeseq_spec<Item>(&self,
-                                                 oldspecs: Spanned<Vec<TypeSpec<Spanned<Item>>>>,
-                                                 specs: Spanned<Vec<Spanned<(M, Spanned<Kind>)>>>,
-                                                 note_on_dup: &Localize,
-                                                 note_on_less: &Localize,
-                                                 note_on_more: &Localize)
-            -> Result<Spanned<Vec<TypeSpec<Spanned<Item>>>>> {
-        if oldspecs.iter().any(|oldspec| oldspec.modf != M::None ||
+    fn update_type_specs_with_typeseq_spec<Item>(
+        &self,
+        oldspecs: Spanned<Vec<TypeSpec<Spanned<Item>>>>,
+        specs: Spanned<Vec<Spanned<(MM, Option<Spanned<Kind>>)>>>,
+        note_on_dup: &Localize,
+        note_on_less: &Localize,
+        note_on_more: &Localize,
+    ) -> Result<Spanned<Vec<TypeSpec<Spanned<Item>>>>> {
+        if oldspecs.iter().any(|oldspec| oldspec.modf != MM::None ||
                                          oldspec.kind.is_some()) {
             self.error(specs.span, note_on_dup).done()?;
             Ok(oldspecs)
@@ -1318,7 +1323,7 @@ impl<'a> Parser<'a> {
         let begin = self.pos();
         let mut spec = None;
         let mut variadic = None;
-        let end = self.recover(|parser| {
+        let end = self.recover_with(|parser| {
             let mut name = None;
             match parser.read() {
                 (_, Spanned { base: Tok::Punct(Punct::DotDotDot), span }) => {
@@ -1361,10 +1366,10 @@ impl<'a> Parser<'a> {
                     varargs_ = parser.try_parse_kailua_type_spec_with_spanned_modf()?; // 5)
                 }
                 let varargs_ = if let Some(Spanned { base: (m, kind), .. }) = varargs_ {
-                    if m.base != M::None {
+                    if m.base != MM::None {
                         parser.error(m.span, m::NoModfAllowedInVarargs {}).done()?;
                     }
-                    Some(kind)
+                    kind
                 } else {
                     None
                 };
@@ -1380,7 +1385,7 @@ impl<'a> Parser<'a> {
             }
 
             Ok(Some(end))
-        }, DelimAlreadyRead)?;
+        }, DelimAlreadyRead, || None)?;
         let end = end.unwrap_or_else(|| self.last_pos());
         returns = self.try_parse_kailua_rettype_spec()?;
 
@@ -1949,12 +1954,13 @@ impl<'a> Parser<'a> {
 
     // Kailua-specific syntaxes
 
-    fn make_kailua_typespec<Base>(&self, base: Base,
-                                  spec: Option<Spanned<(M, Spanned<Kind>)>>) -> TypeSpec<Base> {
+    fn make_kailua_typespec<Base>(
+        &self, base: Base, spec: Option<Spanned<(MM, Option<Spanned<Kind>>)>>
+    ) -> TypeSpec<Base> {
         if let Some(Spanned { base: (modf, kind), .. }) = spec {
-            TypeSpec { base: base, modf: modf, kind: Some(kind) }
+            TypeSpec { base: base, modf: modf, kind: kind }
         } else {
-            TypeSpec { base: base, modf: M::None, kind: None }
+            TypeSpec { base: base, modf: MM::None, kind: None }
         }
     }
 
@@ -1977,9 +1983,26 @@ impl<'a> Parser<'a> {
         if self.may_expect(Keyword::Const) {
             let end = self.last_pos();
             Ok(M::Const.with_loc(begin..end))
+        } else if self.may_expect(Keyword::Module) {
+            let end = self.last_pos();
+            self.error(begin..end, m::ModuleModfInNonAssign {}).done()?;
+            Ok(M::None.with_loc(begin..end))
         } else {
             Ok(M::None.with_loc(begin))
         }
+    }
+
+    fn parse_kailua_modf_with_module(&mut self) -> Result<Spanned<MM>> {
+        let begin = self.pos();
+        let (modf, end) = if self.may_expect(Keyword::Const) {
+            (MM::Const, self.last_pos())
+        } else if self.may_expect(Keyword::Module) {
+            // this gets ignored in the checker unless at proper places
+            (MM::Module, self.last_pos())
+        } else {
+            (MM::None, begin)
+        };
+        Ok(modf.with_loc(begin..end))
     }
 
     fn parse_kailua_slotkind(&mut self) -> Result<Spanned<SlotKind>> {
@@ -2116,7 +2139,7 @@ impl<'a> Parser<'a> {
             let parse_named_type_spec = |parser: &mut Self, name: Spanned<Name>,
                                          begin: Pos| -> Result<Spanned<TypeSpec<Spanned<Name>>>> {
                 parser.expect(Punct::Colon)?;
-                let modf = parser.parse_kailua_modf()?;
+                let modf = parser.parse_kailua_modf_with_module()?;
                 let kind = parser.parse_kailua_kind()?;
                 let spec = TypeSpec { base: name, modf: modf.base, kind: Some(kind) };
                 Ok(spec.with_loc(begin..parser.last_pos()))
@@ -2599,7 +2622,8 @@ impl<'a> Parser<'a> {
     }
 
     fn try_parse_kailua_type_spec_with_spanned_modf(&mut self)
-            -> Result<Option<Spanned<(Spanned<M>, Spanned<Kind>)>>> {
+        -> Result<Option<Spanned<(Spanned<MM>, Option<Spanned<Kind>>)>>>
+    {
         let metabegin = self.pos();
         if self.may_expect(Punct::DashDashColon) {
             self.recover_meta(|parser| {
@@ -2607,8 +2631,14 @@ impl<'a> Parser<'a> {
                 //            --:   b = bar }`
                 parser.begin_meta_comment(Punct::DashDashColon);
 
-                let modf = parser.parse_kailua_modf()?;
-                let kind = parser.recover_upto(Self::parse_kailua_kind)?;
+                let modf = parser.parse_kailua_modf_with_module()?;
+                let mut kind = parser.recover_upto(Self::try_parse_kailua_kind)?;
+                if kind.is_none() && !(parser.lookahead(Punct::DashDashGt) ||
+                                       parser.lookahead(Punct::Newline)) {
+                    // the next `end_meta_comment` call is guaranteed to fail, which leaves
+                    // the kind empty (i.e. inferred later). better to make it an oops.
+                    kind = Some(Recover::recover());
+                }
 
                 let metaend = parser.last_pos();
                 // allow for `--: last type --> return type` in the function decl
@@ -2629,25 +2659,36 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn try_parse_kailua_type_spec(&mut self) -> Result<Option<Spanned<(M, Spanned<Kind>)>>> {
+    fn try_parse_kailua_type_spec(&mut self)
+        -> Result<Option<Spanned<(MM, Option<Spanned<Kind>>)>>>
+    {
         trace!("parsing kailua type spec");
         let spec = self.try_parse_kailua_type_spec_with_spanned_modf()?;
         Ok(spec.map(|spec| spec.map(|(m,k)| (m.base, k))))
     }
 
     fn try_parse_kailua_typeseq_spec(&mut self)
-            -> Result<Option<Spanned<Vec<Spanned<(M, Spanned<Kind>)>>>>> {
+        -> Result<Option<Spanned<Vec<Spanned<(MM, Option<Spanned<Kind>>)>>>>>
+    {
         trace!("parsing kailua type sequence spec");
         let metabegin = self.pos();
         if self.may_expect(Punct::DashDashColon) {
-            self.recover_meta(|parser| {
+            let mut specs = Vec::new();
+
+            let metaend = self.recover_meta(|parser| {
                 parser.begin_meta_comment(Punct::DashDashColon);
 
-                let mut specs = Vec::new();
                 parser.scan_list(|parser| {
                     let begin = parser.pos();
-                    let modf = parser.parse_kailua_modf()?;
-                    let kind = parser.recover_upto(Self::parse_kailua_kind)?;
+                    let modf = parser.parse_kailua_modf_with_module()?;
+                    let mut kind = parser.recover_upto(Self::try_parse_kailua_kind)?;
+                    if kind.is_none() && !(parser.lookahead(Punct::DashDashGt) ||
+                                           parser.lookahead(Punct::Newline) ||
+                                           parser.lookahead(Punct::Comma)) {
+                        // the next `end_meta_comment` call is guaranteed to fail, which leaves
+                        // the kind empty (i.e. inferred later). better to make it an oops.
+                        kind = Some(Recover::recover());
+                    }
                     Ok((modf, kind).with_loc(begin..parser.last_pos()))
                 }, |spec| {
                     specs.push(spec.map(|(m,k)| (m.base, k)));
@@ -2661,8 +2702,11 @@ impl<'a> Parser<'a> {
                     parser.ignore_after_newline = None;
                     parser.elided_newline = None;
                 }
-                Ok(Some(specs.with_loc(metabegin..metaend)))
-            }, Recover::recover)
+                Ok(Some(metaend))
+            }, || None)?;
+
+            let metaend = metaend.unwrap_or_else(|| self.last_pos());
+            Ok(Some(specs.with_loc(metabegin..metaend)))
         } else {
             Ok(None)
         }
@@ -2680,7 +2724,7 @@ impl<'a> Parser<'a> {
                 parser.end_meta_comment(Punct::DashDashGt)?;
 
                 Ok(Some(returns.with_loc(begin..end)))
-            }, Recover::recover)
+            }, || None)
         } else {
             Ok(None)
         }
@@ -2745,7 +2789,7 @@ impl<'a> Parser<'a> {
                 let metaend = parser.last_pos();
                 parser.end_meta_comment(Punct::DashDashV)?;
                 Ok(Some((attrs, sig).with_loc(metabegin..metaend)))
-            }, Recover::recover)
+            }, || None)
         } else {
             Ok(None)
         }
@@ -2796,9 +2840,9 @@ impl<'a> Parser<'a> {
                         let modf = parser.parse_kailua_modf()?.base;
                         let kindbegin = parser.pos();
                         let kind = if parser.may_expect(Keyword::Method) {
-                            let funckind = parser.recover_upto(|p| {
+                            let funckind = parser.recover_upto_with(|p| {
                                 p.parse_kailua_funckind().map(Some)
-                            })?;
+                            }, || None)?;
                             // if the parsing fails later, we need a span to construct K::Func
                             Kindlike::Method(Span::new(kindbegin, parser.last_pos()), funckind)
                         } else {

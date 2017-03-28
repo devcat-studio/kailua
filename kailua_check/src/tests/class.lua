@@ -481,3 +481,88 @@ local x = h:f() --: string --@< Error: Cannot index `Hello` with `"f"`
 local y = h.g() --: string --@< Error: Cannot index `Hello` with `"g"`
 --! error
 
+--8<-- class-no-module
+--# assume `class`: [make_class] function() --> table
+local Hello = class()
+
+--v method(n: integer)
+function Hello:init(n)
+    self.n = n
+end
+
+--v method()
+function Hello:foo()
+    if self.n > 0 then
+        self.n = self.n - 1
+        self:bar() --@< Error: Cannot index `Hello` with `"bar"`
+    end
+end
+
+--v method()
+function Hello:bar()
+    if self.n > 0 then
+        self.n = self.n - 1
+        self:foo()
+    end
+end
+
+--! error
+
+--8<-- class-module
+--# assume `class`: [make_class] function() --> table
+local Hello = class() --: module
+
+--v method(n: integer)
+function Hello:init(n)
+    self.n = n
+end
+
+--v method()
+function Hello:foo()
+    if self.n > 0 then
+        self.n = self.n - 1
+        self:bar()
+    end
+end
+
+--v method()
+function Hello:bar()
+    if self.n > 0 then
+        self.n = self.n - 1
+        self:foo()
+    end
+end
+
+--! ok
+
+--8<-- class-module-partial-init
+--# assume `class`: [make_class] function() --> table
+local Hello = class() --: module
+
+--v method(n: integer)
+function Hello:init(n)
+    self.n = n
+end
+
+local h = Hello.new(42)
+
+--v method()
+function Hello:foo()
+    if self.n > 0 then
+        self.n = self.n - 1
+        self:bar()
+    end
+end
+
+--v method()
+function Hello:bar()
+    if self.n > 0 then
+        self.n = self.n - 1
+        self:foo()
+    end
+end
+
+h:foo()
+
+--! ok
+

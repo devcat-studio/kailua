@@ -307,6 +307,12 @@ local x = {a = 'foo'} --: table
 local p = x.a --@< Error: Cannot index `table` without further type information; specify more detailed type, or use `--# assume` as a last resort
 --! error
 
+--8<-- index-unknown
+--# open `internal kailua_test`
+local x = kailua_test.gen_tvar()
+local p = x.a --@< Error: The type `<unknown type>` is tabular but not known enough to index
+--! error
+
 --8<-- methodcall-empty
 local p = ({}):hello() --@< Error: Missing key "hello" in `{...}`
 --! error
@@ -963,6 +969,29 @@ function a(...)
 end
 --! error
 
+--8<-- func-arg-const
+function a(x) --: const integer
+    x = 54 --@< Error: Cannot assign `54` into `const integer`
+           --@^ Note: The other type originates here
+end
+--! error
+
+--8<-- func-arg-const-only -- feature:no_implicit_func_sig
+function a(x) --: const
+    --@^ Error: Every argument in the named function should have a type specified
+    --@^^ Error: The type for this argument in the anonymous function is missing but couldn't be inferred from the calls
+end
+--! error
+
+--8<-- func-arg-const-only-inferred -- feature:!no_implicit_func_sig
+function a(x) --: const
+    local y = x --: integer
+    x = 54 --@< Error: Cannot assign `54` into `const <unknown type>`
+           --@^ Note: The other type originates here
+end
+a(42) -- this is okay
+--! error
+
 --8<-- funccall-func-hint
 --v function(a: function(integer, integer) --> integer)
 function p(a) end
@@ -1337,6 +1366,23 @@ local z = a[3] --: integer
 --@^ Error: Cannot assign `number` into `integer`
 --@^^ Note: The other type originates here
 --! error
+
+--8<-- const-only-1
+local a = 3 --: const
+a = 3 --@< Error: Cannot assign `3` into `const integer`
+      --@^ Note: The other type originates here
+--! error
+
+--8<-- const-only-2
+a = 3 --: const
+a = 3 --@< Error: Cannot assign `3` into `const integer`
+      --@^ Note: The other type originates here
+--! error
+
+--8<-- const-only-3
+local a = {x = 1, y = 2} --: const
+local b = a.x + a.y
+--! ok
 
 --8<-- const-map-init
 local a = {} --: const map<number, number>
@@ -3078,6 +3124,20 @@ p[1] = 42 --: integer --@< Error: Cannot specify the type of indexing expression
 --8<-- table-assign-type-to-map
 local p = {} --: map<string, integer>
 p.a = 42 --: integer --@< Error: Cannot specify the type of indexing expression
+--! error
+
+--8<-- table-assign-type-const-1
+local p = {}
+p.a = 42 --: const integer
+p.a = 54 --@< Error: Cannot assign `54` into `const integer`
+         --@^ Note: The other type originates here
+--! error
+
+--8<-- table-assign-type-const-2
+local p = {}
+p.a = 42 --: const
+p.a = 54 --@< Error: Cannot assign `54` into `const integer`
+         --@^ Note: The other type originates here
 --! error
 
 --8<-- implicit-literal-type

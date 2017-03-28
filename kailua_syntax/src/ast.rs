@@ -206,7 +206,7 @@ impl fmt::Debug for Var {
 #[derive(Clone, PartialEq)]
 pub struct TypeSpec<T> {
     pub base: T,
-    pub modf: M,
+    pub modf: MM, // allows for modules
     pub kind: Option<Spanned<Kind>>,
 }
 
@@ -220,7 +220,7 @@ impl<T: fmt::Debug> fmt::Debug for TypeSpec<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self.base)?;
         match (self.modf, &self.kind) {
-            (M::None, &None) => Ok(()),
+            (MM::None, &None) => Ok(()),
             (modf, &None) => write!(f, ": {:?}", modf),
             (modf, &Some(ref kind)) => write!(f, ": {:?} {:?}", modf, kind),
         }
@@ -582,6 +582,23 @@ impl fmt::Debug for M {
         match *self {
             M::None => write!(f, "_"),
             M::Const => write!(f, "Const"),
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum MM {
+    None,
+    Const,
+    Module, // a special modifier (same to None otherwise) for delayed type checking
+}
+
+impl fmt::Debug for MM {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            MM::None => write!(f, "_"),
+            MM::Const => write!(f, "Const"),
+            MM::Module => write!(f, "Module"),
         }
     }
 }

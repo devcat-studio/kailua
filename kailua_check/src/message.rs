@@ -582,6 +582,29 @@ define_msg! { pub NoCheckRequiresTypedReturns:
     _    => "[NO_CHECK] attribute requires the return type to be present",
 }
 
+define_msg! { pub ModuleRequiresTypedSelf:
+    "ko" => "`module`로 타입 체크를 지연하려면 `self` 인자의 타입이 명백해야 합니다. \
+             대신 함수 선언 문법으로 타입을 직접 지정하십시오",
+    _    => "Delayed type checking via `module` requires that \
+             the type for `self` argument is clear; \
+             directly specify the type for `self` with the function declaration instead",
+}
+
+define_msg! { pub ModuleRequiresTypedArgs:
+    "ko" => "`module`로 타입 체크를 지연하려면 인자에 타입이 주어져야 합니다",
+    _    => "Delayed type checking via `module` requires the arguments to be typed",
+}
+
+define_msg! { pub ModuleRequiresTypedVarargs:
+    "ko" => "`module`로 타입 체크를 지연하려면 가변 인자에 타입이 주어져야 합니다",
+    _    => "Delayed type checking via `module` requires the variadic arguments to be typed",
+}
+
+define_msg! { pub ModuleRequiresTypedReturns:
+    "ko" => "`module`로 타입 체크를 지연하려면 함수의 반환 타입이 주어져야 합니다",
+    _    => "Delayed type checking via `module` requires the return type to be present",
+}
+
 define_msg! { pub UnsupportedErrorType:
     "ko" => "`error \"메시지\"` 타입은 아직 지원되지 않습니다",
     _    => "`error \"message\"` type is not yet supported",

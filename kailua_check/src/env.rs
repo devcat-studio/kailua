@@ -5,7 +5,6 @@ use std::fmt;
 use std::result;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::borrow::Cow;
 use std::collections::{hash_map, HashMap, HashSet};
 use vec_map::{self, VecMap};
 use atomic::Atomic;
@@ -425,9 +424,33 @@ impl Module {
     }
 }
 
+#[derive(Clone, Debug)]
 enum LoadStatus {
     Done(Module),
     Ongoing(Span), // span for who to blame
+}
+
+#[derive(Clone, Debug)]
+pub enum SlotSpec {
+    // the slot is constructed implicitly (e.g. from `--: const`),
+    // so the type should be still copied directly from the initialization
+    Implicit(Spanned<Slot>),
+    // the slot is specified explicitly and the initialization should be its subtype
+    Explicit(Spanned<Slot>),
+}
+
+impl SlotSpec {
+    pub fn slot(&self) -> &Spanned<Slot> {
+        match *self {
+            SlotSpec::Implicit(ref slot) | SlotSpec::Explicit(ref slot) => slot,
+        }
+    }
+
+    pub fn unwrap(self) -> Spanned<Slot> {
+        match self {
+            SlotSpec::Implicit(slot) | SlotSpec::Explicit(slot) => slot,
+        }
+    }
 }
 
 // global context (also acts as a type context).
@@ -1596,40 +1619,62 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         self.assign_(lhs, rhs, false)
     }
 
+    // merge the initialization and optional type specification to produce a single slot type.
+    fn assign_from_spec(&mut self, init: &Spanned<Slot>,
+                        spec: Option<&SlotSpec>) -> Result<Spanned<Slot>> {
+        match spec {
+            // type spec is explicit: init <: spec
+            Some(&SlotSpec::Explicit(ref spec)) => {
+                self.assign_(spec, init, true)?;
+                Ok(spec.clone())
+            },
+
+            // type spec is implicit, the type part is expected to be a type variable
+            Some(&SlotSpec::Implicit(ref spec)) => {
+                if self.assign_special(spec, init)? {
+                    // ignore the flexibility
+                    let lty = (*spec.unlift()).clone().with_loc(spec);
+                    let rty = (*init.unlift()).clone().with_loc(init);
+                    if let Err(r) = lty.assert_eq(&rty, self.context) {
+                        self.error(spec, m::CannotAssign { lhs: self.display(spec),
+                                                           rhs: self.display(init) })
+                            .note_if(init, m::OtherTypeOrigin {})
+                            .report_types(r, TypeReportHint::None)
+                            .done()?;
+                    }
+                }
+                Ok(spec.clone())
+            },
+
+            // type spec is *not* given, use the coerced version of initialization
+            None => Ok(init.clone().map(|s| s.coerce())),
+        }
+    }
+
     // same to `assign` but the slot is assumed to be newly created (out of field)
     // and the strict equality instead of subtyping is applied.
     // this is required because the slot itself is generated before doing any assignment;
     // the usual notion of accepting by subtyping does not work well here.
     // this is technically two assignments, of which the latter is done via the strict equality.
     pub fn assign_new(&mut self, lhs: &Spanned<Slot>, initrhs: &Spanned<Slot>,
-                      specrhs: Option<&Spanned<Slot>>) -> Result<()> {
+                      specrhs: Option<&SlotSpec>) -> Result<()> {
         trace!("assigning {:?} to a new slot {:?} with type {:?}", initrhs, lhs, specrhs);
 
         // first assignment of initrhs to specrhs, if any
-        let specrhs = if let Some(specrhs) = specrhs {
-            if !self.assign_special(specrhs, initrhs)? { return Ok(()); }
-            if let Err(r) = specrhs.accept(initrhs, self.context, true) {
-                self.error(specrhs, m::CannotAssign { lhs: self.display(specrhs),
-                                                      rhs: self.display(initrhs) })
-                    .note_if(initrhs, m::OtherTypeOrigin {})
+        let specrhs = self.assign_from_spec(initrhs, specrhs)?;
+
+        // second "assignment" of specrhs (or initrhs) to lhs
+        specrhs.adapt(lhs.flex(), self.context);
+        if self.assign_special(lhs, &specrhs)? {
+            if let Err(r) = lhs.assert_eq(&specrhs, self.context) {
+                self.error(lhs, m::CannotAssign { lhs: self.display(lhs),
+                                                  rhs: self.display(&specrhs) })
+                    .note_if(&specrhs, m::OtherTypeOrigin {})
                     .report_types(r, TypeReportHint::None)
                     .done()?;
             }
-            Cow::Borrowed(specrhs)
-        } else {
-            Cow::Owned(initrhs.clone().map(|s| s.coerce()))
-        };
-
-        // second assignment of specrhs (or initrhs) to lhs
-        specrhs.adapt(lhs.flex(), self.context);
-        if !self.assign_special(lhs, &specrhs)? { return Ok(()); }
-        if let Err(r) = lhs.assert_eq(&*specrhs, self.context) {
-            self.error(lhs, m::CannotAssign { lhs: self.display(lhs),
-                                              rhs: self.display(&specrhs) })
-                .note_if(&*specrhs, m::OtherTypeOrigin {})
-                .report_types(r, TypeReportHint::None)
-                .done()?;
         }
+
         Ok(())
     }
 
@@ -1717,7 +1762,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
     // adds a local variable with the explicit type `specinfo` and the implicit type `initinfo`.
     pub fn add_var(&mut self, nameref: &Spanned<NameRef>,
-                   specinfo: Option<Spanned<Slot>>,
+                   specinfo: Option<SlotSpec>,
                    initinfo: Option<Spanned<Slot>>) -> Result<()> {
         let id = self.id_from_nameref(nameref);
         debug!("adding a variable {} with {:?} (specified) and {:?} (initialized)",
@@ -1733,15 +1778,14 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         }
 
         let slot = if let Some(initinfo) = initinfo {
-            let specinfo = specinfo.unwrap_or_else(|| initinfo.clone().map(|s| s.coerce()));
-            self.assign_(&specinfo, &initinfo, true)?;
+            let specinfo = self.assign_from_spec(&initinfo, specinfo.as_ref())?;
 
             // name the class if it is currently unnamed
             self.name_class_if_any(&id, &initinfo)?;
 
             NameSlot::Set(specinfo.base)
         } else if let Some(specinfo) = specinfo {
-            NameSlot::Unset(specinfo.base)
+            NameSlot::Unset(specinfo.unwrap().base)
         } else {
             NameSlot::None
         };

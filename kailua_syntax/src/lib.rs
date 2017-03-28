@@ -11,7 +11,7 @@ pub use lex::{Tok, Punct, Keyword, Lexer};
 pub use lex::{Nest, NestedToken, NestingCategory, NestingSerial};
 pub use ast::{Name, NameRef, Str, Seq, Var, TypeSpec, Returns};
 pub use ast::{Sig, Ex, Exp, UnOp, BinOp, SelfParam};
-pub use ast::{TypeScope, St, Stmt, Block, M, K, Kind, FuncKind, SlotKind, Attr, Args, Chunk};
+pub use ast::{TypeScope, St, Stmt, Block, M, MM, K, Kind, FuncKind, SlotKind, Attr, Args, Chunk};
 pub use parser::Parser;
 
 mod lang;

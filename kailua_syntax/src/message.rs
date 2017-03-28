@@ -406,6 +406,11 @@ define_msg! { pub NoKindParamsClose<'a> { read: &'a Tok }:
     _    => "Expected `>` or `>>`, got {read}",
 }
 
+define_msg! { pub ModuleModfInNonAssign:
+    "ko" => "`module`은 대입문이나 `local`의 최상위 타입에서만 쓰일 수 있습니다",
+    _    => "`module` can only be used in top-level types of assignments or `local`s",
+}
+
 define_msg! { pub FutureKeyword<'a> { read: &'a Tok, current: Lua, future: Lua }:
     "ko" => "{read}은(는) {current}에서는 이름으로 처리되지만 \
              {future}부터는 예약어가 되었으므로 쓰지 않는 것이 좋습니다",

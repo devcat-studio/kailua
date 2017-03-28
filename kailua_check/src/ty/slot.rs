@@ -5,7 +5,7 @@ use std::sync::Arc;
 use parking_lot::{RwLock, RwLockReadGuard};
 
 use kailua_env::{Span, Spanned};
-use kailua_syntax::M;
+use kailua_syntax::{M, MM};
 use diag::Origin;
 use super::{Dyn, Nil, T, Ty, TypeContext, Lattice, Union, Dummy, TVar, Tag};
 use super::{Display, DisplayState, TypeReport, TypeResult};
@@ -14,9 +14,8 @@ use super::flags::Flags;
 // slot type flexibility (a superset of type mutability)
 #[derive(Copy, Clone, PartialEq)]
 pub enum F {
-    // invalid top type (no type information available)
-    // for the typing convenience the type information itself is retained, but never used.
-    Any,
+    // unknown flexibility (e.g. right after the generation but before the initialization)
+    Unknown,
     // dynamic slot; all assignments are allowed and ignored
     Dynamic(Dyn),
     // temporary r-value slot
@@ -26,10 +25,14 @@ pub enum F {
     Const,
     // invariant mutable slot
     Var,
+    // postponed invariant mutable slot
+    // this is a variant of Var but only allows for indexing (no subtyping), and any types
+    // assigned via indexing will be marked as type-checked later
+    Module,
 }
 
-impl F {
-    pub fn from(modf: M) -> F {
+impl From<M> for F {
+    fn from(modf: M) -> F {
         match modf {
             M::None => F::Var,
             M::Const => F::Const,
@@ -37,15 +40,26 @@ impl F {
     }
 }
 
+impl From<MM> for F {
+    fn from(modf: MM) -> F {
+        match modf {
+            MM::None => F::Var,
+            MM::Const => F::Const,
+            MM::Module => F::Module,
+        }
+    }
+}
+
 impl<'a> fmt::Debug for F {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            F::Any                => write!(f, "any"),
+            F::Unknown            => write!(f, "_"),
             F::Dynamic(Dyn::User) => write!(f, "?"),
             F::Dynamic(Dyn::Oops) => write!(f, "?!"),
             F::Just               => write!(f, "just"),
             F::Const              => write!(f, "const"),
             F::Var                => write!(f, "var"),
+            F::Module             => write!(f, "module"),
         }
     }
 }
@@ -99,7 +113,11 @@ impl S {
                 },
                 (F::Dynamic(dyn), _) | (_, F::Dynamic(dyn)) =>
                     (F::Dynamic(dyn), Ty::new(T::Dynamic(dyn))),
-                (F::Any, _) | (_, F::Any) => (F::Any, Ty::new(T::None)),
+
+                // modules and unknowns cannot be unioned (even to itself)
+                (F::Module, _) | (_, F::Module) |
+                (F::Unknown, _) | (_, F::Unknown) =>
+                    return Err(ctx.gen_report()),
 
                 // it's fine to merge r-values
                 (F::Just, F::Just) => (F::Just, self.ty.union(&other.ty, explicit, ctx)?),
@@ -131,7 +149,6 @@ impl S {
 
         (|| {
             match (self.flex, other.flex) {
-                (_, F::Any) => Ok(()),
                 (_, F::Dynamic(_)) | (F::Dynamic(_), _) => Ok(()),
 
                 (F::Just, _) | (_, F::Const) => self.ty.assert_sub(&other.ty, ctx),
@@ -142,15 +159,23 @@ impl S {
         })().map_err(|r: TypeReport| r.not_sub(Origin::Slot, self, other, ctx))
     }
 
-    pub fn assert_eq(&self, other: &S, ctx: &mut TypeContext) -> TypeResult<()> {
+    // this can replace F::Unknown, and thus is mutable
+    pub fn assert_eq(&mut self, other: &mut S, ctx: &mut TypeContext) -> TypeResult<()> {
         debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
         (|| {
+            // if one flex is unknown, use the other's flex
+            if self.flex == F::Unknown {
+                self.flex = other.flex;
+            } else if other.flex == F::Unknown {
+                other.flex = self.flex;
+            }
+
             match (self.flex, other.flex) {
-                (F::Any, F::Any) => Ok(()),
                 (_, F::Dynamic(_)) | (F::Dynamic(_), _) => Ok(()),
 
-                (F::Just, F::Just) | (F::Const, F::Const) | (F::Var, F::Var) =>
+                (F::Just, F::Just) | (F::Const, F::Const) |
+                (F::Var, F::Var) | (F::Module, F::Module) =>
                     self.ty.assert_eq(&other.ty, ctx),
 
                 (_, _) => Err(ctx.gen_report()),
@@ -166,8 +191,8 @@ impl Display for S {
         }
 
         let ret = match (self.flex, &st.locale[..]) {
-            (F::Any, "ko") => write!(f, "<접근 불가능한 타입>"),
-            (F::Any, _)    => write!(f, "<inaccessible type>"),
+            (F::Unknown, "ko") => write!(f, "<초기화되지 않음>"),
+            (F::Unknown, _)    => write!(f, "<not initialized>"),
 
             (F::Dynamic(Dyn::User), _)    => write!(f, "WHATEVER"),
             (F::Dynamic(Dyn::Oops), "ko") => write!(f, "<오류>"),
@@ -177,6 +202,9 @@ impl Display for S {
             (F::Just,  _) => write!(f, "{}", self.ty.display(st)),
             (F::Const, _) => write!(f, "const {}", self.ty.display(st)),
             (F::Var,   _) => write!(f, "{}", self.ty.display(st)),
+
+            (F::Module, "ko") => write!(f, "<초기화중> {}", self.ty.display(st)),
+            (F::Module, _)    => write!(f, "<initializing> {}", self.ty.display(st)),
         };
         st.unmark_slot(self);
         ret
@@ -253,14 +281,18 @@ impl Slot {
             match (lhs.flex, rhs.flex, init) {
                 (F::Dynamic(_), _, _) => Ok(()),
 
-                (_, F::Any, _) |
-                (F::Any, _, _) |
+                (_, F::Unknown, _) |
+                (F::Unknown, _, _) |
                 (F::Const, _, false) => Err(ctx.gen_report()),
 
                 (_, F::Dynamic(_), _) => Ok(()),
 
                 // as long as the type is in agreement, Var can be assigned
                 (F::Var, _, _) => rhs.ty.assert_sub(&lhs.ty, ctx),
+
+                // Module requires the strict equality on the initialization
+                (F::Module, _, true) => rhs.ty.assert_eq(&lhs.ty, ctx),
+                (F::Module, _, false) => rhs.ty.assert_sub(&lhs.ty, ctx),
 
                 // assignment to Const slot is for initialization only
                 (F::Const, _, true) => rhs.ty.assert_sub(&lhs.ty, ctx),
@@ -285,14 +317,23 @@ impl Slot {
         let mut s = self.0.write();
         match s.flex {
             F::Dynamic(_) => Ok(()),
-            F::Any | F::Const => {
+            F::Unknown | F::Const => {
                 Err(ctx.gen_report().cannot_assign_in_place(Origin::Slot, &*s, ctx))
             },
             F::Var => Ok(()),
             F::Just => {
                 s.flex = F::Var;
                 Ok(())
-            }
+            },
+            // this requires an additional processing
+            F::Module => Ok(()),
+        }
+    }
+
+    pub fn unmark_as_module(&self) {
+        let mut s = self.0.write();
+        if s.flex == F::Module {
+            s.flex = F::Var;
         }
     }
 
@@ -368,7 +409,7 @@ impl Lattice for Slot {
     }
 
     fn assert_eq(&self, other: &Slot, ctx: &mut TypeContext) -> TypeResult<()> {
-        self.0.read().assert_eq(&other.0.read(), ctx)
+        self.0.write().assert_eq(&mut other.0.write(), ctx)
     }
 }
 
