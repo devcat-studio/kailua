@@ -1279,8 +1279,13 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
     fn visit_block(&mut self, block: &'inp Spanned<Block>) -> Result<Exit> {
         // `self.pending_modules` should be kept in sync, even when the checking fails
         self.pending_modules.push(HashMap::new());
-        let exit = self.visit_block_(block);
-        let ret = self.check_pending_modules();
+        let exit;
+        let ret;
+        {
+            let mut scope = self.scoped(Scope::new());
+            exit = scope.visit_block_(block);
+            ret = scope.check_pending_modules();
+        }
         self.pending_modules.pop().expect("no matching pending module list");
         let exit = exit?;
         ret?;
@@ -1323,21 +1328,20 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
     }
 
     fn visit_block_(&mut self, block: &'inp Spanned<Block>) -> Result<Exit> {
-        let mut scope = self.scoped(Scope::new());
         let mut exit = Exit::None;
         let mut ignored_stmts: Option<Span> = None;
         for stmt in &block.base {
             if exit != Exit::None {
                 ignored_stmts = Some(ignored_stmts.unwrap_or(Span::dummy()) | stmt.span);
                 // the exit return can no longer affect this block's return
-                scope.visit_stmt(stmt)?;
+                self.visit_stmt(stmt)?;
             } else {
-                exit = scope.visit_stmt(stmt)?;
+                exit = self.visit_stmt(stmt)?;
             }
         }
         #[cfg(feature = "warn_on_dead_code")] {
             if let Some(span) = ignored_stmts {
-                scope.env.warn(span, m::DeadCode {}).done()?;
+                self.env.warn(span, m::DeadCode {}).done()?;
             }
         }
         Ok(exit)

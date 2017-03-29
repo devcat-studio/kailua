@@ -512,7 +512,7 @@ end
 x = 42
 --! ok
 
---8<-- module-decl-type-scope-local
+-->8-- module-decl-type-scope-local
 local M = {} --: module
 
 --v function() --> integer
@@ -524,15 +524,68 @@ end
 --# type local X = integer
 --! error
 
---8<-- module-decl-type-scope-global
+-->8-- module-decl-type-scope-global
 local M = {} --: module
 
 --v function() --> integer
 function M.a()
-    local x = 42 --: X
+    local x = 42 --: X --@< Error: Type `X` is not defined
     return x
 end
 
 --# type global X = integer
+--! error
+
+-->8-- module-decl-type-scope-imported
+--# assume global `require`: [require] function(string) --> any
+local M = {} --: module
+
+--v function() --> integer
+function M.a()
+    local x = 42 --: X --@< Error: Type `X` is not defined
+    return x
+end
+
+require 'a'
+
+--& a
+--# type X = integer
+--! error
+
+--8<-- module-sig-type-scope-local
+local M = {} --: module
+
+--# type local X = integer
+
+--v function() --> X
+function M.a()
+    return 42
+end
+--! ok
+
+--8<-- module-sig-type-scope-global
+local M = {} --: module
+
+--# type global X = integer
+
+--v function() --> X
+function M.a()
+    return 42
+end
+--! ok
+
+--8<-- module-sig-type-scope-imported
+--# assume global `require`: [require] function(string) --> any
+local M = {} --: module
+
+require 'a'
+
+--v function() --> X
+function M.a()
+    return 42
+end
+
+--& a
+--# type X = integer
 --! ok
 
