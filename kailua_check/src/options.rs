@@ -57,23 +57,34 @@ impl<S: FsSource> FsOptions<S> {
                    suffix: &[u8]) -> Result<Option<Chunk>, Option<Stop>> {
         for template in search_paths {
             let mut newpath = Vec::new();
+            let mut newpathdot = Vec::new();
             for (i, e) in template.split(|&b| b == b'?').enumerate() {
                 if i > 0 {
                     newpath.extend(path.iter().map(|&b| {
                         if b == b'.' { MAIN_SEPARATOR as u8 } else { b }
                     }));
+                    newpathdot.extend(path.iter().cloned());
                 }
                 newpath.extend_from_slice(e);
+                newpathdot.extend_from_slice(e);
             }
             newpath.extend_from_slice(suffix);
+            newpathdot.extend_from_slice(suffix);
 
             let resolved_path = self.root.join(self.source.to_path_buf(&newpath)?);
-            debug!("trying to load {:?}", path);
+            trace!("trying to load {:?}", resolved_path);
+            if let Some(chunk) = self.source.chunk_from_path(&resolved_path)? {
+                return Ok(Some(chunk));
+            }
 
+            // also try to load a dotted path
+            let resolved_path = self.root.join(self.source.to_path_buf(&newpathdot)?);
+            trace!("trying to load {:?}", resolved_path);
             if let Some(chunk) = self.source.chunk_from_path(&resolved_path)? {
                 return Ok(Some(chunk));
             }
         }
+
         Ok(None)
     }
 }
