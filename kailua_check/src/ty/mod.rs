@@ -26,7 +26,7 @@ mod seq;
 mod tag;
 
 // anonymous, unifiable type variables
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct TVar(pub u32);
 
 impl fmt::Debug for TVar {
@@ -39,7 +39,7 @@ impl fmt::Debug for TVar {
 // - `empty` (row #0) denotes a inextensible "empty" row variable;
 //   this cannot occur from unification, but is required to handle subtyping between
 //   records and non-records, which effectively disables any further record extension
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct RVar(u32);
 
 impl RVar {
@@ -69,7 +69,7 @@ impl fmt::Debug for RVar {
 }
 
 // nominal type identifiers
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ClassId(pub u32);
 
 impl fmt::Debug for ClassId {
@@ -79,7 +79,7 @@ impl fmt::Debug for ClassId {
 }
 
 // nominal type classification
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Class {
     Prototype(ClassId),
     Instance(ClassId),

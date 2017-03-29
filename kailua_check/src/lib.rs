@@ -20,7 +20,8 @@ pub use ty::{RVar, TVar, ClassId, Class, TypeContext, TypeResolver, Union, Latti
 pub use ty::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, Dyn, Nil, T, Ty};
 pub use ty::{F, S, Slot, SeqIter, TySeq, SpannedTySeq, SlotSeq, SpannedSlotSeq, Tag};
 pub use options::{Options, FsOptions, FsSource};
-pub use env::{Id, IdDisplay, Frame, NameDef, TypeDef, ClassDef, Scope, Context, Output, Env};
+pub use env::{Id, IdDisplay, Frame, NameDef, TypeDef, ClassFields, Scope};
+pub use env::{Context, Output, Env, Types};
 pub use check::Checker;
 
 mod diag;

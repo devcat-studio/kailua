@@ -78,7 +78,7 @@ impl kailua_test::Testing for Testing {
             });
             for slot in slots {
                 let msg = format!("slot: {}",
-                                  slot.display(&context as &TypeContext)
+                                  slot.display(context.types() as &TypeContext)
                                       .localized(Locale::dummy()));
                 report.info(slot.span, &msg).done().unwrap();
             }

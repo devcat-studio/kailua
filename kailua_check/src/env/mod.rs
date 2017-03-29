@@ -1,4 +1,3 @@
-use std::mem;
 use std::ops;
 use std::str;
 use std::fmt;
@@ -6,22 +5,24 @@ use std::result;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::collections::{hash_map, HashMap, HashSet};
-use vec_map::{self, VecMap};
-use atomic::Atomic;
-use atomic::Ordering::Relaxed;
 
 use kailua_env::{self, Span, Spanned, WithLoc, ScopedId, ScopeMap, SpanMap};
 use kailua_diag::{Result, Kind, Report, Reporter, Locale, Localize};
 use kailua_syntax::{Name, NameRef};
-use diag::{unquotable_name, Origin, TypeReport, TypeResult, TypeReportHint, TypeReportMore};
+use diag::{TypeReportHint, TypeReportMore};
 use ty::{Displayed, Display};
-use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, RVar, Lattice, Union, Tag};
+use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, Lattice, Union, Tag};
 use ty::{TypeContext, TypeResolver, ClassId, Class, Tables, Functions, Function, Key};
 use ty::flags::*;
 use defs::get_defs;
 use options::Options;
 use check::Checker;
 use message as m;
+
+pub use self::types::Types;
+
+mod partitions;
+mod types;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Id {
@@ -170,10 +171,8 @@ pub struct TypeDef {
 }
 
 #[derive(Clone, Debug)]
-pub struct ClassDef {
+pub struct ClassFields {
     pub span: Span,
-    pub name: Option<Spanned<Name>>,
-    pub parent: Option<ClassId>,
     pub class_ty: HashMap<Key, Slot>,
     pub instance_ty: HashMap<Key, Slot>,
 }
@@ -209,206 +208,6 @@ impl Scope {
     // the caller should check for the outermost types first
     pub fn put_type(&mut self, name: Spanned<Name>, ty: Ty) -> bool {
         self.types.insert(name.base, TypeDef { span: name.span, ty: ty }).is_none()
-    }
-}
-
-trait Partition {
-    fn create(parent: usize, rank: usize) -> Self;
-    fn read(&self) -> (usize /*parent*/, usize /*rank*/);
-    fn write_parent(&self, parent: usize);
-    fn increment_rank(&mut self);
-}
-
-#[derive(Debug)]
-struct Partitions<T> {
-    map: VecMap<T>,
-}
-
-impl<T: Partition> Partitions<T> {
-    fn new() -> Partitions<T> {
-        Partitions { map: VecMap::new() }
-    }
-
-    fn find(&self, i: usize) -> usize {
-        if let Some(u) = self.map.get(&i) {
-            let (mut parent, _) = u.read();
-            if parent != i { // path compression
-                while let Some(v) = self.map.get(&parent) {
-                    let (newparent, _) = v.read();
-                    if newparent == parent { break; }
-                    parent = newparent;
-                }
-                u.write_parent(parent);
-            }
-            parent
-        } else {
-            i
-        }
-    }
-
-    fn union(&mut self, lhs: usize, rhs: usize) -> usize {
-        use std::cmp::Ordering;
-
-        let lhs = self.find(lhs);
-        let rhs = self.find(rhs);
-        if lhs == rhs { return rhs; }
-
-        let (_, lrank) = self.map.entry(lhs).or_insert_with(|| Partition::create(lhs, 0)).read();
-        let (_, rrank) = self.map.entry(rhs).or_insert_with(|| Partition::create(rhs, 0)).read();
-        match lrank.cmp(&rrank) {
-            Ordering::Less => {
-                self.map.get_mut(&lhs).unwrap().write_parent(rhs);
-                rhs
-            }
-            Ordering::Greater => {
-                self.map.get_mut(&rhs).unwrap().write_parent(lhs);
-                lhs
-            }
-            Ordering::Equal => {
-                self.map.get_mut(&rhs).unwrap().write_parent(lhs);
-                self.map.get_mut(&lhs).unwrap().increment_rank();
-                lhs
-            }
-        }
-    }
-}
-
-impl<T> ops::Deref for Partitions<T> {
-    type Target = VecMap<T>;
-    fn deref(&self) -> &VecMap<T> { &self.map }
-}
-
-impl<T> ops::DerefMut for Partitions<T> {
-    fn deref_mut(&mut self) -> &mut VecMap<T> { &mut self.map }
-}
-
-#[derive(Debug)]
-struct Bound {
-    parent: Atomic<u32>,
-    rank: u8,
-    bound: Option<Ty>,
-}
-
-// a set of constraints that can be organized as a tree
-#[derive(Debug)]
-struct Constraints {
-    op: &'static str,
-    bounds: Partitions<Box<Bound>>,
-}
-
-// is this bound trivial so that one can always overwrite?
-fn is_bound_trivial(t: &Option<Ty>) -> bool {
-    // TODO special casing ? is not enough, should resolve b.bound's inner ?s as well
-    if let Some(ref t) = *t {
-        match **t { T::None | T::Dynamic(_) => true, _ => false }
-    } else {
-        true
-    }
-}
-
-impl Partition for Box<Bound> {
-    fn create(parent: usize, rank: usize) -> Box<Bound> {
-        Box::new(Bound { parent: Atomic::new(parent as u32), rank: rank as u8, bound: None })
-    }
-
-    fn read(&self) -> (usize /*parent*/, usize /*rank*/) {
-        (self.parent.load(Relaxed) as usize, self.rank as usize)
-    }
-
-    fn write_parent(&self, parent: usize) {
-        self.parent.store(parent as u32, Relaxed);
-    }
-
-    fn increment_rank(&mut self) {
-        self.rank += 1;
-    }
-}
-
-impl Constraints {
-    fn new(op: &'static str) -> Constraints {
-        Constraints { op: op, bounds: Partitions::new() }
-    }
-
-    fn is(&self, lhs: TVar, rhs: TVar) -> bool {
-        lhs == rhs || self.bounds.find(lhs.0 as usize) == self.bounds.find(rhs.0 as usize)
-    }
-
-    fn get_bound<'a>(&'a self, lhs: TVar) -> Option<&'a Bound> {
-        let lhs = self.bounds.find(lhs.0 as usize);
-        self.bounds.get(&lhs).map(|b| &**b)
-    }
-
-    // Some(bound) indicates that the bound already exists and is not consistent to rhs
-    fn add_bound<'a>(&'a mut self, lhs: TVar, rhs: &Ty) -> Option<&'a Ty> {
-        let lhs_ = self.bounds.find(lhs.0 as usize);
-        let b = self.bounds.entry(lhs_).or_insert_with(|| Partition::create(lhs_, 0));
-        if is_bound_trivial(&b.bound) {
-            b.bound = Some(rhs.clone());
-        } else {
-            let lhsbound = b.bound.as_ref().unwrap();
-            if lhsbound != rhs { return Some(lhsbound); }
-        }
-        None
-    }
-
-    fn add_relation(&mut self, lhs: TVar, rhs: TVar) -> bool {
-        if lhs == rhs { return true; }
-
-        let lhs_ = self.bounds.find(lhs.0 as usize);
-        let rhs_ = self.bounds.find(rhs.0 as usize);
-        if lhs_ == rhs_ { return true; }
-
-        fn take_bound(bounds: &mut VecMap<Box<Bound>>, i: usize) -> Option<Ty> {
-            if let Some(b) = bounds.get_mut(&i) {
-                mem::replace(&mut b.bound, None)
-            } else {
-                None
-            }
-        }
-
-        // take the bounds from each representative variable.
-        let lhsbound = take_bound(&mut self.bounds, lhs_);
-        let rhsbound = take_bound(&mut self.bounds, rhs_);
-
-        let bound = match (is_bound_trivial(&lhsbound), is_bound_trivial(&rhsbound)) {
-            (false, _) => lhsbound,
-            (true, false) => rhsbound,
-            (true, true) if lhsbound == rhsbound => lhsbound,
-            (true, true) => {
-                info!("variables {:?}/{:?} cannot have multiple bounds \
-                       (left {} {:?}, right {} {:?})",
-                      lhs, rhs, self.op, lhsbound, self.op, rhsbound);
-                return false;
-            },
-        };
-
-        // update the shared bound to the merged representative
-        let new = self.bounds.union(lhs_, rhs_);
-        if !is_bound_trivial(&bound) {
-            // the merged entry should have non-zero rank, so unwrap() is fine
-            self.bounds.get_mut(&new).unwrap().bound = bound;
-        }
-
-        true
-    }
-}
-
-#[derive(Debug)]
-struct RowInfo {
-    // the hashmap being None indicates that it is currently recursing;
-    // the value can be Some(slot) for "positive" fields, which the row variable contains that key,
-    // or None for "negative" fields, which the variable _cannot_ contain that key
-    // and it's an error for the unification to introduce it.
-    fields: Option<HashMap<Key, Option<Slot>>>,
-
-    // when the next variable is None, it is not instantiated yet and
-    // implicitly thought to have negative (absent) fields for each key in fields
-    next: Option<RVar>,
-}
-
-impl RowInfo {
-    fn new() -> RowInfo {
-        RowInfo { fields: Some(HashMap::new()), next: None }
     }
 }
 
@@ -470,15 +269,8 @@ pub struct Output {
     // TODO this might be eventually found useless
     global_scope: Scope,
 
-    // type variable information
-    next_tvar: TVar,
-    tvar_sub: Constraints, // upper bound
-    tvar_sup: Constraints, // lower bound
-    tvar_eq: Constraints, // tight bound
-
-    // row variable information
-    next_rvar: RVar,
-    row_infos: VecMap<Box<RowInfo>>,
+    // type context
+    types: Types,
 
     // module information
     opened: HashSet<String>,
@@ -487,12 +279,13 @@ pub struct Output {
     // runtime information
     string_meta: Option<Spanned<Slot>>,
 
-    // classes defined
-    classes: Vec<ClassDef>,
+    // class fields
+    class_fields: HashMap<ClassId, ClassFields>,
 }
 
 impl<R: Report> Context<R> {
     pub fn new(report: R) -> Context<R> {
+        let locale = report.message_locale();
         let mut ctx = Context {
             report: report,
             output: Output {
@@ -500,16 +293,11 @@ impl<R: Report> Context<R> {
                 scope_maps: Vec::new(),
                 spanned_slots: SpanMap::new(),
                 global_scope: Scope::new(),
-                next_tvar: TVar(1), // TVar(0) for the top-level return
-                tvar_sub: Constraints::new("<:"),
-                tvar_sup: Constraints::new(":>"),
-                tvar_eq: Constraints::new("="),
-                next_rvar: RVar::new(1), // RVar::new(0) == RVar::empty()
-                row_infos: VecMap::new(),
+                types: Types::new(locale),
                 opened: HashSet::new(),
                 loaded: HashMap::new(),
                 string_meta: None,
-                classes: Vec::new(),
+                class_fields: HashMap::new(),
             }
         };
 
@@ -521,6 +309,14 @@ impl<R: Report> Context<R> {
 
     pub fn report(&self) -> &R {
         &self.report
+    }
+
+    pub fn types(&self) -> &Types {
+        &self.types
+    }
+
+    pub fn types_mut(&mut self) -> &mut Types {
+        &mut self.types
     }
 
     pub fn open_library(&mut self, name: &Spanned<Name>, opts: Rc<RefCell<Options>>) -> Result<()> {
@@ -561,13 +357,9 @@ impl<R: Report> Context<R> {
     }
 
     pub fn make_class(&mut self, parent: Option<ClassId>, span: Span) -> ClassId {
-        assert!(parent.map_or(true, |cid| (cid.0 as usize) < self.classes.len()));
-
-        let cid = ClassId(self.classes.len() as u32);
-        self.classes.push(ClassDef {
+        let cid = self.types.make_class(parent);
+        self.class_fields.insert(cid, ClassFields {
             span: span,
-            name: None,
-            parent: parent,
             class_ty: HashMap::new(),
             instance_ty: HashMap::new(),
         });
@@ -575,235 +367,13 @@ impl<R: Report> Context<R> {
     }
 
     pub fn name_class(&mut self, cid: ClassId, name: Spanned<Name>) -> Result<()> {
-        let cls = &mut self.output.classes[cid.0 as usize];
-        if let Some(ref prevname) = cls.name {
-            self.report.warn(name, m::RedefinedClassName {})
-                       .note(prevname, m::PreviousClassName {})
+        let namespan = name.span;
+        if let Err(prevspan) = self.types.name_class(cid, name).map_err(|name| name.span) {
+            self.report.warn(namespan, m::RedefinedClassName {})
+                       .note(prevspan, m::PreviousClassName {})
                        .done()?;
-        } else {
-            info!("named {:?} as {:?}", cid, name);
-            cls.name = Some(name);
         }
         Ok(())
-    }
-
-    fn assert_rvar_rel(&mut self, lhs: RVar, rhs: RVar, is_sub: bool) -> TypeResult<()> {
-        trace!("{:?} should be {} {:?}", lhs, if is_sub { "<:" } else { "=" }, rhs);
-
-        // we want to avoid modifying shared row variables (which we cannot distinguish,
-        // therefore we can only modify a row variable which next var is not yet instantiated),
-        // while making sure that all fields known to be present or absent in both operands
-        // are common to each other as well. we therefore have to go through a chain of
-        // row variables for each operand, collect positive and negative fields respectively,
-        // set the bounds from mismatching fields to the last row variable in the chain
-        // _and_ finally set the next row variables for both to the same row variable.
-        //
-        // this is going to be tough.
-
-        fn collect_fields<R: Report>(mut r: RVar, ctx: &mut Context<R>)
-                -> TypeResult<(HashMap<Key, Slot>, RVar)> {
-            let mut present = HashMap::new();
-            let mut absent = HashSet::new(); // only used for filling the last row if none
-
-            let err;
-            'err: loop {
-                if r == RVar::empty() {
-                    return Ok((present, r));
-                }
-
-                match ctx.row_infos.entry(r.to_usize()) {
-                    vec_map::Entry::Occupied(row) => {
-                        let row = row.get();
-
-                        let fields = if let Some(ref fields) = row.fields {
-                            fields
-                        } else {
-                            err = format!("recursive record");
-                            break 'err;
-                        };
-
-                        for (k, v) in fields {
-                            if let Some(ref v) = *v {
-                                // positive field should be unique
-                                if present.insert(k.clone(), v.clone()).is_some() {
-                                    err = format!("internally duplicate field {:?}", k);
-                                    break 'err;
-                                }
-                            } else {
-                                // negative field will *not* be unique
-                                absent.insert(k.clone());
-                            }
-                        }
-
-                        if let Some(ref next) = row.next {
-                            r = next.clone();
-                        } else {
-                            return Ok((present, r));
-                        }
-                    }
-
-                    vec_map::Entry::Vacant(e) => {
-                        // instantiate the row and implicitly fill negative fields
-                        let mut fields = HashMap::new();
-                        fields.extend(present.iter().map(|(k, _)| (k.clone(), None)));
-                        fields.extend(absent.into_iter().map(|k| (k, None)));
-                        e.insert(Box::new(RowInfo { fields: Some(fields), next: None }));
-                        return Ok((present, r));
-                    }
-                }
-            }
-
-            Err(ctx.gen_report().put(Origin::RVar, err))
-        };
-
-        if lhs == rhs {
-            return Ok(());
-        }
-
-        let (lfields, lnext) = collect_fields(lhs.clone(), self)?;
-        let (rfields, rnext) = collect_fields(rhs.clone(), self)?;
-
-        let mut matching = Vec::new();
-        let mut lmissing = Vec::new();
-        let mut rmissing = Vec::new();
-
-        // collect missing fields and matching fields
-        // (we cannot immediately check for them due to borrowing)
-        for (k, lv) in lfields.iter() {
-            if let Some(rv) = rfields.get(k) {
-                matching.push((k.clone(), lv.clone(), rv.clone()));
-            } else {
-                rmissing.push((k.clone(), lv.clone()));
-            }
-        }
-        for (k, rv) in rfields.iter() {
-            if !lfields.contains_key(k) {
-                lmissing.push((k.clone(), rv.clone()));
-            }
-        }
-
-        // to make tests reproducible :-)
-        matching.sort_by(|a, b| a.0.cmp(&b.0));
-        lmissing.sort_by(|a, b| a.0.cmp(&b.0));
-        rmissing.sort_by(|a, b| a.0.cmp(&b.0));
-
-        // check for the matching fields
-        if is_sub {
-            for (_k, lv, rv) in matching {
-                lv.assert_sub(&rv, self)?;
-            }
-        } else {
-            for (_k, lv, rv) in matching {
-                lv.assert_eq(&rv, self)?;
-            }
-        }
-
-        // remaining fields should be in the relevant updatable row variable
-        if !lmissing.is_empty() {
-            self.assert_rvar_includes_(lnext.clone(), &lmissing, false)?;
-        }
-        if !rmissing.is_empty() {
-            self.assert_rvar_includes_(rnext.clone(), &rmissing, is_sub)?;
-        }
-
-        // finally two row variables should be linked by setting the common last row variable
-        let last = self.gen_rvar();
-        if lnext != RVar::empty() {
-            let mut row =
-                self.row_infos.entry(lnext.to_usize()).or_insert_with(|| Box::new(RowInfo::new()));
-            assert_eq!(row.next, None);
-            row.next = Some(last.clone());
-        }
-        if rnext != RVar::empty() && rnext != lnext {
-            // avoid setting the next twice, which breaks the assertion
-            let mut row =
-                self.row_infos.entry(rnext.to_usize()).or_insert_with(|| Box::new(RowInfo::new()));
-            assert_eq!(row.next, None);
-            row.next = Some(last);
-        }
-
-        Ok(())
-    }
-
-    fn assert_rvar_includes_(&mut self, lhs: RVar, includes: &[(Key, Slot)],
-                             nilable: bool) -> TypeResult<()> {
-        trace!("{:?} should include {:?} ({} nil)",
-               lhs, includes, if nilable { "allows" } else { "disallows" });
-
-        // optimize a no-op just in case
-        if includes.is_empty() {
-            return Ok(());
-        }
-
-        if lhs == RVar::empty() {
-            return Err(self.gen_report().put(Origin::RVar,
-                                             format!("the record is not extensible")));
-        }
-
-        let lhs_ = lhs.to_usize();
-
-        // take fields out, so that we can detect an infinite recursion
-        let fields_and_next = {
-            let row = self.row_infos.entry(lhs_).or_insert_with(|| Box::new(RowInfo::new()));
-            row.fields.take().map(|fields| (fields, row.next.clone()))
-        };
-        let (mut fields, next) = if let Some(fields_and_next) = fields_and_next {
-            fields_and_next
-        } else {
-            return Err(self.gen_report().put(Origin::RVar, format!("recursive record")));
-        };
-        trace!("{:?} already had {:?} and {:?}", lhs, fields, next);
-
-        let e = inner(self, lhs, includes, nilable, &mut fields, next);
-        self.row_infos.get_mut(&lhs_).unwrap().fields = Some(fields);
-        return e;
-
-        fn inner<R: Report>(ctx: &mut Context<R>, lhs: RVar, includes: &[(Key, Slot)],
-                            nilable: bool, fields: &mut HashMap<Key, Option<Slot>>,
-                            next: Option<RVar>) -> TypeResult<()> {
-            // collect missing fields, whether positive or negative, and
-            // check if other matching fields are compatible
-            let mut missing = Vec::new();
-            for &(ref k, ref rv) in includes {
-                match fields.get(k) {
-                    Some(&Some(ref lv)) => {
-                        // the existing fields should be compatible
-                        rv.assert_sub(lv, ctx)?;
-                    }
-                    Some(&None) => {
-                        // the field is excluded, immediately fail
-                        return Err(ctx.gen_report().put(Origin::RVar,
-                                                        format!("record {:?} cannot have \
-                                                                 a field {:?}", lhs, k)));
-                    }
-                    None => {
-                        // the field should be added to the next row variable (if any)
-                        missing.push((k.clone(), rv.clone()));
-                    }
-                }
-            }
-
-            // if we have missing fields they should be in the next row variable if any;
-            // we can avoid instantiation when it has not yet been instantiated though
-            if let Some(next) = next {
-                // we need to put fields back, so this cannot be a tail recursion
-                ctx.assert_rvar_includes_(next, &missing, nilable)?;
-            } else {
-                for (k, v) in missing.into_iter() {
-                    // when the record is extended due to the (in)equality relation,
-                    // the type that is not explicitly nilable is disallowed
-                    if nilable || v.unlift().can_omit() {
-                        fields.insert(k, Some(v));
-                    } else {
-                        return Err(ctx.gen_report().put(Origin::RVar,
-                                                        format!("record {:?} is being extended \
-                                                                 with non-nilable {:?}", lhs, v)));
-                    }
-                }
-            }
-
-            Ok(())
-        }
     }
 
     pub fn into_output(self) -> Output {
@@ -840,88 +410,16 @@ impl Output {
         self.ids.iter()
     }
 
-    pub fn get_class<'a>(&'a self, cid: ClassId) -> Option<&'a ClassDef> {
-        self.classes.get(cid.0 as usize)
+    pub fn get_class_fields<'a>(&'a self, cid: ClassId) -> Option<&'a ClassFields> {
+        self.class_fields.get(&cid)
     }
 
-    pub fn get_class_mut<'a>(&'a mut self, cid: ClassId) -> Option<&'a mut ClassDef> {
-        self.classes.get_mut(cid.0 as usize)
-    }
-
-    // returns a pair of type flags that is an exact lower and upper bound for that type
-    // used as an approximate type bound testing like arithmetics;
-    // better be replaced with a non-instantiating assertion though.
-    pub fn get_type_bounds(&self, ty: &Ty) -> (/*lb*/ Flags, /*ub*/ Flags) {
-        let flags = ty.flags();
-        let (lb, ub) = ty.get_tvar().map_or((T_NONE, T_NONE), |v| self.get_tvar_bounds(v));
-        (flags | lb, flags | ub)
-    }
-
-    // exactly resolves the type variable inside `ty` if possible
-    // this is a requirement for table indexing and function calls
-    pub fn resolve_exact_type<'a>(&self, ty: &Ty) -> Option<Ty> {
-        if let T::TVar(tv) = **ty {
-            if let Some(ty2) = self.get_tvar_exact_type(tv) {
-                Some(ty2.union_nil(ty.nil()).with_tag(ty.tag()))
-            } else {
-                None
-            }
-        } else {
-            Some(ty.clone())
-        }
+    pub fn get_class_fields_mut<'a>(&'a mut self, cid: ClassId) -> Option<&'a mut ClassFields> {
+        self.class_fields.get_mut(&cid)
     }
 
     pub fn get_string_meta(&self) -> Option<Spanned<Slot>> {
         self.string_meta.clone()
-    }
-
-    pub fn last_tvar(&self) -> Option<TVar> {
-        let tvar = self.next_tvar;
-        if tvar == TVar(0) { None } else { Some(TVar(tvar.0 - 1)) }
-    }
-
-    pub fn get_tvar_bounds(&self, tvar: TVar) -> (Flags /*lb*/, Flags /*ub*/) {
-        if let Some(b) = self.tvar_eq.get_bound(tvar).and_then(|b| b.bound.as_ref()) {
-            let flags = b.flags();
-            (flags, flags)
-        } else {
-            let lb = self.tvar_sup.get_bound(tvar).and_then(|b| b.bound.as_ref())
-                                                  .map_or(T_NONE, |b| b.flags());
-            let ub = self.tvar_sub.get_bound(tvar).and_then(|b| b.bound.as_ref())
-                                                  .map_or(!T_NONE, |b| b.flags());
-            assert_eq!(lb & !ub, T_NONE);
-            (lb, ub)
-        }
-    }
-
-    pub fn get_tvar_exact_type(&self, tvar: TVar) -> Option<Ty> {
-        self.tvar_eq.get_bound(tvar).and_then(|b| b.bound.as_ref()).cloned()
-    }
-
-    // differs from the trait version because we cannot use generics in trait objects
-    pub fn list_rvar_fields<E, F>(&self, mut rvar: RVar, mut f: F) -> result::Result<RVar, E>
-        where F: FnMut(&Key, &Slot) -> result::Result<(), E>
-    {
-        loop {
-            if let Some(info) = self.row_infos.get(&rvar.to_usize()) {
-                if let Some(ref fields) = info.fields {
-                    trace!("{:?} contains {:?}", rvar, fields);
-                    for (k, v) in fields.iter() {
-                        if let Some(ref v) = *v { // skip negative fields
-                            f(k, v)?; // handle user requested break
-                        }
-                    }
-                }
-                if let Some(ref next) = info.next {
-                    rvar = next.clone();
-                } else {
-                    return Ok(RVar::any());
-                }
-            } else {
-                // return immediately if the row variable is special or not yet instantiated
-                return Ok(rvar);
-            }
-        }
     }
 
     pub fn get_available_fields<'a>(&'a self, ty: &Ty) -> Option<HashMap<Key, Slot>> {
@@ -936,12 +434,14 @@ impl Output {
                 T::Class(Class::Prototype(cid)) => {
                     let mut fields = HashMap::new();
                     let mut cid = Some(cid);
-                    while let Some(def) = cid.and_then(|cid| self.get_class(cid)) {
-                        // do not update the existing (children's) fields
-                        for (k, v) in def.class_ty.iter() {
-                            fields.entry(k.clone()).or_insert(v.clone());
+                    while let Some(cid_) = cid {
+                        if let Some(def) = self.get_class_fields(cid_) {
+                            // do not update the existing (children's) fields
+                            for (k, v) in def.class_ty.iter() {
+                                fields.entry(k.clone()).or_insert(v.clone());
+                            }
                         }
-                        cid = def.parent;
+                        cid = self.get_parent_class(cid_);
                     }
                     return Some(fields);
                 }
@@ -951,15 +451,17 @@ impl Output {
                     let mut instfields = HashMap::new();
                     let mut fields = HashMap::new();
                     let mut cid = Some(cid);
-                    while let Some(def) = cid.and_then(|cid| self.get_class(cid)) {
-                        // do not update the existing (children's) fields
-                        for (k, v) in def.instance_ty.iter() {
-                            instfields.entry(k.clone()).or_insert(v.clone());
+                    while let Some(cid_) = cid {
+                        if let Some(def) = self.get_class_fields(cid_) {
+                            // do not update the existing (children's) fields
+                            for (k, v) in def.instance_ty.iter() {
+                                instfields.entry(k.clone()).or_insert(v.clone());
+                            }
+                            for (k, v) in def.class_ty.iter() {
+                                fields.entry(k.clone()).or_insert(v.clone());
+                            }
                         }
-                        for (k, v) in def.class_ty.iter() {
-                            fields.entry(k.clone()).or_insert(v.clone());
-                        }
-                        cid = def.parent;
+                        cid = self.get_parent_class(cid_);
                     }
                     fields.extend(instfields.into_iter());
                     return Some(fields);
@@ -980,7 +482,7 @@ impl Output {
             // otherwise it should be a record
             if let Some(&Tables::Fields(ref rvar)) = ty.get_tables() {
                 let mut fields = HashMap::new();
-                self.list_rvar_fields(rvar.clone(), |k, v| -> result::Result<(), ()> {
+                self.list_rvar_fields(rvar.clone(), &mut |k, v| -> result::Result<(), ()> {
                     fields.insert(k.clone(), v.clone());
                     Ok(())
                 }).expect("list_rvar_fields exited early while we haven't break");
@@ -990,49 +492,15 @@ impl Output {
 
         None
     }
+}
 
-    pub fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result {
-        fn class_name(classes: &[ClassDef],
-                      cid: ClassId) -> Option<(&Spanned<Name>, &'static str)> {
-            let cid = cid.0 as usize;
-            if cid < classes.len() {
-                if let Some(ref name) = classes[cid].name {
-                    let q = if unquotable_name(&name) { "" } else { "`" };
-                    return Some((name, q));
-                }
-            }
-            None
-        }
+impl ops::Deref for Output {
+    type Target = Types;
+    fn deref(&self) -> &Types { &self.types }
+}
 
-        match cls {
-            Class::Prototype(cid) => {
-                if let Some((name, q)) = class_name(&self.classes, cid) {
-                    write!(f, "<prototype for {}{:-?}{}>", q, name, q)
-                } else {
-                    write!(f, "<prototype for unnamed class #{}>", cid.0)
-                }
-            }
-            Class::Instance(cid) => {
-                if let Some((name, q)) = class_name(&self.classes, cid) {
-                    write!(f, "{}{:-?}{}", q, name, q)
-                } else {
-                    write!(f, "<unnamed class #{}>", cid.0)
-                }
-            }
-        }
-    }
-
-    pub fn is_subclass_of(&self, mut lhs: ClassId, rhs: ClassId) -> bool {
-        if lhs == rhs { return true; }
-
-        while let Some(parent) = self.classes[lhs.0 as usize].parent {
-            assert!(parent < lhs);
-            lhs = parent;
-            if lhs == rhs { return true; }
-        }
-
-        false
-    }
+impl ops::DerefMut for Output {
+    fn deref_mut(&mut self) -> &mut Types { &mut self.types }
 }
 
 impl<R: Report> ops::Deref for Context<R> {
@@ -1051,261 +519,6 @@ impl<R: Report> Report for Context<R> {
 
     fn add_span(&self, k: Kind, s: Span, m: &Localize) -> Result<()> {
         self.report.add_span(k, s, m)
-    }
-}
-
-impl<R: Report> TypeContext for Context<R> {
-    fn gen_report(&self) -> TypeReport {
-        TypeReport::new(self.report.message_locale())
-    }
-
-    fn last_tvar(&self) -> Option<TVar> {
-        self.output.last_tvar()
-    }
-
-    fn gen_tvar(&mut self) -> TVar {
-        self.next_tvar.0 += 1;
-        self.next_tvar
-    }
-
-    fn copy_tvar(&mut self, tvar: TVar) -> TVar {
-        if self.tvar_eq.get_bound(tvar).map_or(false, |b| b.bound.is_some()) {
-            // we have an equal bound, so tvar has no chance to be extended
-            trace!("copying {:?} is a no-op", tvar);
-            tvar
-        } else {
-            let tvar_ = self.gen_tvar();
-            trace!("copied {:?} to {:?}", tvar, tvar_);
-            if let Some(ub) = self.tvar_sub.get_bound(tvar).and_then(|b| b.bound.clone()) {
-                let oldub = self.tvar_sub.add_bound(tvar_, &ub);
-                assert!(oldub.is_none(), "bounding fresh tvar should not fail");
-            }
-            if let Some(lb) = self.tvar_sup.get_bound(tvar).and_then(|b| b.bound.clone()) {
-                let oldlb = self.tvar_sup.add_bound(tvar_, &lb);
-                assert!(oldlb.is_none(), "bounding fresh tvar should not fail");
-            }
-            tvar_
-        }
-    }
-
-    fn assert_tvar_sub(&mut self, lhs: TVar, rhs0: &Ty) -> TypeResult<()> {
-        let rhs = rhs0.clone().coerce();
-        debug!("adding a constraint {:?} <: {:?} (coerced to {:?})", lhs, rhs0, rhs);
-        if let Some(eb) = self.tvar_eq.get_bound(lhs).and_then(|b| b.bound.clone()) {
-            eb.assert_sub(&rhs, self)?;
-        } else {
-            if let Some(ub) = self.tvar_sub.add_bound(lhs, &rhs).map(|b| b.clone()) {
-                // the original bound is not consistent, bound <: rhs still has to hold
-                if let Err(e) = ub.assert_sub(&rhs, self) {
-                    info!("variable {:?} cannot have multiple possibly disjoint \
-                           bounds (original <: {:?}, later <: {:?}): {:?}", lhs, ub, rhs, e);
-                    return Err(e);
-                }
-            }
-            if let Some(lb) = self.tvar_sup.get_bound(lhs).and_then(|b| b.bound.clone()) {
-                lb.assert_sub(&rhs, self)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn assert_tvar_sup(&mut self, lhs: TVar, rhs: &Ty) -> TypeResult<()> {
-        // no coercion here, as type coercion will always expand the type
-        debug!("adding a constraint {:?} :> {:?}", lhs, rhs);
-        if let Some(eb) = self.tvar_eq.get_bound(lhs).and_then(|b| b.bound.clone()) {
-            rhs.assert_sub(&eb, self)?;
-        } else {
-            if let Some(lb) = self.tvar_sup.add_bound(lhs, rhs).map(|b| b.clone()) {
-                // the original bound is not consistent, bound :> rhs still has to hold
-                if let Err(e) = rhs.assert_sub(&lb, self) {
-                    info!("variable {:?} cannot have multiple possibly disjoint \
-                           bounds (original :> {:?}, later :> {:?}): {:?}", lhs, lb, rhs, e);
-                    return Err(e);
-                }
-            }
-            if let Some(ub) = self.tvar_sub.get_bound(lhs).and_then(|b| b.bound.clone()) {
-                rhs.assert_sub(&ub, self)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn assert_tvar_eq(&mut self, lhs: TVar, rhs0: &Ty) -> TypeResult<()> {
-        let rhs = rhs0.clone().coerce();
-        debug!("adding a constraint {:?} = {:?} (coerced to {:?})", lhs, rhs0, rhs);
-        if let Some(eb) = self.tvar_eq.add_bound(lhs, &rhs).map(|b| b.clone()) {
-            // the original bound is not consistent, bound = rhs still has to hold
-            if let Err(e) = eb.assert_eq(&rhs, self) {
-                info!("variable {:?} cannot have multiple possibly disjoint \
-                       bounds (original = {:?}, later = {:?}): {:?}", lhs, eb, rhs, e);
-                return Err(e);
-            }
-        } else {
-            if let Some(ub) = self.tvar_sub.get_bound(lhs).and_then(|b| b.bound.clone()) {
-                rhs.assert_sub(&ub, self)?;
-            }
-            if let Some(lb) = self.tvar_sup.get_bound(lhs).and_then(|b| b.bound.clone()) {
-                lb.assert_sub(&rhs, self)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn assert_tvar_sub_tvar(&mut self, lhs: TVar, rhs: TVar) -> TypeResult<()> {
-        debug!("adding a constraint {:?} <: {:?}", lhs, rhs);
-        if !self.tvar_eq.is(lhs, rhs) {
-            if !self.tvar_sub.add_relation(lhs, rhs) {
-                // TODO
-                return Err(self.gen_report().not_sub(Origin::TVar, "<tvar>", "<tvar>", self));
-            }
-            if !self.tvar_sup.add_relation(rhs, lhs) {
-                // TODO
-                return Err(self.gen_report().not_sub(Origin::TVar, "<tvar>", "<tvar>", self));
-            }
-        }
-        Ok(())
-    }
-
-    fn assert_tvar_eq_tvar(&mut self, lhs: TVar, rhs: TVar) -> TypeResult<()> {
-        debug!("adding a constraint {:?} = {:?}", lhs, rhs);
-        // do not update tvar_sub & tvar_sup, tvar_eq will be consulted first
-        if !self.tvar_eq.add_relation(lhs, rhs) {
-            // TODO
-            return Err(self.gen_report().not_eq(Origin::TVar, "<tvar>", "<tvar>", self));
-        }
-        Ok(())
-    }
-
-    fn get_tvar_bounds(&self, tvar: TVar) -> (Flags /*lb*/, Flags /*ub*/) {
-        self.output.get_tvar_bounds(tvar)
-    }
-
-    fn get_tvar_exact_type(&self, tvar: TVar) -> Option<Ty> {
-        self.output.get_tvar_exact_type(tvar)
-    }
-
-    fn gen_rvar(&mut self) -> RVar {
-        let rvar = self.next_rvar.clone();
-        self.next_rvar = RVar::new(rvar.to_usize() + 1);
-        rvar
-    }
-
-    fn copy_rvar(&mut self, rvar0: RVar) -> RVar {
-        let mut fields = HashMap::new();
-        let mut rvar = rvar0.clone();
-
-        loop {
-            if rvar == RVar::empty() {
-                // the original rvar has no chance to be extended, so we can safely return that
-                return rvar0;
-            }
-
-            if let Some(info) = self.row_infos.get(&rvar.to_usize()) {
-                for (k, v) in info.fields.as_ref().unwrap().iter() {
-                    if let Some(ref v) = *v {
-                        // positive fields can overwrite negative fields
-                        let prev = fields.insert(k.clone(), Some(v.clone()));
-                        assert!(prev.map_or(true, |t| t.is_none()),
-                                "duplicate field {:?} in the chain {:?}..{:?}", k, rvar0, rvar);
-                    } else {
-                        // negative fields should not overwrite positive fields
-                        fields.entry(k.clone()).or_insert(None);
-                    }
-                }
-                if let Some(ref next) = info.next {
-                    rvar = next.clone();
-                } else {
-                    break;
-                }
-            } else {
-                // next row variable has been instantiated but not set any fields, stop here
-                break;
-            }
-
-            // TODO is recursion detection required here?
-        }
-
-        // we know that rvar0 contains `fields` plus an unspecified non-empty row variable,
-        // which should be replaced with an (uninstantiated) fresh row variable.
-        let rvar = self.gen_rvar();
-        self.row_infos.insert(rvar.to_usize(),
-                              Box::new(RowInfo { fields: Some(fields), next: None }));
-        rvar
-    }
-
-    fn assert_rvar_sub(&mut self, lhs: RVar, rhs: RVar) -> TypeResult<()> {
-        // TODO
-        self.assert_rvar_rel(lhs.clone(), rhs.clone(), true).map_err(|r| {
-            r.not_sub(Origin::RVar, "<rvar>", "<rvar>", self)
-        })
-    }
-
-    fn assert_rvar_eq(&mut self, lhs: RVar, rhs: RVar) -> TypeResult<()> {
-        // TODO
-        self.assert_rvar_rel(lhs.clone(), rhs.clone(), false).map_err(|r| {
-            r.not_eq(Origin::RVar, "<rvar>", "<rvar>", self)
-        })
-    }
-
-    fn assert_rvar_includes(&mut self, lhs: RVar, rhs: &[(Key, Slot)]) -> TypeResult<()> {
-        self.assert_rvar_includes_(lhs.clone(), rhs, true).map_err(|r| {
-            r.put(Origin::RVar, format!("the record should include {:?} but didn't", rhs))
-        })
-    }
-
-    fn assert_rvar_closed(&mut self, mut rvar: RVar) -> TypeResult<()> {
-        trace!("{:?} should not be extensible", rvar);
-
-        // detect a cycle by advancing slowrvar 1/2x slower than rvar;
-        // if rvar == slowrvar is true after the initial loop, it's a cycle
-        let mut slowrvar = rvar.clone();
-        let mut slowtick = true;
-
-        loop {
-            // a row variable has been already closed
-            if rvar == RVar::empty() {
-                return Ok(());
-            }
-
-            {
-                let rvar_ = rvar.to_usize();
-                let info = self.row_infos.entry(rvar_).or_insert_with(|| Box::new(RowInfo::new()));
-                if let Some(ref next) = info.next {
-                    rvar = next.clone();
-                } else {
-                    info.next = Some(RVar::empty());
-                    return Ok(());
-                }
-            }
-
-            // advance slowrvar on the 2nd, 4th, 6th, ... iterations and compare with rvar
-            // slowrvar is guaranteed not to be special, as it has once been rvar previously
-            if slowtick {
-                slowtick = false;
-            } else {
-                slowrvar = self.row_infos.get(&slowrvar.to_usize()).unwrap().next.clone().unwrap();
-                if slowrvar == rvar {
-                    return Err(self.gen_report().put(Origin::RVar,
-                                                     "recursive record detected \
-                                                      while closing the record".into()));
-                }
-                slowtick = true;
-            }
-        }
-    }
-
-    fn list_rvar_fields(
-        &self, rvar: RVar, f: &mut FnMut(&Key, &Slot) -> result::Result<(), ()>
-    ) -> result::Result<RVar, ()> {
-        self.output.list_rvar_fields(rvar, f)
-    }
-
-    fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result {
-        self.output.fmt_class(cls, f)
-    }
-
-    fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool {
-        self.output.is_subclass_of(lhs, rhs)
     }
 }
 
@@ -1335,6 +548,10 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         }
     }
 
+    pub fn types(&mut self) -> &mut Types {
+        &mut self.context.types
+    }
+
     // not to be called internally; it intentionally reduces the lifetime
     pub fn context(&mut self) -> &mut Context<R> {
         self.context
@@ -1350,7 +567,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
     // convenience function to avoid mutable references
     pub fn display<'a, 'c, T: Display>(&'c self, x: &'a T) -> Displayed<'a, T, &'c TypeContext> {
-        x.display(self.context)
+        x.display(&self.context.types)
     }
 
     pub fn id_from_nameref(&self, nameref: &Spanned<NameRef>) -> Spanned<Id> {
@@ -1405,7 +622,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
                 // simulate `require` behavior, i.e. nil translates to true
                 let ty = if ty.nil() == Nil::Noisy {
                     let tywithoutnil = ty.without_nil().with_loc(span);
-                    tywithoutnil.union(&T::True.without_loc(), false, self.context).expect(
+                    tywithoutnil.union(&T::True.without_loc(), false, self.types()).expect(
                         "failed to union the module return type with True, this should be \
                          always possible because we know the return type doesn't have a tvar!"
                     )
@@ -1545,9 +762,9 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             let ctor = Slot::new(F::Const, Ty::new(T::func(ctor)));
 
             debug!("implicitly setting the `new` method of {:?} as {:?}", cid, ctor);
-            let cdef = self.context.get_class_mut(cid).expect("invalid ClassId");
+            let cfields = self.context.get_class_fields_mut(cid).expect("invalid ClassId");
             let key = Key::Str(b"new"[..].into());
-            let prevctor = cdef.class_ty.insert(key, ctor);
+            let prevctor = cfields.class_ty.insert(key, ctor);
             assert_eq!(prevctor, None); // should have been prevented
         } else {
             self.error(init, m::BadSelfInInitMethod { init: self.display(init) }).done()?;
@@ -1603,7 +820,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
     fn assign_(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>, init: bool) -> Result<()> {
         if self.assign_special(lhs, rhs)? {
-            if lhs.accept(rhs, self.context, init).is_err() {
+            if lhs.accept(rhs, self.types(), init).is_err() {
                 self.error(lhs, m::CannotAssign { lhs: self.display(lhs), rhs: self.display(rhs) })
                     .note_if(rhs, m::OtherTypeOrigin {})
                     .done()?;
@@ -1635,7 +852,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
                     // ignore the flexibility
                     let lty = (*spec.unlift()).clone().with_loc(spec);
                     let rty = (*init.unlift()).clone().with_loc(init);
-                    if let Err(r) = lty.assert_eq(&rty, self.context) {
+                    if let Err(r) = lty.assert_eq(&rty, self.types()) {
                         self.error(spec, m::CannotAssign { lhs: self.display(spec),
                                                            rhs: self.display(init) })
                             .note_if(init, m::OtherTypeOrigin {})
@@ -1664,9 +881,9 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         let specrhs = self.assign_from_spec(initrhs, specrhs)?;
 
         // second "assignment" of specrhs (or initrhs) to lhs
-        specrhs.adapt(lhs.flex(), self.context);
+        specrhs.adapt(lhs.flex(), self.types());
         if self.assign_special(lhs, &specrhs)? {
-            if let Err(r) = lhs.assert_eq(&specrhs, self.context) {
+            if let Err(r) = lhs.assert_eq(&specrhs, self.types()) {
                 self.error(lhs, m::CannotAssign { lhs: self.display(lhs),
                                                   rhs: self.display(&specrhs) })
                     .note_if(&specrhs, m::OtherTypeOrigin {})
@@ -1707,7 +924,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         // not yet set but typed (e.g. `local x --: string`), the type should accept `nil`
         let nil = Slot::just(Ty::noisy_nil()).without_loc();
         if self.assign_special(&defslot, &nil)? {
-            if defslot.accept(&nil, self.context, true).is_ok() { // this IS still initialization
+            if defslot.accept(&nil, self.types(), true).is_ok() { // this IS still initialization
                 self.context.ids.get_mut(&id).unwrap().slot = NameSlot::Set(defslot.base.clone());
             } else {
                 // won't alter the set flag, so subsequent uses are still errors
@@ -1802,7 +1019,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         // we cannot blindly `accept` the `initinfo`, since it will discard the flexibility
         // (e.g. if the callee requests `F::Var`, we need to keep that).
         // therefore we just remap `F::Just` to `F::Var`.
-        info.adapt(F::Var, self.context);
+        info.adapt(F::Var, self.types());
 
         self.name_class_if_any(&id, &info)?;
 
@@ -2042,11 +1259,11 @@ impl<'ctx, R: Report> Report for Env<'ctx, R> {
 
 impl<'ctx, R: Report> TypeResolver for Env<'ctx, R> {
     fn context(&self) -> &TypeContext {
-        self.context
+        &self.context.types
     }
 
     fn context_mut(&mut self) -> &mut TypeContext {
-        self.context
+        &mut self.context.types
     }
 
     fn ty_from_name(&self, name: &Spanned<Name>) -> Result<Ty> {
@@ -2068,69 +1285,5 @@ fn test_context_is_send_and_sync() {
 
     _assert_send(Context::new(NoReport));
     _assert_sync(Context::new(NoReport));
-}
-
-#[test]
-fn test_context_tvar() {
-    use kailua_diag::NoReport;
-
-    let mut ctx = Context::new(NoReport);
-
-    { // idempotency of bounds
-        let v1 = ctx.gen_tvar();
-        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::Integer)).is_ok());
-        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::Integer)).is_ok());
-        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::String)).is_err());
-    }
-
-    { // empty bounds (lb & ub = bottom)
-        let v1 = ctx.gen_tvar();
-        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::Integer)).is_ok());
-        assert!(ctx.assert_tvar_sup(v1, &Ty::new(T::String)).is_err());
-
-        let v2 = ctx.gen_tvar();
-        assert!(ctx.assert_tvar_sup(v2, &Ty::new(T::Integer)).is_ok());
-        assert!(ctx.assert_tvar_sub(v2, &Ty::new(T::String)).is_err());
-    }
-
-    { // empty bounds (lb & ub != bottom)
-        let v1 = ctx.gen_tvar();
-        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::ints(vec![3, 4, 5]))).is_ok());
-        assert!(ctx.assert_tvar_sup(v1, &Ty::new(T::ints(vec![1, 2, 3]))).is_err());
-
-        let v2 = ctx.gen_tvar();
-        assert!(ctx.assert_tvar_sup(v2, &Ty::new(T::ints(vec![3, 4, 5]))).is_ok());
-        assert!(ctx.assert_tvar_sub(v2, &Ty::new(T::ints(vec![1, 2, 3]))).is_err());
-    }
-
-    { // implicitly disjoint bounds
-        let v1 = ctx.gen_tvar();
-        let v2 = ctx.gen_tvar();
-        assert!(ctx.assert_tvar_sub_tvar(v1, v2).is_ok());
-        assert!(ctx.assert_tvar_sub(v2, &Ty::new(T::String)).is_ok());
-        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::Integer)).is_err());
-
-        let v3 = ctx.gen_tvar();
-        let v4 = ctx.gen_tvar();
-        assert!(ctx.assert_tvar_sub_tvar(v3, v4).is_ok());
-        assert!(ctx.assert_tvar_sup(v3, &Ty::new(T::String)).is_ok());
-        assert!(ctx.assert_tvar_sup(v4, &Ty::new(T::Integer)).is_err());
-    }
-
-    { // equality propagation
-        let v1 = ctx.gen_tvar();
-        assert!(ctx.assert_tvar_eq(v1, &Ty::new(T::Integer)).is_ok());
-        assert!(ctx.assert_tvar_sub(v1, &Ty::new(T::Number)).is_ok());
-        assert!(ctx.assert_tvar_sup(v1, &Ty::new(T::String)).is_err());
-
-        let v2 = ctx.gen_tvar();
-        assert!(ctx.assert_tvar_sub(v2, &Ty::new(T::Number)).is_ok());
-        assert!(ctx.assert_tvar_eq(v2, &Ty::new(T::Integer)).is_ok());
-        assert!(ctx.assert_tvar_sup(v2, &Ty::new(T::String)).is_err());
-
-        let v3 = ctx.gen_tvar();
-        assert!(ctx.assert_tvar_sub(v3, &Ty::new(T::Number)).is_ok());
-        assert!(ctx.assert_tvar_eq(v3, &Ty::new(T::String)).is_err());
-    }
 }
 

@@ -15,7 +15,7 @@ use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, Dummy, TypeContex
 use ty::{Key, Tables, Function, Functions};
 use ty::{F, Slot, SlotSeq, SpannedSlotSeq, Tag, Class, ClassId};
 use ty::flags::*;
-use env::{Env, Returns, Frame, Scope, Context, SlotSpec};
+use env::{Env, Returns, Frame, Scope, Context, Types, SlotSpec};
 use message as m;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -215,6 +215,10 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
         Checker { env: env, pending_modules: Vec::new() }
     }
 
+    fn types(&mut self) -> &mut Types {
+        self.env.types()
+    }
+
     fn context(&mut self) -> &mut Context<R> {
         self.env.context()
     }
@@ -261,7 +265,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
 
         macro_rules! assert_sub {
             ($lhs:expr, $rhs:expr) => {
-                match $lhs.assert_sub($rhs, self.context()) {
+                match $lhs.assert_sub($rhs, self.types()) {
                     Ok(()) => {}
                     Err(r) => { finalize(r, self)?; }
                 }
@@ -321,8 +325,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
 
         macro_rules! assert_sub_both {
             ($lhs1:expr, $lhs2:expr, $rhs:expr) => {
-                match ($lhs1.assert_sub($rhs, self.context()),
-                       $lhs2.assert_sub($rhs, self.context())) {
+                match ($lhs1.assert_sub($rhs, self.types()),
+                       $lhs2.assert_sub($rhs, self.types())) {
                     (Ok(()), Ok(())) => {}
                     (r1, r2) => { finalize2(r1.err(), r2.err(), self)?; }
                 }
@@ -331,7 +335,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
 
         macro_rules! union {
             ($lhs:expr, $rhs:expr, $explicit:expr) => {
-                match $lhs.union($rhs, $explicit, self.context()) {
+                match $lhs.union($rhs, $explicit, self.types()) {
                     Ok(out) => out,
                     Err(r) => { finalize(r, self)?; Ty::dummy() },
                 }
@@ -516,8 +520,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                     TySeq { head: head, tail: tail }
                 };
 
-                let funcargs = generalize_tyseq(&f.args, self.context()).all_with_loc(func);
-                if let Err(r) = args.assert_sub(&funcargs, self.context()) {
+                let funcargs = generalize_tyseq(&f.args, self.types()).all_with_loc(func);
+                if let Err(r) = args.assert_sub(&funcargs, self.types()) {
                     let hint = if methodcall {
                         TypeReportHint::MethodArgs
                     } else {
@@ -530,7 +534,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 }
 
                 if let Some(ref returns) = f.returns {
-                    generalize_tyseq(returns, self.context())
+                    generalize_tyseq(returns, self.types())
                 } else {
                     return Ok(Exitable::diverging());
                 }
@@ -637,14 +641,14 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
 
         // if lval is true, we are supposed to update the table and
         // therefore the table should have an appropriate flex
-        if lval && ety0.accept_in_place(self.context()).is_err() {
+        if lval && ety0.accept_in_place(self.types()).is_err() {
             self.env.error(&*ety0, m::CannotUpdateConst { tab: self.display(&*ety0) }).done()?;
             return Ok(Index::dummy());
         }
 
-        let new_slot = |flex: F, context: &mut Context<R>| {
+        let new_slot = |flex: F, types: &mut Types| {
             // we don't yet know the exact value type, so generate a new type variable
-            let tvar = T::TVar(context.gen_tvar());
+            let tvar = T::TVar(types.gen_tvar());
             Slot::new(flex, Ty::new(tvar))
         };
 
@@ -690,7 +694,9 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             // but we need to record any change back to the class definition
             // so we duplicate the core logic here.
             macro_rules! fields {
-                ($x:ident) => (self.context().get_class_mut(cid).expect("invalid ClassId").$x)
+                ($x:ident) => (
+                    self.env.context().get_class_fields_mut(cid).expect("invalid ClassId").$x
+                )
             }
 
             if lval {
@@ -710,7 +716,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                         }
 
                         // should have a [constructor] tag to create a `new` method
-                        let ty = T::TVar(self.context().gen_tvar());
+                        let ty = T::TVar(self.types().gen_tvar());
                         let slot = Slot::new(F::Var, Ty::new(ty).with_tag(Tag::Constructor));
                         fields!(class_ty).insert(litkey, slot.clone());
                         (slot, true)
@@ -731,7 +737,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                         }
 
                         // prototypes always use Var slots; it is in principle append-only.
-                        let slot = new_slot(F::Var, self.context());
+                        let slot = new_slot(F::Var, self.types());
                         fields!(class_ty).insert(litkey, slot.clone());
                         (slot, true)
                     }
@@ -747,13 +753,13 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                         return Ok(Index::dummy());
                     } else {
                         // the constructor (checked earlier) can add slots to instances.
-                        let slot = new_slot(F::Var, self.context());
+                        let slot = new_slot(F::Var, self.types());
                         fields!(instance_ty).insert(litkey, slot.clone());
                         (slot, true)
                     }
                 };
 
-                vslot.adapt(ety0.flex(), self.context());
+                vslot.adapt(ety0.flex(), self.types());
                 if new {
                     return Ok(Index::Created(vslot));
                 } else {
@@ -764,15 +770,15 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 trace!("indexing to a field {:?} of the class {} of {:?}",
                        litkey, if proto { "prototype" } else { "instance" }, cid);
 
-                let cdef = self.context().get_class_mut(cid).expect("invalid ClassId");
+                let fields = self.env.context().get_class_fields_mut(cid).expect("invalid ClassId");
                 // TODO should we re-adapt methods?
                 if !proto {
                     // instance fields have a precedence over class fields
-                    if let Some(info) = cdef.instance_ty.get(&litkey).map(|v| (*v).clone()) {
+                    if let Some(info) = fields.instance_ty.get(&litkey).map(|v| (*v).clone()) {
                         return Ok(Index::Found(info));
                     }
                 }
-                if let Some(info) = cdef.class_ty.get(&litkey).map(|v| (*v).clone()) {
+                if let Some(info) = fields.class_ty.get(&litkey).map(|v| (*v).clone()) {
                     return Ok(Index::Found(info));
                 } else {
                     return Ok(Index::Missing);
@@ -819,7 +825,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
         if let Some(dyn) = flags.get_dynamic() {
             let value = Slot::just(Ty::new(T::Dynamic(dyn)));
             // the flex should be retained
-            if lval { value.adapt(ety0.flex(), self.context()); }
+            if lval { value.adapt(ety0.flex(), self.types()); }
             return Ok(Index::Found(value));
         }
 
@@ -850,7 +856,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 (Some(&Tables::Fields(ref rvar)), lval) => {
                     // find a field in the rvar
                     let mut vslot = None;
-                    let _ = self.context().list_rvar_fields(rvar.clone(), &mut |k, v| {
+                    let _ = self.env.context().list_rvar_fields(rvar.clone(), &mut |k, v| {
                         if *k == litkey {
                             vslot = Some(v.clone());
                             Err(())
@@ -867,9 +873,9 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                         // should *not* extend the terminal rvar (from `list_rvar_fields`),
                         // since it has to be instantiated which we can't do without a ref
                         (None, true) => {
-                            let vslot = new_slot(F::Unknown, self.context());
-                            check!(self.context().assert_rvar_includes(rvar.clone(),
-                                                                       &[(litkey, vslot.clone())]));
+                            let vslot = new_slot(F::Unknown, self.types());
+                            check!(self.types().assert_rvar_includes(rvar.clone(),
+                                                                     &[(litkey, vslot.clone())]));
                             (vslot, true)
                         },
 
@@ -877,7 +883,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                         (None, false) => return Ok(Index::Missing),
                     };
 
-                    vslot.adapt(ety0.flex(), self.context());
+                    vslot.adapt(ety0.flex(), self.types());
                     if new {
                         return Ok(Index::Created(vslot));
                     } else {
@@ -896,7 +902,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             None => {
                 let value = Slot::just(Ty::new(T::Dynamic(Dyn::Oops)));
                 // the flex should be retained
-                if lval { value.adapt(ety0.flex(), self.context()); }
+                if lval { value.adapt(ety0.flex(), self.types()); }
                 Ok(Index::Found(value))
             },
 
@@ -910,7 +916,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             },
 
             Some(&Tables::Array(ref value)) if intkey => {
-                if lval { value.adapt(ety0.flex(), self.context()); }
+                if lval { value.adapt(ety0.flex(), self.types()); }
                 Ok(Index::Found((*value).clone().with_nil()))
             },
 
@@ -923,8 +929,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             },
 
             Some(&Tables::Map(ref key, ref value)) => {
-                check!(kty.assert_sub(&**key, self.context()));
-                if lval { value.adapt(ety0.flex(), self.context()); }
+                check!(kty.assert_sub(&**key, self.types()));
+                if lval { value.adapt(ety0.flex(), self.types()); }
                 Ok(Index::Found((*value).clone().with_nil()))
             },
 
@@ -1046,7 +1052,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                     // behave as if there were no `static`
                 }
 
-                let mut fields = env.context().get_rvar_fields(rvar.clone());
+                let mut fields = env.types().get_rvar_fields(rvar.clone());
                 let pos = fields.iter().position(|&(ref k, _)| {
                     match *k {
                         Key::Str(ref k) => **k == **next_key,
@@ -1080,12 +1086,13 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                     return Ok(root);
                 }
 
-                let mut def = self.context().get_class_mut(cid).expect("invalid ClassId");
+                let mut fields =
+                    self.env.context().get_class_fields_mut(cid).expect("invalid ClassId");
                 let firstname = Key::Str(firstname.base.clone().into());
                 if static_ {
-                    def.class_ty.insert(firstname, slot);
+                    fields.class_ty.insert(firstname, slot);
                 } else {
-                    def.instance_ty.insert(firstname, slot);
+                    fields.instance_ty.insert(firstname, slot);
                 }
 
                 return Ok(root);
@@ -1127,8 +1134,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
         let mut slot = slot;
         for (name, (flex, nil, mut fields)) in names.iter().rev().zip(tables.into_iter()) {
             fields.push((Key::Str(name.base.clone().into()), slot));
-            let rvar = self.context().gen_rvar();
-            self.context().assert_rvar_includes(rvar.clone(), &fields).expect(
+            let rvar = self.types().gen_rvar();
+            self.types().assert_rvar_includes(rvar.clone(), &fields).expect(
                 "cannot insert updated disjoint fields into a fresh row variable"
             );
             slot = Slot::new(flex,
@@ -1499,9 +1506,9 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 } else {
                     indty = T::Number;
                 }
-                match (start.assert_sub(&indty.clone().without_loc(), self.context()),
-                       end.assert_sub(&indty.clone().without_loc(), self.context()),
-                       step.assert_sub(&indty.clone().without_loc(), self.context())) {
+                match (start.assert_sub(&indty.clone().without_loc(), self.types()),
+                       end.assert_sub(&indty.clone().without_loc(), self.types()),
+                       step.assert_sub(&indty.clone().without_loc(), self.types())) {
                     (Ok(()), Ok(()), Ok(())) => {}
                     (r1, r2, r3) => {
                         let span = start.span | end.span | step.span;
@@ -1556,7 +1563,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                                      tail: Some(Ty::new(T::Dynamic(dyn))) };
                 } else {
                     // last can be updated, so one should assume that its type can be much wider.
-                    let indvar = T::TVar(self.context().gen_tvar());
+                    let indvar = T::TVar(self.types().gen_tvar());
 
                     // func <: function(state, last) -> (last, ...)
                     //
@@ -1576,7 +1583,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                         self.check_callable(&func.clone().with_loc(expspan), &args, false)?;
                     exit &= exit_.to_stmt(expspan, self.env)?;
 
-                    if let Err(r) = last.assert_sub(&indvar, self.context()) {
+                    if let Err(r) = last.assert_sub(&indvar, self.types()) {
                         // it is very hard to describe, but it is conceptually
                         // an extension of check_callable
                         self.env.error(expspan,
@@ -1615,7 +1622,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 self.error_on_implicit_sig(sig)?;
 
                 // `name` itself is available to the inner scope
-                let funcv = self.context().gen_tvar();
+                let funcv = self.types().gen_tvar();
                 let info = Slot::just(Ty::new(T::TVar(funcv))).with_loc(stmt);
                 if let (&NameRef::Local(..), None) = (&name.base, nextscope) {
                     // this is very rare but valid case where the local variable is
@@ -1629,7 +1636,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 let (tag, no_check) = self.visit_sig_attrs(&sig.attrs)?;
                 let functy = self.visit_func_body(tag, no_check, None, sig, block,
                                                   stmt.span, None)?;
-                if let Err(r) = T::TVar(funcv).assert_eq(&*functy.unlift(), self.context()) {
+                if let Err(r) = T::TVar(funcv).assert_eq(&*functy.unlift(), self.types()) {
                     self.env.error(stmt, m::BadRecursiveCall {})
                         .report_types(r, TypeReportHint::None)
                         .done()?;
@@ -1855,7 +1862,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             Returns::Implicit(returns) => {
                 // need to infer the return type, but not _that_ much
                 let returns = returns.all_with_loc(stmtspan);
-                match seq.union(&returns, false, self.context()) {
+                match seq.union(&returns, false, self.types()) {
                     Ok(returns) => {
                         self.env.get_frame_mut().returns =
                             Returns::Implicit(returns.unspan());
@@ -1870,7 +1877,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
 
             Returns::Explicit(returns) => {
                 let returns = returns.all_with_loc(stmtspan);
-                if let Err(r) = seq.assert_sub(&returns, self.context()) {
+                if let Err(r) = seq.assert_sub(&returns, self.types()) {
                     self.env.error(stmtspan, m::CannotReturn { returns: self.display(&returns),
                                                                ty: self.display(&seq) })
                             .report_types(r, TypeReportHint::Returns)
@@ -1950,7 +1957,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             }
 
             // <fresh type variable>
-            let tv = T::TVar(self.context().gen_tvar());
+            let tv = T::TVar(self.types().gen_tvar());
             Ok(Slot::var(Ty::new(tv)))
         }
     }
@@ -2017,7 +2024,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                     }
                     #[cfg(not(feature = "no_implicit_func_sig"))] {
                         // fill a fresh type variable in
-                        Some(Ty::new(T::TVar(self.context().gen_tvar())))
+                        Some(Ty::new(T::TVar(self.types().gen_tvar())))
                     }
                 }
             },
@@ -2109,7 +2116,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 }
                 #[cfg(not(feature = "no_implicit_func_sig"))] {
                     // fill a fresh type variable in
-                    let argv = scope.context().gen_tvar();
+                    let argv = scope.types().gen_tvar();
                     ty = Ty::new(T::TVar(argv));
                     sty = Slot::new(F::Var, Ty::new(T::TVar(argv)));
                 }
@@ -2290,7 +2297,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
 
             // kailua_test.gen_tvar()
             Some(Tag::KailuaGenTvar) => {
-                return Ok(exit.with(SlotSeq::from(T::TVar(self.context().gen_tvar()))));
+                return Ok(exit.with(SlotSeq::from(T::TVar(self.types().gen_tvar()))));
             }
 
             // kailua_test.assert_tvar()
@@ -2426,7 +2433,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                         }
                     }
 
-                    if let Err(r) = v.assert_sub(vty, env.context()) {
+                    if let Err(r) = v.assert_sub(vty, env.types()) {
                         env.error(&v,
                                   m::TableLitWithInvalidArrayValue {
                                       given: env.display(&v), value: env.display(vty),
@@ -2437,7 +2444,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 }
 
                 Target::Map(ref mut kty, ref mut vty) => {
-                    if let Err(r) = k.assert_sub(kty, env.context()) {
+                    if let Err(r) = k.assert_sub(kty, env.types()) {
                         env.error(&k,
                                   m::TableLitWithInvalidMapKey {
                                       given: env.display(&k),
@@ -2447,7 +2454,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                            .done()?;
                     }
 
-                    if let Err(r) = v.assert_sub(vty, env.context()) {
+                    if let Err(r) = v.assert_sub(vty, env.types()) {
                         env.error(&v,
                                   m::TableLitWithInvalidMapValue {
                                       given: env.display(&v),
@@ -2499,10 +2506,10 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             Target::Any => Tables::All,
 
             Target::Fields(fields) => {
-                let rvar = self.context().gen_rvar();
+                let rvar = self.types().gen_rvar();
                 if !fields.is_empty() {
                     // really should not fail...
-                    self.context().assert_rvar_includes(rvar.clone(), &fields).expect(
+                    self.types().assert_rvar_includes(rvar.clone(), &fields).expect(
                         "cannot insert disjoint fields into a fresh row variable"
                     );
                 }
@@ -2751,7 +2758,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
         let (explicit, ty) = if let Some(ref kind) = spec.kind {
             (true, Ty::from_kind(kind, &mut self.env)?.with_loc(kind))
         } else {
-            (false, Ty::new(T::TVar(self.context().gen_tvar())).with_loc(&spec.base))
+            (false, Ty::new(T::TVar(self.types().gen_tvar())).with_loc(&spec.base))
         };
         let slot = ty.map(|ty| Slot::new(F::from(spec.modf), ty));
 
@@ -2938,7 +2945,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             Cond::Flags(info, flags) => {
                 let flags = if negated { !flags } else { flags };
                 // XXX this is temporary, the entire condition assertion should be changed!
-                info.filter_by_flags(flags, self.context()).map_err(|_| kailua_diag::Stop)?;
+                info.filter_by_flags(flags, self.types()).map_err(|_| kailua_diag::Stop)?;
                 debug!("resulted in {:?}", info);
             }
 

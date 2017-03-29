@@ -1623,11 +1623,11 @@ impl fmt::Debug for Ty {
 #[cfg(test)]
 #[allow(unused_variables, dead_code)]
 mod tests {
-    use kailua_diag::NoReport;
+    use kailua_diag::Locale;
     use kailua_syntax::Str;
     use std::borrow::Cow;
     use ty::{Lattice, Union, TypeContext, NoTypeContext, F, Slot, Tag};
-    use env::Context;
+    use env::Types;
     use super::*;
 
     macro_rules! hash {
@@ -1646,8 +1646,8 @@ mod tests {
         (@explicitness implicit) => (false);
 
         ($l:expr, $r:expr; [$e:tt]=_) => ({
-            let mut ctx = Context::new(NoReport);
-            let actualunion = $l.union(&$r, check_base!(@explicitness $e), &mut ctx);
+            let mut types = Types::new(Locale::dummy());
+            let actualunion = $l.union(&$r, check_base!(@explicitness $e), &mut types);
             if actualunion.is_ok() {
                 panic!("{:?} | {:?} ({}) = expected Err(_), actual {:?}",
                        $l, $r, stringify!($e), actualunion);
@@ -1656,8 +1656,8 @@ mod tests {
 
         ($l:expr, $r:expr; [$e:tt]=$u:expr) => ({
             let union = $u;
-            let mut ctx = Context::new(NoReport);
-            let actualunion = $l.union(&$r, check_base!(@explicitness $e), &mut ctx);
+            let mut types = Types::new(Locale::dummy());
+            let actualunion = $l.union(&$r, check_base!(@explicitness $e), &mut types);
             if actualunion.is_err() || *actualunion.as_ref().unwrap() != union {
                 panic!("{:?} | {:?} ({}) = expected Ok({:?}), actual {:?}",
                        $l, $r, stringify!($e), union, actualunion);
@@ -1928,57 +1928,57 @@ mod tests {
         assert!(nosubboolorstr.assert_sub(&substr, &mut NoTypeContext).is_err());
         assert!(nosubboolorstr.assert_sub(&nosubboolorstr, &mut NoTypeContext).is_ok());
 
-        let mut ctx = Context::new(NoReport);
+        let mut types = Types::new(Locale::dummy());
 
         {
-            let v1 = ctx.gen_tvar();
+            let v1 = types.gen_tvar();
             // v1 <: integer
-            assert!(T::TVar(v1).assert_sub(&T::Integer, &mut ctx).is_ok());
+            assert!(T::TVar(v1).assert_sub(&T::Integer, &mut types).is_ok());
             // v1 <: integer
-            assert!(T::TVar(v1).assert_sub(&T::Integer, &mut ctx).is_ok());
+            assert!(T::TVar(v1).assert_sub(&T::Integer, &mut types).is_ok());
             // v1 <: integer AND v1 <: string (!)
-            assert!(T::TVar(v1).assert_sub(&T::String, &mut ctx).is_err());
+            assert!(T::TVar(v1).assert_sub(&T::String, &mut types).is_err());
         }
 
         {
-            let v1 = ctx.gen_tvar();
-            let v2 = ctx.gen_tvar();
+            let v1 = types.gen_tvar();
+            let v2 = types.gen_tvar();
             // v1 <: v2
-            assert!(T::TVar(v1).assert_sub(&T::TVar(v2), &mut ctx).is_ok());
+            assert!(T::TVar(v1).assert_sub(&T::TVar(v2), &mut types).is_ok());
             // v1 <: v2 <: string
-            assert!(T::TVar(v2).assert_sub(&T::String, &mut ctx).is_ok());
+            assert!(T::TVar(v2).assert_sub(&T::String, &mut types).is_ok());
             // v1 <: v2 <: string AND v1 <: integer (!)
-            assert!(T::TVar(v1).assert_sub(&T::Integer, &mut ctx).is_err());
+            assert!(T::TVar(v1).assert_sub(&T::Integer, &mut types).is_err());
         }
 
         /*
         {
-            let v1 = ctx.gen_tvar();
-            let v2 = ctx.gen_tvar();
+            let v1 = types.gen_tvar();
+            let v2 = types.gen_tvar();
             let t1 = T::record(hash![a=just(T::Integer), b=just(T::TVar(v1))]);
             let t2 = T::record(hash![a=just(T::TVar(v2)), b=just(T::String), c=just(T::Boolean)]);
             // {a=just integer, b=just v1} <: {a=just v2, b=just string, c=just boolean}
-            assert!(t1.assert_sub(&t2, &mut ctx).is_ok());
+            assert!(t1.assert_sub(&t2, &mut types).is_ok());
             // ... AND v1 <: string
-            assert!(T::TVar(v1).assert_sub(&T::String, &mut ctx).is_ok());
+            assert!(T::TVar(v1).assert_sub(&T::String, &mut types).is_ok());
             // ... AND v1 <: string AND v2 :> integer
-            assert!(T::Integer.assert_sub(&T::TVar(v2), &mut ctx).is_ok());
+            assert!(T::Integer.assert_sub(&T::TVar(v2), &mut types).is_ok());
             // {a=just integer, b=just v1} = {a=just v2, b=just string, c=just boolean} (!)
-            assert!(t1.assert_eq(&t2, &mut ctx).is_err());
+            assert!(t1.assert_eq(&t2, &mut types).is_err());
         }
         */
 
         {
-            let v1 = ctx.gen_tvar();
+            let v1 = types.gen_tvar();
             let tv1 = Ty::new(T::TVar(v1));
             let tv1nil = Ty::new(T::TVar(v1)).or_nil(Nil::Noisy);
             let intnil = Ty::new(T::Integer).or_nil(Nil::Noisy);
             // v1? <: nil?
-            assert!(tv1nil.assert_sub(&intnil, &mut ctx).is_ok());
+            assert!(tv1nil.assert_sub(&intnil, &mut types).is_ok());
             // v1 <: nil?
-            assert!(tv1.assert_sub(&intnil, &mut ctx).is_ok());
+            assert!(tv1.assert_sub(&intnil, &mut types).is_ok());
             // v1 :> nil?
-            assert!(intnil.assert_sub(&tv1, &mut ctx).is_ok());
+            assert!(intnil.assert_sub(&tv1, &mut types).is_ok());
         }
     }
 
