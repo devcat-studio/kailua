@@ -250,19 +250,52 @@ define_msg! { pub CallToAnyFunc<'a> { func: Ty<'a> }:
              specify more detailed type, or use `--# assume` as a last resort",
 }
 
-define_msg! { pub TableLitWithUnknownKey<'a> { key: Ty<'a> }:
-    "ko" => "테이블 생성자는 항상 레코드여야 하므로 덜 추론되거나, 문자열이나 숫자가 아니거나, \
-             미리 알 수 없는 `{key}` 타입을 키로 쓸 수 없습니다",
-    _    => "The key type `{key}` is not known enough, not a string or integer, \
-             or not known ahead of time as the table constructor should always be a record",
+define_msg! { pub TableLitWithInvalidRecKey<'a> { key: Ty<'a> }:
+    "ko" => "레코드 타입을 가지는 테이블 생성자에서 `{key}` 타입을 키로 쓸 수 없습니다",
+    _    => "The type `{key}` cannot be used as a key in the table constructor for records",
+}
+
+define_msg! { pub TableLitWithInvalidArrayKey<'a> { key: Ty<'a> }:
+    "ko" => "배열 타입을 가지는 테이블 생성자에서 `{key}` 타입을 키로 쓸 수 없습니다",
+    _    => "The type `{key}` cannot be used as a key in the table constructor for arrays",
+}
+
+define_msg! { pub TableLitWithInvalidArrayValue<'a> { given: Slot<'a>, value: Slot<'a> }:
+    "ko" => "`vector<{value}>` 타입을 가지는 테이블 생성자에서 \
+             `{given}` 타입을 값으로 쓸 수 없습니다",
+    _    => "The type `{given}` cannot be used as a value \
+             in the table constructor for the type `vector<{value}>`",
+}
+
+define_msg! { pub TableLitWithInvalidMapKey<'a> { given: Ty<'a>, key: Ty<'a>, value: Slot<'a> }:
+    "ko" => "`map<{key}, {value}>` 타입을 가지는 테이블 생성자에서 \
+             `{given}` 타입을 키로 쓸 수 없습니다",
+    _    => "The type `{given}` cannot be used as a key \
+             in the table constructor for the type `map<{key}, {value}>`",
+}
+
+define_msg! { pub TableLitWithInvalidMapValue<'a> { given: Slot<'a>, key: Ty<'a>, value: Slot<'a> }:
+    "ko" => "`map<{key}, {value}>` 타입을 가지는 테이블 생성자에서 \
+             `{given}` 타입을 값으로 쓸 수 없습니다",
+    _    => "The type `{given}` cannot be used as a value \
+             in the table constructor for the type `map<{key}, {value}>`",
+}
+
+define_msg! { pub TableLitWithMissingArrayKey:
+    "ko" => "배열 타입을 가지는 테이블 생성자에서 빠진 키가 있습니다",
+    _    => "Keys in the table constructor for arrays have a missing key",
+}
+
+define_msg! { pub TableLitWithNonOneMinArrayKey:
+    "ko" => "배열 타입을 가지는 테이블 생성자에서 가장 작은 키가 1이 아닙니다",
+    _    => "The minimum key in the table constructor for arrays is not 1",
 }
 
 define_msg! { pub TableLitWithUnboundSeq:
-    "ko" => "테이블 생성자는 항상 레코드여야 하므로 \
+    "ko" => "레코드 타입을 가지는 테이블 생성자에서 \
              반환값 갯수가 정해지지 않은 수식을 마지막 수식으로 쓸 수 없습니다",
     _    => "This expression has an unknown number of return values, \
-             so cannot be used as the last value in the table constructor \
-             which should always be a record",
+             so cannot be used as the last value in the table constructor for records",
 }
 
 define_msg! { pub TableLitWithDuplicateKey<'a> { key: &'a Key }:

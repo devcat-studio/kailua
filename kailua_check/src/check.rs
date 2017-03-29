@@ -559,15 +559,15 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                     match tab.clone().unwrap() {
                         // map<k, v> -> (k, v)
                         T::Tables(Cow::Owned(Tables::Map(k, v))) =>
-                            (k, v),
+                            (k, v.with_nil()),
                         T::Tables(Cow::Borrowed(&Tables::Map(ref k, ref v))) =>
-                            (k.clone(), v.clone()),
+                            (k.clone(), v.clone().with_nil()),
 
                         // vector<v> -> (integer, v)
                         T::Tables(Cow::Owned(Tables::Array(v))) =>
-                            (Ty::new(T::Integer), v),
+                            (Ty::new(T::Integer), v.with_nil()),
                         T::Tables(Cow::Borrowed(&Tables::Array(ref v))) =>
-                            (Ty::new(T::Integer), v.clone()),
+                            (Ty::new(T::Integer), v.clone().with_nil()),
 
                         _ => return,
                     }
@@ -1959,7 +1959,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                        selfparam: Option<(&Spanned<SelfParam>, Slot)>, sig: &Sig,
                        block: &'inp Spanned<Vec<Spanned<Stmt>>>, declspan: Span,
                        hint: Option<Spanned<Slot>>) -> Result<Slot> {
-        // if the hint exists and is a function,
+        // if the hint exists and has a functional portion,
         // collect first `sig.args.head.len()` types for missing argument types,
         // and a repeating part of remaining type sequence for a missing variadic argument type.
         // also collect the return type(s) which can be used as is.
@@ -2141,31 +2141,34 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
 
     fn visit_func_call(&mut self, functy: &Spanned<Ty>, selfinfo: Option<Spanned<Slot>>,
                        args: &'inp Spanned<Args>, expspan: Span) -> Result<Exitable<SlotSeq>> {
+        // construct hints; they are given at the best effort basis
+        let hint = self.env.resolve_exact_type(functy).and_then(|ty| {
+            if let Some(&Functions::Simple(ref f)) = ty.get_functions() {
+                let mut args = f.args.clone();
+                if selfinfo.is_some() && !args.head.is_empty() {
+                    args.head.remove(0); // args do not contain self, so do hints
+                }
+                Some(SlotSeq::from_seq(args).all_with_loc(functy))
+            } else {
+                None
+            }
+        });
+
         // should be visited first, otherwise a WHATEVER function will ignore slots in arguments
         let (nargs, Exitable(exit, mut argtys)) = match args.base {
             Args::List(ref ee) => {
-                // at this stage the hint is given at the best effort basis
-                let hint = self.env.resolve_exact_type(functy).and_then(|ty| {
-                    if let Some(&Functions::Simple(ref f)) = ty.get_functions() {
-                        let mut args = f.args.clone();
-                        if selfinfo.is_some() && !args.head.is_empty() {
-                            args.head.remove(0);
-                        }
-                        Some(SlotSeq::from_seq(args).all_with_loc(functy))
-                    } else {
-                        None
-                    }
-                });
-
                 (ee.len(), self.visit_explist_with_span(ee, args.span, hint)?)
             },
+
             Args::Str(ref s) => {
                 let argstr = Str::from(s[..].to_owned());
                 let strty = T::Str(Cow::Owned(argstr)).with_loc(args);
                 (1, Exitable::new(SpannedSlotSeq::from(strty)))
             },
+
             Args::Table(ref fields) => {
-                let table = self.visit_table(fields)?;
+                let hint = hint.map(|seq| seq.into_first());
+                let table = self.visit_table(fields, args.span, hint)?;
                 (1, table.map(|table| SpannedSlotSeq::from(table.with_loc(args))))
             },
         };
@@ -2326,88 +2329,202 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
         Ok(Exitable(cmp::max(exit, retexit), SlotSeq::from_seq(returns)))
     }
 
-    fn visit_table(&mut self, fields: &'inp [(Option<Spanned<Exp>>, Spanned<Exp>)])
-        -> Result<Exitable<T<'static>>>
-    {
-        let mut newfields = Vec::new();
+    fn visit_table(&mut self, fields: &'inp [(Option<Spanned<Exp>>, Spanned<Exp>)], tabspan: Span,
+                   hint: Option<Spanned<Slot>>) -> Result<Exitable<T<'static>>> {
+        // the finally resolved type depends on the hint type
+        #[derive(Debug)]
+        enum Target {
+            Any,
+            Fields(Vec<(Key, Slot)>),
+            // need to ensure that there is no hole and everything is 1-based
+            Array(Spanned<Slot>, i32 /*min*/, i32 /*max*/, i32 /*count*/),
+            Map(Spanned<Ty>, Spanned<Slot>),
+        }
+
+        // if the hint exists and has vectors or maps in a tabular portion,
+        // we do not add to the fields but instead simply check if keys and values are subtypes
+        let target = hint.and_then(|hint| {
+            self.env.resolve_exact_type(&hint.unlift()).and_then(|ty| {
+                match ty.get_tables() {
+                    Some(&Tables::All) => Some(Target::Any),
+                    Some(&Tables::Array(ref v)) => {
+                        let v = v.clone().with_nil().with_loc(&hint);
+                        Some(Target::Array(v, i32::MAX, i32::MIN, 0))
+                    },
+                    Some(&Tables::Map(ref k, ref v)) => {
+                        let k = k.clone().with_loc(&hint);
+                        let v = v.clone().with_nil().with_loc(&hint);
+                        Some(Target::Map(k, v))
+                    },
+                    Some(&Tables::Fields(_)) | None => None,
+                }
+            })
+        });
+        let mut target = target.unwrap_or_else(|| Target::Fields(Vec::new()));
 
         let mut fieldspans = HashMap::new();
-        let mut add_field = |newfields: &mut Vec<(Key, Slot)>, env: &Env<R>, k: Key, v: Slot,
-                             span: Span| -> Result<()> {
-            if let Some(&prevspan) = fieldspans.get(&k) {
-                env.error(span, m::TableLitWithDuplicateKey { key: &k })
-                   .note(prevspan, m::PreviousKeyInTableLit {})
-                   .done()?;
-            } else {
-                newfields.push((k.clone(), v));
-                fieldspans.insert(k, span);
+
+        let mut add_field = |target: &mut Target, env: &mut Env<R>,
+                             k: Spanned<Ty>, v: Spanned<Slot>, varargs: bool| -> Result<()> {
+            // extract an literal portion if possible
+            let litkey = env.resolve_exact_type(&k).and_then(|ty| {
+                if let Some(v) = ty.as_integer() {
+                    Some(Key::from(v))
+                } else if let Some(s) = ty.as_string() {
+                    Some(Key::from(s))
+                } else {
+                    None
+                }
+            });
+
+            // check for the duplicate keys if the key is literal
+            let mut dup = false;
+            if let Some(ref key) = litkey {
+                if let Some(&prevspan) = fieldspans.get(key) {
+                    env.error(&k, m::TableLitWithDuplicateKey { key: key })
+                       .note(prevspan, m::PreviousKeyInTableLit {})
+                       .done()?;
+                    dup = true; // do not add this field if the key is significant
+                } else {
+                    fieldspans.insert(key.clone(), k.span);
+                }
             }
+
+            match *target {
+                Target::Any => {}
+
+                Target::Fields(_) if varargs => {
+                    // guard this case first in place of more general errors
+                    env.error(k.span | v.span, m::TableLitWithUnboundSeq {}).done()?;
+                }
+
+                Target::Fields(ref mut fields) => {
+                    if let Some(key) = litkey {
+                        if !dup {
+                            fields.push((key, v.base));
+                        }
+                    } else {
+                        env.error(&k, m::TableLitWithInvalidRecKey { key: env.display(&k) })
+                           .done()?;
+                    }
+                }
+
+                Target::Array(ref mut vty, ref mut min, ref mut max, ref mut count) => {
+                    // for varargs `k` would be Integer, but that is fine
+                    // (the actual keys merged into `k` are always consecutive)
+                    if !varargs {
+                        // check if `k` is a non-duplicate integer, and if so update the counters
+                        if let Some(Key::Int(k)) = litkey {
+                            if !dup {
+                                *count += 1;
+                                if *min > k { *min = k; }
+                                if *max < k { *max = k; }
+                            }
+                        } else {
+                            env.error(&k, m::TableLitWithInvalidArrayKey { key: env.display(&k) })
+                               .done()?;
+                        }
+                    }
+
+                    if let Err(r) = v.assert_sub(vty, env.context()) {
+                        env.error(&v,
+                                  m::TableLitWithInvalidArrayValue {
+                                      given: env.display(&v), value: env.display(vty),
+                                  })
+                           .report_types(r, TypeReportHint::None)
+                           .done()?;
+                    }
+                }
+
+                Target::Map(ref mut kty, ref mut vty) => {
+                    if let Err(r) = k.assert_sub(kty, env.context()) {
+                        env.error(&k,
+                                  m::TableLitWithInvalidMapKey {
+                                      given: env.display(&k),
+                                      key: env.display(kty), value: env.display(vty),
+                                  })
+                           .report_types(r, TypeReportHint::None)
+                           .done()?;
+                    }
+
+                    if let Err(r) = v.assert_sub(vty, env.context()) {
+                        env.error(&v,
+                                  m::TableLitWithInvalidMapValue {
+                                      given: env.display(&v),
+                                      key: env.display(kty), value: env.display(vty),
+                                  })
+                           .report_types(r, TypeReportHint::None)
+                           .done()?;
+                    }
+                }
+            }
+
             Ok(())
         };
 
         let mut len = 0;
         let mut exprexit = ExprExit::None;
         for (idx, &(ref key, ref value)) in fields.iter().enumerate() {
-            let span = key.as_ref().map_or(Span::dummy(), |k| k.span) | value.span;
-
             // if this is the last entry and no explicit index is set, splice the values
             if idx == fields.len() - 1 && key.is_none() {
                 let Exitable(exit, vty) = self.visit_exp(value, None)?;
                 exprexit = exprexit.collide(exit);
                 for ty in vty.head.into_iter() {
                     len += 1;
-                    add_field(&mut newfields, &self.env, Key::Int(len), ty.base, span)?;
+                    let kty = Ty::new(T::Int(len)).with_loc(ty.span.begin());
+                    add_field(&mut target, &mut self.env, kty, ty, false)?;
                 }
                 if let Some(ty) = vty.tail {
-                    // a record is no longer sufficient now, and as we don't want to infer
-                    // anything larger than a record, this is an error
-                    self.env.error(&ty, m::TableLitWithUnboundSeq {}).done()?;
-                    continue;
+                    let kty = Ty::new(T::Integer).with_loc(vty.span.end());
+                    add_field(&mut target, &mut self.env, kty, ty, true)?;
                 }
             } else {
-                let litkey = if let Some(ref key) = *key {
+                let kty = if let Some(ref key) = *key {
                     let Exitable(exit, key) = self.visit_exp(key, None)?;
                     exprexit = exprexit.collide(exit);
-                    let key = key.into_first();
-                    let kty = key.unlift();
-                    let kty = if let Some(kty) = self.env.resolve_exact_type(&kty) {
-                        kty
-                    } else {
-                        self.env.error(&key, m::TableLitWithUnknownKey { key: self.display(&kty) })
-                                .done()?;
-                        continue;
-                    };
-
-                    // kty should be a known integer or string, otherwise invalid (for Kailua)
-                    if let Some(kty) = kty.as_integer() {
-                        Key::from(kty)
-                    } else if let Some(kty) = kty.as_string() {
-                        Key::from(kty)
-                    } else {
-                        self.env.error(&key, m::TableLitWithUnknownKey { key: self.display(&kty) })
-                                .done()?;
-                        continue;
-                    }
+                    key.into_first().map(|slot| slot.unlift().clone())
                 } else {
                     len += 1;
-                    Key::Int(len)
+                    Ty::new(T::Int(len)).with_loc(value.span.begin())
                 };
 
                 let Exitable(exit, vty) = self.visit_exp(value, None)?;
                 exprexit = exprexit.collide(exit);
                 let vty = vty.into_first();
-                add_field(&mut newfields, &self.env, litkey, vty.base, span)?;
+                add_field(&mut target, &mut self.env, kty, vty, false)?;
             }
         }
 
-        let rvar = self.context().gen_rvar();
-        if !newfields.is_empty() {
-            // really should not fail...
-            self.context().assert_rvar_includes(rvar.clone(), &newfields).expect(
-                "cannot insert disjoint fields into a fresh row variable"
-            );
-        }
-        Ok(exprexit.with(T::Tables(Cow::Owned(Tables::Fields(rvar)))))
+        let table = match target {
+            Target::Any => Tables::All,
+
+            Target::Fields(fields) => {
+                let rvar = self.context().gen_rvar();
+                if !fields.is_empty() {
+                    // really should not fail...
+                    self.context().assert_rvar_includes(rvar.clone(), &fields).expect(
+                        "cannot insert disjoint fields into a fresh row variable"
+                    );
+                }
+                Tables::Fields(rvar)
+            },
+
+            Target::Array(vty, min, max, count) => {
+                // check if the array has all keys from 1 to # of keys
+                if count != 0 {
+                    if min != 1 {
+                        self.env.error(tabspan, m::TableLitWithNonOneMinArrayKey {}).done()?;
+                    } else if max != count {
+                        self.env.error(tabspan, m::TableLitWithMissingArrayKey {}).done()?;
+                    }
+                }
+                Tables::Array(vty.base)
+            },
+
+            Target::Map(kty, vty) => Tables::Map(kty.base, vty.base),
+        };
+
+        Ok(exprexit.with(T::Tables(Cow::Owned(table))))
     }
 
     fn visit_exp_from_stmt(&mut self, exp: &'inp Spanned<Exp>, hint: Option<SpannedSlotSeq>)
@@ -2492,7 +2609,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 Exitable::new(SlotSeq::from(returns))
             },
             Ex::Table(ref fields) => {
-                self.visit_table(fields)?.map(SlotSeq::from)
+                let hint = hint.map(|seq| seq.into_first());
+                self.visit_table(fields, exp.span, hint)?.map(SlotSeq::from)
             },
 
             Ex::FuncCall(ref func, ref args) => {
@@ -2529,7 +2647,16 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             },
 
             Ex::Un(op, ref e) => {
-                let Exitable(exit, info) = self.visit_exp(e, None)?;
+                // allow `#{...}` to be checked without an error
+                let hint = match op.base {
+                    UnOp::Len => {
+                        let taborstr = Ty::new(T::table() | T::String);
+                        Some(SpannedSlotSeq::from(Slot::just(taborstr).with_loc(op.span)))
+                    },
+                    _ => None
+                };
+
+                let Exitable(exit, info) = self.visit_exp(e, hint)?;
                 let info = info.into_first();
                 let info = self.check_un_op(op.base, &info, exp.span)?;
                 exit.with(SlotSeq::from(info))
@@ -2670,7 +2797,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                         Some(Slot::just(Ty::new(T::Str(Cow::Owned(argstr)))).with_loc(args))
                     },
                     Args::Table(ref fields) => {
-                        let Exitable(_, table) = self.visit_table(fields)?;
+                        let Exitable(_, table) = self.visit_table(fields, args.span, None)?;
                         Some(Slot::just(Ty::new(table)).with_loc(args))
                     },
                 }

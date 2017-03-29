@@ -64,8 +64,7 @@ function M.foo() end --@< Error: Missing key "foo" in `<initializing> {}`
 --! error
 
 --8<-- module-table
-local M = {} --: module table --@< Error: Cannot assign `{...}` into `<initializing> table`
-                              --@^ Note: The other type originates here
+local M = {} --: module table
 
 --v function()
 function M.foo() end --@< Error: Cannot index `<initializing> table` without further type information; specify more detailed type, or use `--# assume` as a last resort

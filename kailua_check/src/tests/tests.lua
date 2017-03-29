@@ -751,6 +751,21 @@ q = p + p --@< Error: Cannot assign `number` into `integer`
 local a = 3 + #{1, 2, 3}
 --! ok
 
+--8<-- len-table-varargs-1
+--v function() --> (integer...)
+function f() end
+
+local a = 3 + #{1, 2, 3, f()}
+local b = 6 + #{f()}
+--! ok
+
+--8<-- len-table-varargs-2
+--v function(...: integer)
+function f(...)
+    local a = #{...}
+end
+--! ok
+
 --8<-- len-string
 local a = 3 + #'heck'
 --! ok
@@ -1085,6 +1100,15 @@ function p(a) end
 p(function()
 end) --@< Error: Tried to return from a function that is marked that it never returns
 --! error
+
+--8<-- funccall-func-hint-union
+--v function(a: (function(integer, integer) --> integer) | string)
+function p(a) end
+
+p(function(x, y)
+    return x + y
+end)
+--! ok
 
 --8<-- methodcall-func-hint
 local tab = {}
@@ -2960,55 +2984,207 @@ local a = {
 }
 --! error
 
---8<-- table-lit-arbitrary-key
+--8<-- table-lit-rec-arbitrary-key
 --# assume k: string
-local a = {[k] = 42} --@< Error: The key type `string` is not known enough, not a string or integer, or not known ahead of time as the table constructor should always be a record
+local a = {[k] = 42} --@< Error: The type `string` cannot be used as a key in the table constructor for records
 --! error
 
---8<-- table-lit-non-stringy-key
+--8<-- table-lit-rec-non-stringy-key
 --# assume k: table
-local a = {[k] = 42} --@< Error: The key type `table` is not known enough, not a string or integer, or not known ahead of time as the table constructor should always be a record
+local a = {[k] = 42} --@< Error: The type `table` cannot be used as a key in the table constructor for records
 --! error
 
---8<-- table-lit-bounded-seq
+--8<-- table-lit-rec-bounded-seq
 function f() return 3, 4 end
-local a = {1, 2, f()} --: {integer, integer, integer, integer}
+local a = {1, 2, f()}
+local aa = a --: {integer, integer, integer, integer}
 --! ok
 
---8<-- table-lit-unbounded-seq
---v [NO_CHECK]
---v function() --> (integer...)
-function f() end
-local a = {1, 2, f()} --@< Error: This expression has an unknown number of return values, so cannot be used as the last value in the table constructor which should always be a record
+--8<-- table-lit-rec-unbounded-seq
+function f() --> (integer...)
+end
+-- note the missing hint
+local a = {1, 2, f()} --@< Error: This expression has an unknown number of return values, so cannot be used as the last value in the table constructor for records
 --! error
 
 --8<-- table-lit-subtyping-1
-local a = {1, 2, 3} --: vector<integer>
-local b = {1, 2, 3, [4] = 4} --: vector<integer>
-local c = {1, 2, 3, [8] = 4} --: map<integer, integer>
+-- avoid hinting
+local a = {1, 2, 3}
+local aa = a --: vector<integer>
+local b = {1, 2, 3, [4] = 4}
+local bb = b --: vector<integer>
+local c = {1, 2, 3, [8] = 4}
+local cc = c --: map<integer, integer>
 --! ok
 
 --8<-- table-lit-subtyping-2
-local d = {a = 3, b = 4} --: map<string, integer>
-local e = {1, 2, 3, string = 4} --: map<integer|string, integer>
+local d = {a = 3, b = 4}
+local dd = d --: map<string, integer>
+local e = {1, 2, 3, string = 4}
+local ee = e --: map<integer|string, integer>
 --! ok
 
 --8<-- table-lit-subtyping-3
-local x = {1, 2, 3, [5] = 4} --: vector<integer>
+local x = {1, 2, 3, [5] = 4}
+local xx = x --: vector<integer>
 --@^ Error: Cannot assign `{1, 2, 3, 5: 4}` into `vector<integer>`
 --@^^ Note: The other type originates here
 --! error
 
 --8<-- table-lit-subtyping-4
-local y = {1, 2, 3, string = 4} --: vector<integer>
+local y = {1, 2, 3, string = 4}
+local yy = y --: vector<integer>
 --@^ Error: Cannot assign `{1, 2, 3, string: 4, ...}` into `vector<integer>`
 --@^^ Note: The other type originates here
 --! error
 
 --8<-- table-lit-subtyping-5
-local z = {1, 2, 3, string = 4} --: map<integer, integer>
+local z = {1, 2, 3, string = 4}
+local zz = z --: map<integer, integer>
 --@^ Error: Cannot assign `{1, 2, 3, string: 4, ...}` into `map<integer, integer>`
 --@^^ Note: The other type originates here
+--! error
+
+--8<-- table-lit-no-splicing-with-key
+function f() --> (integer, string)
+    return 42, 'foo'
+end
+
+local a = { [1] = f() } --: {integer}
+local b = { [1] = f() } --: vector<integer>
+--! ok
+
+--8<-- table-lit-hint-vector-1
+local function f() --> (integer...)
+end
+
+local a = {} --: vector<integer>
+local b = {1, 2, 3} --: vector<integer>
+local c = {f()} --: vector<integer>
+local d = {1, 2, 3, f()} --: vector<integer>
+--! ok
+
+--8<-- table-lit-hint-vector-2
+local function f() --> ((4|5)...)
+end
+
+local a = {1, 2, 3} --: vector<1|2|3|4|5>
+local b = {1, 2, 3, f()} --: vector<1|2|3|4|5>
+
+local c = {1, 2, 3, f()} --: vector<1|2|3|4>
+--@^ Error: The type `(4|5)` cannot be used as a value in the table constructor for the type `vector<(1|2|3|4)>`
+--@^^ Cause: `(4|5)` is not a subtype of `(1|2|3|4)`
+--@^^^ Note: The other type originates here
+--! error
+
+--8<-- table-lit-hint-vector-3
+local function f() --> (integer...)
+end
+
+local a = {1, 2} --: vector<const string>
+--@^ Error: The type `1` cannot be used as a value in the table constructor for the type `vector<const string>`
+--@^^ Cause: `1` is not a subtype of `const string`
+--@^^^ Note: The other type originates here
+--@^^^^ Error: The type `2` cannot be used as a value in the table constructor for the type `vector<const string>`
+--@^^^^^ Cause: `2` is not a subtype of `const string`
+--@^^^^^^ Note: The other type originates here
+
+local b = {f()} --: vector<string>
+--@^ Error: The type `integer` cannot be used as a value in the table constructor for the type `vector<string>`
+--@^^ Cause: `integer` is not a subtype of `string`
+--@^^^ Note: The other type originates here
+--! error
+
+--8<-- table-lit-hint-vector-4
+local x = 42 --: integer
+local a = {[x] = 43} --: vector<integer>
+--@^ Error: The type `integer` cannot be used as a key in the table constructor for arrays
+
+local y = 42 --: 42?
+local b = {[y] = 43} --: vector<integer>
+--@^ Error: The type `42?` cannot be used as a key in the table constructor for arrays
+
+local z = 1 --: 1
+local c = {[z] = 43} --: vector<integer>
+--! error
+
+--8<-- table-lit-hint-vector-5
+local a = {[2] = 2, [3] = 3} --: vector<integer>
+--@^ Error: The minimum key in the table constructor for arrays is not 1
+local b = {[1] = 1, [3] = 3} --: vector<integer>
+--@^ Error: Keys in the table constructor for arrays have a missing key
+--! error
+
+--8<-- table-lit-hint-map-1
+local function f() --> (integer...)
+end
+
+local a = {} --: map<integer, integer>
+local b = {1, 2, 3} --: map<integer, const integer>
+local c = {f()} --: map<integer, const integer>
+local d = {1, 2, 3, f()} --: map<integer, integer>
+local e = {[7]=1, [9]=2, [4]=3, f()} --: map<integer, integer>
+--! ok
+
+--8<-- table-lit-hint-map-2
+local function f() --> (integer...)
+end
+
+local a = {1, 2} --: map<integer, const string>
+--@^ Error: The type `1` cannot be used as a value in the table constructor for the type `map<integer, const string>`
+--@^^ Cause: `1` is not a subtype of `const string`
+--@^^^ Note: The other type originates here
+--@^^^^ Error: The type `2` cannot be used as a value in the table constructor for the type `map<integer, const string>`
+--@^^^^^ Cause: `2` is not a subtype of `const string`
+--@^^^^^^ Note: The other type originates here
+
+local b = {f()} --: map<integer, string>
+--@^ Error: The type `integer` cannot be used as a value in the table constructor for the type `map<integer, string>`
+--@^^ Cause: `integer` is not a subtype of `string`
+--@^^^ Note: The other type originates here
+--! error
+
+--8<-- table-lit-hint-map-3
+local function f() --> (integer...)
+end
+
+local a = {1, [7] = 2} --: map<string, const integer>
+--@^ Error: The type `1` cannot be used as a key in the table constructor for the type `map<string, const integer>`
+--@^^ Cause: `1` is not a subtype of `string`
+--@^^^ Note: The other type originates here
+--@^^^^ Error: The type `7` cannot be used as a key in the table constructor for the type `map<string, const integer>`
+--@^^^^^ Cause: `7` is not a subtype of `string`
+--@^^^^^^ Note: The other type originates here
+
+local b = {f()} --: map<string, integer>
+--@^ Error: The type `integer` cannot be used as a key in the table constructor for the type `map<string, integer>`
+--@^^ Cause: `integer` is not a subtype of `string`
+--@^^^ Note: The other type originates here
+--! error
+
+--8<-- table-lit-hint-table
+local function f() --> (function()...)
+end
+
+local x = nil --: thread
+local a = {[x] = 2, [f()] = x, f()} --: table
+--! ok
+
+--8<-- table-lit-hint-duplicate-key
+-- duplicate keys are checked as much as possible
+-- even when the hint doesn't require integral or stringy keys
+local x = nil --: thread
+local a = {
+    foo = 1,
+    [x] = 2,
+    [1] = 3,
+    [x] = 4, -- this cannot be caught
+    bar = 5,
+    foo = 6, --@< Error: The key `foo` is duplicated in the table constructor
+             --@^^^^^^ Note: The key was previously assigned here
+    7, --@< Error: The key `1` is duplicated in the table constructor
+       --@^^^^^^ Note: The key was previously assigned here
+} --: table
 --! error
 
 --8<-- no-table-union
