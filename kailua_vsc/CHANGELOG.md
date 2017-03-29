@@ -1,3 +1,29 @@
+## 0.0.14
+
+* Delayed type checking via the `module` keyword is now supported. Traditionally Kailua didn't support mutually recursive functions, mainly because it checks everything in the lexical order---which is inevitable for dynamically typed languages like Lua. `module` acts as an escape hatch: when some variable or field is declared as `--: module` or `--: module <type>`, every function or method declaration through it is collected but not immediately type-checked. Instead, they are checked at the end of the scope where `--: module` appears, at the time declarations are guaranteed to exist.
+
+    * Assignments are not affected by the `module` keyword. `function M.a() end` is eligible for the delayed type checking but `M.a = function() end` is not. This may change in the future.
+
+    * Due to the delayed type checking, declarations to `--: module` variable or field should be fully specified much like the `[NO_CHECK]` attribute.
+
+    * In spite of the delayed type checking, every local name in the declaration is resolved at its initial position, not at the end of the scope. Global names *are* resolved at the end of the scope.
+
+    * It is possible to declare mutually recursive functions throughout *different* `--: module` variables or fields. They should be declared as `--: module` in the same scope to be correctly checked, however.
+
+* Function signatures that never return (i.e. diverging) are now supported. A special return type `!` can be used to declare that the function should not return.
+
+    * Diverging function calls inside an expression are unconditional warnings, because they are almost always accidental.
+
+* Modifier-only specifications like `--: const` are now allowed (a side effect of having `--: module`). `local x = 3 --: const` is now identical to `local x = 3 --: const integer`.
+
+* Improved warnings on wrong or duplicate attributes. (Triggered from a prior renaming from `[no_check]` to `[NO_CHECK]`.)
+
+* `require "foo.bar"` now correctly opens `foo/bar.lua` (and so on) instead of `foo.bar.lua`.
+
+* Fixed a parser crash on the incomplete functions or records with named arguments or fields.
+
+* Syntax highlighting has been greatly improved to catch up with Kailua-specific syntaxes.
+
 ## 0.0.13
 
 * The function type declaration has been changed. Previously `--v function(self, ...)` (without a type for `self`) is allowed for methods; this is now `--v method(...)` and no type for `self` can be declared. As before, `--v function(...)` should be used for functions and `--v method(...)` should be used for methods; since the only difference between function and method declaration is the implied type for `self`, you can freely use a function declaration if you *do* need to specify the type for `self`.
