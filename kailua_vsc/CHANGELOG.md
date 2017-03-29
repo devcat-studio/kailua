@@ -1,3 +1,7 @@
+## 0.0.15
+
+* Made `require "foo.bar"` check *both* `foo/bar.lua` and `foo.bar.lua` (forgot to process both, oops).
+
 ## 0.0.14
 
 * Delayed type checking via the `module` keyword is now supported. Traditionally Kailua didn't support mutually recursive functions, mainly because it checks everything in the lexical order---which is inevitable for dynamically typed languages like Lua. `module` acts as an escape hatch: when some variable or field is declared as `--: module` or `--: module <type>`, every function or method declaration through it is collected but not immediately type-checked. Instead, they are checked at the end of the scope where `--: module` appears, at the time declarations are guaranteed to exist.
