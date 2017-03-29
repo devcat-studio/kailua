@@ -300,7 +300,7 @@ pub fn complete_name(tokens: &[NestedToken], name_idx: usize, nesting_category: 
 }
 
 pub fn complete_field(tokens: &[NestedToken], sep_idx: usize,
-                      last_output: &Output) -> Vec<CompletionItem> {
+                      last_output: &Output) -> Option<Vec<CompletionItem>> {
     let mut items = Vec::new();
 
     // note that this approach of using the closest non-comment token's end is
@@ -312,7 +312,7 @@ pub fn complete_field(tokens: &[NestedToken], sep_idx: usize,
     }
     let prefix_expr_end = match tokens[..sep_idx].iter().rev().find(|tok| !is_comment(tok)) {
         Some(tok) => tok.tok.span.end(),
-        None => return items,
+        None => return Some(items), // no field to complete
     };
 
     // find all slot-associated spans that intersects (even at the end points) the end pos...
@@ -331,9 +331,11 @@ pub fn complete_field(tokens: &[NestedToken], sep_idx: usize,
                     items.push(make_item(name, CompletionItemKind::Field, None));
                 }
             }
+            return Some(items);
         }
     }
 
-    items
+    // we may retry for the newer output if there is no slot available
+    None
 }
 

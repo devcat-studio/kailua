@@ -34,7 +34,7 @@ use futures::{Future, BoxFuture};
 use tokio_timer::Timer;
 
 use server::Server;
-use futureutils::CancelError;
+use futureutils::{CancelToken, CancelError};
 use diags::ReportTree;
 use workspace::{Workspace, WorkspaceFile};
 
@@ -293,9 +293,7 @@ fn checking_loop(server: Server, workspace: Arc<RwLock<Workspace>>,
 
 fn main_loop(server: Server, workspace: Arc<RwLock<Workspace>>) {
     use std::collections::HashMap;
-    use futureutils::CancelToken;
     use workspace::WorkspaceError;
-    use completion::{self, CompletionClass};
     use protocol::*;
     use server::Received;
 
@@ -388,59 +386,105 @@ fn main_loop(server: Server, workspace: Arc<RwLock<Workspace>>) {
                 let token = CancelToken::new();
                 cancel_tokens.insert(id.clone(), token.clone());
 
-                let spare_workspace = workspace.clone();
-
-                let ws = workspace.read();
-                let file = try_or_notify!(ws.file(&params.textDocument.uri).ok_or_else(|| {
+                let uri = &params.textDocument.uri;
+                let file = try_or_notify!(workspace.read().file(uri).ok_or_else(|| {
                     WorkspaceError("file does not exist for completion")
                 }));
 
-                let tokens_fut = file.ensure_tokens().map_err(|e| e.as_ref().map(|_| ()));
-                let pos_fut = file.translate_position(&params.position);
-
-                let server = server.clone();
-                let fut = tokens_fut.join(pos_fut).and_then(move |(tokens, pos)| {
-                    let workspace = spare_workspace;
-                    let tokens = &tokens.0;
-
-                    let class = completion::classify(tokens, pos);
-                    debug!("completion: {:?} {:#?}", class, pos);
-                    let items = match class {
-                        Some(CompletionClass::Name(idx, category)) => {
-                            file.last_chunk().map(|chunk| {
-                                let ws = workspace.read();
-
-                                // the list of all chunks is used to get the global names
-                                // TODO make last_global_names and optimize for that
-                                let all_chunks: Vec<_> =
-                                    ws.files().values().flat_map(|f| f.last_chunk()).collect();
-
-                                let items = completion::complete_name(
-                                    tokens, idx, category, pos, &chunk, &all_chunks, &ws.source());
-                                items
-                            })
-                        },
-                        Some(CompletionClass::Field(idx)) => {
-                            let output = workspace.read().last_check_output();
-                            output.map(|output| completion::complete_field(tokens, idx, &output))
-                        },
-                        None => None,
-                    };
-                    debug!("completion items: {:?}",
-                           items.as_ref().map(|items| {
-                               items.iter().map(|i| i.label.clone()).collect::<Vec<_>>()
-                           }));
-
-                    let _ = server.send_ok(id, items.unwrap_or(Vec::new()));
-                    Ok(())
-                });
-
-                ws.pool().spawn(fut).forget();
+                complete(server.clone(), workspace.clone(), id, file, token, &params.position);
             }
 
             _ => {}
         }
     }
+}
+
+fn complete(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
+            file: WorkspaceFile, cancel_token: CancelToken, position: &protocol::Position) {
+    use futures::future;
+    use completion::{self, CompletionClass};
+
+    let tokens_fut = file.ensure_tokens().map_err(|e| e.as_ref().map(|_| ()));
+    let pos_fut = file.translate_position(position);
+
+    let spare_workspace = workspace.clone();
+    let fut = tokens_fut.join(pos_fut).and_then(move |(tokens, pos)| {
+        if let Err(e) = cancel_token.keep_going() {
+            return future::err(e).boxed();
+        }
+
+        let workspace = spare_workspace;
+
+        let class = completion::classify(&tokens.0, pos);
+        debug!("completion: {:?} {:#?}", class, pos);
+
+        fn send_items(server: Server, id: protocol::Id, items: Vec<protocol::CompletionItem>) {
+            debug!("completion items: {:?}",
+                   items.iter().map(|i| i.label.clone()).collect::<Vec<_>>());
+            let _ = server.send_ok(id, items);
+        }
+
+        // we will try twice, first with previous parsing or checking outputs,
+        // second with actual parsing or checking outputs (when the first failed).
+        match class {
+            Some(CompletionClass::Name(idx, category)) => {
+                let complete = move |chunk: &kailua_syntax::Chunk| {
+                    let ws = workspace.read();
+
+                    // the list of all chunks is used to get the global names
+                    // TODO make last_global_names and optimize for that
+                    let all_chunks: Vec<_> =
+                        ws.files().values().flat_map(|f| f.last_chunk()).collect();
+
+                    let items = completion::complete_name(&tokens.0, idx, category, pos,
+                                                          chunk, &all_chunks, &ws.source());
+                    send_items(server, id, items);
+                };
+
+                if let Some(chunk) = file.last_chunk() {
+                    complete(&chunk);
+                    future::ok(()).boxed()
+                } else {
+                    file.ensure_chunk().map_err(|e| e.as_ref().map(|_| ())).and_then(move |chunk| {
+                        cancel_token.keep_going()?;
+                        complete(&chunk.0);
+                        Ok(())
+                    }).boxed()
+                }
+            },
+
+            Some(CompletionClass::Field(idx)) => {
+                let output = workspace.read().last_check_output();
+                let items = output.and_then(|output| {
+                    completion::complete_field(&tokens.0, idx, &output)
+                });
+
+                if let Some(items) = items {
+                    send_items(server, id, items);
+                    future::ok(()).boxed()
+                } else if let Ok(output_fut) = workspace.read().ensure_check_output() {
+                    output_fut.map_err(|e| e.as_ref().map(|_| ())).and_then(move |output| {
+                        cancel_token.keep_going()?;
+
+                        let items = completion::complete_field(&tokens.0, idx, &output.0);
+                        send_items(server, id, items.unwrap_or(Vec::new()));
+                        Ok(())
+                    }).boxed()
+                } else {
+                    // checking couldn't be started, `checking_loop` will notify the incident
+                    // so we don't have to do anything
+                    future::ok(()).boxed()
+                }
+            },
+
+            None => {
+                send_items(server, id, Vec::new());
+                future::ok(()).boxed()
+            },
+        }
+    });
+
+    workspace.read().pool().spawn(fut).forget();
 }
 
 pub fn main() {
