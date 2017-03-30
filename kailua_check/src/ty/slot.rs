@@ -405,10 +405,14 @@ impl Union for Slot {
 
 impl Lattice for Slot {
     fn assert_sub(&self, other: &Slot, ctx: &mut TypeContext) -> TypeResult<()> {
+        if self.0.deref() as *const _ == other.0.deref() as *const _ { return Ok(()); }
+
         self.0.read().assert_sub(&other.0.read(), ctx)
     }
 
     fn assert_eq(&self, other: &Slot, ctx: &mut TypeContext) -> TypeResult<()> {
+        if self.0.deref() as *const _ == other.0.deref() as *const _ { return Ok(()); }
+
         self.0.write().assert_eq(&mut other.0.write(), ctx)
     }
 }
