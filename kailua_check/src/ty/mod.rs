@@ -85,6 +85,25 @@ pub enum Class {
     Instance(ClassId),
 }
 
+impl Display for Class {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
+        match *self {
+            Class::Prototype(cid) => match (&st.locale[..], st.context.get_class_name(cid)) {
+                ("ko", Some(name)) => write!(f, "<{:+} 프로토타입>", name),
+                (_,    Some(name)) => write!(f, "<prototype for {:+}>", name),
+                ("ko", None) => write!(f, "<이름 없는 클래스 #{}의 프로토타입>", cid.0),
+                (_,    None) => write!(f, "<prototype for unnamed class #{}>", cid.0),
+            },
+
+            Class::Instance(cid) => match (&st.locale[..], st.context.get_class_name(cid)) {
+                (_,    Some(name)) => write!(f, "{:+}", name),
+                ("ko", None) => write!(f, "<이름 없는 클래스 #{}>", cid.0),
+                (_,    None) => write!(f, "<unnamed class #{}>", cid.0),
+            },
+        }
+    }
+}
+
 impl fmt::Debug for Class {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -152,7 +171,7 @@ pub trait TypeContext {
     }
 
     // nominal type management
-    fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result;
+    fn get_class_name(&self, cid: ClassId) -> Option<&Name>;
     fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool;
 }
 
@@ -281,8 +300,8 @@ impl TypeContext for NoTypeContext {
         panic!("list_rvar_fields({:?}, ...) is not supposed to be called here", rvar)
     }
 
-    fn fmt_class(&self, cls: Class, _f: &mut fmt::Formatter) -> fmt::Result {
-        panic!("fmt_class({:?}, ...) is not supposed to be called here", cls);
+    fn get_class_name(&self, cid: ClassId) -> Option<&Name> {
+        panic!("get_class_name({:?}) is not supposed to be called here", cid);
     }
     fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool {
         panic!("is_subclass_of({:?}, {:?}) is not supposed to be called here", lhs, rhs);

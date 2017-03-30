@@ -4,6 +4,22 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use kailua_env::{Span, Spanned, Scope, ScopedId, ScopeMap};
 
+use lex::Keyword;
+
+fn is_unquotable(s: &[u8]) -> bool {
+    fn is_first(c: u8) -> bool {
+        match c { b'_' | b'a'...b'z' | b'A'...b'Z' => true, _ => false }
+    }
+
+    fn is_next(c: u8) -> bool {
+        match c { b'_' | b'a'...b'z' | b'A'...b'Z' | b'0'...b'9' => true, _ => false }
+    }
+
+    !s.is_empty() && is_first(s[0])
+                  && s[1..].iter().all(|&c| is_next(c))
+                  && Keyword::from(s, true).is_none()
+}
+
 fn format_ascii_vec(f: &mut fmt::Formatter, s: &[u8]) -> fmt::Result {
     for &c in s {
         match c {
@@ -38,6 +54,7 @@ impl fmt::Display for Comma {
 pub struct Name(Box<[u8]>);
 
 impl Name {
+    pub fn quote_required(&self) -> bool { !is_unquotable(&self.0) }
     pub fn into_bytes(self) -> Box<[u8]> { self.0 }
 }
 
@@ -62,9 +79,10 @@ impl fmt::Display for Name {
 
 impl fmt::Debug for Name {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if !f.sign_minus() { write!(f, "`")?; }
+        let quote = if f.sign_plus() { self.quote_required() } else { !f.sign_minus() };
+        if quote { write!(f, "`")?; }
         format_ascii_vec(f, &self.0)?;
-        if !f.sign_minus() { write!(f, "`")?; }
+        if quote { write!(f, "`")?; }
         Ok(())
     }
 }
@@ -73,6 +91,7 @@ impl fmt::Debug for Name {
 pub struct Str(Box<[u8]>);
 
 impl Str {
+    pub fn quote_required(&self) -> bool { !is_unquotable(&self.0) }
     pub fn into_bytes(self) -> Box<[u8]> { self.0 }
 }
 
@@ -97,9 +116,10 @@ impl fmt::Display for Str {
 
 impl fmt::Debug for Str {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if !f.sign_minus() { write!(f, "\"")?; }
+        let quote = if f.sign_plus() { self.quote_required() } else { !f.sign_minus() };
+        if quote { write!(f, "\"")?; }
         format_ascii_vec(f, &self.0)?;
-        if !f.sign_minus() { write!(f, "\"")?; }
+        if quote { write!(f, "\"")?; }
         Ok(())
     }
 }

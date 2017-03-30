@@ -883,7 +883,7 @@ impl<'a> Display for T<'a> {
 
             T::Tables(ref tab)     => fmt::Display::fmt(&tab.display(st), f),
             T::Functions(ref func) => fmt::Display::fmt(&func.display(st), f),
-            T::Class(c)            => st.context.fmt_class(c, f),
+            T::Class(c)            => fmt::Display::fmt(&c.display(st), f),
             T::Union(ref u)        => fmt::Display::fmt(&u.display(st), f),
         }
     }

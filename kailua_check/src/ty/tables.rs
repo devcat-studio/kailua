@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use kailua_syntax::Str;
-use diag::{Origin, TypeReport, TypeResult, unquotable_name};
+use diag::{Origin, TypeReport, TypeResult};
 use super::{Display, DisplayState, T, Ty, Slot, TypeContext, Union, Lattice, RVar};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -50,9 +50,9 @@ impl PartialEq<i32> for Key {
 impl fmt::Display for Key {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Key::Int(ref v) => write!(f, "{:?}", *v),
-            Key::Str(ref s) if unquotable_name(s) => write!(f, "{:-?}", *s),
-            Key::Str(ref s) => write!(f, "`{:-?}`", *s),
+            Key::Int(ref v) => write!(f, "{}", v),
+            Key::Str(ref s) if s.quote_required() => write!(f, "`{:-}`", s),
+            Key::Str(ref s) => write!(f, "{:-}", s),
         }
     }
 }

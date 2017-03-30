@@ -2,23 +2,8 @@ use std::fmt;
 
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag::{ReportMore, Locale, Localize, Localized};
-use kailua_syntax::Keyword;
 use message as m;
 use ty::{TypeContext, Display};
-
-pub fn unquotable_name(s: &[u8]) -> bool {
-    fn is_first(c: u8) -> bool {
-        match c { b'_' | b'a'...b'z' | b'A'...b'Z' => true, _ => false }
-    }
-
-    fn is_next(c: u8) -> bool {
-        match c { b'_' | b'a'...b'z' | b'A'...b'Z' | b'0'...b'9' => true, _ => false }
-    }
-
-    !s.is_empty() && is_first(s[0])
-                  && s[1..].iter().all(|&c| is_next(c))
-                  && Keyword::from(s, true).is_none()
-}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Ordinal(pub usize);

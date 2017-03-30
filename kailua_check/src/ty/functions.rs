@@ -3,7 +3,7 @@ use kailua_env::Spanned;
 use kailua_diag::Result;
 use kailua_syntax::{Name, FuncKind, Returns};
 
-use diag::{Origin, TypeReport, TypeResult, unquotable_name};
+use diag::{Origin, TypeReport, TypeResult};
 use super::{Display, DisplayState, Ty, TySeq, TypeContext, TypeResolver, Lattice};
 
 #[derive(Clone, PartialEq)]
@@ -72,11 +72,7 @@ impl Function {
             if first { first = false; } else { write!(f, ", ")?; }
             if let Some(name) = names.next() {
                 if let Some(ref name) = *name {
-                    if unquotable_name(name) {
-                        write!(f, "{:-?}: ", name)?;
-                    } else {
-                        write!(f, "`{:-?}`: ", name)?;
-                    }
+                    write!(f, "{:+}: ", name)?;
                 }
             }
             write_ty(t, f, false)?;

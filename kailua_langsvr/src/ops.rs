@@ -600,8 +600,7 @@ pub fn signature_help<F>(tokens: &[NestedToken], loc: &SignatureLoc, output: &Ou
                 write_invisible_num(&mut param, params.len());
                 if let Some(name) = names.next() {
                     if let Some(ref name) = *name {
-                        // XXX unquotable_name should be applied
-                        let _ = write!(param, "{:-}: ", name);
+                        let _ = write!(param, "{:+}: ", name);
                     }
                 }
                 let _ = write!(param, "{}", localize(&t.display(types)));

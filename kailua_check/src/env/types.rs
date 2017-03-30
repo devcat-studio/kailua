@@ -1,6 +1,5 @@
 use std::mem;
 use std::str;
-use std::fmt;
 use std::collections::{HashMap, HashSet};
 use vec_map::{self, VecMap};
 use atomic::Atomic;
@@ -9,9 +8,9 @@ use atomic::Ordering::Relaxed;
 use kailua_env::Spanned;
 use kailua_diag::Locale;
 use kailua_syntax::Name;
-use diag::{unquotable_name, Origin, TypeReport, TypeResult};
+use diag::{Origin, TypeReport, TypeResult};
 use ty::{Ty, T, Slot, TVar, RVar, Lattice};
-use ty::{TypeContext, ClassId, Class, Key};
+use ty::{TypeContext, ClassId, Key};
 use ty::flags::*;
 
 use super::partitions::{Partition, Partitions};
@@ -208,10 +207,6 @@ impl Types {
             cls.name = Some(name);
             Ok(())
         }
-    }
-
-    pub fn get_class_name(&self, cid: ClassId) -> Option<&Spanned<Name>> {
-        self.classes.get(cid.0 as usize).and_then(|cls| cls.name.as_ref())
     }
 
     pub fn get_parent_class(&self, cid: ClassId) -> Option<ClassId> {
@@ -456,49 +451,6 @@ impl Types {
         } else {
             Some(ty.clone())
         }
-    }
-
-    pub fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result {
-        fn class_name(classes: &[ClassDef],
-                      cid: ClassId) -> Option<(&Spanned<Name>, &'static str)> {
-            let cid = cid.0 as usize;
-            if cid < classes.len() {
-                if let Some(ref name) = classes[cid].name {
-                    let q = if unquotable_name(&name) { "" } else { "`" };
-                    return Some((name, q));
-                }
-            }
-            None
-        }
-
-        match cls {
-            Class::Prototype(cid) => {
-                if let Some((name, q)) = class_name(&self.classes, cid) {
-                    write!(f, "<prototype for {}{:-?}{}>", q, name, q)
-                } else {
-                    write!(f, "<prototype for unnamed class #{}>", cid.0)
-                }
-            }
-            Class::Instance(cid) => {
-                if let Some((name, q)) = class_name(&self.classes, cid) {
-                    write!(f, "{}{:-?}{}", q, name, q)
-                } else {
-                    write!(f, "<unnamed class #{}>", cid.0)
-                }
-            }
-        }
-    }
-
-    pub fn is_subclass_of(&self, mut lhs: ClassId, rhs: ClassId) -> bool {
-        if lhs == rhs { return true; }
-
-        while let Some(parent) = self.classes[lhs.0 as usize].parent {
-            assert!(parent < lhs);
-            lhs = parent;
-            if lhs == rhs { return true; }
-        }
-
-        false
     }
 }
 
@@ -778,12 +730,20 @@ impl TypeContext for Types {
         }
     }
 
-    fn fmt_class(&self, cls: Class, f: &mut fmt::Formatter) -> fmt::Result {
-        self.fmt_class(cls, f)
+    fn get_class_name(&self, cid: ClassId) -> Option<&Name> {
+        self.classes.get(cid.0 as usize).and_then(|cls| cls.name.as_ref().map(|name| &name.base))
     }
 
-    fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool {
-        self.is_subclass_of(lhs, rhs)
+    fn is_subclass_of(&self, mut lhs: ClassId, rhs: ClassId) -> bool {
+        if lhs == rhs { return true; }
+
+        while let Some(parent) = self.classes[lhs.0 as usize].parent {
+            assert!(parent < lhs);
+            lhs = parent;
+            if lhs == rhs { return true; }
+        }
+
+        false
     }
 }
 
