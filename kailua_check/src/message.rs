@@ -308,6 +308,12 @@ define_msg! { pub PreviousKeyInTableLit:
     _    => "The key was previously assigned here",
 }
 
+define_msg! { pub TableLitIsImplicitlyRec:
+    "ko" => "이 테이블의 타입을 알 수 없어서 레코드로 간주했습니다. 타입을 명시해 주십시오",
+    _    => "The type of this table was unknown so is assumed to be a record; \
+             please specify its type"
+}
+
 define_msg! { pub IndexToNonTable<'a> { tab: Slot<'a> }:
     "ko" => "테이블이 아닌 타입 `{tab}`을(를) 인덱싱하려고 했습니다",
     _    => "Tried to index a non-table type `{tab}`",

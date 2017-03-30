@@ -2987,11 +2987,13 @@ local a = {
 --8<-- table-lit-rec-arbitrary-key
 --# assume k: string
 local a = {[k] = 42} --@< Error: The type `string` cannot be used as a key in the table constructor for records
+                     --@^ Note: The type of this table was unknown so is assumed to be a record; please specify its type
 --! error
 
 --8<-- table-lit-rec-non-stringy-key
 --# assume k: table
 local a = {[k] = 42} --@< Error: The type `table` cannot be used as a key in the table constructor for records
+                     --@^ Note: The type of this table was unknown so is assumed to be a record; please specify its type
 --! error
 
 --8<-- table-lit-rec-bounded-seq
@@ -3005,6 +3007,7 @@ function f() --> (integer...)
 end
 -- note the missing hint
 local a = {1, 2, f()} --@< Error: This expression has an unknown number of return values, so cannot be used as the last value in the table constructor for records
+                      --@^ Note: The type of this table was unknown so is assumed to be a record; please specify its type
 --! error
 
 --8<-- table-lit-subtyping-1
@@ -3053,6 +3056,15 @@ end
 local a = { [1] = f() } --: {integer}
 local b = { [1] = f() } --: vector<integer>
 --! ok
+
+--8<-- table-lit-hint-rec -- exact
+function f() --> (integer...)
+end
+
+-- there should be *no* hint about the explicit type, as we already have one
+local a = {1, 2, f()} --: {integer, integer}
+--@^ Error: This expression has an unknown number of return values, so cannot be used as the last value in the table constructor for records
+--! error
 
 --8<-- table-lit-hint-vector-1
 local function f() --> (integer...)

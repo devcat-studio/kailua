@@ -2342,7 +2342,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
         #[derive(Debug)]
         enum Target {
             Any,
-            Fields(Vec<(Key, Slot)>),
+            Fields(bool /*explicitly typed*/, Vec<(Key, Slot)>),
             // need to ensure that there is no hole and everything is 1-based
             Array(Spanned<Slot>, i32 /*min*/, i32 /*max*/, i32 /*count*/),
             Map(Spanned<Ty>, Spanned<Slot>),
@@ -2363,11 +2363,12 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                         let v = v.clone().with_nil().with_loc(&hint);
                         Some(Target::Map(k, v))
                     },
-                    Some(&Tables::Fields(_)) | None => None,
+                    Some(&Tables::Fields(_)) => Some(Target::Fields(true, Vec::new())),
+                    None => None,
                 }
             })
         });
-        let mut target = target.unwrap_or_else(|| Target::Fields(Vec::new()));
+        let mut target = target.unwrap_or_else(|| Target::Fields(false, Vec::new()));
 
         let mut fieldspans = HashMap::new();
 
@@ -2400,19 +2401,28 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             match *target {
                 Target::Any => {}
 
-                Target::Fields(_) if varargs => {
+                Target::Fields(explicit, _) if varargs => {
                     // guard this case first in place of more general errors
-                    env.error(k.span | v.span, m::TableLitWithUnboundSeq {}).done()?;
+                    let span = k.span | v.span;
+                    let mut more = env.error(span, m::TableLitWithUnboundSeq {});
+                    if !explicit {
+                        more = more.note(span, m::TableLitIsImplicitlyRec {});
+                    }
+                    more.done()?;
                 }
 
-                Target::Fields(ref mut fields) => {
+                Target::Fields(explicit, ref mut fields) => {
                     if let Some(key) = litkey {
                         if !dup {
                             fields.push((key, v.base));
                         }
                     } else {
-                        env.error(&k, m::TableLitWithInvalidRecKey { key: env.display(&k) })
-                           .done()?;
+                        let mut more =
+                            env.error(&k, m::TableLitWithInvalidRecKey { key: env.display(&k) });
+                        if !explicit {
+                            more = more.note(&k, m::TableLitIsImplicitlyRec {});
+                        }
+                        more.done()?;
                     }
                 }
 
@@ -2505,7 +2515,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
         let table = match target {
             Target::Any => Tables::All,
 
-            Target::Fields(fields) => {
+            Target::Fields(_, fields) => {
                 let rvar = self.types().gen_rvar();
                 if !fields.is_empty() {
                     // really should not fail...
