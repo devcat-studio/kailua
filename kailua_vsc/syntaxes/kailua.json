@@ -90,14 +90,15 @@
 				{"include": "#string-multiline-meta"},
 				{"include": "#comment-block-meta"},
 				{"include": "#comment-line"},
-				{"include": "#keyword"},
-				{"include": "#operator"},
+				{"include": "#kailua-dangerous"},
 				{"include": "#kailua-literal-type"},
 				{"include": "#kailua-prim-type"},
 				{"include": "#kailua-keyword"},
 				{"include": "#kailua-namelike"},
 				{"include": "#kailua-quoted-name"},
-				{"include": "#kailua-tag"}
+				{"include": "#kailua-tag"},
+				{"include": "#keyword"},
+				{"include": "#operator"}
 			]
 		},
 		{
@@ -115,6 +116,7 @@
 				{"include": "#string-multiline-meta"},
 				{"include": "#comment-block-meta"},
 				{"include": "#comment-line"},
+				{"include": "#kailua-dangerous"},
 				{"include": "#kailua-literal-type"},
 				{"include": "#kailua-prim-type"},
 				{"include": "#kailua-keyword"},
@@ -282,8 +284,12 @@
 			"match": "\\b(and|or|not)\\b|\\+|-|%|#|\\*|\\/|\\^|==?|~=|<=?|>=?|(?<!\\.)\\.{2}(?!\\.)",
 			"name": "keyword.operator.lua"
 		},
+		"kailua-dangerous": {
+			"match": "\\bWHATEVER\\b|(?<!\\[)\\[\\s*NO_CHECK\\s*\\](?!\\])",
+			"name": "invalid.kailua.dangerous"
+		},
 		"kailua-literal-type": {
-			"match": "\\b(false|nil|true|WHATEVER)\\b",
+			"match": "\\b(false|nil|true)\\b",
 			"name": "constant.language.lua"
 		},
 		"kailua-prim-type": {
