@@ -115,15 +115,15 @@
 				{"include": "#string-multiline-meta"},
 				{"include": "#comment-block-meta"},
 				{"include": "#comment-line"},
-				{"include": "#keyword"},
-				{"include": "#operator"},
 				{"include": "#kailua-literal-type"},
 				{"include": "#kailua-prim-type"},
 				{"include": "#kailua-keyword"},
 				{"include": "#kailua-namelike"},
 				{"include": "#kailua-quoted-name"},
 				{"include": "#kailua-tag"},
-				{"include": "#kailua-internal-type"}
+				{"include": "#kailua-internal-type"},
+				{"include": "#keyword"},
+				{"include": "#operator"}
 			]
 		},
 		{
@@ -324,7 +324,7 @@
 			"name": "support.type.kailua.tag"
 		},
 		"kailua-internal-type": {
-			"match": "<.*?>",
+			"match": "(?<![A-Za-z0-9_`])<.*?>",
 			"name": "comment.kailua.type.internal"
 		}
 	},

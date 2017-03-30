@@ -1,3 +1,13 @@
+## 0.0.16
+
+* Table constructors can be inferred as a vector, a map or `table` when the sufficient type hint is given. In particular it is now possible to create a vector or a map with `local x = {[k] = v} --: map<..., ...>` declaration. `#` also hints its operand.
+
+* Fixed an invalid resolution of types in the declarations affected by `--: module`. This has a side effect that type scopes are more forgiving than ever (e.g. the declarations can refer to the types declared later in the same scope), but this is not intended and can be fixed later.
+
+* Greatly improved the behavior of field completion; it now tries to use the previous output, then retry with the current output when the previous output cannot be used.
+
+* Added support for hovering type informations.
+
 ## 0.0.15
 
 * Made `require "foo.bar"` check *both* `foo/bar.lua` and `foo.bar.lua` (forgot to process both, oops).
