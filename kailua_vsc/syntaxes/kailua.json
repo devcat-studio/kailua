@@ -84,67 +84,46 @@
 			},
 			"end": "\\n",
 			"patterns": [
-				{
-					"include": "#number"
-				},
-				{
-					"include": "#string-squoted"
-				},
-				{
-					"include": "#string-dquoted"
-				},
-				{
-					"include": "#string-multiline-meta"
-				},
-				{
-					"include": "#comment-block-meta"
-				},
-				{
-					"include": "#comment-line"
-				},
-				{
-					"include": "#keyword"
-				},
-				{
-					"include": "#operator"
-				},
-				{
-					"match": "\\b(false|nil|true|WHATEVER)\\b",
-					"name": "constant.language.lua"
-				},
-                {
-                    "match": "\\b(any|bool|boolean|int|integer|number|string|table|thread|userdata)\\b",
-                    "name": "storage.type.kailua"
-                },
-				{
-			        "match": "\\b(assume|class|const|global|map|method|module|open|static|type|var|vector)\\b",
-			        "name": "keyword.control.kailua"
-				},
-				{
-					"match": "(?:\\b([A-Za-z_]\\w*)\\b|`(?:[^\\\\`]|\\\\.)*`)(?:\\s*\\.\\s*(?:\\b([A-Za-z_]\\w*)\\b|`(?:[^\\\\`]|\\\\.)*`))*(?=\\s*[=:])",
-					"name": "variable.other.kailua.field-or-argument-or-type-name"
-				},
-				{
-					"begin": "`",
-					"beginCaptures": {
-						"0": {
-							"name": "punctuation.definition.kailua.quoted-name.begin.lua"
-						}
-					},
-					"end": "`|(?=\\n)",
-					"endCaptures": {
-						"0": {
-							"name": "punctuation.definition.kailua.quoted-name.end.lua"
-						}
-					},
-					"name": "entity.name.kailua.quoted-name",
-					"patterns": [
-						{
-							"match": "\\\\.",
-							"name": "constant.character.escape.kailua"
-						}
-					]
+				{"include": "#number"},
+				{"include": "#string-squoted"},
+				{"include": "#string-dquoted"},
+				{"include": "#string-multiline-meta"},
+				{"include": "#comment-block-meta"},
+				{"include": "#comment-line"},
+				{"include": "#keyword"},
+				{"include": "#operator"},
+				{"include": "#kailua-literal-type"},
+				{"include": "#kailua-prim-type"},
+				{"include": "#kailua-keyword"},
+				{"include": "#kailua-namelike"},
+				{"include": "#kailua-quoted-name"},
+				{"include": "#kailua-tag"}
+			]
+		},
+		{
+			"begin": "\u200c\u200d\u200d\u200c\u2060\u200c\u200b\u200d\u200c\u200c\u200d\u200b\u2060\u200d\u2060\u2060",
+			"beginCaptures": {
+				"0": {
+					"name": "meta.preprocessor.kailua.type-only"
 				}
+			},
+			"end": "(?!)",
+			"patterns": [
+				{"include": "#number"},
+				{"include": "#string-squoted"},
+				{"include": "#string-dquoted"},
+				{"include": "#string-multiline-meta"},
+				{"include": "#comment-block-meta"},
+				{"include": "#comment-line"},
+				{"include": "#keyword"},
+				{"include": "#operator"},
+				{"include": "#kailua-literal-type"},
+				{"include": "#kailua-prim-type"},
+				{"include": "#kailua-keyword"},
+				{"include": "#kailua-namelike"},
+				{"include": "#kailua-quoted-name"},
+				{"include": "#kailua-tag"},
+				{"include": "#kailua-internal-type"}
 			]
 		},
 		{
@@ -302,6 +281,51 @@
 		"operator": {
 			"match": "\\b(and|or|not)\\b|\\+|-|%|#|\\*|\\/|\\^|==?|~=|<=?|>=?|(?<!\\.)\\.{2}(?!\\.)",
 			"name": "keyword.operator.lua"
+		},
+		"kailua-literal-type": {
+			"match": "\\b(false|nil|true|WHATEVER)\\b",
+			"name": "constant.language.lua"
+		},
+		"kailua-prim-type": {
+			"match": "\\b(any|bool|boolean|int|integer|number|string|table|thread|userdata)\\b",
+			"name": "storage.type.kailua"
+		},
+		"kailua-keyword": {
+			"match": "\\b(assume|class|const|global|map|method|module|open|static|type|var|vector)\\b",
+			"name": "keyword.control.kailua"
+		},
+		"kailua-namelike": {
+			"match": "(?:\\b([A-Za-z_]\\w*)\\b|`(?:[^\\\\`]|\\\\.)*`)(?:\\s*\\.\\s*(?:\\b([A-Za-z_]\\w*)\\b|`(?:[^\\\\`]|\\\\.)*`))*(?=\\s*[=:])",
+			"name": "variable.other.kailua.field-or-argument-or-type-name"
+		},
+		"kailua-quoted-name": {
+			"begin": "`",
+			"beginCaptures": {
+				"0": {
+					"name": "punctuation.definition.kailua.quoted-name.begin.lua"
+				}
+			},
+			"end": "`|(?=\\n)",
+			"endCaptures": {
+				"0": {
+					"name": "punctuation.definition.kailua.quoted-name.end.lua"
+				}
+			},
+			"name": "entity.name.kailua.quoted-name",
+			"patterns": [
+				{
+					"match": "\\\\.",
+					"name": "constant.character.escape.kailua"
+				}
+			]
+		},
+		"kailua-tag": {
+			"match": "(?<!\\[)\\[[^\\[\\]]+\\](?!\\])",
+			"name": "support.type.kailua.tag"
+		},
+		"kailua-internal-type": {
+			"match": "<.*?>",
+			"name": "comment.kailua.type.internal"
 		}
 	},
 	"scopeName": "source.lua",

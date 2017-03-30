@@ -311,14 +311,6 @@ impl<R: Report> Context<R> {
         &self.report
     }
 
-    pub fn types(&self) -> &Types {
-        &self.types
-    }
-
-    pub fn types_mut(&mut self) -> &mut Types {
-        &mut self.types
-    }
-
     pub fn open_library(&mut self, name: &Spanned<Name>, opts: Rc<RefCell<Options>>) -> Result<()> {
         if let Some(defs) = str::from_utf8(&name.base).ok().and_then(get_defs) {
             // one library may consist of multiple files, so we defer duplicate check
@@ -382,6 +374,14 @@ impl<R: Report> Context<R> {
 }
 
 impl Output {
+    pub fn types(&self) -> &Types {
+        &self.types
+    }
+
+    pub fn types_mut(&mut self) -> &mut Types {
+        &mut self.types
+    }
+
     pub fn spanned_slots(&self) -> &SpanMap<Slot> {
         &self.spanned_slots
     }
@@ -422,6 +422,7 @@ impl Output {
         self.string_meta.clone()
     }
 
+    // TODO if we've got a common crate for IDE support, this will be there
     pub fn get_available_fields<'a>(&'a self, ty: &Ty) -> Option<HashMap<Key, Slot>> {
         if let Some(mut ty) = self.resolve_exact_type(ty) {
             // if the type includes an explicit nil no direct field access is safe

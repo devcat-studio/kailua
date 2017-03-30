@@ -153,6 +153,7 @@ fn initialize_workspace(server: &Server) -> Workspace {
                                                                   .map(|c| c.to_string())
                                                                   .collect(),
                             }),
+                            hoverProvider: true,
                             ..Default::default()
                         },
                     });
@@ -394,6 +395,18 @@ fn main_loop(server: Server, workspace: Arc<RwLock<Workspace>>) {
                 complete(server.clone(), workspace.clone(), id, file, token, &params.position);
             }
 
+            Received::Request(id, Request::Hover(params)) => {
+                let token = CancelToken::new();
+                cancel_tokens.insert(id.clone(), token.clone());
+
+                let uri = &params.textDocument.uri;
+                let file = try_or_notify!(workspace.read().file(uri).ok_or_else(|| {
+                    WorkspaceError("file does not exist for completion")
+                }));
+
+                hover(server.clone(), workspace.clone(), id, file, token, &params.position);
+            }
+
             _ => {}
         }
     }
@@ -481,6 +494,79 @@ fn complete(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
                 send_items(server, id, Vec::new());
                 future::ok(()).boxed()
             },
+        }
+    });
+
+    workspace.read().pool().spawn(fut).forget();
+}
+
+fn hover(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
+         file: WorkspaceFile, cancel_token: CancelToken, position: &protocol::Position) {
+    use futures::future;
+    use kailua_env::Pos;
+    use kailua_check::{TypeContext, Display, Output};
+    use protocol::*;
+
+    let spare_workspace = workspace.clone();
+    let fut = file.translate_position(position).and_then(move |pos| {
+        if let Err(e) = cancel_token.keep_going() {
+            return future::err(e).boxed();
+        }
+
+        fn get_help(workspace: &Arc<RwLock<Workspace>>,
+                    output: &Output, pos: Pos) -> Option<Hover> {
+            // find all slot-associated spans that contains the pos...
+            let spans = output.spanned_slots().contains(pos);
+            // ...and pick the smallest one among them (there should be at most one such span).
+            let closest_slot = spans.min_by_key(|slot| slot.span.len());
+
+            // format the slot if available
+            if let Some(slot) = closest_slot {
+                // the resulting output should be colorized as if it's in `--:`.
+                // in order to use a single syntax, we use a sequence of random invisible
+                // characters to "trick" the colorizer.
+                const TYPE_PREFIX: &'static str =
+                    "\u{200c}\u{200d}\u{200d}\u{200c}\u{2060}\u{200c}\u{200b}\u{200d}\
+                     \u{200c}\u{200c}\u{200d}\u{200b}\u{2060}\u{200d}\u{2060}\u{2060}";
+
+                let ws = workspace.read();
+                let range = diags::translate_span(slot.span, &ws.source()).map(|(_, range)| range);
+                let tystr = ws.localize(&slot.display(output.types() as &TypeContext));
+                Some(Hover {
+                    contents: vec![
+                        MarkedString {
+                            language: format!("lua"),
+                            value: format!("{}{}", TYPE_PREFIX, tystr),
+                        }
+                    ],
+                    range: range,
+                })
+            } else {
+                None
+            }
+        }
+
+        let workspace = spare_workspace.clone();
+        let output = workspace.read().last_check_output();
+        let info = output.and_then(|output| get_help(&workspace, &output, pos));
+        if let Some(info) = info {
+            let _ = server.send_ok(id, info);
+            future::ok(()).boxed()
+        } else if let Ok(output_fut) = workspace.read().ensure_check_output() {
+            output_fut.map_err(|e| e.as_ref().map(|_| ())).and_then(move |output| {
+                cancel_token.keep_going()?;
+
+                let workspace = spare_workspace;
+                let info = get_help(&workspace, &output.0, pos).unwrap_or_else(|| {
+                    Hover { contents: Vec::new(), range: None }
+                });
+                let _ = server.send_ok(id, info);
+                Ok(())
+            }).boxed()
+        } else {
+            // checking couldn't be started, `checking_loop` will notify the incident
+            // so we don't have to do anything
+            future::ok(()).boxed()
         }
     });
 
