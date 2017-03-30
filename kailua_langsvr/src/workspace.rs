@@ -658,8 +658,8 @@ impl Workspace {
         }
     }
 
-    pub fn localize(&self, msg: &Localize) -> String {
-        Localized::new(&msg, self.message_locale).to_string()
+    pub fn localize<'a, T: Localize + ?Sized + 'a>(&self, msg: &'a T) -> Localized<'a, T> {
+        Localized::new(msg, self.message_locale)
     }
 
     pub fn files<'a>(&'a self) -> RwLockReadGuard<'a, HashMap<PathBuf, WorkspaceFile>> {

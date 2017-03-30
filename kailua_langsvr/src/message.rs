@@ -23,3 +23,8 @@ define_msg! { pub CannotOpenStartPath<'a> { error: &'a Error }:
     _    => "Couldn't open a start path. (Cause: {error})",
 }
 
+define_msg! { pub OmittedSelfLabel:
+    "ko" => "<생략됨>",
+    _    => "<omitted>",
+}
+

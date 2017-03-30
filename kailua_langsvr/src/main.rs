@@ -25,7 +25,7 @@ pub mod diags;
 pub mod workspace;
 pub mod futureutils;
 pub mod message;
-pub mod completion;
+pub mod ops;
 
 use std::io;
 use std::sync::Arc;
@@ -133,7 +133,8 @@ fn initialize_workspace(server: &Server) -> Workspace {
                             Method::ShowMessage,
                             ShowMessageParams {
                                 type_: MessageType::Warning,
-                                message: workspace.localize(&m::CannotReadConfig { error: &e }),
+                                message: workspace.localize(&m::CannotReadConfig { error: &e })
+                                                  .to_string(),
                             },
                         );
                     } else {
@@ -154,6 +155,9 @@ fn initialize_workspace(server: &Server) -> Workspace {
                                                                   .collect(),
                             }),
                             hoverProvider: true,
+                            signatureHelpProvider: Some(SignatureHelpOptions {
+                                triggerCharacters: vec!["(".to_string(), ",".to_string()],
+                            }),
                             ..Default::default()
                         },
                     });
@@ -284,7 +288,7 @@ fn checking_loop(server: Server, workspace: Arc<RwLock<Workspace>>,
                 // avoid a duplicate message if kailua.json is missing
                 let _ = server.send_notify(Method::ShowMessage, ShowMessageParams {
                     type_: MessageType::Warning,
-                    message: workspace.read().localize(&m::NoStartPath {}),
+                    message: workspace.read().localize(&m::NoStartPath {}).to_string(),
                 });
             }
             futures::finished(()).boxed()
@@ -401,10 +405,22 @@ fn main_loop(server: Server, workspace: Arc<RwLock<Workspace>>) {
 
                 let uri = &params.textDocument.uri;
                 let file = try_or_notify!(workspace.read().file(uri).ok_or_else(|| {
-                    WorkspaceError("file does not exist for completion")
+                    WorkspaceError("file does not exist for hover help")
                 }));
 
                 hover(server.clone(), workspace.clone(), id, file, token, &params.position);
+            }
+
+            Received::Request(id, Request::SignatureHelp(params)) => {
+                let token = CancelToken::new();
+                cancel_tokens.insert(id.clone(), token.clone());
+
+                let uri = &params.textDocument.uri;
+                let file = try_or_notify!(workspace.read().file(uri).ok_or_else(|| {
+                    WorkspaceError("file does not exist for signature help")
+                }));
+
+                signature(server.clone(), workspace.clone(), id, file, token, &params.position);
             }
 
             _ => {}
@@ -415,7 +431,7 @@ fn main_loop(server: Server, workspace: Arc<RwLock<Workspace>>) {
 fn complete(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
             file: WorkspaceFile, cancel_token: CancelToken, position: &protocol::Position) {
     use futures::future;
-    use completion::{self, CompletionClass};
+    use ops::{self, CompletionClass};
 
     let tokens_fut = file.ensure_tokens().map_err(|e| e.as_ref().map(|_| ()));
     let pos_fut = file.translate_position(position);
@@ -428,7 +444,7 @@ fn complete(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
 
         let workspace = spare_workspace;
 
-        let class = completion::classify(&tokens.0, pos);
+        let class = ops::classify_completion(&tokens.0, pos);
         debug!("completion: {:?} {:#?}", class, pos);
 
         fn send_items(server: Server, id: protocol::Id, items: Vec<protocol::CompletionItem>) {
@@ -449,8 +465,8 @@ fn complete(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
                     let all_chunks: Vec<_> =
                         ws.files().values().flat_map(|f| f.last_chunk()).collect();
 
-                    let items = completion::complete_name(&tokens.0, idx, category, pos,
-                                                          chunk, &all_chunks, &ws.source());
+                    let items = ops::complete_name(&tokens.0, idx, category, pos,
+                                                   chunk, &all_chunks, &ws.source());
                     send_items(server, id, items);
                 };
 
@@ -469,7 +485,7 @@ fn complete(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
             Some(CompletionClass::Field(idx)) => {
                 let output = workspace.read().last_check_output();
                 let items = output.and_then(|output| {
-                    completion::complete_field(&tokens.0, idx, &output)
+                    ops::complete_field(&tokens.0, idx, &output)
                 });
 
                 if let Some(items) = items {
@@ -479,7 +495,7 @@ fn complete(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
                     output_fut.map_err(|e| e.as_ref().map(|_| ())).and_then(move |output| {
                         cancel_token.keep_going()?;
 
-                        let items = completion::complete_field(&tokens.0, idx, &output.0);
+                        let items = ops::complete_field(&tokens.0, idx, &output.0);
                         send_items(server, id, items.unwrap_or(Vec::new()));
                         Ok(())
                     }).boxed()
@@ -503,8 +519,6 @@ fn complete(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
 fn hover(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
          file: WorkspaceFile, cancel_token: CancelToken, position: &protocol::Position) {
     use futures::future;
-    use kailua_env::Pos;
-    use kailua_check::{TypeContext, Display, Output};
     use protocol::*;
 
     let spare_workspace = workspace.clone();
@@ -513,42 +527,13 @@ fn hover(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
             return future::err(e).boxed();
         }
 
-        fn get_help(workspace: &Arc<RwLock<Workspace>>,
-                    output: &Output, pos: Pos) -> Option<Hover> {
-            // find all slot-associated spans that contains the pos...
-            let spans = output.spanned_slots().contains(pos);
-            // ...and pick the smallest one among them (there should be at most one such span).
-            let closest_slot = spans.min_by_key(|slot| slot.span.len());
-
-            // format the slot if available
-            if let Some(slot) = closest_slot {
-                // the resulting output should be colorized as if it's in `--:`.
-                // in order to use a single syntax, we use a sequence of random invisible
-                // characters to "trick" the colorizer.
-                const TYPE_PREFIX: &'static str =
-                    "\u{200c}\u{200d}\u{200d}\u{200c}\u{2060}\u{200c}\u{200b}\u{200d}\
-                     \u{200c}\u{200c}\u{200d}\u{200b}\u{2060}\u{200d}\u{2060}\u{2060}";
-
-                let ws = workspace.read();
-                let range = diags::translate_span(slot.span, &ws.source()).map(|(_, range)| range);
-                let tystr = ws.localize(&slot.display(output.types() as &TypeContext));
-                Some(Hover {
-                    contents: vec![
-                        MarkedString {
-                            language: format!("lua"),
-                            value: format!("{}{}", TYPE_PREFIX, tystr),
-                        }
-                    ],
-                    range: range,
-                })
-            } else {
-                None
-            }
-        }
-
         let workspace = spare_workspace.clone();
         let output = workspace.read().last_check_output();
-        let info = output.and_then(|output| get_help(&workspace, &output, pos));
+        let info = output.and_then(|output| {
+            let ws = workspace.read();
+            let info = ops::hover_help(&output, pos, &ws.source(), |s| ws.localize(s));
+            info
+        });
         if let Some(info) = info {
             let _ = server.send_ok(id, info);
             future::ok(()).boxed()
@@ -556,16 +541,69 @@ fn hover(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
             output_fut.map_err(|e| e.as_ref().map(|_| ())).and_then(move |output| {
                 cancel_token.keep_going()?;
 
-                let workspace = spare_workspace;
-                let info = get_help(&workspace, &output.0, pos).unwrap_or_else(|| {
-                    Hover { contents: Vec::new(), range: None }
-                });
+                let ws = spare_workspace.read();
+                let info = ops::hover_help(&output.0, pos, &ws.source(), |s| ws.localize(s));
+                let info = info.unwrap_or_else(|| Hover { contents: Vec::new(), range: None });
                 let _ = server.send_ok(id, info);
                 Ok(())
             }).boxed()
         } else {
-            // checking couldn't be started, `checking_loop` will notify the incident
-            // so we don't have to do anything
+            future::ok(()).boxed()
+        }
+    });
+
+    workspace.read().pool().spawn(fut).forget();
+}
+
+fn signature(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
+             file: WorkspaceFile, cancel_token: CancelToken, position: &protocol::Position) {
+    use futures::future;
+    use protocol::*;
+
+    let empty_signature = || {
+        SignatureHelp { signatures: Vec::new(), activeSignature: None, activeParameter: None }
+    };
+
+    let tokens_fut = file.ensure_tokens().map_err(|e| e.as_ref().map(|_| ()));
+    let pos_fut = file.translate_position(position);
+
+    let spare_workspace = workspace.clone();
+    let fut = tokens_fut.join(pos_fut).and_then(move |(tokens, pos)| {
+        if let Err(e) = cancel_token.keep_going() {
+            return future::err(e).boxed();
+        }
+
+        let loc = ops::locate_signature(&tokens.0, pos);
+        debug!("signature: {:?} {:#?}", loc, pos);
+
+        let loc = if let Some(loc) = loc {
+            loc
+        } else {
+            let _ = server.send_ok(id, empty_signature());
+            return future::ok(()).boxed();
+        };
+
+        let workspace = spare_workspace.clone();
+        let output = workspace.read().last_check_output();
+        let info = output.and_then(|output| {
+            let ws = workspace.read();
+            let info = ops::signature_help(&tokens.0, &loc, &output, |s| ws.localize(s));
+            info
+        });
+        if let Some(info) = info {
+            let _ = server.send_ok(id, info);
+            future::ok(()).boxed()
+        } else if let Ok(output_fut) = workspace.read().ensure_check_output() {
+            output_fut.map_err(|e| e.as_ref().map(|_| ())).and_then(move |output| {
+                cancel_token.keep_going()?;
+
+                let ws = spare_workspace.read();
+                let info = ops::signature_help(&tokens.0, &loc, &output.0, |s| ws.localize(s));
+                let info = info.unwrap_or_else(|| empty_signature());
+                let _ = server.send_ok(id, info);
+                Ok(())
+            }).boxed()
+        } else {
             future::ok(()).boxed()
         }
     });
@@ -581,3 +619,4 @@ pub fn main() {
     info!("initialized workspace, starting a main loop");
     main_loop(server, workspace);
 }
+
