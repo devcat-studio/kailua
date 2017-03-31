@@ -1,3 +1,17 @@
+## 1.0.0 (2017-03-31)
+
+Kailua requires Visual Studio Code 1.10.0 or later starting from this version.
+
+* Improved user experiences on the first usage (especially for bad `kailua.json`).
+
+* Implemented signature help.
+
+* Added a better note when table constructors are implicitly typed as records and the checking fails due to that.
+
+* Fixed a critical deadlock when checking, for example, `local x = {} --: map<string, function(vector<string>)>`.
+
+* Highlights `WHATEVER` and `[NO_CHECK]` more prominently.
+
 ## 0.0.16
 
 * Table constructors can be inferred as a vector, a map or `table` when the sufficient type hint is given. In particular it is now possible to create a vector or a map with `local x = {[k] = v} --: map<..., ...>` declaration. `#` also hints its operand.

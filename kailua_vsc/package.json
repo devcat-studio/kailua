@@ -2,9 +2,8 @@
   "name": "kailua",
   "displayName": "Kailua",
   "description": "A type checker and IDE support for Lua",
-  "version": "0.0.16",
+  "version": "1.0.0",
   "publisher": "devCAT",
-  "preview": true,
   "engines": {
     "vscode": "^1.10.0"
   },
