@@ -416,18 +416,23 @@ macro_rules! define_methods {
 define_methods! {
     CancelRequest "$/cancelRequest" = 0x200,
     Initialize "initialize" = 0x100,
+    Initialized "initialized" = 0x300,
     Shutdown "shutdown" = 0x101,
     Exit "exit" = 0x102,
     ShowMessage "window/showMessage" = 0x103,
     ShowMessageRequest "window/showMessageRequest" = 0x201,
     LogMessage "window/logMessage" = 0x104,
     TelemetryEvent "telemetry/event" = 0x202,
+    RegisterCapability "client/registerCapability" = 0x301,
+    UnregisterCapability "client/unregisterCapability" = 0x302,
     DidChangeConfiguration "workspace/didChangeConfiguration" = 0x105,
     DidChangeWatchedFiles "workspace/didChangeWatchedFiles" = 0x106,
     WorkspaceSymbol "workspace/symbol" = 0x107,
     PublishDiagnostics "textDocument/publishDiagnostics" = 0x108,
     DidOpen "textDocument/didOpen" = 0x109,
     DidChange "textDocument/didChange" = 0x10a,
+    WillSave "textDocument/willSave" = 0x305,
+    WillSaveWaitUntil "textDocument/willSaveWaitUntil" = 0x306,
     DidSave "textDocument/didSave" = 0x203,
     DidClose "textDocument/didClose" = 0x10b,
     Completion "textDocument/completion" = 0x10c,
@@ -447,14 +452,8 @@ define_methods! {
     DocumentLink "textDocument/documentLink" = 0x204,
     DocumentLinkResolve "documentLink/resolve" = 0x205,
     Rename "textDocument/rename" = 0x11a,
-
-    Initialized "initialized" #[cfg(protocol_v3)] = 0x300,
-    RegisterCapability "client/registerCapability" #[cfg(protocol_v3)] = 0x301,
-    UnregisterCapability "client/unregisterCapability" #[cfg(protocol_v3)] = 0x302,
-    ExecuteCommand "workspace/executeCommand" #[cfg(protocol_v3)] = 0x303,
-    ApplyEdit "workspace/applyEdit" #[cfg(protocol_v3)] = 0x304,
-    WillSave "textDocument/willSave" #[cfg(protocol_v3)] = 0x305,
-    WillSaveWaitUntil "textDocument/willSaveWaitUntil" #[cfg(protocol_v3)] = 0x306,
+    ExecuteCommand "workspace/executeCommand" = 0x303,
+    ApplyEdit "workspace/applyEdit" = 0x304,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -468,12 +467,12 @@ pub enum Request {
     Initialize(InitializeParams),
     Shutdown,
     ShowMessageRequest(ShowMessageRequestParams),
-    #[cfg(protocol_v3)] Registration(RegistrationParams),
-    #[cfg(protocol_v3)] Unregistration(UnregistrationParams),
+    Registration(RegistrationParams),
+    Unregistration(UnregistrationParams),
     WorkspaceSymbol(WorkspaceSymbolParams),
-    #[cfg(protocol_v3)] ExecuteCommand(ExecuteCommandParams),
-    #[cfg(protocol_v3)] ApplyWorkspaceEdit(ApplyWorkspaceEditParams),
-    #[cfg(protocol_v3)] WillSaveWaitUntilTextDocument(WillSaveTextDocumentParams),
+    ExecuteCommand(ExecuteCommandParams),
+    ApplyWorkspaceEdit(ApplyWorkspaceEditParams),
+    WillSaveWaitUntilTextDocument(WillSaveTextDocumentParams),
     Completion(TextDocumentPositionParams),
     CompletionItemResolve(CompletionItem),
     Hover(TextDocumentPositionParams),
@@ -515,6 +514,12 @@ impl Request {
             Ok(M::Initialize) => parse(msg, R::Initialize),
             Ok(M::Shutdown) => (msg.id, Ok(R::Shutdown)),
             Ok(M::ShowMessageRequest) => parse(msg, R::ShowMessageRequest),
+            Ok(M::RegisterCapability) => parse(msg, R::Registration),
+            Ok(M::UnregisterCapability) => parse(msg, R::Unregistration),
+            Ok(M::WorkspaceSymbol) => parse(msg, R::WorkspaceSymbol),
+            Ok(M::ExecuteCommand) => parse(msg, R::ExecuteCommand),
+            Ok(M::ApplyEdit) => parse(msg, R::ApplyWorkspaceEdit),
+            Ok(M::WillSaveWaitUntil) => parse(msg, R::WillSaveWaitUntilTextDocument),
             Ok(M::Completion) => parse(msg, R::Completion),
             Ok(M::CompletionItemResolve) => parse(msg, R::CompletionItemResolve),
             Ok(M::Hover) => parse(msg, R::Hover),
@@ -533,17 +538,6 @@ impl Request {
             Ok(M::DocumentLinkResolve) => parse(msg, R::DocumentLinkResolve),
             Ok(M::Rename) => parse(msg, R::Rename),
 
-            #[cfg(protocol_v3)]
-            Ok(M::RegisterCapability) => parse(msg, R::Registration),
-            #[cfg(protocol_v3)]
-            Ok(M::UnregisterCapability) => parse(msg, R::Unregistration),
-            #[cfg(protocol_v3)]
-            Ok(M::ExecuteCommand) => parse(msg, R::ExecuteCommand),
-            #[cfg(protocol_v3)]
-            Ok(M::ApplyEdit) => parse(msg, R::ApplyWorkspaceEdit),
-            #[cfg(protocol_v3)]
-            Ok(M::WillSaveWaitUntil) => parse(msg, R::WillSaveWaitUntilTextDocument),
-
             _ => (msg.id, Err(MessageError::MethodNotFound(msg.method))),
         }
     }
@@ -552,7 +546,7 @@ impl Request {
 #[derive(Debug, Clone)]
 pub enum Notification {
     CancelRequest(CancelParams),
-    #[cfg(protocol_v3)] Initialized,
+    Initialized,
     Exit,
     ShowMessage(ShowMessageParams),
     LogMessage(LogMessageParams),
@@ -562,7 +556,7 @@ pub enum Notification {
     PublishDiagnostics(PublishDiagnosticsParams),
     DidOpenTextDocument(DidOpenTextDocumentParams),
     DidChangeTextDocument(DidChangeTextDocumentParams),
-    #[cfg(protocol_v3)] WillSaveTextDocument(WillSaveTextDocumentParams),
+    WillSaveTextDocument(WillSaveTextDocumentParams),
     DidSaveTextDocument(DidSaveTextDocumentParams),
     DidCloseTextDocument(DidCloseTextDocumentParams),
 }
@@ -587,6 +581,7 @@ impl Notification {
 
         match msg.method.parse::<M>() {
             Ok(M::CancelRequest) => parse(msg, N::CancelRequest),
+            Ok(M::Initialized) => Ok(N::Initialized),
             Ok(M::Exit) => Ok(N::Exit),
             Ok(M::ShowMessage) => parse(msg, N::ShowMessage),
             Ok(M::LogMessage) => parse(msg, N::LogMessage),
@@ -596,11 +591,9 @@ impl Notification {
             Ok(M::PublishDiagnostics) => parse(msg, N::PublishDiagnostics),
             Ok(M::DidOpen) => parse(msg, N::DidOpenTextDocument),
             Ok(M::DidChange) => parse(msg, N::DidChangeTextDocument),
+            Ok(M::WillSave) => parse(msg, N::WillSaveTextDocument),
             Ok(M::DidSave) => parse(msg, N::DidSaveTextDocument),
             Ok(M::DidClose) => parse(msg, N::DidCloseTextDocument),
-
-            #[cfg(protocol_v3)] Ok(M::Initialized) => Ok(N::Initialized),
-            #[cfg(protocol_v3)] Ok(M::WillSave) => parse(msg, N::WillSaveTextDocument),
 
             _ => Err(MessageError::MethodNotFound(msg.method)),
         }
@@ -669,7 +662,6 @@ interface! {
         pub position: Position,
     }
 
-    #[cfg(protocol_v3)]
     pub struct DocumentFilter {
         pub language?: Option<String>,
         pub scheme?: Option<String>,
@@ -677,7 +669,6 @@ interface! {
     }
 }
 
-#[cfg(protocol_v3)]
 pub type DocumentSelector = Vec<DocumentFilter>;
 
 enum_number! {
@@ -703,20 +694,19 @@ interface! {
     pub struct InitializeParams {
         pub processId: Option<i64>,
         pub rootPath: Option<String>,
-        #[cfg(protocol_v3)] pub rootUri: Option<String>,
+        pub rootUri: Option<String>,
         pub initializationOptions?: Option<Value>,
         pub capabilities: ClientCapabilities,
-        #[cfg(protocol_v3)] pub trace?: Trace,
+        pub trace?: Trace,
     }
 
     pub struct ClientCapabilities {
-        #[cfg(protocol_v3)] pub workspace?: Option<WorkspaceClientCapabilites>,
-        #[cfg(protocol_v3)] pub textDocument?: Option<TextDocumentClientCapabilities>,
-        #[cfg(protocol_v3)] pub experimental?: Option<Value>,
+        pub workspace?: Option<WorkspaceClientCapabilites>,
+        pub textDocument?: Option<TextDocumentClientCapabilities>,
+        pub experimental?: Option<Value>,
     }
 }
 
-#[cfg(protocol_v3)]
 interface! {
     pub struct WorkspaceClientCapabilites {
         pub applyEdit?: bool,
@@ -745,7 +735,6 @@ interface! {
     }
 }
 
-#[cfg(protocol_v3)]
 #[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Trace {
     #[serde(rename = "off")] Off,
@@ -753,18 +742,15 @@ pub enum Trace {
     #[serde(rename = "verbose")] Verbose,
 }
 
-#[cfg(protocol_v3)]
 impl Default for Trace {
     fn default() -> Self { Trace::Off }
 }
 
-#[cfg(protocol_v3)]
 impl IsDefault for Trace {
     fn is_default(&self) -> bool { *self == Trace::Off }
 }
 
 pub mod client_caps {
-    #[cfg(protocol_v3)]
     interface! {
         pub struct DidChangeConfiguration {
             pub dynamicRegistration?: bool,
@@ -795,8 +781,7 @@ pub mod client_caps {
         }
 
         pub struct CompletionItem {
-            pub rangeProperty?: bool,
-            pub typedString?: bool,
+            pub snippetSupport?: bool,
         }
 
         pub struct Hover {
@@ -880,22 +865,18 @@ interface! {
         pub moreTriggerCharacter?: Vec<String>,
     }
 
-    #[cfg(protocol_v3)]
     pub struct DocumentLinkOptions {
         pub resolveProvider?: bool,
     }
 
-    #[cfg(protocol_v3)]
     pub struct ExecuteCommandOptions {
         pub commands: Vec<String>,
     }
 
-    #[cfg(protocol_v3)]
     pub struct SaveOptions {
         pub includeText?: bool,
     }
 
-    #[cfg(protocol_v3)]
     pub struct TextDocumentSyncOptions {
         pub openClose?: bool,
         pub change?: TextDocumentSyncKind,
@@ -905,8 +886,9 @@ interface! {
     }
 
     pub struct ServerCapabilities {
-        #[cfg(protocol_v3)] pub textDocumentSync?: Option<TextDocumentSyncOptions>,
-        #[cfg(not(protocol_v3))] pub textDocumentSync?: TextDocumentSyncKind,
+        // vscode-languageclient<=3.2.0 has a critical bug that prevents this code
+        //pub textDocumentSync?: Option<TextDocumentSyncOptions>,
+        pub textDocumentSync?: TextDocumentSyncKind,
         pub hoverProvider?: bool,
         pub completionProvider?: Option<CompletionOptions>,
         pub signatureHelpProvider?: Option<SignatureHelpOptions>,
@@ -921,8 +903,8 @@ interface! {
         pub documentRangeFormattingProvider?: bool,
         pub documentOnTypeFormattingProvider?: Option<DocumentOnTypeFormattingOptions>,
         pub renameProvider?: bool,
-        #[cfg(protocol_v3)] pub documentLinkProvider?: Option<DocumentLinkOptions>,
-        #[cfg(protocol_v3)] pub executeCommandProvider?: Option<ExecuteCommandOptions>,
+        pub documentLinkProvider?: Option<DocumentLinkOptions>,
+        pub executeCommandProvider?: Option<ExecuteCommandOptions>,
     }
 }
 
@@ -969,7 +951,6 @@ enum_number! {
 
 // dynamic client capabilities
 
-#[cfg(protocol_v3)]
 interface! {
     pub struct Registration {
         pub id: String,
@@ -1038,7 +1019,6 @@ interface! {
         pub text: String,
     }
 
-    #[cfg(protocol_v3)]
     pub struct TextDocumentChangeRegistrationOptions {
         pub documentSelector: Option<DocumentSelector>,
         pub syncKind: TextDocumentSyncKind,
@@ -1046,10 +1026,9 @@ interface! {
 
     pub struct DidSaveTextDocumentParams {
         pub textDocument: TextDocumentIdentifier,
-        #[cfg(protocol_v3)] pub text?: Option<String>,
+        pub text?: Option<String>,
     }
 
-    #[cfg(protocol_v3)]
     pub struct TextDocumentSaveRegistrationOptions {
         pub documentSelector: Option<DocumentSelector>,
         pub includeText?: bool,
@@ -1065,7 +1044,6 @@ interface! {
     }
 }
 
-#[cfg(protocol_v3)]
 interface! {
     pub struct WillSaveTextDocumentParams {
         pub textDocument: TextDocumentIdentifier,
@@ -1073,7 +1051,6 @@ interface! {
     }
 }
 
-#[cfg(protocol_v3)]
 enum_number! {
     pub enum TextDocumentSaveReason {
         Manual = 1,
@@ -1104,7 +1081,6 @@ interface! {
         pub data?: Option<Value>,
     }
 
-    #[cfg(protocol_v3)]
     pub struct CompletionRegistrationOptions {
         pub documentSelector: Option<DocumentSelector>,
         pub triggerCharacters?: Vec<String>,
@@ -1169,7 +1145,6 @@ interface! {
         pub documentation?: Option<String>,
     }
 
-    #[cfg(protocol_v3)]
     pub struct SignatureHelpRegistrationOptions {
         pub documentSelector: Option<DocumentSelector>,
         pub triggerCharacters?: Vec<String>,
@@ -1276,7 +1251,6 @@ interface! {
         pub data?: Option<Value>,
     }
 
-    #[cfg(protocol_v3)]
     pub struct CodeLensRegistrationOptions {
         pub documentSelector: Option<DocumentSelector>,
         pub resolveProvider?: bool,
@@ -1295,7 +1269,6 @@ interface! {
         pub target: String,
     }
 
-    #[cfg(protocol_v3)]
     pub struct DocumentLinkRegistrationOptions {
         pub documentSelector: Option<DocumentSelector>,
         pub resolveProvider?: bool,
@@ -1338,7 +1311,6 @@ interface! {
 
 // execute command
 
-#[cfg(protocol_v3)]
 interface! {
     pub struct ExecuteCommandParams {
         pub command: String,
@@ -1348,7 +1320,6 @@ interface! {
 
 // workspace edits
 
-#[cfg(protocol_v3)]
 interface! {
     pub struct ApplyWorkspaceEditParams {
         pub edit: WorkspaceEdit,

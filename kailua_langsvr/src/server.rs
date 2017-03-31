@@ -123,6 +123,7 @@ impl Server {
         let json = match serde_json::from_slice::<Value>(&body) {
             Ok(json) => json,
             Err(e) => {
+                error!("Server::recv failed to parse: {}", e);
                 self.send_err(None, protocol::error_codes::PARSE_ERROR,
                               format!("parsing failed: {}", e), ())?;
                 return Ok(None);
@@ -131,6 +132,7 @@ impl Server {
         let msg = match serde_json::from_value::<Message>(json) {
             Ok(msg) => msg,
             Err(e) => {
+                error!("Server::recv got an invalid request: {}", e);
                 self.send_err(None, protocol::error_codes::INVALID_REQUEST,
                               format!("invalid request: {}", e), ())?;
                 return Ok(None);
@@ -170,11 +172,13 @@ impl Server {
         match ret {
             Ok(received) => Ok(Some(received)),
             Err((id, MessageError::MethodNotFound(method))) => {
+                error!("Server::recv got an unknown method: {}", method);
                 self.send_err(id, protocol::error_codes::METHOD_NOT_FOUND,
                               format!("method not found: {}", method), ())?;
                 Ok(None)
             },
             Err((id, MessageError::InvalidParams(estr))) => {
+                error!("Server::recv got invalid parameters: {}", estr);
                 self.send_err(id, protocol::error_codes::INVALID_PARAMS,
                               format!("invalid parameters: {}", estr), ())?;
                 Ok(None)

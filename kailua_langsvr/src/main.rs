@@ -97,10 +97,45 @@ fn parse_init_options(opts: Option<serde_json::Value>) -> InitOptions {
     InitOptions::default()
 }
 
+// both show the message (more visible but will be dismissed after a few seconds)
+// and the diagnostics (less visible but will last for this session)
+fn cannot_read_config(workspace: &Workspace, server: &Server, msg: &kailua_diag::Localize) {
+    use url::Url;
+    use protocol::*;
+
+    let _ = server.send_notify(
+        Method::ShowMessage,
+        ShowMessageParams {
+            type_: MessageType::Warning,
+            message: workspace.localize(msg).to_string(),
+        },
+    );
+
+    if let Ok(uri) = Url::from_file_path(&workspace.config_path()) {
+        let _ = server.send_notify(
+            Method::PublishDiagnostics,
+            PublishDiagnosticsParams {
+                uri: uri.to_string(),
+                diagnostics: vec![
+                    protocol::Diagnostic {
+                        range: protocol::Range {
+                            start: protocol::Position { line: 0, character: 0 },
+                            end: protocol::Position { line: 0, character: 0 },
+                        },
+                        severity: Some(protocol::DiagnosticSeverity::Error),
+                        code: None,
+                        source: None,
+                        message: workspace.localize(&message::RestartRequired {}).to_string(),
+                    },
+                ],
+            }
+        );
+    }
+}
+
 fn initialize_workspace(server: &Server) -> Workspace {
     use std::path::PathBuf;
     use futures_cpupool::CpuPool;
-    use workspace::Workspace;
     use protocol::*;
     use server::Received;
     use message as m;
@@ -128,16 +163,8 @@ fn initialize_workspace(server: &Server) -> Workspace {
                                                        initopts.default_locale);
 
                     // try to read the config...
-                    if let Err(e) = workspace.read_config() {
-                        let _ = server.send_notify(
-                            Method::ShowMessage,
-                            ShowMessageParams {
-                                type_: MessageType::Warning,
-                                message: workspace.localize(&m::CannotReadConfig { error: &e })
-                                                  .to_string(),
-                            },
-                        );
-                    } else {
+                    let config_res = workspace.read_config();
+                    if config_res.is_ok() {
                         // ...then try to initially scan the directory (should happen before sending
                         // an initialize response so that changes reported later are not dups)
                         workspace.populate_watchlist();
@@ -145,6 +172,15 @@ fn initialize_workspace(server: &Server) -> Workspace {
 
                     let _ = server.send_ok(id, InitializeResult {
                         capabilities: ServerCapabilities {
+                            /*
+                            textDocumentSync: Some(TextDocumentSyncOptions {
+                                openClose: true,
+                                change: TextDocumentSyncKind::Full,
+                                willSave: false,
+                                willSaveWaitUntil: false,
+                                save: Some(SaveOptions { includeText: false }),
+                            }),
+                            */
                             textDocumentSync: TextDocumentSyncKind::Full,
                             completionProvider: Some(CompletionOptions {
                                 resolveProvider: false,
@@ -161,6 +197,11 @@ fn initialize_workspace(server: &Server) -> Workspace {
                             ..Default::default()
                         },
                     });
+
+                    // configuration error may include diagnostics and should be sent after init
+                    if let Err(e) = workspace.read_config() {
+                        cannot_read_config(&workspace, &server, &m::CannotReadConfig { error: &e });
+                    }
 
                     return workspace;
                 } else {
@@ -243,7 +284,6 @@ fn checking_loop(server: Server, workspace: Arc<RwLock<Workspace>>,
     use std::time::Duration;
     use futures;
     use futureutils::FutureExt;
-    use protocol::*;
     use message as m;
 
     let cancel_future = workspace.read().cancel_future();
@@ -286,10 +326,7 @@ fn checking_loop(server: Server, workspace: Arc<RwLock<Workspace>>,
             // the loop terminates, possibly with a message
             if workspace.read().has_read_config() {
                 // avoid a duplicate message if kailua.json is missing
-                let _ = server.send_notify(Method::ShowMessage, ShowMessageParams {
-                    type_: MessageType::Warning,
-                    message: workspace.read().localize(&m::NoStartPath {}).to_string(),
-                });
+                cannot_read_config(&workspace.read(), &server, &m::NoStartPath {});
             }
             futures::finished(()).boxed()
         }

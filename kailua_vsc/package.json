@@ -6,7 +6,7 @@
   "publisher": "devCAT",
   "preview": true,
   "engines": {
-    "vscode": "^1.8.0"
+    "vscode": "^1.10.0"
   },
   "keywords": [
     "Lua",
@@ -70,7 +70,7 @@
   "dependencies": {
     "@types/lodash": "^4.14.45",
     "lodash": "^4.17.4",
-    "vscode-languageclient": "^2.6.3"
+    "vscode-languageclient": "^3.2.0"
   },
   "devDependencies": {
     "@types/mocha": "^2.2.32",

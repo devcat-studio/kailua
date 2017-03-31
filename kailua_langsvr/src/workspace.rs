@@ -143,8 +143,12 @@ struct WorkspaceConfig {
 }
 
 impl WorkspaceConfig {
+    fn config_path(base_dir: &Path) -> PathBuf {
+        base_dir.join(".vscode").join("kailua.json")
+    }
+
     fn read(base_dir: &Path) -> io::Result<WorkspaceConfig> {
-        let f = File::open(base_dir.join(".vscode").join("kailua.json"))?;
+        let f = File::open(Self::config_path(base_dir))?;
         let mut config: WorkspaceConfig = serde_json::de::from_reader(f).map_err(|e| {
             io::Error::new(io::ErrorKind::InvalidData, e)
         })?;
@@ -343,21 +347,27 @@ impl WorkspaceFile {
                     Err(e) => {
                         Err(e.as_ref().map(|e| {
                             // translate an I/O error into a report
-                            let msg = m::CannotOpenStartPath { error: e };
-                            let msg = Localized::new(&msg, inner.message_locale).to_string();
+                            let dummy_diag = |msg: &Localize| {
+                                protocol::Diagnostic {
+                                    range: protocol::Range {
+                                        start: protocol::Position { line: 0, character: 0 },
+                                        end: protocol::Position { line: 0, character: 0 },
+                                    },
+                                    severity: Some(protocol::DiagnosticSeverity::Error),
+                                    code: None,
+                                    source: None,
+                                    message: Localized::new(msg, inner.message_locale).to_string(),
+                                }
+                            };
 
                             let path = inner.path.display().to_string();
+                            let config_path = WorkspaceConfig::config_path(
+                                &inner.workspace.read().base_dir
+                            ).display().to_string();
+
                             let diags = ReportTree::new(inner.message_locale, Some(&path));
-                            diags.add_diag(path, protocol::Diagnostic {
-                                range: protocol::Range {
-                                    start: protocol::Position { line: 0, character: 0 },
-                                    end: protocol::Position { line: 0, character: 0 },
-                                },
-                                severity: Some(protocol::DiagnosticSeverity::Error),
-                                code: None,
-                                source: None,
-                                message: msg,
-                            });
+                            diags.add_diag(path, dummy_diag(&m::CannotOpenStartPath { error: e }));
+                            diags.add_diag(config_path, dummy_diag(&m::RestartRequired {}));
 
                             diags
                         }))
@@ -470,6 +480,8 @@ impl WorkspaceFile {
 struct WorkspaceShared {
     cancel_token: CancelToken, // used for stopping ongoing checks
 
+    base_dir: PathBuf,
+
     check_output: Option<ReportFuture<Arc<Output>>>,
     last_check_output: Option<Arc<Output>>,
 }
@@ -477,6 +489,7 @@ struct WorkspaceShared {
 impl fmt::Debug for WorkspaceShared {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("WorkspaceShared")
+         .field("base_dir", &self.base_dir)
          .field("cancel_token", &self.cancel_token)
          .field("check_output", &self.check_output.as_ref().map(|_| Ellipsis))
          .finish()
@@ -571,7 +584,6 @@ impl FsSource for WorkspaceFsSource {
 }
 
 pub struct Workspace {
-    base_dir: PathBuf,
     start_path: Option<PathBuf>,
     message_locale: Locale,
     config_read: bool,
@@ -589,7 +601,6 @@ pub struct Workspace {
 impl fmt::Debug for Workspace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Workspace")
-         .field("base_dir", &self.base_dir)
          .field("start_path", &self.start_path)
          .field("message_locale", &self.message_locale)
          .field("config_read", &self.config_read)
@@ -604,7 +615,6 @@ impl fmt::Debug for Workspace {
 impl Workspace {
     pub fn new(base_dir: PathBuf, pool: Arc<CpuPool>, default_locale: Locale) -> Workspace {
         Workspace {
-            base_dir: base_dir,
             start_path: None,
             message_locale: default_locale,
             config_read: false,
@@ -613,6 +623,7 @@ impl Workspace {
             source: Arc::new(RwLock::new(Source::new())),
             shared: Arc::new(RwLock::new(WorkspaceShared {
                 cancel_token: CancelToken::new(),
+                base_dir: base_dir,
                 check_output: None,
                 last_check_output: None,
             })),
@@ -631,8 +642,12 @@ impl Workspace {
         self.config_read
     }
 
+    pub fn config_path(&self) -> PathBuf {
+        WorkspaceConfig::config_path(&self.shared.read().base_dir)
+    }
+
     pub fn read_config(&mut self) -> io::Result<()> {
-        let config = WorkspaceConfig::read(&self.base_dir)?;
+        let config = WorkspaceConfig::read(&self.shared.read().base_dir)?;
         self.start_path = Some(config.start_path);
         if let Some(lang) = config.message_lang {
             if let Some(locale) = Locale::new(&lang) {
@@ -646,7 +661,7 @@ impl Workspace {
     }
 
     pub fn populate_watchlist(&mut self) {
-        for e in WalkDir::new(&self.base_dir).follow_links(true) {
+        for e in WalkDir::new(&self.shared.read().base_dir).follow_links(true) {
             // we don't care about I/O errors and (in Unix) symlink loops
             let e = if let Ok(e) = e { e } else { continue };
 
@@ -724,18 +739,24 @@ impl Workspace {
         }
     }
 
-    pub fn on_file_created(&self, uri: &str) {
+    pub fn on_file_created(&self, uri: &str) -> Option<WorkspaceFile> {
         if let Ok(path) = uri_to_path(uri) {
             let file = self.ensure_file(&path);
             let _ = file.ensure_chunk();
+            Some(file)
+        } else {
+            None
         }
     }
 
-    pub fn on_file_changed(&self, uri: &str) {
+    pub fn on_file_changed(&self, uri: &str) -> Option<WorkspaceFile> {
         if let Ok(path) = uri_to_path(uri) {
             let file = self.ensure_file(&path);
             file.cancel();
             let _ = file.ensure_chunk();
+            Some(file)
+        } else {
+            None
         }
     }
 
@@ -771,7 +792,7 @@ impl Workspace {
             // get a future for the entrypoint's chunk
             let start_chunk_fut = self.ensure_file(start_path).ensure_chunk();
 
-            let base_dir = self.base_dir.clone();
+            let base_dir = shared.base_dir.clone();
             let files = self.files.clone();
             let source = self.source.clone();
             let cancel_token = shared.cancel_token.clone();

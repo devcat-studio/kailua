@@ -120,6 +120,7 @@ function initializeLanguageServer(context: vscode.ExtensionContext) {
             fileEvents: [
                 vscode.workspace.createFileSystemWatcher('**/*.lua'),
                 vscode.workspace.createFileSystemWatcher('**/*.kailua'),
+                vscode.workspace.createFileSystemWatcher('**/kailua.json'),
             ],
         },
         initializationOptions: {
