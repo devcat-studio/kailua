@@ -45,7 +45,7 @@ The following content is required for `.vscode/kailua.json`, in case you are edi
 }
 ```
 
-You need to reload the current window () to apply the configuration.
+You need to reload the current window (`Ctrl-R` or `Cmd-R`) to apply the configuration.
 
 ### Your First Kailua Code
 
@@ -57,6 +57,18 @@ print('Hello, world!')
 ```
 
 Play a bit with this code to see which errors Kailua can detect.
+
+### Supported IDE Functions
+
+* Real-time syntax checking (for all files).
+
+* Real-time type checking, starting from given start path.
+
+* Auto-completions for names and fields.
+
+* Help for function signatures.
+
+* Help for types of most subexpressions on hover.
 
 ## Kailua the Language
 
@@ -86,13 +98,19 @@ Kailua is a subset of valid Lua code---you don't need any transpilation or compi
 
 * `--v function(<name>: <type> ...) [--> <type>]` describes a function type.
 
-  It is valid before the `function` keyword (yes, also for anonymous functions). This is equivalent to `--:` and `-->`, but much more readable.
+  It is valid before the `function` keyword (yes, also for anonymous functions). This is equivalent to `--:` and `-->`, but much more readable. All names should be identical to the corresponding declarations. Variadic arguments can be written as `...: <type>` at the end of arguments. Multiple returns need parentheses.
+
+  The general rule of the thumb is that all functions have to be typed with either `--v` or `--:/-->` unless it is obvious from the preceding context. This allows you to write a code like `f(function(a, b) ... end)`, but only when `f` is known to accept such a function.
+
+* `--v method(<name>: <type> ...) [--> <type>]` describes a method type.
+
+  It is same to `function`, but for declarations like `function A:b(...)`. Kailua tries to infer the type of `self`, and if it's not possible you should use `function A.b(self, ...)` and `--v function(...)` instead for the clarity.
 
 * `--# ...` is a special directive for the type checker.
 
   The most important directive is `--# open <built-in library name>`, which loads the corresponding built-in names and also implicitly specifies what language variant is currently in use. The only supported name so far is `lua51`, for the vanilla Lua 5.1. It is recommended to put it to the first non-comment line in the entry point.
 
-  `--# type <name> = <type>` can be used to declare a type alias. The type alias is locally scoped (much like `local` but no shadowing).
+  `--# type [local | global] <name> = <type>` can be used to declare a type alias. There are three flavors of typa alises: `local` is locally scoped (much like `local` statements), `global` is globally scoped (much like `A = ...`), and no modifier indicates that the type is *exported* from the current file and they should be locally visible after `require`. Only local types can be in the inner scopes. Unlike variable names, inner type names should not overwrite outer names.
 
   `--# assume [global] <name>: <type>` *overrides* the type for given name. The `global` keyword forces the global assignment, otherwise a new scope is created like `local` statements. It is useful for sidestepping the checker issue, but it is also highly unsafe. **Use at your own risk.**
 
@@ -102,9 +120,9 @@ The equal kind of special comments can span multiple lines.
 
 ```lua
 --# type Date = {
---#     hour = integer;
---#     min = integer;
---#     sec = integer;
+--#     hour: integer;
+--#     min: integer;
+--#     sec: integer;
 --# }
 ```
 
@@ -112,9 +130,9 @@ The equal kind of special comments can span multiple lines.
 
 The following basic types are recognized:
 
-* `nil`, `boolean`, `number`, `string`, `function`, `userdata`, `thread`, `table` for primitive Lua types.
+* `nil`, `boolean` (or `bool`), `number`, `string`, `function`, `userdata`, `thread`, `table` for primitive Lua types.
 
-* `integer` for a check-time integral subset of `number`. (In the future, in the Lua 5.3 mode or later, it will be also recognized as primitive.)
+* `integer` (or `int`) for a check-time integral subset of `number`. (In the future, in the Lua 5.3 mode or later, it will be also recognized as primitive.)
 
 * `true` or `false`, integer and string literals are valid subtypes of `boolean`, `integer` and `string`, respectively.
 
@@ -126,11 +144,13 @@ The following basic types are recognized:
 
   * `map<Key, Value>` for a homogeneous associative table.
 
-  * `{ key = T, ... }` for records, whose keys are strings and fixed at the check time. You can use semicolons in place of commas.
+  * `{ key1: T1, key2: T2 }` for records, whose keys are strings and fixed at the check time. You can use semicolons in place of commas.
 
-  * `{ T, ... }` for tuples, whose keys are consecutive integers. Otherwise they are similar to records.
+    Explicitly declared records are "inextensible" by default, meaning that the list of fields is complete and cannot be altered. You can make it extensible by putting `...` at the end of fields; this allows a lazy initialization of records like `table.field = 'string'`. On the other hands, a normal Lua table is implicitly typed as extensible records, only made inextensible when required.
 
-* `function(Arg, ...)` or `function(Arg, ...) --> Ret` for functions. `Ret` can be multiple types, in which case you need parentheses (`function(vector<T>, integer) --> (integer, string)`).
+  * `{ T1, T2, T3 }` for tuples, whose keys are consecutive integers. Otherwise they are similar to records.
+
+* `function(Arg, ...)` or `function(Arg, ...) --> Ret` for functions. `Ret` can be multiple types, in which case you need parentheses (`function(vector<T>, integer) --> (integer, string)`). Arguments can be named like `function(a: string, b: number)`.
 
 * `T | T | ...` for union types. They are mostly useful for literal types (e.g. `"read" | "write" | "execute"`). Kailua has very limited support for checking other kinds of union types.
 
@@ -142,7 +162,7 @@ The Kailua types are by default *not checked for `nil`*. That is, you can assign
 
 You can opt in two other `nil`-handling modes if you need to make it explicit. As they are (transitively) freely assignable, consider them more a machine-readable documentation.
 
-* `T?` also accepts `nil` but it is aware that it can contain `nil`. Two `integer?`s cannot be added.
+* `T?` also accepts `nil` but it is aware that it can contain `nil`. Two `integer?`s cannot be added. It also allows for missing fields and missing arguments (they are not allowed otherwise): the type `{a: integer?, b: integer}` can contain either `{a = 42, b = 54}` or `{b = 54}`, but not `{a = 42}`.
 
 * `T!` guarantees that it cannot contain `nil`.
 
@@ -154,7 +174,7 @@ Finally, types for the names and table values can optionally have a `const` pref
 
 As annotating everything is not practical, Kailua supports two ways to avoid the type checking with more localized guarantees:
 
-* `--v [no_check] function(...)` disables the type checking for the following function.
+* `--v [NO_CHECK] function(...)` disables the type checking for the following function.
 
   Kailua essentially *believes* the specified function type, which can be no longer omitted.
 
