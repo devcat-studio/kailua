@@ -57,9 +57,7 @@ impl Unioned {
                 panic!("Unioned::from called with T::Dynamic or T::All");
             }
             &T::TVar(_) => {
-                return Err(ctx.gen_report().put(Origin::Union,
-                                                "a type not yet fully resolved \
-                                                 cannot be unioned".into()));
+                return Err(ctx.gen_report().cannot_union_single(ty, ctx));
             }
 
             &T::None     => {}

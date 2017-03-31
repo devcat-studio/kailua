@@ -642,7 +642,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
         // if lval is true, we are supposed to update the table and
         // therefore the table should have an appropriate flex
         if lval && ety0.accept_in_place(self.types()).is_err() {
-            self.env.error(&*ety0, m::CannotUpdateConst { tab: self.display(&*ety0) }).done()?;
+            self.env.error(&*ety0, m::CannotUpdate { tab: self.display(&*ety0) }).done()?;
             return Ok(Index::dummy());
         }
 

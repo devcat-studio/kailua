@@ -1,9 +1,10 @@
 use std::fmt;
+use std::cell::RefCell;
 
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag::{ReportMore, Locale, Localize, Localized};
 use message as m;
-use ty::{TypeContext, Display};
+use ty::{TypeContext, Display, Key};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Ordinal(pub usize);
@@ -50,6 +51,56 @@ impl Localize for Ordinal {
                 }
             },
         }
+    }
+}
+
+struct QuotedList<'a, I: Iterator<Item=&'a Localize>> {
+    iter: RefCell<Option<I>>,
+    locale: Locale,
+}
+
+impl<'a, I: Iterator<Item=&'a Localize>> QuotedList<'a, I> {
+    fn new(iter: I, locale: Locale) -> QuotedList<'a, I> {
+        QuotedList { iter: RefCell::new(Some(iter)), locale: locale }
+    }
+}
+
+impl<'a, I: Iterator<Item=&'a Localize>> fmt::Display for QuotedList<'a, I> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut iter = self.iter.borrow_mut().take().expect(
+            "QuotedList can be formatted only once"
+        );
+
+        let mut cur = if let Some(cur) = iter.next() {
+            cur
+        } else {
+            return Ok(());
+        };
+
+        write!(f, "`")?;
+
+        // delayed iteration to handle the last "and"
+        let mut first = true;
+        while let Some(next) = iter.next() {
+            if first {
+                first = false;
+            } else {
+                write!(f, "`, `")?;
+            }
+
+            // keep the formatter flags down to elements
+            cur.fmt_localized(f, self.locale)?;
+            cur = next;
+        }
+
+        if !first {
+            match &self.locale[..] {
+                "ko" => write!(f, "` 및 `")?,
+                _ => write!(f, "` and `")?,
+            }
+        }
+        cur.fmt_localized(f, self.locale)?;
+        write!(f, "`")
     }
 }
 
@@ -104,22 +155,21 @@ enum ReportItem {
     Binary(BinaryReportKind, Origin, Spanned<String>, Spanned<String>, Option<usize>),
     LessArity(Span, Spanned<String>, usize),
     MoreArity(Spanned<String>, Span, usize),
-    Other(Origin, String),
+    CannotUnionSingle(Spanned<String>),
+    CannotAssign(Origin, Spanned<String>, Spanned<String>),
+    CannotUpdate(Origin, Spanned<String>),
+    CannotFilter(Origin, Spanned<String>),
+    InextensibleRec(Span),
+    RecursiveRec(Span),
+    RecDuplicateKey(Span, Spanned<Key>),
+    RecCannotHaveKey(Span, Spanned<Key>),
+    RecShouldHaveKeys(Span, Spanned<Vec<Key>>),
+    RecExtendedWithNonNil(Span, Spanned<Key>, Spanned<String>),
 }
 
 impl TypeReport {
     pub fn new(locale: Locale) -> TypeReport {
         TypeReport { locale: locale, messages: Vec::new() }
-    }
-
-    pub fn put(mut self, org: Origin, s: String) -> TypeReport {
-        self.messages.push(ReportItem::Other(org, s));
-        self
-    }
-
-    pub fn put_with_locale<F: FnOnce(Locale) -> String>(self, org: Origin, f: F) -> TypeReport {
-        let locale = self.locale;
-        self.put(org, f(locale))
     }
 
     fn binary<T: Display, U: Display>(mut self, kind: BinaryReportKind, org: Origin,
@@ -138,6 +188,13 @@ impl TypeReport {
             => {
                 ReportItem::Binary(kind, org, lhs.with_loc(lhsspan), rhs.with_loc(rhsspan), idx)
             },
+
+            // RVar origin is mostly useless except when it appears alone
+            Some(ReportItem::Binary(_, Origin::RVar, Spanned { span: lhsspan, .. },
+                                                     Spanned { span: rhsspan, .. }, idx)) => {
+                ReportItem::Binary(kind, org, lhs.with_loc(lhsspan), rhs.with_loc(rhsspan), idx)
+            },
+
             last => {
                 if let Some(last) = last {
                     self.messages.push(last); // push back an irrelevant item
@@ -145,6 +202,7 @@ impl TypeReport {
                 ReportItem::Binary(kind, org, lhs.without_loc(), rhs.without_loc(), None)
             },
         };
+
         self.messages.push(item);
         self
     }
@@ -227,6 +285,13 @@ impl TypeReport {
         self.binary_attach_index(BinaryReportKind::CannotUnion(explicit), org, index)
     }
 
+    pub fn cannot_union_single<T: Display>(mut self, t: T, ctx: &TypeContext) -> TypeReport {
+        let locale = self.locale;
+        let t = Localized::new(&t.display(ctx), locale).to_string().without_loc(); // TODO span
+        self.messages.push(ReportItem::CannotUnionSingle(t));
+        self
+    }
+
     pub fn less_arity<T: Display>(mut self, lhs: Span, rhs: Spanned<&T>, index: usize,
                                   ctx: &TypeContext) -> TypeReport {
         let locale = self.locale;
@@ -243,24 +308,68 @@ impl TypeReport {
         self
     }
 
-    pub fn cannot_assign<T: Display, U: Display>(self, org: Origin, t: T, u: U,
+    pub fn cannot_assign<T: Display, U: Display>(mut self, org: Origin, t: T, u: U,
                                                  ctx: &TypeContext) -> TypeReport {
         let locale = self.locale;
-        self.put(org, format!("cannot assign {} to {}",
-                              Localized::new(&u.display(ctx), locale),
-                              Localized::new(&t.display(ctx), locale)))
+        let lhs = Localized::new(&t.display(ctx), locale).to_string().without_loc(); // TODO span
+        let rhs = Localized::new(&u.display(ctx), locale).to_string().without_loc(); // TODO span
+        self.messages.push(ReportItem::CannotAssign(org, lhs, rhs));
+        self
     }
 
-    pub fn cannot_assign_in_place<T: Display>(self, org: Origin, t: T,
+    pub fn cannot_assign_in_place<T: Display>(mut self, org: Origin, t: T,
                                               ctx: &TypeContext) -> TypeReport {
         let locale = self.locale;
-        self.put(org, format!("cannot update {}", Localized::new(&t.display(ctx), locale)))
+        let t = Localized::new(&t.display(ctx), locale).to_string().without_loc(); // TODO span
+        self.messages.push(ReportItem::CannotUpdate(org, t));
+        self
     }
 
-    pub fn cannot_filter_by_flags<T: Display>(self, org: Origin, t: T,
+    pub fn cannot_filter_by_flags<T: Display>(mut self, org: Origin, t: T,
                                               ctx: &TypeContext) -> TypeReport {
         let locale = self.locale;
-        self.put(org, format!("cannot filter {}", Localized::new(&t.display(ctx), locale)))
+        let t = Localized::new(&t.display(ctx), locale).to_string().without_loc(); // TODO span
+        self.messages.push(ReportItem::CannotFilter(org, t));
+        self
+    }
+
+    pub fn inextensible_record(mut self) -> TypeReport {
+        self.messages.push(ReportItem::InextensibleRec(Span::dummy())); // TODO span
+        self
+    }
+
+    pub fn recursive_record(mut self) -> TypeReport {
+        self.messages.push(ReportItem::RecursiveRec(Span::dummy())); // TODO span
+        self
+    }
+
+    pub fn record_duplicate_key(mut self, k: &Key) -> TypeReport {
+        let k = k.clone().without_loc(); // TODO span
+        self.messages.push(ReportItem::RecDuplicateKey(Span::dummy(), k)); // TODO span
+        self
+    }
+
+    pub fn record_cannot_have_key(mut self, k: &Key) -> TypeReport {
+        let k = k.clone().without_loc(); // TODO span
+        self.messages.push(ReportItem::RecCannotHaveKey(Span::dummy(), k)); // TODO span
+        self
+    }
+
+    pub fn record_should_have_keys<'a, Keys>(mut self, keys: Keys) -> TypeReport
+        where Keys: Iterator<Item=&'a Key>
+    {
+        let keys = keys.map(|k| k.clone()).collect::<Vec<_>>().without_loc(); // TODO span
+        self.messages.push(ReportItem::RecShouldHaveKeys(Span::dummy(), keys)); // TODO span
+        self
+    }
+
+    pub fn record_extended_with_non_nil<T: Display>(mut self, k: &Key, v: T,
+                                                    ctx: &TypeContext) -> TypeReport {
+        let locale = self.locale;
+        let k = k.clone().without_loc(); // TODO span
+        let v = Localized::new(&v.display(ctx), locale).to_string().without_loc(); // TODO span
+        self.messages.push(ReportItem::RecExtendedWithNonNil(Span::dummy(), k, v)); // TODO span
+        self
     }
 }
 
@@ -433,8 +542,50 @@ impl<'a, T> TypeReportMore for ReportMore<'a, T> {
                                .note_if(lhs, m::OtherTypeOrigin {});
                 }
 
-                ReportItem::Other(_org, msg) => {
-                    self = self.note(Span::dummy(), format!("XXX {}", msg));
+                ReportItem::CannotUnionSingle(ref ty) => {
+                    self = self.cause(ty, m::CannotUnionType { ty: ty });
+                }
+
+                ReportItem::CannotAssign(_org, ref lhs, ref rhs) => {
+                    self = self.cause(lhs, m::CannotAssignInner { lhs: lhs, rhs: rhs })
+                               .note_if(rhs, m::OtherTypeOrigin {});
+                }
+
+                ReportItem::CannotUpdate(_org, ref tab) => {
+                    self = self.cause(tab, m::CannotUpdateInner { tab: tab });
+                }
+
+                ReportItem::CannotFilter(_org, ref ty) => {
+                    self = self.cause(ty, m::CannotFilterInner { ty: ty });
+                }
+
+                ReportItem::InextensibleRec(recspan) => {
+                    self = self.cause(recspan, m::InextensibleRec {});
+                }
+
+                ReportItem::RecursiveRec(recspan) => {
+                    self = self.cause(recspan, m::RecursiveRec {});
+                }
+
+                ReportItem::RecDuplicateKey(recspan, ref key) => {
+                    // TODO do something with key.span
+                    self = self.cause(recspan, m::RecDuplicateKey { key: key });
+                }
+
+                ReportItem::RecCannotHaveKey(recspan, ref key) => {
+                    // TODO do something with key.span
+                    self = self.cause(recspan, m::RecCannotHaveKey { key: key });
+                }
+
+                ReportItem::RecShouldHaveKeys(recspan, ref keys) => {
+                    // TODO do something with keys.span
+                    let keys = QuotedList::new(keys.iter().map(|k| k as &Localize), r.locale);
+                    self = self.cause(recspan, m::RecShouldHaveKeys { keys: &keys.to_string() });
+                }
+
+                ReportItem::RecExtendedWithNonNil(recspan, ref key, ref value) => {
+                    // TODO do something with key.span and value.span
+                    self = self.cause(recspan, m::RecExtendedWithNonNil { key: key, slot: value });
                 }
             }
         }

@@ -72,6 +72,11 @@ define_msg! { pub NotEqualInReturns<'a> { lhs: &'a str, rhs: &'a str, index: Ord
     _    => "{index:+} return type `{lhs}` does not equal to `{rhs}`",
 }
 
+define_msg! { pub CannotUnionType<'a> { ty: &'a str }:
+    "ko" => "`{ty}` 타입을 포함하는 합 타입을 만들 수 없습니다",
+    _    => "Cannot create a union type including `{ty}`",
+}
+
 define_msg! { pub InvalidUnionType<'a> { lhs: &'a str, rhs: &'a str }:
     "ko" => "`{lhs}`와(과) `{rhs}`의 합 타입을 만들 수 없습니다",
     _    => "Cannot create a union type of `{lhs}` and `{rhs}`",
@@ -135,6 +140,44 @@ define_msg! { pub MoreArityInReturns { index: usize }:
 define_msg! { pub OtherTypeOrigin:
     "ko" => "다른 타입은 여기에서 만들어졌습니다",
     _    => "The other type originates here",
+}
+
+// TODO should point to the correct span
+define_msg! { pub InextensibleRec:
+    "ko" => "레코드 타입에 더 이상 새 필드를 추가할 수 없습니다",
+    _    => "No longer possible to add a new field to this record type",
+}
+
+// TODO should point to the correct span
+define_msg! { pub RecursiveRec:
+    "ko" => "레코드 타입에서 재귀 참조가 발견되었습니다",
+    _    => "Recursive cycles detected in the record type",
+}
+
+// TODO should point to the correct span
+define_msg! { pub RecDuplicateKey<'a> { key: &'a Key }:
+    "ko" => "레코드 타입이 `{key}` 필드를 중복으로 가집니다",
+    _    => "Duplicate key `{key}` found in the record type",
+}
+
+// TODO should point to the correct span
+define_msg! { pub RecCannotHaveKey<'a> { key: &'a Key }:
+    "ko" => "레코드 타입이 `{key}` 필드를 가질 수 없습니다",
+    _    => "The record cannot have a field with the key `{key}`",
+}
+
+// TODO should point to the correct span
+define_msg! { pub RecShouldHaveKeys<'a> { keys: &'a str }:
+    "ko" => "레코드 타입이 {keys} 필드를 포함하지 않습니다",
+    _    => "The record does not have a field with the key(s) {keys}",
+}
+
+// TODO should point to the correct span
+define_msg! { pub RecExtendedWithNonNil<'a> { key: &'a Key, slot: &'a str }:
+    "ko" => "레코드 타입에 원래 존재하지 않던 `{key}` 필드는 \
+             명시적으로 nil을 포함하지 않는 `{slot}` 타입으로 추가될 수 없습니다",
+    _    => "The record cannot add a new field with the key `{key}` and \
+             the value type `{slot}` that is not explicitly nilable",
 }
 
 define_msg! { pub CannotRedefineVar<'a> { name: &'a Name }:
@@ -351,7 +394,13 @@ define_msg! { pub IndexToAnyTable<'a> { tab: Slot<'a> }:
              specify more detailed type, or use `--# assume` as a last resort",
 }
 
-define_msg! { pub CannotUpdateConst<'a> { tab: Slot<'a> }:
+define_msg! { pub CannotUpdate<'a> { tab: Slot<'a> }:
+    "ko" => "변경할 수 없는 `{tab}` 타입을 인덱싱해서 갱신할 수 없습니다",
+    _    => "Cannot update the immutable type `{tab}` by indexing",
+}
+
+// a version of CannotUpdate suitable for type reports
+define_msg! { pub CannotUpdateInner<'a> { tab: &'a str }:
     "ko" => "변경할 수 없는 `{tab}` 타입을 인덱싱해서 갱신할 수 없습니다",
     _    => "Cannot update the immutable type `{tab}` by indexing",
 }
@@ -375,6 +424,17 @@ define_msg! { pub CannotCreateIndex<'a> { tab: Slot<'a>, key: Slot<'a>, specrhs:
 define_msg! { pub CannotAssign<'a> { lhs: Slot<'a>, rhs: Slot<'a> }:
     "ko" => "`{lhs}` 타입에 `{rhs}` 타입을 대입할 수 없습니다",
     _    => "Cannot assign `{rhs}` into `{lhs}`",
+}
+
+// a version of CannotAssign suitable for type reports
+define_msg! { pub CannotAssignInner<'a> { lhs: &'a str, rhs: &'a str }:
+    "ko" => "`{lhs}` 타입에 `{rhs}` 타입을 대입할 수 없습니다",
+    _    => "Cannot assign `{rhs}` into `{lhs}`",
+}
+
+define_msg! { pub CannotFilterInner<'a> { ty: &'a str }:
+    "ko" => "`{ty}` 타입을 좁힐 수 없습니다",
+    _    => "Cannot narrow `{ty}`",
 }
 
 define_msg! { pub NonNumericFor:

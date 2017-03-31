@@ -230,6 +230,9 @@ impl Types {
             let mut present = HashMap::new();
             let mut absent = HashSet::new(); // only used for filling the last row if none
 
+            #[derive(Clone)]
+            enum E { Recursive, Duplicate(Key) }
+
             let err;
             'err: loop {
                 if r == RVar::empty() {
@@ -243,7 +246,7 @@ impl Types {
                         let fields = if let Some(ref fields) = row.fields {
                             fields
                         } else {
-                            err = format!("recursive record");
+                            err = E::Recursive;
                             break 'err;
                         };
 
@@ -251,7 +254,7 @@ impl Types {
                             if let Some(ref v) = *v {
                                 // positive field should be unique
                                 if present.insert(k.clone(), v.clone()).is_some() {
-                                    err = format!("internally duplicate field {:?}", k);
+                                    err = E::Duplicate(k.clone());
                                     break 'err;
                                 }
                             } else {
@@ -278,7 +281,10 @@ impl Types {
                 }
             }
 
-            Err(ctx.gen_report().put(Origin::RVar, err))
+            match err {
+                E::Recursive => Err(ctx.gen_report().recursive_record()),
+                E::Duplicate(key) => Err(ctx.gen_report().record_duplicate_key(&key)),
+            }
         };
 
         if lhs == rhs {
@@ -361,8 +367,7 @@ impl Types {
         }
 
         if lhs == RVar::empty() {
-            return Err(self.gen_report().put(Origin::RVar,
-                                             format!("the record is not extensible")));
+            return Err(self.gen_report().inextensible_record());
         }
 
         let lhs_ = lhs.to_usize();
@@ -375,7 +380,7 @@ impl Types {
         let (mut fields, next) = if let Some(fields_and_next) = fields_and_next {
             fields_and_next
         } else {
-            return Err(self.gen_report().put(Origin::RVar, format!("recursive record")));
+            return Err(self.gen_report().recursive_record());
         };
         trace!("{:?} already had {:?} and {:?}", lhs, fields, next);
 
@@ -383,7 +388,7 @@ impl Types {
         self.row_infos.get_mut(&lhs_).unwrap().fields = Some(fields);
         return e;
 
-        fn inner(ctx: &mut Types, lhs: RVar, includes: &[(Key, Slot)], nilable: bool,
+        fn inner(ctx: &mut Types, _lhs: RVar, includes: &[(Key, Slot)], nilable: bool,
                  fields: &mut HashMap<Key, Option<Slot>>, next: Option<RVar>) -> TypeResult<()> {
             // collect missing fields, whether positive or negative, and
             // check if other matching fields are compatible
@@ -396,9 +401,7 @@ impl Types {
                     }
                     Some(&None) => {
                         // the field is excluded, immediately fail
-                        return Err(ctx.gen_report().put(Origin::RVar,
-                                                        format!("record {:?} cannot have \
-                                                                 a field {:?}", lhs, k)));
+                        return Err(ctx.gen_report().record_cannot_have_key(k));
                     }
                     None => {
                         // the field should be added to the next row variable (if any)
@@ -419,9 +422,7 @@ impl Types {
                     if nilable || v.unlift().can_omit() {
                         fields.insert(k, Some(v));
                     } else {
-                        return Err(ctx.gen_report().put(Origin::RVar,
-                                                        format!("record {:?} is being extended \
-                                                                 with non-nilable {:?}", lhs, v)));
+                        return Err(ctx.gen_report().record_extended_with_non_nil(&k, v, ctx));
                     }
                 }
             }
@@ -645,14 +646,14 @@ impl TypeContext for Types {
     }
 
     fn assert_rvar_sub(&mut self, lhs: RVar, rhs: RVar) -> TypeResult<()> {
-        // TODO
+        // TODO appropriate labels just in case
         self.assert_rvar_rel(lhs.clone(), rhs.clone(), true).map_err(|r| {
             r.not_sub(Origin::RVar, "<rvar>", "<rvar>", self)
         })
     }
 
     fn assert_rvar_eq(&mut self, lhs: RVar, rhs: RVar) -> TypeResult<()> {
-        // TODO
+        // TODO appropriate labels just in case
         self.assert_rvar_rel(lhs.clone(), rhs.clone(), false).map_err(|r| {
             r.not_eq(Origin::RVar, "<rvar>", "<rvar>", self)
         })
@@ -660,7 +661,7 @@ impl TypeContext for Types {
 
     fn assert_rvar_includes(&mut self, lhs: RVar, rhs: &[(Key, Slot)]) -> TypeResult<()> {
         self.assert_rvar_includes_(lhs.clone(), rhs, true).map_err(|r| {
-            r.put(Origin::RVar, format!("the record should include {:?} but didn't", rhs))
+            r.record_should_have_keys(rhs.iter().map(|&(ref k, _)| k))
         })
     }
 
@@ -696,9 +697,7 @@ impl TypeContext for Types {
             } else {
                 slowrvar = self.row_infos.get(&slowrvar.to_usize()).unwrap().next.clone().unwrap();
                 if slowrvar == rvar {
-                    return Err(self.gen_report().put(Origin::RVar,
-                                                     "recursive record detected \
-                                                      while closing the record".into()));
+                    return Err(self.gen_report().recursive_record());
                 }
                 slowtick = true;
             }
