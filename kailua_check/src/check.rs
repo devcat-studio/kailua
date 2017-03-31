@@ -1238,8 +1238,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                     }
 
                     // map the name span to the resulting slot
-                    let varslot = self.env.get_var(nameref).unwrap().slot.slot().cloned();
-                    if let Some(varslot) = varslot {
+                    if let Some(varslot) = self.env.get_var(nameref)
+                                                   .and_then(|var| var.slot.slot().cloned()) {
                         let varslot = varslot.with_loc(nameref);
                         self.context().spanned_slots_mut().insert(varslot);
                     }

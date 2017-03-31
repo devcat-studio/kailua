@@ -1,0 +1,26 @@
+[package]
+name = "kailua_check_fuzz"
+version = "0.0.0"
+authors = ["Kang Seonghoon <public+git@mearie.org>"]
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+kailua_env = { path = "../../kailua_env" }
+kailua_diag = { path = "../../kailua_diag" }
+kailua_syntax = { path = "../../kailua_syntax" }
+kailua_check = { path = ".." }
+
+[dependencies.libfuzzer-sys]
+git = "https://github.com/rust-fuzz/libfuzzer-sys.git"
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "check_single"
+path = "fuzzers/check_single.rs"
+

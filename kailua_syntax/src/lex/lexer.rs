@@ -373,7 +373,10 @@ impl<'a> Lexer<'a> {
                             |c| num.push(c.u8()));
 
                         let s = str::from_utf8(&num).unwrap();
-                        if s.len() <= 16 {
+                        if s.is_empty() {
+                            self.report.error(begin..self.pos(), m::InvalidNumber {}).done()?;
+                            // continue reading other tokens
+                        } else if s.len() <= 16 {
                             let v = u64::from_str_radix(s, 16).unwrap();
                             return tok!(Num(v as f64));
                         } else {

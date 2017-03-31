@@ -526,16 +526,21 @@ impl<'a> Parser<'a> {
 
             // if the last token has closed too many nestings we need to keep
             // that last token to allow the further match from the caller.
-            // this case includes a premature EOF, where reading EOF would close
-            // at least two nestings (the initial nesting, the top-level nesting).
+            //
+            // in addition, recovery never skips the EOF; while most premature EOFs are
+            // handled by the former rule, in which case that reading EOF would close
+            // at least two nestings (the initial nesting, the top-level nesting),
+            // there are some cases that the recovery runs at the topmost nesting.
             //
             // on the other hands, a different minimal depth and current depth indicates
             // that a new nesting is introduced by this token and that token should be kept.
             // (this is just a convention, the other choice is possible)
             let excessive_closing = self.last_nesting_depth < init_depth - 1;
-            if always_unread || excessive_closing || same_depth_update {
+            let eof = if let Tok::EOF = last_tok.1.base { true } else { false };
+            if eof || always_unread || excessive_closing || same_depth_update {
                 trace!("unreading the final token {}",
-                       if always_unread { "at a request" }
+                       if eof { "because it's EOF" }
+                       else if always_unread { "at a request" }
                        else if excessive_closing { "due to excessive closing" }
                        else { "due to nesting update at the same level" });
                 self.unread(last_tok);

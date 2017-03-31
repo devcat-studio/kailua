@@ -3748,8 +3748,3 @@ x = y --@< Error: Cannot assign `{x: <...>, y: {x: <...>, y: <...>, z: <...>, ..
       --@^ Note: The other type originates here
 --! error
 
---8<-- regression-map-func-array
--- regression test for Slot::assert_eq deadlock
-local foo = {} --: map<string, function(vector<string>) --> ()>
---! ok
-
