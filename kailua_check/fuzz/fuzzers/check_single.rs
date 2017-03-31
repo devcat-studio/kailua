@@ -13,6 +13,9 @@ extern crate kailua_check;
 pub extern fn go(data: &[u8]) {
     use std::rc::Rc;
     use std::cell::RefCell;
+    use std::thread;
+    use std::sync::mpsc;
+    use std::time::Duration;
     use kailua_env::{Span, Source, SourceFile};
     use kailua_diag::{Kind, Report, Locale, Localize};
     use kailua_check::{Context, Options};
@@ -28,15 +31,25 @@ pub extern fn go(data: &[u8]) {
 
     impl Options for DummyOptions {}
 
-    let source = Rc::new(RefCell::new(Source::new()));
-    let report = Rc::new(DummyReport);
-    let file = SourceFile::from_u8("<fuzz input>".into(), data.to_owned());
-    let span = source.borrow_mut().add(file);
-    let source = source.borrow();
-    if let Ok(chunk) = kailua_syntax::parse_chunk(&source, span, &*report) {
-        let mut context = Context::new(report.clone());
-        let opts = Rc::new(RefCell::new(DummyOptions));
-        let _ = kailua_check::check_from_chunk(&mut context, chunk, opts);
+    const TIMEOUT_MS: u64 = 5000;
+
+    let (sender, receiver) = mpsc::channel();
+    let data = data.to_owned();
+    let _thread = thread::spawn(move || {
+        let source = Rc::new(RefCell::new(Source::new()));
+        let report = Rc::new(DummyReport);
+        let file = SourceFile::from_u8("<fuzz input>".into(), data.to_owned());
+        let span = source.borrow_mut().add(file);
+        let source = source.borrow();
+        if let Ok(chunk) = kailua_syntax::parse_chunk(&source, span, &*report) {
+            let mut context = Context::new(report.clone());
+            let opts = Rc::new(RefCell::new(DummyOptions));
+            let _ = kailua_check::check_from_chunk(&mut context, chunk, opts);
+        }
+        let _ = sender.send(());
+    });
+    if receiver.recv_timeout(Duration::from_millis(TIMEOUT_MS)).is_err() {
+        panic!("timed out after {}ms", TIMEOUT_MS);
     }
 }
 

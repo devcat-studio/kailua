@@ -186,11 +186,7 @@ impl S {
 
 impl Display for S {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
-        if st.is_slot_seen(self) {
-            return write!(f, "<...>");
-        }
-
-        let ret = match (self.flex, &st.locale[..]) {
+        match (self.flex, &st.locale[..]) {
             (F::Unknown, "ko") => write!(f, "<초기화되지 않음>"),
             (F::Unknown, _)    => write!(f, "<not initialized>"),
 
@@ -205,9 +201,7 @@ impl Display for S {
 
             (F::Module, "ko") => write!(f, "<초기화중> {}", self.ty.display(st)),
             (F::Module, _)    => write!(f, "<initializing> {}", self.ty.display(st)),
-        };
-        st.unmark_slot(self);
-        ret
+        }
     }
 }
 
@@ -451,22 +445,31 @@ impl<'a> Lattice<Ty> for Spanned<Slot> {
 
 impl PartialEq for Slot {
     fn eq(&self, other: &Slot) -> bool {
+        if self.0.deref() as *const _ == other.0.deref() as *const _ { return true; }
         *self.0.read() == *other.0.read()
     }
 }
 
 impl Display for Slot {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
-        self.0.read().fmt_displayed(f, st)
+        if let Some(s) = self.0.try_read() {
+            s.fmt_displayed(f, st)
+        } else {
+            write!(f, "<...>")
+        }
     }
 }
 
 impl fmt::Debug for Slot {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if f.sign_minus() {
-            fmt::Debug::fmt(&self.0.read().ty, f)
+        if let Some(s) = self.0.try_read() {
+            if f.sign_minus() {
+                fmt::Debug::fmt(&s.ty, f)
+            } else {
+                fmt::Debug::fmt(&*s, f)
+            }
         } else {
-            fmt::Debug::fmt(&*self.0.read(), f)
+            write!(f, "<recursion>")
         }
     }
 }

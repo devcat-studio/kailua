@@ -3748,3 +3748,10 @@ x = y --@< Error: Cannot assign `{x: <...>, y: {x: <...>, y: <...>, z: <...>, ..
       --@^ Note: The other type originates here
 --! error
 
+--8<-- rec-recursive-display-3
+local u = {}
+u.u = u
+u.u = 0 --@< Error: Cannot assign `0` into `{u: <...>, ...}`
+        --@^ Note: The other type originates here
+--! error
+
