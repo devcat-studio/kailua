@@ -4,11 +4,12 @@ use std::collections::HashSet;
 
 use kailua_env::Spanned;
 use kailua_diag::{Locale, Localize, Localized};
-use super::{TypeContext, TVar, RVar};
+use super::{TypeContext, S, TVar, RVar};
 
 pub struct DisplayState<'a> {
     pub locale: Locale,
     pub context: &'a TypeContext,
+    slots_seen: RefCell<HashSet<*const S>>,
     tvars_seen: RefCell<HashSet<u32>>,
     rvars_seen: RefCell<HashSet<u32>>,
 }
@@ -18,9 +19,14 @@ impl<'a> DisplayState<'a> {
         DisplayState {
             locale: locale,
             context: ctx,
+            slots_seen: RefCell::new(HashSet::new()),
             tvars_seen: RefCell::new(HashSet::new()),
             rvars_seen: RefCell::new(HashSet::new()),
         }
+    }
+
+    pub fn is_slot_seen(&self, slot: &S) -> bool {
+        !self.slots_seen.borrow_mut().insert(slot as *const S)
     }
 
     pub fn is_tvar_seen(&self, tvar: TVar) -> bool {
@@ -29,6 +35,10 @@ impl<'a> DisplayState<'a> {
 
     pub fn is_rvar_seen(&self, rvar: RVar) -> bool {
         !self.rvars_seen.borrow_mut().insert(rvar.to_u32())
+    }
+
+    pub fn unmark_slot(&self, slot: &S) {
+        self.slots_seen.borrow_mut().remove(&(slot as *const S));
     }
 
     pub fn unmark_tvar(&self, tvar: TVar) {

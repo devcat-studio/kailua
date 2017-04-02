@@ -2,6 +2,7 @@ use std::fmt;
 use std::mem;
 use std::ops::Deref;
 use std::sync::Arc;
+use std::sync::atomic::{Ordering, AtomicUsize};
 use parking_lot::{RwLock, RwLockReadGuard};
 
 use kailua_env::{Span, Spanned};
@@ -64,49 +65,151 @@ impl<'a> fmt::Debug for F {
     }
 }
 
+const UNKNOWN_BITS: usize = 0x00;
+const DYNAMIC_USER_BITS: usize = 0x01;
+const DYNAMIC_OOPS_BITS: usize = 0x02;
+const JUST_BITS: usize = 0x03;
+const CONST_BITS: usize = 0x04;
+const VAR_BITS: usize = 0x05;
+const MODULE_BITS: usize = 0x06;
+const FLEX_MASK: usize = 0x07;
+
+fn usize_from_flex(flex: F) -> usize {
+    match flex {
+        F::Unknown            => UNKNOWN_BITS,
+        F::Dynamic(Dyn::User) => DYNAMIC_USER_BITS,
+        F::Dynamic(Dyn::Oops) => DYNAMIC_OOPS_BITS,
+        F::Just               => JUST_BITS,
+        F::Const              => CONST_BITS,
+        F::Var                => VAR_BITS,
+        F::Module             => MODULE_BITS,
+    }
+}
+
+fn flex_from_usize(v: usize) -> F {
+    match v & FLEX_MASK {
+        UNKNOWN_BITS      => F::Unknown,
+        DYNAMIC_USER_BITS => F::Dynamic(Dyn::User),
+        DYNAMIC_OOPS_BITS => F::Dynamic(Dyn::Oops),
+        JUST_BITS         => F::Just,
+        CONST_BITS        => F::Const,
+        VAR_BITS          => F::Var,
+        MODULE_BITS       => F::Module,
+        _                 => panic!("unknown flex bits {:#x}", v),
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+struct Bits(usize);
+
+impl Bits {
+    fn new(flex: F) -> Bits {
+        Bits(usize_from_flex(flex))
+    }
+
+    fn from(a: AtomicUsize) -> Bits {
+        Bits(a.into_inner())
+    }
+
+    fn load(a: &AtomicUsize) -> Bits {
+        Bits(a.load(Ordering::SeqCst))
+    }
+
+    fn make(&self) -> AtomicUsize {
+        AtomicUsize::new(self.0)
+    }
+
+    fn flex(&self) -> F {
+        flex_from_usize(self.0)
+    }
+
+    fn with_flex(&self, flex: F) -> Bits {
+        Bits((self.0 & !FLEX_MASK) | usize_from_flex(flex))
+    }
+
+    fn try_store(&mut self, new: Bits, a: &AtomicUsize) -> bool {
+        let old = a.compare_and_swap(self.0, new.0, Ordering::SeqCst);
+        if self.0 == old {
+            self.0 = new.0;
+            true
+        } else {
+            self.0 = old;
+            false
+        }
+    }
+
+    fn try_set_flex(&mut self, flex: F, a: &AtomicUsize) -> bool {
+        let new = self.with_flex(flex);
+        self.try_store(new, a)
+    }
+}
+
+impl PartialEq for Bits {
+    fn eq(&self, other: &Bits) -> bool {
+        (self.0 ^ other.0) & FLEX_MASK == 0
+    }
+}
+
+pub struct UnliftedSlot<'a>(RwLockReadGuard<'a, Ty>);
+
+impl<'a> Deref for UnliftedSlot<'a> {
+    type Target = Ty;
+    fn deref(&self) -> &Ty { &*self.0 }
+}
+
 // slot types
-#[derive(Clone, PartialEq)]
 pub struct S {
-    flex: F,
-    ty: Ty,
+    bits: AtomicUsize,
+    ty: RwLock<Ty>,
 }
 
 impl S {
-    pub fn flex(&self) -> F {
-        self.flex
+    pub fn new(flex: F, ty: Ty) -> S {
+        S { bits: Bits::new(flex).make(), ty: RwLock::new(ty) }
     }
 
-    pub fn unlift(&self) -> &Ty {
-        &self.ty
+    fn bits(&self) -> Bits {
+        Bits::load(&self.bits)
+    }
+
+    pub fn flex(&self) -> F {
+        self.bits().flex()
+    }
+
+    pub fn unlift<'a>(&'a self) -> UnliftedSlot<'a> {
+        UnliftedSlot(self.ty.read())
+    }
+
+    fn map_ty<F: FnOnce(Ty) -> Ty>(self, f: F) -> S {
+        S { bits: Bits::from(self.bits).make(), ty: RwLock::new(f(self.ty.into_inner())) }
     }
 
     pub fn with_nil(self) -> S {
-        S { flex: self.flex, ty: self.ty.with_nil() }
+        self.map_ty(|t| t.with_nil())
     }
 
     pub fn without_nil(self) -> S {
-        S { flex: self.flex, ty: self.ty.without_nil() }
+        self.map_ty(|t| t.without_nil())
     }
 
     // in addition to `Ty::coerce`, also updates the flexibility
     pub fn coerce(self) -> S {
-        let flex = match self.flex {
+        let flex = match self.flex() {
             F::Just | F::Const | F::Var => F::Var,
             flex => flex,
         };
-        S { flex: flex, ty: self.ty.coerce() }
+        S::new(flex, self.ty.into_inner().coerce())
     }
 
     pub fn generalize(self, ctx: &mut TypeContext) -> S {
-        S { flex: self.flex, ty: self.ty.generalize(ctx) }
+        self.map_ty(|t| t.generalize(ctx))
     }
 
     // self and other may be possibly different slots and being merged by union
     // mainly used by `and`/`or` operators and table lifting
-    pub fn union(&mut self, other: &mut S, explicit: bool,
-                 ctx: &mut TypeContext) -> TypeResult<S> {
+    pub fn union(&self, other: &S, explicit: bool, ctx: &mut TypeContext) -> TypeResult<S> {
         (|| {
-            let (flex, ty) = match (self.flex, other.flex) {
+            let (flex, ty) = match (self.flex(), other.flex()) {
                 (F::Dynamic(dyn1), F::Dynamic(dyn2)) => {
                     let dyn = dyn1.union(dyn2);
                     (F::Dynamic(dyn), Ty::new(T::Dynamic(dyn)))
@@ -120,15 +223,19 @@ impl S {
                     return Err(ctx.gen_report()),
 
                 // it's fine to merge r-values
-                (F::Just, F::Just) => (F::Just, self.ty.union(&other.ty, explicit, ctx)?),
+                (F::Just, F::Just) => {
+                    let ty = self.ty.read().union(&*other.ty.read(), explicit, ctx)?;
+                    (F::Just, ty)
+                },
 
                 // merging Var requires a and b are identical
                 // (the user is expected to annotate a and b if it's not the case)
                 (F::Var, F::Var) |
                 (F::Var, F::Just) |
                 (F::Just, F::Var) => {
-                    self.ty.assert_eq(&other.ty, ctx)?;
-                    (F::Var, self.ty.clone())
+                    let ty = self.ty.read();
+                    ty.assert_eq(&*other.ty.read(), ctx)?;
+                    (F::Var, (*ty).clone())
                 },
 
                 // Var and Just are lifted to Const otherwise
@@ -136,11 +243,13 @@ impl S {
                 (F::Const, F::Const) |
                 (F::Const, F::Var) |
                 (F::Just, F::Const) |
-                (F::Var, F::Const) =>
-                    (F::Const, self.ty.union(&other.ty, explicit, ctx)?),
+                (F::Var, F::Const) => {
+                    let ty = self.ty.read().union(&*other.ty.read(), explicit, ctx)?;
+                    (F::Const, ty)
+                },
             };
 
-            Ok(S { flex: flex, ty: ty })
+            Ok(S::new(flex, ty))
         })().map_err(|r: TypeReport| r.cannot_union(Origin::Slot, self, other, explicit, ctx))
     }
 
@@ -148,11 +257,13 @@ impl S {
         debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
         (|| {
-            match (self.flex, other.flex) {
+            match (self.flex(), other.flex()) {
                 (_, F::Dynamic(_)) | (F::Dynamic(_), _) => Ok(()),
 
-                (F::Just, _) | (_, F::Const) => self.ty.assert_sub(&other.ty, ctx),
-                (F::Var, F::Var) => self.ty.assert_eq(&other.ty, ctx),
+                (F::Just, _) | (_, F::Const) =>
+                    self.ty.read().assert_sub(&*other.ty.read(), ctx),
+                (F::Var, F::Var) =>
+                    self.ty.read().assert_eq(&*other.ty.read(), ctx),
 
                 (_, _) => Err(ctx.gen_report()),
             }
@@ -160,23 +271,28 @@ impl S {
     }
 
     // this can replace F::Unknown, and thus is mutable
-    pub fn assert_eq(&mut self, other: &mut S, ctx: &mut TypeContext) -> TypeResult<()> {
+    pub fn assert_eq(&self, other: &S, ctx: &mut TypeContext) -> TypeResult<()> {
         debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
         (|| {
-            // if one flex is unknown, use the other's flex
-            if self.flex == F::Unknown {
-                self.flex = other.flex;
-            } else if other.flex == F::Unknown {
-                other.flex = self.flex;
+            // if one flex is unknown, use the other's flex (this should be atomic)
+            let mut lbits = self.bits();
+            let mut rbits = other.bits();
+            if lbits.flex() != rbits.flex() {
+                while lbits.flex() == F::Unknown {
+                    lbits.try_set_flex(rbits.flex(), &self.bits);
+                }
+                while rbits.flex() == F::Unknown {
+                    rbits.try_set_flex(lbits.flex(), &other.bits);
+                }
             }
 
-            match (self.flex, other.flex) {
+            match (lbits.flex(), rbits.flex()) {
                 (_, F::Dynamic(_)) | (F::Dynamic(_), _) => Ok(()),
 
                 (F::Just, F::Just) | (F::Const, F::Const) |
                 (F::Var, F::Var) | (F::Module, F::Module) =>
-                    self.ty.assert_eq(&other.ty, ctx),
+                    self.ty.read().assert_eq(&*other.ty.read(), ctx),
 
                 (_, _) => Err(ctx.gen_report()),
             }
@@ -184,50 +300,75 @@ impl S {
     }
 }
 
+impl PartialEq for S {
+    fn eq(&self, other: &S) -> bool {
+        Bits::load(&self.bits) == Bits::load(&other.bits) && *self.ty.read() == *other.ty.read()
+    }
+}
+
+impl Clone for S {
+    fn clone(&self) -> S {
+        S { bits: Bits::load(&self.bits).make(), ty: RwLock::new((*self.ty.read()).clone()) }
+    }
+}
+
 impl Display for S {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
-        match (self.flex, &st.locale[..]) {
-            (F::Unknown, "ko") => write!(f, "<초기화되지 않음>"),
-            (F::Unknown, _)    => write!(f, "<not initialized>"),
+        if st.is_slot_seen(self) {
+            return write!(f, "<...>");
+        }
 
-            (F::Dynamic(Dyn::User), _)    => write!(f, "WHATEVER"),
-            (F::Dynamic(Dyn::Oops), "ko") => write!(f, "<오류>"),
-            (F::Dynamic(Dyn::Oops), _)    => write!(f, "<error>"),
+        let (write_ty, prefix) = match (self.flex(), &st.locale[..]) {
+            (F::Unknown, "ko") => (false, "<초기화되지 않음>"),
+            (F::Unknown, _)    => (false, "<not initialized>"),
+
+            (F::Dynamic(Dyn::User), _)    => (false, "WHATEVER"),
+            (F::Dynamic(Dyn::Oops), "ko") => (false, "<오류>"),
+            (F::Dynamic(Dyn::Oops), _)    => (false, "<error>"),
 
             // Just can be seen as a mutable value yet to be assigned
-            (F::Just,  _) => write!(f, "{}", self.ty.display(st)),
-            (F::Const, _) => write!(f, "const {}", self.ty.display(st)),
-            (F::Var,   _) => write!(f, "{}", self.ty.display(st)),
+            (F::Just,  _) => (true, ""),
+            (F::Const, _) => (true, "const "),
+            (F::Var,   _) => (true, ""),
 
-            (F::Module, "ko") => write!(f, "<초기화중> {}", self.ty.display(st)),
-            (F::Module, _)    => write!(f, "<initializing> {}", self.ty.display(st)),
-        }
+            (F::Module, "ko") => (true, "<초기화중> "),
+            (F::Module, _)    => (true, "<initializing> "),
+        };
+
+        let ret = if write_ty {
+            if let Some(ty) = self.ty.try_read() {
+                write!(f, "{}{}", prefix, (*ty).display(st))
+            } else {
+                write!(f, "{}<...>", prefix)
+            }
+        } else {
+            write!(f, "{}", prefix)
+        };
+        st.unmark_slot(self);
+        ret
     }
 }
 
 impl fmt::Debug for S {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?} {:?}", self.flex, self.ty)
+        if let Some(ty) = self.ty.try_read() {
+            write!(f, "{:?} {:?}", self.flex(), *ty)
+        } else {
+            write!(f, "{:?} <...>", self.flex())
+        }
     }
-}
-
-pub struct UnliftedSlot<'a>(RwLockReadGuard<'a, S>);
-
-impl<'a> Deref for UnliftedSlot<'a> {
-    type Target = Ty;
-    fn deref(&self) -> &Ty { self.0.unlift() }
 }
 
 #[derive(Clone)]
-pub struct Slot(Arc<RwLock<S>>);
+pub struct Slot(Arc<S>);
 
 impl Slot {
     pub fn new<'a>(flex: F, ty: Ty) -> Slot {
-        Slot(Arc::new(RwLock::new(S { flex: flex, ty: ty })))
+        Slot(Arc::new(S::new(flex, ty)))
     }
 
     pub fn from(s: S) -> Slot {
-        Slot(Arc::new(RwLock::new(s)))
+        Slot(Arc::new(s))
     }
 
     pub fn just(t: Ty) -> Slot {
@@ -243,18 +384,20 @@ impl Slot {
     }
 
     pub fn unlift<'a>(&'a self) -> UnliftedSlot<'a> {
-        UnliftedSlot(self.0.read())
+        self.0.unlift()
     }
 
     // one tries to assign to `self` through parent with `flex`. how should `self` change?
     // (only makes sense when `self` is a Just slot, otherwise no-op)
     pub fn adapt(&self, flex: F, _ctx: &mut TypeContext) {
-        let mut slot = self.0.write();
-        if slot.flex == F::Just {
-            slot.flex = match flex {
-                F::Const | F::Var => flex,
-                _ => F::Just,
-            };
+        match flex {
+            F::Const | F::Var => {
+                let mut bits = self.0.bits();
+                while bits.flex() == F::Just {
+                    bits.try_set_flex(flex, &self.0.bits);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -268,40 +411,40 @@ impl Slot {
 
         debug!("accepting {:?} into {:?}{}", rhs, self, if init { " (initializing)" } else { "" });
 
-        let mut lhs = self.0.write();
-        let rhs = rhs.0.read();
+        (|| {
+            let mut bits = self.0.bits();
+            loop {
+                match (bits.flex(), rhs.flex(), init) {
+                    (F::Dynamic(_), _, _) => return Ok(()),
 
-        let ret = match (lhs.flex, rhs.flex, init) {
-            (F::Dynamic(_), _, _) => Ok(()),
+                    (_, F::Unknown, _) |
+                    (F::Unknown, _, _) |
+                    (F::Const, _, false) => return Err(ctx.gen_report()),
 
-            (_, F::Unknown, _) |
-            (F::Unknown, _, _) |
-            (F::Const, _, false) => Err(ctx.gen_report()),
+                    (_, F::Dynamic(_), _) => return Ok(()),
 
-            (_, F::Dynamic(_), _) => Ok(()),
+                    // as long as the type is in agreement, Var can be assigned
+                    (F::Var, _, _) =>
+                        return rhs.0.ty.read().assert_sub(&*self.0.ty.read(), ctx),
 
-            // as long as the type is in agreement, Var can be assigned
-            (F::Var, _, _) => rhs.ty.assert_sub(&lhs.ty, ctx),
+                    // Module requires the strict equality on the initialization
+                    (F::Module, _, true) =>
+                        return rhs.0.ty.read().assert_eq(&*self.0.ty.read(), ctx),
+                    (F::Module, _, false) =>
+                        return rhs.0.ty.read().assert_sub(&*self.0.ty.read(), ctx),
 
-            // Module requires the strict equality on the initialization
-            (F::Module, _, true) => rhs.ty.assert_eq(&lhs.ty, ctx),
-            (F::Module, _, false) => rhs.ty.assert_sub(&lhs.ty, ctx),
+                    // assignment to Const slot is for initialization only
+                    (F::Const, _, true) =>
+                        return rhs.0.ty.read().assert_sub(&*self.0.ty.read(), ctx),
 
-            // assignment to Const slot is for initialization only
-            (F::Const, _, true) => rhs.ty.assert_sub(&lhs.ty, ctx),
-
-            // Just becomes Var when assignment happens
-            (F::Just, _, _) => {
-                lhs.flex = F::Var;
-                let lhs = lhs.downgrade();
-                rhs.ty.assert_sub(&lhs.ty, ctx).map_err(|r: TypeReport| {
-                    r.cannot_assign(Origin::Slot, &*lhs, &*rhs, ctx)
-                })?;
-                return Ok(());
+                    // Just becomes Var when assignment happens
+                    (F::Just, _, _) => {
+                        bits.try_set_flex(F::Var, &self.0.bits);
+                        // retry until the flex _really_ changes to Var
+                    },
+                }
             }
-        };
-
-        ret.map_err(|r: TypeReport| r.cannot_assign(Origin::Slot, &*lhs, &*rhs, ctx))
+        })().map_err(|r: TypeReport| r.cannot_assign(Origin::Slot, &*self, &*rhs, ctx))
     }
 
     // one tries to modify `self` in place. the new value, when expressed as a type, is
@@ -311,42 +454,44 @@ impl Slot {
     // conceptually this is same to `accept`, but some special types (notably nominal types)
     // have a representation that is hard to express with `accept` only.
     pub fn accept_in_place(&self, ctx: &mut TypeContext) -> TypeResult<()> {
-        let mut s = self.0.write();
-        match s.flex {
-            F::Dynamic(_) => Ok(()),
-            F::Unknown | F::Const => {
-                Err(ctx.gen_report().cannot_assign_in_place(Origin::Slot, &*s, ctx))
-            },
-            F::Var => Ok(()),
-            F::Just => {
-                s.flex = F::Var;
-                Ok(())
-            },
-            // this requires an additional processing
-            F::Module => Ok(()),
+        let mut bits = self.0.bits();
+        loop {
+            match bits.flex() {
+                F::Dynamic(_) => return Ok(()),
+                F::Unknown | F::Const => {
+                    return Err(ctx.gen_report().cannot_assign_in_place(Origin::Slot, &*self, ctx));
+                },
+                F::Var => return Ok(()),
+                F::Just => {
+                    bits.try_set_flex(F::Var, &self.0.bits);
+                    // retry until the flex _really_ changes to Var
+                },
+                // this requires an additional processing
+                F::Module => return Ok(()),
+            }
         }
     }
 
     pub fn unmark_as_module(&self) {
-        let mut s = self.0.write();
-        if s.flex == F::Module {
-            s.flex = F::Var;
+        let mut bits = self.0.bits();
+        while bits.flex() == F::Module {
+            bits.try_set_flex(F::Var, &self.0.bits);
         }
     }
 
     pub fn filter_by_flags(&self, flags: Flags, ctx: &mut TypeContext) -> TypeResult<()> {
         // when filter_by_flags fails, the slot itself has no valid type
-        let mut s = self.0.write();
-        let t = mem::replace(&mut s.ty, Ty::new(T::None).or_nil(Nil::Absent));
-        s.ty = t.filter_by_flags(flags, ctx).map_err(|r| {
-            r.cannot_filter_by_flags(Origin::Slot, &*s, ctx)
+        let mut ty = self.0.ty.write();
+        let t = mem::replace(&mut *ty, Ty::new(T::None).or_nil(Nil::Absent));
+        *ty = t.filter_by_flags(flags, ctx).map_err(|r| {
+            r.cannot_filter_by_flags(Origin::Slot, &*self, ctx)
         })?;
         Ok(())
     }
 
     // following methods are direct analogues to value type's ones, whenever applicable
 
-    pub fn flex(&self) -> F { self.0.read().flex() }
+    pub fn flex(&self) -> F { self.0.flex() }
     pub fn flags(&self) -> Flags { self.unlift().flags() }
 
     pub fn is_integral(&self) -> bool { self.flags().is_integral() }
@@ -364,23 +509,19 @@ impl Slot {
     pub fn nil(&self) -> Nil { self.unlift().nil() }
 
     pub fn with_nil(&self) -> Slot {
-        let s = self.0.read();
-        Slot::from(s.clone().with_nil())
+        Slot::from((*self.0).clone().with_nil())
     }
 
     pub fn without_nil(&self) -> Slot {
-        let s = self.0.read();
-        Slot::from(s.clone().without_nil())
+        Slot::from((*self.0).clone().without_nil())
     }
 
     pub fn coerce(&self) -> Slot {
-        let s = self.0.read();
-        Slot::from(s.clone().coerce())
+        Slot::from((*self.0).clone().coerce())
     }
 
     pub fn generalize(&self, ctx: &mut TypeContext) -> Slot {
-        let s = self.0.read();
-        Slot::from(s.clone().generalize(ctx))
+        Slot::from((*self.0).clone().generalize(ctx))
     }
 }
 
@@ -396,7 +537,7 @@ impl Union for Slot {
         if self.0.deref() as *const _ == other.0.deref() as *const _ { return Ok(self.clone()); }
 
         // now it is safe to borrow mutably
-        Ok(Slot::from(self.0.write().union(&mut other.0.write(), explicit, ctx)?))
+        Ok(Slot::from(self.0.union(&other.0, explicit, ctx)?))
     }
 }
 
@@ -404,13 +545,13 @@ impl Lattice for Slot {
     fn assert_sub(&self, other: &Slot, ctx: &mut TypeContext) -> TypeResult<()> {
         if self.0.deref() as *const _ == other.0.deref() as *const _ { return Ok(()); }
 
-        self.0.read().assert_sub(&other.0.read(), ctx)
+        self.0.assert_sub(&other.0, ctx)
     }
 
     fn assert_eq(&self, other: &Slot, ctx: &mut TypeContext) -> TypeResult<()> {
         if self.0.deref() as *const _ == other.0.deref() as *const _ { return Ok(()); }
 
-        self.0.write().assert_eq(&mut other.0.write(), ctx)
+        self.0.assert_eq(&other.0, ctx)
     }
 }
 
@@ -449,30 +590,26 @@ impl<'a> Lattice<Ty> for Spanned<Slot> {
 impl PartialEq for Slot {
     fn eq(&self, other: &Slot) -> bool {
         if self.0.deref() as *const _ == other.0.deref() as *const _ { return true; }
-        *self.0.read() == *other.0.read()
+        *self.0 == *other.0
     }
 }
 
 impl Display for Slot {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
-        if let Some(s) = self.0.try_read() {
-            s.fmt_displayed(f, st)
-        } else {
-            write!(f, "<...>")
-        }
+        self.0.fmt_displayed(f, st)
     }
 }
 
 impl fmt::Debug for Slot {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if let Some(s) = self.0.try_read() {
-            if f.sign_minus() {
-                fmt::Debug::fmt(&s.ty, f)
+        if f.sign_minus() {
+            if let Some(ty) = self.0.ty.try_read() {
+                fmt::Debug::fmt(&*ty, f)
             } else {
-                fmt::Debug::fmt(&*s, f)
+                write!(f, "<...>")
             }
         } else {
-            write!(f, "<recursion>")
+            fmt::Debug::fmt(&self.0, f)
         }
     }
 }
