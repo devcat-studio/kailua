@@ -12,6 +12,8 @@ kailua_env = { path = "../../kailua_env" }
 kailua_diag = { path = "../../kailua_diag" }
 kailua_syntax = { path = "../../kailua_syntax" }
 kailua_check = { path = ".." }
+lazy_static = "0.2.6"
+thread-pool = "0.1.1"
 
 [dependencies.libfuzzer-sys]
 git = "https://github.com/rust-fuzz/libfuzzer-sys.git"

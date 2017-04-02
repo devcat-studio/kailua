@@ -4,6 +4,8 @@
 #![no_main]
 
 extern crate libfuzzer_sys;
+#[macro_use] extern crate lazy_static;
+extern crate thread_pool;
 extern crate kailua_env;
 extern crate kailua_diag;
 extern crate kailua_syntax;
@@ -11,11 +13,12 @@ extern crate kailua_check;
 
 #[export_name="rust_fuzzer_test_input"]
 pub extern fn go(data: &[u8]) {
+    use std::usize;
     use std::rc::Rc;
     use std::cell::RefCell;
-    use std::thread;
     use std::sync::mpsc;
     use std::time::Duration;
+    use thread_pool as tp;
     use kailua_env::{Span, Source, SourceFile};
     use kailua_diag::{Kind, Report, Locale, Localize};
     use kailua_check::{Context, Options};
@@ -31,11 +34,17 @@ pub extern fn go(data: &[u8]) {
 
     impl Options for DummyOptions {}
 
+    lazy_static! {
+        static ref POOL: (tp::Sender<Box<tp::TaskBox>>, tp::ThreadPool<Box<tp::TaskBox>>) = {
+            tp::Builder::new().work_queue_capacity(usize::MAX).build()
+        };
+    }
+
     const TIMEOUT_MS: u64 = 5000;
 
     let (sender, receiver) = mpsc::channel();
     let data = data.to_owned();
-    let _thread = thread::spawn(move || {
+    let _ = POOL.0.send_fn(move || {
         let source = Rc::new(RefCell::new(Source::new()));
         let report = Rc::new(DummyReport);
         let file = SourceFile::from_u8("<fuzz input>".into(), data.to_owned());
