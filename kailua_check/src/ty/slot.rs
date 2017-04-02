@@ -271,34 +271,37 @@ impl Slot {
         let mut lhs = self.0.write();
         let rhs = rhs.0.read();
 
-        (|| {
-            match (lhs.flex, rhs.flex, init) {
-                (F::Dynamic(_), _, _) => Ok(()),
+        let ret = match (lhs.flex, rhs.flex, init) {
+            (F::Dynamic(_), _, _) => Ok(()),
 
-                (_, F::Unknown, _) |
-                (F::Unknown, _, _) |
-                (F::Const, _, false) => Err(ctx.gen_report()),
+            (_, F::Unknown, _) |
+            (F::Unknown, _, _) |
+            (F::Const, _, false) => Err(ctx.gen_report()),
 
-                (_, F::Dynamic(_), _) => Ok(()),
+            (_, F::Dynamic(_), _) => Ok(()),
 
-                // as long as the type is in agreement, Var can be assigned
-                (F::Var, _, _) => rhs.ty.assert_sub(&lhs.ty, ctx),
+            // as long as the type is in agreement, Var can be assigned
+            (F::Var, _, _) => rhs.ty.assert_sub(&lhs.ty, ctx),
 
-                // Module requires the strict equality on the initialization
-                (F::Module, _, true) => rhs.ty.assert_eq(&lhs.ty, ctx),
-                (F::Module, _, false) => rhs.ty.assert_sub(&lhs.ty, ctx),
+            // Module requires the strict equality on the initialization
+            (F::Module, _, true) => rhs.ty.assert_eq(&lhs.ty, ctx),
+            (F::Module, _, false) => rhs.ty.assert_sub(&lhs.ty, ctx),
 
-                // assignment to Const slot is for initialization only
-                (F::Const, _, true) => rhs.ty.assert_sub(&lhs.ty, ctx),
+            // assignment to Const slot is for initialization only
+            (F::Const, _, true) => rhs.ty.assert_sub(&lhs.ty, ctx),
 
-                // Just becomes Var when assignment happens
-                (F::Just, _, _) => {
-                    rhs.ty.assert_sub(&lhs.ty, ctx)?;
-                    lhs.flex = F::Var;
-                    Ok(())
-                }
+            // Just becomes Var when assignment happens
+            (F::Just, _, _) => {
+                lhs.flex = F::Var;
+                let lhs = lhs.downgrade();
+                rhs.ty.assert_sub(&lhs.ty, ctx).map_err(|r: TypeReport| {
+                    r.cannot_assign(Origin::Slot, &*lhs, &*rhs, ctx)
+                })?;
+                return Ok(());
             }
-        })().map_err(|r: TypeReport| r.cannot_assign(Origin::Slot, &*lhs, &*rhs, ctx))
+        };
+
+        ret.map_err(|r: TypeReport| r.cannot_assign(Origin::Slot, &*lhs, &*rhs, ctx))
     }
 
     // one tries to modify `self` in place. the new value, when expressed as a type, is

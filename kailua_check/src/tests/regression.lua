@@ -10,3 +10,10 @@ local foo = {} --: map<string, function(vector<string>) --> ()>
 a,b; --@< Error: Expected `=`, got `;`
 --! ok
 
+--8<-- regression-recovering-recursive-assign
+-- cargo-fuzz trophy case #5
+u = {u = 0}
+u = {u = u} --@< Error: Cannot assign `{u: {u: 0, ...}, ...}` into `{u: 0, ...}`
+            --@^ Note: The other type originates here
+--! error
+
