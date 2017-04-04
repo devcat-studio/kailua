@@ -1229,6 +1229,14 @@ end
 local x --: const | integer --@< Error: Expected a newline, got `|`
 --! [Local([`x`$1: Const Oops], [])$1]
 
+--8<-- kind-large-int
+local x --: 123456789012345 --@< Error: Cannot use a non-integer, or too small or too large integer as a type
+--! [Local([`x`$1: _ Oops], [])$1]
+
+--8<-- kind-non-int
+local x --: 3.14 --@< Error: Cannot use a non-integer, or too small or too large integer as a type
+--! [Local([`x`$1: _ Oops], [])$1]
+
 --8<-- funcspec
 --v function()
 function foo() end

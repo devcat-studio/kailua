@@ -396,6 +396,11 @@ define_msg! { pub WrongMapParamsModf:
     _    => "The first type parameter of `map` type cannot have modifiers",
 }
 
+define_msg! { pub NonIntegerType:
+    "ko" => "정수가 아닌 숫자나, 너무 작거나 큰 정수는 타입으로 쓸 수 없습니다",
+    _    => "Cannot use a non-integer, or too small or too large integer as a type",
+}
+
 define_msg! { pub ReservedKindName<'a> { name: &'a Name }:
     "ko" => "{name} 타입 이름은 예약되어 있으며 사용할 수 없습니다",
     _    => "The type name {name} is reserved and cannot be used",

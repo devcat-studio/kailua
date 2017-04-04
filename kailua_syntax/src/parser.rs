@@ -244,6 +244,52 @@ impl<'a, T> ReportMore<'a, T> {
     }
 }
 
+// simplify the common case of errors on the next lookahead (possibly read temporarily)
+macro_rules! error_with {
+    ($slf:expr, $tok:expr, m::$msg:ident $({ $($k:ident: $v:expr),* $(,)* })*) => ({
+        let tok = $tok;
+        $slf.error(tok.1.span, m::$msg { $($($k: $v,)*)* read: &tok.1.base }).done()?;
+        $slf.unread(tok);
+    });
+
+    ($slf:expr, m::$msg:ident $({ $($k:ident: $v:expr),* $(,)* })*) => (
+        error_with!($slf, $slf.read(), m::$msg $({ $($k: $v),* })*)
+    );
+}
+
+// it is very common to read a token, match against patterns and unread it only when unmatched.
+// since this is very prone to error (e.g. forgetting to unread can easily cause EOF errors),
+// we automate the entire process with a macro.
+macro_rules! match_next {
+    (
+        $slf:expr;
+        // this set of arms can consume a read token (and optionally retrieve a span).
+        // the unreading information (the first of the tuple) is discarded.
+        $($(Tok::$ct:ident$(($($cp:pat),*))*)|+ $(in $csp:ident)* => $ce:expr;)*
+        // this set of arms can't consume a read token, but it can match against that.
+        // unreading information (the first of the tuple) is invisible and given to `unread` as is.
+        // if the message is present, the error is reported with that message before unreading.
+        // the body is run after unreading; it has no access to the matched component.
+        $('unread: $($up:pat)|+ $(, m::$um:ident)* => $ue:expr);* $(;)*
+    ) => (
+        match $slf.read() {
+            $(
+                $((_, Spanned { base: Tok::$ct$(($($cp),*))*, span: _span }))|+ => {
+                    $(let $csp = _span;)*
+                    $ce
+                },
+            )*
+            $(
+                $(tok @ (_, Spanned { base: $up, .. }))|+ => {
+                    $($slf.error(tok.1.span, m::$um { read: &tok.1.base }).done()?;)*
+                    $slf.unread(tok);
+                    $ue
+                },
+            )*
+        }
+    )
+}
+
 impl<'a> Parser<'a> {
     pub fn new(iter: &'a mut Iterator<Item=NestedToken>, report: &'a Report) -> Parser<'a> {
         let mut parser = Parser {
@@ -399,8 +445,7 @@ impl<'a> Parser<'a> {
     fn expect<Tok: Expectable>(&mut self, tok: Tok) -> Result<()> {
         let read = self.read();
         if !tok.check_token(&read.1.base) {
-            self.error(read.1.span, m::ExpectFailed { expected: tok, read: &read.1.base }).done()?;
-            self.unread(read);
+            error_with!(self, read, m::ExpectFailed { expected: tok });
             Err(Stop::Recover)
         } else {
             Ok(())
@@ -751,39 +796,24 @@ impl<'a> Parser<'a> {
     }
 
     fn try_parse_name(&mut self) -> Option<Spanned<Name>> {
-        let tok = self.read();
-        if let Tok::Name(name) = tok.1.base {
-            Some(Name::from(name).with_loc(tok.1.span))
-        } else {
-            self.unread(tok);
-            None
+        match_next! { self;
+            Tok::Name(name) in span => Some(Name::from(name).with_loc(span));
+            'unread: _ => None;
         }
     }
 
     fn parse_name(&mut self) -> Result<Spanned<Name>> {
-        let tok = self.read();
-        if let Tok::Name(name) = tok.1.base {
-            Ok(Name::from(name).with_loc(tok.1.span))
-        } else {
-            self.error(tok.1.span, m::NoName { read: &tok.1.base }).done()?;
-            self.unread(tok);
-            Err(Stop::Recover)
+        match_next! { self;
+            Tok::Name(name) in span => Ok(Name::from(name).with_loc(span));
+            'unread: _, m::NoName => Err(Stop::Recover);
         }
     }
 
     fn try_name_or_keyword(&mut self) -> Result<Spanned<Name>> {
-        match self.read() {
-            (_, Spanned { base: Tok::Name(name), span }) => {
-                Ok(Name::from(name).with_loc(span))
-            }
-            (_, Spanned { base: Tok::Keyword(keyword), span }) => {
-                Ok(Name::from(keyword.name()).with_loc(span))
-            }
-            tok => {
-                self.error(tok.1.span, m::NoName { read: &tok.1.base }).done()?;
-                self.unread(tok);
-                Err(Stop::Recover)
-            }
+        match_next! { self;
+            Tok::Name(name) in span => Ok(Name::from(name).with_loc(span));
+            Tok::Keyword(keyword) in span => Ok(Name::from(keyword.name()).with_loc(span));
+            'unread: _, m::NoName => Err(Stop::Recover);
         }
     }
 
@@ -958,25 +988,25 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let stmt = match self.read() {
-            (_, Spanned { base: Tok::Keyword(Keyword::Do), .. }) => {
+        let stmt = match_next! { self;
+            Tok::Keyword(Keyword::Do) => {
                 let block = self.recover(Self::parse_block, Keyword::End)?;
                 Box::new(St::Do(block))
-            }
+            };
 
-            (_, Spanned { base: Tok::Keyword(Keyword::While), .. }) => {
+            Tok::Keyword(Keyword::While) => {
                 let cond = self.recover(Self::parse_exp, Keyword::Do)?;
                 let block = self.recover(Self::parse_block, Keyword::End)?;
                 Box::new(St::While(cond, block))
-            }
+            };
 
-            (_, Spanned { base: Tok::Keyword(Keyword::Repeat), .. }) => {
+            Tok::Keyword(Keyword::Repeat) => {
                 let block = self.recover(Self::parse_block, Keyword::Until)?;
                 let cond = self.parse_exp()?;
                 Box::new(St::Repeat(block, cond))
-            }
+            };
 
-            (_, Spanned { base: Tok::Keyword(Keyword::If), .. }) => {
+            Tok::Keyword(Keyword::If) => {
                 let mut blocks = Vec::new();
                 let mut lastblock = self.recover(|parser| {
                     let cond = parser.recover(Self::parse_exp, Keyword::Then)?;
@@ -1004,13 +1034,13 @@ impl<'a> Parser<'a> {
                     blocks.last_mut().unwrap().span |= self.last_pos().into();
                 }
                 Box::new(St::If(blocks, lastblock))
-            }
+            };
 
-            (_, Spanned { base: Tok::Keyword(Keyword::For), .. }) => {
+            Tok::Keyword(Keyword::For) => {
                 let name = self.parse_name()?;
-                match self.read() {
+                match_next! { self;
                     // for NAME "=" ...
-                    (_, Spanned { base: Tok::Punct(Punct::Eq), .. }) => {
+                    Tok::Punct(Punct::Eq) => {
                         let start = self.parse_exp()?;
                         self.expect(Punct::Comma)?;
                         let end = self.parse_exp()?;
@@ -1025,32 +1055,30 @@ impl<'a> Parser<'a> {
                         });
                         let block = self.recover(|_| block, Keyword::End)?;
                         Box::new(St::For(id, start, end, step, scope, block))
-                    }
+                    };
 
                     // for NAME in ...
-                    (_, Spanned { base: Tok::Keyword(Keyword::In), .. }) => {
+                    Tok::Keyword(Keyword::In) => {
                         let span = name.span;
                         self.parse_stmt_for_in(vec![name].with_loc(span))?
-                    }
+                    };
 
                     // for NAME [SPEC] "," ... in ...
-                    (_, Spanned { base: Tok::Punct(Punct::Comma), .. }) => {
+                    Tok::Punct(Punct::Comma) => {
                         let mut vars = vec![name];
                         let span = self.scan_list(Self::parse_name, |name| vars.push(name))?;
                         self.expect(Keyword::In)?;
                         self.parse_stmt_for_in(vars.with_loc(span))?
-                    }
+                    };
 
-                    tok => {
-                        self.error(tok.1.span, m::NoForInSep { read: &tok.1.base }).done()?;
-                        self.unread(tok);
+                    'unread: _, m::NoForInSep => {
                         self.recover_to_close();
                         Recover::recover()
-                    }
+                    };
                 }
-            }
+            };
 
-            (_, Spanned { base: Tok::Keyword(Keyword::Function), .. }) => {
+            Tok::Keyword(Keyword::Function) => {
                 let namesbegin = self.pos();
                 let rootname = self.parse_name()?.map(|name| self.resolve_name(name));
                 if let NameRef::Global(ref name) = rootname.base {
@@ -1095,12 +1123,12 @@ impl<'a> Parser<'a> {
                 } else {
                     Box::new(St::Oops)
                 }
-            }
+            };
 
-            (_, Spanned { base: Tok::Keyword(Keyword::Local), .. }) => {
-                match self.read() {
+            Tok::Keyword(Keyword::Local) => {
+                match_next! { self;
                     // local function ...
-                    (_, Spanned { base: Tok::Keyword(Keyword::Function), .. }) => {
+                    Tok::Keyword(Keyword::Function) => {
                         let name = self.parse_name()?;
                         if let Some((_, sig, scope, body)) = self.parse_func_body(false,
                                                                                   funcspec)? {
@@ -1112,12 +1140,10 @@ impl<'a> Parser<'a> {
                         } else {
                             Box::new(St::Oops)
                         }
-                    }
+                    };
 
                     // local NAME ...
-                    tok @ (_, Spanned { base: Tok::Name(_), .. }) => {
-                        self.unread(tok);
-
+                    'unread: Tok::Name(_) => {
                         // forbid `--v ...` then `local NAME ...`
                         if let Some(ref funcspec) = funcspec {
                             self.error(funcspec.span, m::MissingFuncDeclAfterFuncSpec {}).done()?;
@@ -1156,30 +1182,21 @@ impl<'a> Parser<'a> {
                             }).collect()
                         });
                         Box::new(St::Local(namerefs, exps, sibling_scope))
-                    }
+                    };
 
-                    tok => {
-                        self.error(tok.1.span, m::NoFuncOrNameAfterLocal { read: &tok.1.base })
-                            .done()?;
-                        self.unread(tok);
-                        Box::new(St::Oops)
-                    }
+                    'unread: _, m::NoFuncOrNameAfterLocal => Box::new(St::Oops);
                 }
-            }
+            };
 
-            (_, Spanned { base: Tok::Keyword(Keyword::Return), .. }) => {
+            Tok::Keyword(Keyword::Return) => {
                 let mut exps = Vec::new();
                 let (span, _) = self.try_scan_explist(|exp| exps.push(exp))?;
                 Box::new(St::Return(exps.with_loc(span)))
-            }
+            };
 
-            (_, Spanned { base: Tok::Keyword(Keyword::Break), .. }) => {
-                Box::new(St::Break)
-            }
+            Tok::Keyword(Keyword::Break) => Box::new(St::Break);
 
-            tok => {
-                self.unread(tok);
-
+            'unread: _ => {
                 // only prefixexp can appear at this position, but it is very common that
                 // incomplete expression results in a (partial) non-prefix expression.
                 let exp = match self.try_parse_exp()? {
@@ -1240,9 +1257,7 @@ impl<'a> Parser<'a> {
                         // the equal sign is mandatory, so ensure it here
                         let mut lhs = lhs.with_loc(span);
                         if !eq && !self.may_expect(Punct::Eq) {
-                            let read = self.read();
-                            self.error(&read.1, m::NoEq { read: &read.1 }).done()?;
-                            self.unread(read);
+                            error_with!(self, m::NoEq);
 
                             // assume that it is like an assignment but without rhs
                             Box::new(St::Assign(lhs, None))
@@ -1274,7 +1289,7 @@ impl<'a> Parser<'a> {
                         Box::new(St::Void(exp))
                     }
                 }
-            }
+            };
         };
 
         Ok(Some(stmt.with_loc(begin..self.last_pos())))
@@ -1314,15 +1329,14 @@ impl<'a> Parser<'a> {
         //
         // each parsing code is scattered throughout the following block.
 
-        match self.read() {
-            (_, Spanned { base: Tok::Punct(Punct::LParen), .. }) => {}
-            tok => {
-                // if no parentheses are found, the function parsing fails and should return Oops
-                self.error(&tok.1, m::NoFuncArgs { read: &tok.1 }).done()?;
-                self.unread(tok);
+        match_next! { self;
+            Tok::Punct(Punct::LParen) => {};
+
+            // if no parentheses are found, the function parsing fails and should return Oops
+            'unread: _, m::NoFuncArgs => {
                 self.recover_to_close();
                 return Ok(None);
-            }
+            };
         }
 
         let begin = self.pos();
@@ -1330,11 +1344,12 @@ impl<'a> Parser<'a> {
         let mut variadic = None;
         let end = self.recover_with(|parser| {
             let mut name = None;
-            match parser.read() {
-                (_, Spanned { base: Tok::Punct(Punct::DotDotDot), span }) => {
+            match_next! { parser;
+                Tok::Punct(Punct::DotDotDot) in span => {
                     variadic = Some(span);
-                }
-                (_, Spanned { base: Tok::Name(name0), span }) => {
+                };
+
+                Tok::Name(name0) in span => {
                     name = Some(Name::from(name0).with_loc(span));
                     spec = parser.try_parse_kailua_type_spec()?; // 1)
                     while parser.may_expect(Punct::Comma) {
@@ -1350,15 +1365,11 @@ impl<'a> Parser<'a> {
                             spec = parser.try_parse_kailua_type_spec()?; // 1)
                         }
                     }
-                }
-                tok @ (_, Spanned { base: Tok::Punct(Punct::RParen), .. }) => {
-                    parser.unread(tok);
-                }
-                tok => {
-                    parser.error(tok.1.span, m::BadFuncArg { read: &tok.1.base }).done()?;
-                    parser.unread(tok);
-                    return Err(Stop::Recover);
-                }
+                };
+
+                'unread: Tok::Punct(Punct::RParen) => {};
+
+                'unread: _, m::BadFuncArg => return Err(Stop::Recover);
             }
 
             let end;
@@ -1510,20 +1521,15 @@ impl<'a> Parser<'a> {
                 let item = scan(parser)?;
                 items.push(item);
 
-                match parser.read() {
+                match_next! { parser;
                     // `,` [`}`]
                     // `;` [`}`]
-                    (_, Spanned { base: Tok::Punct(Punct::Comma), .. }) |
-                    (_, Spanned { base: Tok::Punct(Punct::Semicolon), .. }) => {}
+                    Tok::Punct(Punct::Comma) | Tok::Punct(Punct::Semicolon) => {};
 
                     // `}`
-                    (_, Spanned { base: Tok::Punct(Punct::RBrace), .. }) => break,
+                    Tok::Punct(Punct::RBrace) => break;
 
-                    tok => {
-                        parser.error(tok.1.span, m::NoTableSep { read: &tok.1.base }).done()?;
-                        parser.unread(tok);
-                        return Err(Stop::Recover);
-                    }
+                    'unread: _, m::NoTableSep => return Err(Stop::Recover);
                 }
             }
             Ok(())
@@ -1544,6 +1550,7 @@ impl<'a> Parser<'a> {
                     Ok((Some(key), value))
                 } else {
                     // try to disambiguate `NAME "=" exp` from `exp`
+                    // (needs a conditional move, so it cannot be `match_next!`)
                     let key = match parser.read() {
                         (side, Spanned { base: Tok::Name(name), span }) => {
                             if parser.may_expect(Punct::Eq) {
@@ -1568,26 +1575,25 @@ impl<'a> Parser<'a> {
 
     fn try_parse_args(&mut self) -> Result<Option<Spanned<Args>>> {
         let begin = self.pos();
-        match self.read() {
-            (_, Spanned { base: Tok::Punct(Punct::LParen), .. }) => {
+
+        match_next! { self;
+            Tok::Punct(Punct::LParen) => {
                 let mut args = Vec::new();
                 let (span, _) = self.recover_with(
                     |p| p.try_scan_explist(|exp| args.push(exp)), Punct::RParen,
                     || (Span::dummy(), false)
                 )?;
                 Ok(Some(Args::List(args).with_loc(span)))
-            }
-            (_, Spanned { base: Tok::Str(s), span }) => {
-                Ok(Some(Args::Str(s.into()).with_loc(span)))
-            }
-            (_, Spanned { base: Tok::Punct(Punct::LBrace), .. }) => {
+            };
+
+            Tok::Str(s) in span => Ok(Some(Args::Str(s.into()).with_loc(span)));
+
+            Tok::Punct(Punct::LBrace) => {
                 let fields = self.parse_table_body()?;
                 Ok(Some(Args::Table(fields).with_loc(begin..self.last_pos())))
-            }
-            tok => {
-                self.unread(tok);
-                Ok(None)
-            }
+            };
+
+            'unread: _ => Ok(None);
         }
     }
 
@@ -1595,52 +1601,46 @@ impl<'a> Parser<'a> {
         // any prefixexp starts with name or parenthesized exp
         let mut exp;
         let begin = self.pos();
-        match self.read() {
-            (_, Spanned { base: Tok::Punct(Punct::LParen), .. }) => {
+        match_next! { self;
+            Tok::Punct(Punct::LParen) => {
                 let exp_ = self.recover(Self::parse_exp, Punct::RParen)?;
                 exp = Box::new(Ex::Exp(exp_)).with_loc(begin..self.last_pos());
-            }
-            (_, Spanned { base: Tok::Name(name), span }) => {
+            };
+
+            Tok::Name(name) in span => {
                 let nameref = self.resolve_name(Name::from(name));
                 exp = Box::new(Ex::Var(nameref.with_loc(span))).with_loc(span);
-            }
-            tok => {
-                self.unread(tok);
-                return Ok(None);
-            }
+            };
+
+            'unread: _ => return Ok(None);
         }
 
         // parse any postfix attachments
         loop {
-            match self.read() {
+            match_next! { self;
                 // prefixexp "." ...
-                (_, Spanned { base: Tok::Punct(Punct::Dot), .. }) => {
+                Tok::Punct(Punct::Dot) => {
                     if let Some(name) = self.try_parse_name() {
                         exp = Box::new(Ex::IndexName(exp, name)).with_loc(begin..self.last_pos());
                     } else {
-                        let tok = self.read();
-                        self.error(tok.1.span, m::NoNameAfterExpDot { read: &tok.1.base }).done()?;
-                        self.unread(tok);
+                        error_with!(self, m::NoNameAfterExpDot);
                         break;
                     }
-                }
+                };
 
                 // prefixexp "[" ...
-                (_, Spanned { base: Tok::Punct(Punct::LBracket), .. }) => {
+                Tok::Punct(Punct::LBracket) => {
                     let exp2 = self.recover(Self::parse_exp, Punct::RBracket)?;
                     let span = begin..self.last_pos();
                     exp = Box::new(Ex::Index(exp, exp2)).with_loc(span);
-                }
+                };
 
                 // prefixexp ":" ...
-                (_, Spanned { base: Tok::Punct(Punct::Colon), .. }) => {
+                Tok::Punct(Punct::Colon) => {
                     let name = if let Some(name) = self.try_parse_name() {
                         name
                     } else {
-                        let tok = self.read();
-                        self.error(tok.1.span, m::NoArgsAfterExpColon { read: &tok.1.base })
-                            .done()?;
-                        self.unread(tok);
+                        error_with!(self, m::NoArgsAfterExpColon);
                         break;
                     };
                     let namesend = self.last_pos();
@@ -1650,22 +1650,18 @@ impl<'a> Parser<'a> {
                         let span = begin..self.last_pos();
                         exp = Box::new(Ex::MethodCall(expname, args)).with_loc(span);
                     } else {
-                        let tok = self.read();
-                        self.error(tok.1.span, m::NoArgsAfterExpColonName { read: &tok.1.base })
-                            .done()?;
-                        self.unread(tok);
+                        error_with!(self, m::NoArgsAfterExpColonName);
 
                         // convert `prefixexp ":" NAME` into `prefixexp "." NAME`
                         exp = Box::new(Ex::IndexName(exp, name)).with_loc(begin..namesend);
                         break;
                     }
-                }
+                };
 
                 // prefixexp STR
                 // prefixexp "("
                 // prefixexp "{"
-                tok => {
-                    self.unread(tok);
+                'unread: _ => {
                     if let Some(args) = self.try_parse_args()? {
                         let span = begin..self.last_pos();
                         exp = Box::new(Ex::FuncCall(exp, args)).with_loc(span);
@@ -1673,8 +1669,9 @@ impl<'a> Parser<'a> {
                     }
                     break;
                 }
-            }
+            };
         }
+
         Ok(Some(exp))
     }
 
@@ -1715,37 +1712,28 @@ impl<'a> Parser<'a> {
             }
         }
 
-        match self.read() {
-            (_, Spanned { base: Tok::Keyword(Keyword::Nil), span }) =>
-                Ok(Some(Box::new(Ex::Nil).with_loc(span))),
-            (_, Spanned { base: Tok::Keyword(Keyword::False), span }) =>
-                Ok(Some(Box::new(Ex::False).with_loc(span))),
-            (_, Spanned { base: Tok::Keyword(Keyword::True), span }) =>
-                Ok(Some(Box::new(Ex::True).with_loc(span))),
-            (_, Spanned { base: Tok::Num(v), span }) =>
-                Ok(Some(Box::new(Ex::Num(v)).with_loc(span))),
-            (_, Spanned { base: Tok::Str(s), span }) =>
-                Ok(Some(Box::new(Ex::Str(s.into())).with_loc(span))),
-            (_, Spanned { base: Tok::Punct(Punct::DotDotDot), span }) =>
-                Ok(Some(Box::new(Ex::Varargs).with_loc(span))),
+        match_next! { self;
+            Tok::Keyword(Keyword::Nil) in span => Ok(Some(Box::new(Ex::Nil).with_loc(span)));
+            Tok::Keyword(Keyword::False) in span => Ok(Some(Box::new(Ex::False).with_loc(span)));
+            Tok::Keyword(Keyword::True) in span => Ok(Some(Box::new(Ex::True).with_loc(span)));
+            Tok::Num(v) in span => Ok(Some(Box::new(Ex::Num(v)).with_loc(span)));
+            Tok::Str(s) in span => Ok(Some(Box::new(Ex::Str(s.into())).with_loc(span)));
+            Tok::Punct(Punct::DotDotDot) in span => Ok(Some(Box::new(Ex::Varargs).with_loc(span)));
 
-            (_, Spanned { base: Tok::Keyword(Keyword::Function), .. }) => {
+            Tok::Keyword(Keyword::Function) => {
                 let exp = match self.parse_func_body(false, funcspec)? {
                     Some((_, sig, scope, body)) => Ex::Func(sig, scope, body),
                     None => Ex::Oops,
                 };
                 Ok(Some(Box::new(exp).with_loc(begin..self.last_pos())))
-            }
+            };
 
-            (_, Spanned { base: Tok::Punct(Punct::LBrace), .. }) => {
+            Tok::Punct(Punct::LBrace) => {
                 let table = self.parse_table_body()?;
                 Ok(Some(Box::new(Ex::Table(table)).with_loc(begin..self.last_pos())))
-            }
+            };
 
-            tok => {
-                self.unread(tok);
-                self.try_parse_prefix_exp()
-            }
+            'unread: _ => self.try_parse_prefix_exp();
         }
     }
 
@@ -1865,9 +1853,7 @@ impl<'a> Parser<'a> {
         if let Some(exp) = self.try_parse_partial_exp(minprec)? {
             Ok(exp)
         } else {
-            let tok = self.read();
-            self.error(tok.1.span, m::NoExp { read: &tok.1.base }).done()?;
-            self.unread(tok);
+            error_with!(self, m::NoExp);
             Ok(Box::new(Ex::Oops).with_loc(self.last_pos()))
         }
     }
@@ -1893,9 +1879,7 @@ impl<'a> Parser<'a> {
                 }
             }
         } else {
-            let tok = self.read();
-            self.error(tok.1.span, m::NoVar { read: &tok.1.base }).done()?;
-            self.unread(tok);
+            error_with!(self, m::NoVar);
             Err(Stop::Recover)
         }
     }
@@ -2042,48 +2026,47 @@ impl<'a> Parser<'a> {
 
             // NAME is a subset of KIND; distinguish by the secondary token
             let begin = parser.pos();
-            let tok = parser.read();
-            if let Tok::Name(name) = tok.1.base {
-                let name = Name::from(name).with_loc(tok.1.span);
-                if parser.lookahead(Punct::Colon) {
-                    match seen.entry(name.base.clone()) {
-                        hash_map::Entry::Occupied(e) => {
-                            parser.error(tok.1.span, m::DuplicateArgNameInFuncKind { name: &name })
-                                  .note(*e.get(), m::FirstArgNameInFuncKind {})
-                                  .done()?;
+            match_next! { parser;
+                Tok::Name(name) in span => {
+                    let name = Name::from(name).with_loc(span);
+                    if parser.lookahead(Punct::Colon) {
+                        match seen.entry(name.base.clone()) {
+                            hash_map::Entry::Occupied(e) => {
+                                parser.error(span, m::DuplicateArgNameInFuncKind { name: &name })
+                                      .note(*e.get(), m::FirstArgNameInFuncKind {})
+                                      .done()?;
+                            }
+                            hash_map::Entry::Vacant(e) => {
+                                e.insert(name.span);
+                            }
                         }
-                        hash_map::Entry::Vacant(e) => {
-                            e.insert(name.span);
-                        }
-                    }
 
-                    parser.expect(Punct::Colon)?;
-                    let kind = parser.parse_kailua_kind()?;
-                    Ok(Some((Some(name), kind)))
-                } else {
-                    let kind = parser.parse_kailua_kind_after_name(begin, name)?;
-                    Ok(Some((None, kind)))
-                }
-            } else {
-                parser.unread(tok);
-                let kind = parser.try_parse_kailua_kind()?;
-                Ok(kind.map(|kind| (None, kind)))
+                        parser.expect(Punct::Colon)?;
+                        let kind = parser.parse_kailua_kind()?;
+                        Ok(Some((Some(name), kind)))
+                    } else {
+                        let kind = parser.parse_kailua_kind_after_name(begin, name)?;
+                        Ok(Some((None, kind)))
+                    }
+                };
+
+                'unread: _ => {
+                    let kind = parser.try_parse_kailua_kind()?;
+                    Ok(kind.map(|kind| (None, kind)))
+                };
             }
         };
 
         // try to read the first [NAME ":"] KIND
         let namekind = match try_parse_named_kind(self)? {
             Some(namekind) => namekind,
-            None => match self.read() {
-                (_, Spanned { base: Tok::Punct(Punct::DotDotDot), span }) => {
+            None => match_next! { self;
+                Tok::Punct(Punct::DotDotDot) in span => {
                     self.error(span, m::NoKindBeforeEllipsis {}).done()?;
                     // pretend that (an invalid) `(...)` is `(?...)`
                     return Ok(Seq { head: head, tail: Some(Box::new(K::Dynamic).with_loc(span)) });
-                }
-                tok => {
-                    self.unread(tok);
-                    return Ok(Seq { head: head, tail: None });
-                }
+                };
+                'unread: _ => return Ok(Seq { head: head, tail: None });
             },
         };
         head.push(namekind);
@@ -2092,18 +2075,14 @@ impl<'a> Parser<'a> {
         while self.may_expect(Punct::Comma) {
             let namekind = match try_parse_named_kind(self)? {
                 Some(namekind) => namekind,
-                None => match self.read() {
-                    (_, Spanned { base: Tok::Punct(Punct::DotDotDot), span }) => {
+                None => match_next! { self;
+                    Tok::Punct(Punct::DotDotDot) in span => {
                         self.error(span, m::NoKindBeforeEllipsis {}).done()?;
                         // pretend that (an invalid) `(<explist>, ...)` is `(<explist>, ?...)`
                         return Ok(Seq { head: head,
                                         tail: Some(Box::new(K::Dynamic).with_loc(span)) });
-                    }
-                    tok => {
-                        self.error(tok.1.span, m::NoKind { read: &tok.1.base }).done()?;
-                        self.unread(tok);
-                        (None, Box::new(K::Oops).without_loc())
-                    }
+                    };
+                    'unread: _, m::NoKind => (None, Box::new(K::Oops).without_loc());
                 },
             };
             head.push(namekind);
@@ -2232,8 +2211,7 @@ impl<'a> Parser<'a> {
                     // XXX this span is bad, but we are unlikely to use this span anyway...
                     self.unread((side, Tok::Punct(Punct::Gt).with_loc(span)));
                 } else {
-                    self.error(tok.1.span, m::NoKindParamsClose { read: &tok.1.base }).done()?;
-                    self.unread(tok);
+                    error_with!(self, tok, m::NoKindParamsClose);
                 }
             }
             let end = self.last_pos();
@@ -2248,9 +2226,7 @@ impl<'a> Parser<'a> {
         if let Some(params) = self.try_parse_kailua_kind_params()? {
             Ok(params)
         } else {
-            let tok = self.read();
-            self.error(tok.1.span, m::NoKindParams { read: &tok.1.base }).done()?;
-            self.unread(tok);
+            error_with!(self, m::NoKindParams);
             Err(Stop::Recover)
         }
     }
@@ -2271,14 +2247,9 @@ impl<'a> Parser<'a> {
                                     name: Spanned<Name>) -> Result<Spanned<Kind>> {
         let kind = if *name.base == b"error"[..] {
             // may follow an error reason
-            let reason = match self.read() {
-                (_, Spanned { base: Tok::Str(s), span }) => {
-                    Some(Str::from(s).with_loc(span))
-                }
-                tok => {
-                    self.unread(tok);
-                    None
-                }
+            let reason = match_next! { self;
+                Tok::Str(s) in span => Some(Str::from(s).with_loc(span));
+                'unread: _ => None;
             };
             Box::new(K::Error(reason)).with_loc(name.span)
         } else {
@@ -2305,8 +2276,8 @@ impl<'a> Parser<'a> {
     fn try_parse_kailua_atomic_kind_seq(&mut self) -> Result<Option<AtomicKind>> {
         let begin = self.pos();
 
-        let kind = match self.read() {
-            (_, Spanned { base: Tok::Keyword(Keyword::Function), span }) => {
+        let kind = match_next! { self;
+            Tok::Keyword(Keyword::Function) in span => {
                 // either a "function" type or a function signature
                 if self.lookahead(Punct::LParen) {
                     // function `(` ... `)` [`-->` ...]
@@ -2317,9 +2288,9 @@ impl<'a> Parser<'a> {
                 } else {
                     Box::new(K::Function).with_loc(span)
                 }
-            }
+            };
 
-            (_, Spanned { base: Tok::Punct(Punct::LParen), .. }) => {
+            Tok::Punct(Punct::LParen) => {
                 let mut args = self.parse_kailua_kindlist(false)?;
                 self.expect(Punct::RParen)?;
                 if args.head.len() != 1 || args.tail.is_some() {
@@ -2332,103 +2303,99 @@ impl<'a> Parser<'a> {
                 } else {
                     args.head.pop().unwrap().1
                 }
-            }
+            };
 
-            (_, Spanned { base: Tok::Punct(Punct::LBrace), .. }) => {
-                let kind = match self.read() {
+            Tok::Punct(Punct::LBrace) => {
+                // "{" NAME ":" MODF KIND {"," NAME ":" MODF KIND} ["," "..."] "}"
+                // we have already read up to the first NAME
+                let parse_rec = |parser: &mut Self, first_name: Spanned<Name>| -> Result<K> {
+                    let mut seen = HashMap::new(); // value denotes the first span
+                    let mut first_name = Some(first_name);
+                    let (extensible, fields) = parser.scan_tabular_body(true, |parser| {
+                        let name = if let Some(name) = first_name.take() {
+                            name
+                        } else {
+                            parser.parse_name()?
+                        };
+                        match seen.entry(name.base.clone()) {
+                            hash_map::Entry::Occupied(e) => {
+                                parser.error(name.span,
+                                             m::DuplicateFieldNameInRec { name: &name.base })
+                                      .note(*e.get(), m::FirstFieldNameInRec {})
+                                      .done()?;
+                            }
+                            hash_map::Entry::Vacant(e) => {
+                                e.insert(name.span);
+                            }
+                        }
+                        let name = Str::from(name.base).with_loc(name.span);
+                        parser.expect(Punct::Colon)?;
+                        let slotkind = parser.parse_kailua_slotkind()?;
+                        Ok((name, slotkind))
+                    })?;
+                    Ok(K::Record(fields, extensible))
+                };
+
+                // "{" MODF KIND "," [MODF KIND {"," MODF KIND}] "}"
+                // we have already read up to the first KIND
+                let parse_tup = |parser: &mut Self,
+                                 first_slotkind: Spanned<SlotKind>| -> Result<K> {
+                    let mut first_slotkind = Some(first_slotkind);
+                    let (_, mut fields) = parser.scan_tabular_body(false, |parser| {
+                        // fake the first SlotKind read (but mind that this closure
+                        // can never be called if the lookahead is `}`)
+                        if let Some(slotkind) = first_slotkind.take() {
+                            Ok(slotkind)
+                        } else {
+                            parser.parse_kailua_slotkind()
+                        }
+                    })?;
+                    if let Some(slotkind) = first_slotkind {
+                        // ...therefore this can happen for a valid code
+                        assert!(fields.is_empty());
+                        fields.push(slotkind);
+                    }
+                    Ok(K::Tuple(fields))
+                };
+
+                let kind = match_next! { self;
                     // "{" "}"
-                    (_, Spanned { base: Tok::Punct(Punct::RBrace), .. }) =>
-                        Box::new(K::EmptyTable),
+                    Tok::Punct(Punct::RBrace) => K::EmptyTable;
 
                     // "{" "..." "}"
-                    (_, Spanned { base: Tok::Punct(Punct::DotDotDot), .. }) => {
+                    Tok::Punct(Punct::DotDotDot) => {
                         self.expect(Punct::RBrace)?;
-                        Box::new(K::Record(Vec::new(), true))
-                    },
+                        K::Record(Vec::new(), true)
+                    };
 
+                    // "{" NAME
                     // tuple or record -- distinguished by the secondary token
-                    tok => {
-                        #[derive(Debug)]
-                        enum TupOrRec { Tup(Spanned<SlotKind>), Rec(Spanned<Name>) }
-
-                        let tup_or_rec = if let Tok::Name(name) = tok.1.base {
-                            let name = Name::from(name).with_loc(tok.1.span);
-                            if self.lookahead(Punct::Colon) {
-                                TupOrRec::Rec(name)
-                            } else {
-                                TupOrRec::Tup(self.parse_kailua_slotkind_after_name(begin, name)?)
-                            }
+                    Tok::Name(name) in span => {
+                        let name = Name::from(name).with_loc(span);
+                        if self.lookahead(Punct::Colon) {
+                            parse_rec(self, name)?
                         } else {
-                            self.unread(tok);
-                            TupOrRec::Tup(self.parse_kailua_slotkind()?)
-                        };
-
-                        match tup_or_rec {
-                            // "{" NAME ":" MODF KIND {"," NAME ":" MODF KIND} ["," "..."] "}"
-                            // we have already read up to the first NAME
-                            TupOrRec::Rec(first_name) => {
-                                let mut seen = HashMap::new(); // value denotes the first span
-                                let mut first_name = Some(first_name);
-                                let (extensible, fields) = self.scan_tabular_body(true, |parser| {
-                                    let name = if let Some(name) = first_name.take() {
-                                        name
-                                    } else {
-                                        parser.parse_name()?
-                                    };
-                                    match seen.entry(name.base.clone()) {
-                                        hash_map::Entry::Occupied(e) => {
-                                            parser.error(name.span,
-                                                         m::DuplicateFieldNameInRec
-                                                             { name: &name.base })
-                                                  .note(*e.get(), m::FirstFieldNameInRec {})
-                                                  .done()?;
-                                        }
-                                        hash_map::Entry::Vacant(e) => {
-                                            e.insert(name.span);
-                                        }
-                                    }
-                                    let name = Str::from(name.base).with_loc(name.span);
-                                    parser.expect(Punct::Colon)?;
-                                    let slotkind = parser.parse_kailua_slotkind()?;
-                                    Ok((name, slotkind))
-                                })?;
-                                Box::new(K::Record(fields, extensible))
-                            },
-
-                            // "{" MODF KIND "," [MODF KIND {"," MODF KIND}] "}"
-                            // we have already read up to the first KIND
-                            TupOrRec::Tup(first_slotkind) => {
-                                let mut first_slotkind = Some(first_slotkind);
-                                let (_, mut fields) = self.scan_tabular_body(false, |parser| {
-                                    // fake the first SlotKind read (but mind that this closure
-                                    // can never be called if the lookahead is `}`)
-                                    if let Some(slotkind) = first_slotkind.take() {
-                                        Ok(slotkind)
-                                    } else {
-                                        parser.parse_kailua_slotkind()
-                                    }
-                                })?;
-                                if let Some(slotkind) = first_slotkind {
-                                    // ...therefore this can happen for a valid code
-                                    assert!(fields.is_empty());
-                                    fields.push(slotkind);
-                                }
-                                Box::new(K::Tuple(fields))
-                            },
+                            let slotkind = self.parse_kailua_slotkind_after_name(begin, name)?;
+                            parse_tup(self, slotkind)?
                         }
-                    }
+                    };
+
+                    // "{" KIND
+                    // definitely tuple
+                    'unread: _ => {
+                        let slotkind = self.parse_kailua_slotkind()?;
+                        parse_tup(self, slotkind)?
+                    };
                 };
-                kind.with_loc(begin..self.last_pos())
-            }
 
-            (_, Spanned { base: Tok::Keyword(Keyword::Nil), span }) =>
-                Box::new(K::Nil).with_loc(span),
-            (_, Spanned { base: Tok::Keyword(Keyword::True), span }) =>
-                Box::new(K::BooleanLit(true)).with_loc(span),
-            (_, Spanned { base: Tok::Keyword(Keyword::False), span }) =>
-                Box::new(K::BooleanLit(false)).with_loc(span),
+                Box::new(kind).with_loc(begin..self.last_pos())
+            };
 
-            (_, Spanned { base: Tok::Keyword(Keyword::Vector), .. }) => {
+            Tok::Keyword(Keyword::Nil) in span => Box::new(K::Nil).with_loc(span);
+            Tok::Keyword(Keyword::True) in span => Box::new(K::BooleanLit(true)).with_loc(span);
+            Tok::Keyword(Keyword::False) in span => Box::new(K::BooleanLit(false)).with_loc(span);
+
+            Tok::Keyword(Keyword::Vector) => {
                 let params = self.parse_kailua_kind_params()?;
                 if params.len() != 1 {
                     if !params.is_empty() {
@@ -2442,8 +2409,9 @@ impl<'a> Parser<'a> {
                     let v = SlotKind { modf: vm.base, kind: v }.with_loc(vspan);
                     Box::new(K::Array(v)).with_loc(begin..self.last_pos())
                 }
-            }
-            (_, Spanned { base: Tok::Keyword(Keyword::Map), .. }) => {
+            };
+
+            Tok::Keyword(Keyword::Map) => {
                 let params = self.parse_kailua_kind_params()?;
                 if params.len() != 2 {
                     if !params.is_empty() {
@@ -2461,27 +2429,26 @@ impl<'a> Parser<'a> {
                     let v = SlotKind { modf: vm.base, kind: v }.with_loc(vspan);
                     Box::new(K::Map(k, v)).with_loc(begin..self.last_pos())
                 }
-            }
+            };
 
-            (_, Spanned { base: Tok::Name(name), span }) => {
+            Tok::Name(name) in span => {
                 let name = Name::from(name).with_loc(span);
                 let kind = self.parse_kailua_kind_after_name(begin, name)?;
                 return Ok(Some(AtomicKind::One(kind)));
-            }
+            };
 
-            (_, Spanned { base: Tok::Num(v), span })
-                    if i32::MIN as f64 <= v && v <= i32::MAX as f64 && v.floor() == v => {
-                Box::new(K::IntegerLit(v as i32)).with_loc(span)
-            }
+            Tok::Num(v) in span => {
+                if i32::MIN as f64 <= v && v <= i32::MAX as f64 && v.floor() == v {
+                    Box::new(K::IntegerLit(v as i32)).with_loc(span)
+                } else {
+                    self.error(span, m::NonIntegerType {}).done()?;
+                    Box::new(K::Oops).with_loc(span)
+                }
+            };
 
-            (_, Spanned { base: Tok::Str(ref s), span }) => {
-                Box::new(K::StringLit(s.to_owned().into())).with_loc(span)
-            }
+            Tok::Str(s) in span => Box::new(K::StringLit(s.into())).with_loc(span);
 
-            tok => {
-                self.unread(tok);
-                return Ok(None);
-            }
+            'unread: _ => return Ok(None);
         };
 
         let kind = self.parse_kailua_kind_suffix(begin, kind);
@@ -2548,9 +2515,7 @@ impl<'a> Parser<'a> {
                         kinds.push(Recover::recover());
                     }
                     None => {
-                        let tok = self.read();
-                        self.error(tok.1.span, m::NoType { read: &tok.1.base }).done()?;
-                        self.unread(tok);
+                        error_with!(self, m::NoType);
                         break;
                     }
                 }
@@ -2595,9 +2560,7 @@ impl<'a> Parser<'a> {
         if let Some(kindseq) = self.try_parse_kailua_kind_seq()? {
             Ok(kindseq.base)
         } else {
-            let tok = self.read();
-            self.error(tok.1.span, m::NoTypeOrTypeSeq { read: &tok.1.base }).done()?;
-            self.unread(tok);
+            error_with!(self, m::NoTypeOrTypeSeq);
             Ok(Seq { head: vec![Recover::recover()], tail: None })
         }
     }
@@ -2606,23 +2569,18 @@ impl<'a> Parser<'a> {
         if let Some(kind) = self.try_parse_kailua_kind()? {
             Ok(kind)
         } else {
-            let tok = self.read();
-            self.error(tok.1.span, m::NoSingleType { read: &tok.1.base }).done()?;
-            self.unread(tok);
+            error_with!(self, m::NoSingleType);
             Err(Stop::Recover)
         }
     }
 
     fn parse_kailua_returns(&mut self) -> Result<Returns> {
-        match self.read() {
-            (_, Spanned { base: Tok::Punct(Punct::Bang), span }) => {
-                Ok(Returns::Never(span))
-            },
-            tok => {
-                self.unread(tok);
+        match_next! { self;
+            Tok::Punct(Punct::Bang) in span => Ok(Returns::Never(span));
+            'unread: _ => {
                 let seq = self.parse_kailua_kind_seq()?;
                 Ok(Returns::Seq(seq))
-            },
+            };
         }
     }
 
@@ -2759,19 +2717,14 @@ impl<'a> Parser<'a> {
 
                 // function "(" [NAME ":" KIND] {"," NAME ":" KIND} ["," "..."] ")" ["-->" KIND]
                 let begin = parser.pos();
-                let sigprefix = match parser.read() {
-                    (_, Spanned { base: Tok::Keyword(Keyword::Function), span }) =>
-                        Some(false.with_loc(span)),
-                    (_, Spanned { base: Tok::Keyword(Keyword::Method), span }) =>
-                        Some(true.with_loc(span)),
-                    tok => {
+                let sigprefix = match_next! { parser;
+                    Tok::Keyword(Keyword::Function) in span => Some(false.with_loc(span));
+                    Tok::Keyword(Keyword::Method) in span => Some(true.with_loc(span));
+                    'unread: _ => {
                         if !attrs_seen {
                             // force reading signatures if no attributes are present
-                            parser.error(tok.1.span,
-                                         m::NoFunctionOrMethodBeforeSig { read: &tok.1.base })
-                                  .done()?;
+                            error_with!(parser, m::NoFunctionOrMethodBeforeSig);
                         }
-                        parser.unread(tok);
                         None
                     }
                 };
@@ -2809,11 +2762,11 @@ impl<'a> Parser<'a> {
                 parser.begin_meta_comment(Punct::DashDashHash);
 
                 let mut sibling_scope = None;
-                let stmt = match parser.read() {
+                let stmt = match_next! { parser;
                     // assume [global] NAME ":" MODF KIND
                     // assume [static] NAME {"." NAME} ":" MODF KIND
                     // assume NAME {"." NAME} ":" MODF "method" ...
-                    (_, Spanned { base: Tok::Keyword(Keyword::Assume), .. }) => {
+                    Tok::Keyword(Keyword::Assume) => {
                         #[derive(Copy, Clone, Debug, PartialEq, Eq)]
                         enum Scope { Implied, Global, Static }
 
@@ -2944,17 +2897,17 @@ impl<'a> Parser<'a> {
                             };
                             Some(Box::new(st))
                         }
-                    }
+                    };
 
                     // open NAME
-                    (_, Spanned { base: Tok::Keyword(Keyword::Open), .. }) => {
+                    Tok::Keyword(Keyword::Open) => {
                         let name = parser.parse_name()?;
                         // TODO also set the parser option
                         Some(Box::new(St::KailuaOpen(name)))
-                    }
+                    };
 
                     // type [local | global] NAME = KIND
-                    (_, Spanned { base: Tok::Keyword(Keyword::Type), .. }) => {
+                    Tok::Keyword(Keyword::Type) => {
                         let typescope = if parser.may_expect(Keyword::Local) {
                             TypeScope::Local
                         } else if parser.may_expect(Keyword::Global) {
@@ -2987,12 +2940,9 @@ impl<'a> Parser<'a> {
                         }
 
                         Some(Box::new(St::KailuaType(typescope, name, kind)))
-                    }
+                    };
 
-                    tok => {
-                        parser.unread(tok);
-                        None // empty `--#` is valid
-                    }
+                    'unread: _ => None; // empty `--#` is valid
                 };
 
                 let end = parser.last_pos();
