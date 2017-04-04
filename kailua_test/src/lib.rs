@@ -424,6 +424,8 @@ pub struct Tester<T> {
     highlight_mismatch: bool,
     message_locale: Locale,
     stop_on_panic: bool,
+    force: bool,
+    ignore_features: bool,
     displayed_logs: Vec<TestLog>,
     num_tested: usize,
     num_passed: usize,
@@ -467,7 +469,14 @@ impl<T: Testing> Tester<T> {
             .arg(Arg::with_name("stop_on_panic")
                 .short("p")
                 .long("stop-on-panic")
+                .multiple(true)
                 .help("Stops on the first panic. Also enables `RUST_BACKTRACE=1`."))
+            .arg(Arg::with_name("force_level")
+                .short("f")
+                .long("force")
+                .multiple(true)
+                .help("Run the ignored tests. \
+                       Will also run feature-blocked tests when given twice."))
             .arg(Arg::with_name("filter"));
         let app = testing.augment_args(app);
         let matches = app.get_matches_from(args);
@@ -482,6 +491,7 @@ impl<T: Testing> Tester<T> {
         let message_locale = matches.value_of("message_locale").unwrap_or("en");
         let message_locale = Locale::new(message_locale).expect("unrecognized message locale");
         let stop_on_panic = matches.occurrences_of("stop_on_panic");
+        let force_level = matches.occurrences_of("force_level");
         testing.collect_args(&matches);
 
         // for the convenience
@@ -496,6 +506,7 @@ impl<T: Testing> Tester<T> {
             testing: testing, features: HashSet::new(), filter: filter, term: term,
             verbose: verbose, exact_diags: exact_diags, highlight_mismatch: highlight_mismatch,
             message_locale: message_locale, stop_on_panic: stop_on_panic > 0,
+            force: force_level > 0, ignore_features: force_level > 1,
             displayed_logs: Vec::new(), num_tested: 0, num_passed: 0, num_ignored: 0,
         }
     }
@@ -526,8 +537,8 @@ impl<T: Testing> Tester<T> {
                     self.note_file(&path);
                     file_noted = true;
                 }
-                let mut ignored = test.ignored;
-                if !test.features.is_empty() {
+                let mut ignored = test.ignored && !self.force;
+                if !test.features.is_empty() && !self.ignore_features {
                     ignored |= !test.features.iter().all(|feat| {
                         if feat.starts_with("!") {
                             !self.features.contains(&feat[1..])

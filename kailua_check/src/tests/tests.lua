@@ -3066,6 +3066,13 @@ local a = {1, 2, f()} --: {integer, integer}
 --@^ Error: This expression has an unknown number of return values, so cannot be used as the last value in the table constructor for records
 --! error
 
+--8<-- table-lit-hint-rec-subtype
+local s = 'string'
+local t = 42
+local a = {s, t} --: {any, any}
+local b = {'string', 42} --: {any, any}
+--! ok
+
 --8<-- table-lit-hint-vector-1
 local function f() --> (integer...)
 end
@@ -3095,10 +3102,10 @@ end
 
 local a = {1, 2} --: vector<const string>
 --@^ Error: The type `1` cannot be used as a value in the table constructor for the type `vector<const string>`
---@^^ Cause: `1` is not a subtype of `const string`
+--@^^ Cause: `1` is not a subtype of `string`
 --@^^^ Note: The other type originates here
 --@^^^^ Error: The type `2` cannot be used as a value in the table constructor for the type `vector<const string>`
---@^^^^^ Cause: `2` is not a subtype of `const string`
+--@^^^^^ Cause: `2` is not a subtype of `string`
 --@^^^^^^ Note: The other type originates here
 
 local b = {f()} --: vector<string>
@@ -3127,6 +3134,12 @@ local b = {[1] = 1, [3] = 3} --: vector<integer>
 --@^ Error: Keys in the table constructor for arrays have a missing key
 --! error
 
+--8<-- table-lit-hint-vector-subtype
+local s = 'string'
+local a = {s} --: vector<any>
+local b = {'string'} --: vector<any>
+--! ok
+
 --8<-- table-lit-hint-map-1
 local function f() --> (integer...)
 end
@@ -3144,10 +3157,10 @@ end
 
 local a = {1, 2} --: map<integer, const string>
 --@^ Error: The type `1` cannot be used as a value in the table constructor for the type `map<integer, const string>`
---@^^ Cause: `1` is not a subtype of `const string`
+--@^^ Cause: `1` is not a subtype of `string`
 --@^^^ Note: The other type originates here
 --@^^^^ Error: The type `2` cannot be used as a value in the table constructor for the type `map<integer, const string>`
---@^^^^^ Cause: `2` is not a subtype of `const string`
+--@^^^^^ Cause: `2` is not a subtype of `string`
 --@^^^^^^ Note: The other type originates here
 
 local b = {f()} --: map<integer, string>
@@ -3173,6 +3186,12 @@ local b = {f()} --: map<string, integer>
 --@^^ Cause: `integer` is not a subtype of `string`
 --@^^^ Note: The other type originates here
 --! error
+
+--8<-- table-lit-hint-map-subtype
+local s = 'string'
+local a = {a = 'string'} --: map<string, any>
+local b = {b = s} --: map<string, any>
+--! ok
 
 --8<-- table-lit-hint-table
 local function f() --> (function()...)

@@ -16,3 +16,10 @@ local x = 0x 3 --@< Error: Invalid number
 --&
 --! [Local([`x`$1], [3])$1]
 
+-->8-- regression-two-meta
+-- cargo-fuzz trophy case #8
+--v function
+--: {f
+=
+--!
+

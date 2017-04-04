@@ -25,3 +25,18 @@ u = {0} --@< Error: Cannot assign `{0, ...}` into `{<...>, ...}`
         --@^ Note: The other type originates here
 --! error
 
+-->8-- regression-recursive-tuple-tuple
+-- cargo-fuzz trophy case #7
+u = {}
+u = {u}
+u = {{u}}
+--! error
+
+-->8-- regression-recursive-broken-invariant
+-- cargo-fuzz trophy case #9
+u = {}
+u.u = e{}
+u.u = #u.u
+a = u.u - 1
+--! error
+

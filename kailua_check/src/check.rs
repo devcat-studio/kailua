@@ -2414,7 +2414,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 Target::Fields(explicit, ref mut fields) => {
                     if let Some(key) = litkey {
                         if !dup {
-                            fields.push((key, v.base));
+                            fields.push((key, Slot::just(v.unlift().clone())));
                         }
                     } else {
                         let mut more =
@@ -2443,7 +2443,9 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                         }
                     }
 
-                    if let Err(r) = v.assert_sub(vty, env.types()) {
+                    let v_ = v.as_ref().map(|s| s.unlift());
+                    let vty_ = vty.as_ref().map(|s| s.unlift());
+                    if let Err(r) = v_.assert_sub(&vty_, env.types()) {
                         env.error(&v,
                                   m::TableLitWithInvalidArrayValue {
                                       given: env.display(&v), value: env.display(vty),
@@ -2464,7 +2466,9 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                            .done()?;
                     }
 
-                    if let Err(r) = v.assert_sub(vty, env.types()) {
+                    let v_ = v.as_ref().map(|s| s.unlift());
+                    let vty_ = vty.as_ref().map(|s| s.unlift());
+                    if let Err(r) = v_.assert_sub(&vty_, env.types()) {
                         env.error(&v,
                                   m::TableLitWithInvalidMapValue {
                                       given: env.display(&v),

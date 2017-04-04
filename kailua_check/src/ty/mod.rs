@@ -209,7 +209,7 @@ impl<A: Lattice<B>, B> Lattice<Box<B>> for Box<A> {
     }
 }
 
-impl<A: Display, B: Display> Union<Spanned<B>> for Spanned<A> where A: Union<B> {
+impl<A, B> Union<Spanned<B>> for Spanned<A> where A: Union<B> {
     type Output = <A as Union<B>>::Output;
 
     fn union(&self, other: &Spanned<B>, explicit: bool,
@@ -220,7 +220,7 @@ impl<A: Display, B: Display> Union<Spanned<B>> for Spanned<A> where A: Union<B> 
     }
 }
 
-impl<A: Display, B: Display> Lattice<Spanned<B>> for Spanned<A> where A: Lattice<B> {
+impl<A, B> Lattice<Spanned<B>> for Spanned<A> where A: Lattice<B> {
     fn assert_sub(&self, other: &Spanned<B>, ctx: &mut TypeContext) -> TypeResult<()> {
         self.base.assert_sub(&other.base, ctx).map_err(|r| {
             r.not_sub_attach_span(self.span, other.span)

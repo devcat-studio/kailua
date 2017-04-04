@@ -157,6 +157,36 @@ impl<'a> Deref for UnliftedSlot<'a> {
     fn deref(&self) -> &Ty { &*self.0 }
 }
 
+impl<'a, 'b> Lattice<UnliftedSlot<'b>> for UnliftedSlot<'a> {
+    fn assert_sub(&self, other: &UnliftedSlot<'b>, ctx: &mut TypeContext) -> TypeResult<()> {
+        (**self).assert_sub(&**other, ctx)
+    }
+
+    fn assert_eq(&self, other: &UnliftedSlot<'b>, ctx: &mut TypeContext) -> TypeResult<()> {
+        (**self).assert_eq(&**other, ctx)
+    }
+}
+
+impl<'a> Lattice<Ty> for UnliftedSlot<'a> {
+    fn assert_sub(&self, other: &Ty, ctx: &mut TypeContext) -> TypeResult<()> {
+        (**self).assert_sub(other, ctx)
+    }
+
+    fn assert_eq(&self, other: &Ty, ctx: &mut TypeContext) -> TypeResult<()> {
+        (**self).assert_eq(other, ctx)
+    }
+}
+
+impl<'a, 'b> Lattice<T<'b>> for UnliftedSlot<'a> {
+    fn assert_sub(&self, other: &T<'b>, ctx: &mut TypeContext) -> TypeResult<()> {
+        (**self).assert_sub(other, ctx)
+    }
+
+    fn assert_eq(&self, other: &T<'b>, ctx: &mut TypeContext) -> TypeResult<()> {
+        (**self).assert_eq(other, ctx)
+    }
+}
+
 // slot types
 pub struct S {
     bits: AtomicUsize,
