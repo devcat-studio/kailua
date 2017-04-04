@@ -730,6 +730,26 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // skip one token at the current nesting, and also tokens at the inner nestings if any.
+    // for example, `(3, 4, 5)` or `--: string <newline>` will be consumed at once,
+    // while only the first token of `abc def` or `3/4` will be consumed,
+    // and `)` with a matching `(` won't be consumed (as it will end the current nesting).
+    // used for last-resort error recovery.
+    fn skip_token_at_current_nesting(&mut self) {
+        let init_depth = self.last_nesting_depth;
+        let init_serial = self.last_nesting_serial;
+        let tok = self.read();
+        let last_depth = self.last_nesting_depth;
+        let last_serial = self.last_nesting_serial;
+        if last_depth < init_depth || (last_depth == init_depth && last_serial != init_serial) {
+            // roll back if the nesting depth falls below the initial depth
+            self.unread(tok);
+        } else if last_depth > init_depth {
+            // if the last token introduced a new nesting, read until that nesting ends
+            self.recover_to_close();
+        }
+    }
+
     // Some(Some(k)) for concrete kinds, Some(None) for generic kinds
     fn builtin_kind(&self, name: &[u8]) -> Option<Option<K>> {
         match name {
@@ -890,8 +910,8 @@ impl<'a> Parser<'a> {
                     // if we can't, we will discard one token and retry.
                     if self.lookahead(EOF) { break; }
                     stmts.push(Recover::recover());
-                    let tok = self.read();
-                    self.error(tok.1.span, m::NoStmt { read: &tok.1.base }).done()?;
+                    error_with!(self, m::NoStmt);
+                    self.skip_token_at_current_nesting();
                     continue;
                 }
                 Err(_) => {
