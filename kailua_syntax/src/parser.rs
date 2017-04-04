@@ -732,19 +732,12 @@ impl<'a> Parser<'a> {
 
     // skip one token at the current nesting, and also tokens at the inner nestings if any.
     // for example, `(3, 4, 5)` or `--: string <newline>` will be consumed at once,
-    // while only the first token of `abc def` or `3/4` will be consumed,
-    // and `)` with a matching `(` won't be consumed (as it will end the current nesting).
+    // while only the first token of `abc def` or `3/4` will be consumed.
     // used for last-resort error recovery.
     fn skip_token_at_current_nesting(&mut self) {
-        let init_depth = self.last_nesting_depth;
-        let init_serial = self.last_nesting_serial;
-        let tok = self.read();
-        let last_depth = self.last_nesting_depth;
-        let last_serial = self.last_nesting_serial;
-        if last_depth < init_depth || (last_depth == init_depth && last_serial != init_serial) {
-            // roll back if the nesting depth falls below the initial depth
-            self.unread(tok);
-        } else if last_depth > init_depth {
+        let init_nesting_depth = self.last_nesting_depth;
+        self.read(); // at least one token is always consumed
+        if init_nesting_depth < self.last_nesting_depth {
             // if the last token introduced a new nesting, read until that nesting ends
             self.recover_to_close();
         }

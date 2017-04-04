@@ -19,3 +19,10 @@ local x = 0x 3 --@< Error: Invalid number
 =            --@< Error: Expected a statement, got `=`
 --! [Oops, Oops]
 
+--8<-- regression-nested-meta
+-- cargo-fuzz trophy case #10
+--: --: --@< Error: Expected a statement, got `--:`
+        --@^ Error: Expected a statement, got `--:`
+        --@^^-^ Error: Expected a statement, got a newline
+--! [Oops, Oops, Oops]
+
