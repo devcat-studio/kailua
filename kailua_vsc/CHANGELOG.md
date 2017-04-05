@@ -1,3 +1,11 @@
+## 1.0.1 (2017-04-05)
+
+* Fixed subtyping of values in the table constructors with the explicit types. In particular, `local x = {a = 42} --: map<string, any>` used to error (in spite of `42` being a subtype of `any`), but it is now valid.
+
+* Fixed many subtle parser and checker crashes from codes with parsing errors.
+
+* Fixed the most severe case of deadlocks during checking.
+
 ## 1.0.0 (2017-03-31)
 
 Kailua requires Visual Studio Code 1.10.0 or later starting from this version.
