@@ -2100,6 +2100,16 @@ local a = {} --: var { var { } } --@< Error: Expected a newline, got a keyword `
 local b --: var { var { } }      --@< Error: Expected a newline, got a keyword `var`
 --! [Local([`a`$1: _ Oops], [{}])$1, Local([`b`$2: _ Oops], [])$2]
 
+--8<-- paren-ambiguity-1
+a = b + c
+(print or io.write)('done')
+--! [Assign([`a`_], [(`b`_ + `c`_((`print`_ or `io`_.`write`))("done"))])]
+
+--8<-- paren-ambiguity-2
+a = b + c
+;(print or io.write)('done')
+--! [Assign([`a`_], [(`b`_ + `c`_)]), Void(((`print`_ or `io`_.`write`))("done"))]
+
 --8<-- non-prefix-expr-at-top-level-1
 f --@< Error: Only function calls are allowed as statement-level expressions
 --&

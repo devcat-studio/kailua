@@ -26,3 +26,14 @@ local x = 0x 3 --@< Error: Invalid number
         --@^^-^ Error: Expected a statement, got a newline
 --! [Oops, Oops, Oops]
 
+--8<-- regression-meta-inside-braces
+-- cargo-fuzz trophy case #11
+--v function --@<-v Error: Expected `(`, got a newline
+{ --: } {a --@< Error: Expected an expression, got `--:`
+           --@^ Error: Expected `,`, `;` or `}`, got `--:`
+           --@^^ Error: Only function calls are allowed as statement-level expressions
+           --@^^^ Error: Expected `,`, `;` or `}`, got a newline
+           --@^^^^ Error: Only function calls are allowed as statement-level expressions
+--&
+--! [Void({Oops}), Void({`a`_})]
+

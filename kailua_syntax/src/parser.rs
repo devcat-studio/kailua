@@ -401,7 +401,9 @@ impl<'a> Parser<'a> {
 
     fn _unread(&mut self, ElidedTokens(elided): ElidedTokens, tok: NestedToken) {
         assert!(self.lookahead.is_none() || self.lookahead2.is_none(),
-                "at most two lookahead tokens are supported");
+                "at most two lookahead tokens are supported:\n\
+                 \tunread: {:?}\n\telided: {:?}\n\tlookahead: {:?}\n\tlookahead2: {:?}",
+                tok, elided, self.lookahead, self.lookahead2);
 
         // this overwrites the prior value, i.e. newlines elided between the first lookahead
         // and the second lookahead will be ignored (fine as long as we don't use them).
@@ -1563,23 +1565,24 @@ impl<'a> Parser<'a> {
                     Ok((Some(key), value))
                 } else {
                     // try to disambiguate `NAME "=" exp` from `exp`
-                    // (needs a conditional move, so it cannot be `match_next!`)
-                    let key = match parser.read() {
-                        (side, Spanned { base: Tok::Name(name), span }) => {
+                    match_next! { parser;
+                        Tok::Name(name) in span => {
                             if parser.may_expect(Punct::Eq) {
-                                Some(Box::new(Ex::Str(Str::from(name))).with_loc(span))
+                                let key = Box::new(Ex::Str(Str::from(name))).with_loc(span);
+                                let value = parser.parse_exp()?;
+                                Ok((Some(key), value))
                             } else {
-                                parser.unread((side, Tok::Name(name).with_loc(span)));
-                                None
+                                let name = Name::from(name).with_loc(span);
+                                let value = parser.parse_exp_after_name(name)?;
+                                Ok((None, value))
                             }
-                        }
-                        tok => {
-                            parser.unread(tok);
-                            None
-                        }
-                    };
-                    let value = parser.parse_exp()?;
-                    Ok((key, value))
+                        };
+
+                        'unread: _ => {
+                            let value = parser.parse_exp()?;
+                            Ok((None, value))
+                        };
+                    }
                 }
             })
         })?;
@@ -1612,23 +1615,28 @@ impl<'a> Parser<'a> {
 
     fn try_parse_prefix_exp(&mut self) -> Result<Option<Spanned<Exp>>> {
         // any prefixexp starts with name or parenthesized exp
-        let mut exp;
         let begin = self.pos();
-        match_next! { self;
+        let exp = match_next! { self;
             Tok::Punct(Punct::LParen) => {
                 let exp_ = self.recover(Self::parse_exp, Punct::RParen)?;
-                exp = Box::new(Ex::Exp(exp_)).with_loc(begin..self.last_pos());
+                Box::new(Ex::Exp(exp_)).with_loc(begin..self.last_pos())
             };
 
             Tok::Name(name) in span => {
                 let nameref = self.resolve_name(Name::from(name));
-                exp = Box::new(Ex::Var(nameref.with_loc(span))).with_loc(span);
+                Box::new(Ex::Var(nameref.with_loc(span))).with_loc(span)
             };
 
             'unread: _ => return Ok(None);
-        }
+        };
 
-        // parse any postfix attachments
+        let exp = self.parse_prefix_exp_suffix(begin, exp)?;
+        Ok(Some(exp))
+    }
+
+    // parse any postfix attachments
+    fn parse_prefix_exp_suffix(&mut self, begin: Pos,
+                               mut exp: Spanned<Exp>) -> Result<Spanned<Exp>> {
         loop {
             match_next! { self;
                 // prefixexp "." ...
@@ -1685,7 +1693,7 @@ impl<'a> Parser<'a> {
             };
         }
 
-        Ok(Some(exp))
+        Ok(exp)
     }
 
     fn convert_and_register_var_from_exp(&mut self, exp: Spanned<Exp>)
@@ -1813,6 +1821,18 @@ impl<'a> Parser<'a> {
 
     // the precedence level 0 is reserved and used at the top level
     fn try_parse_partial_exp(&mut self, minprec: u8) -> Result<Option<Spanned<Exp>>> {
+        trace!("parsing exp with min prec {}", minprec);
+
+        let begin = self.pos();
+        if let Some(exp) = self.try_parse_partial_unary_exp()? {
+            let exp = self.parse_partial_binary_exp(minprec, begin, exp)?;
+            Ok(Some(exp))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn try_parse_partial_unary_exp(&mut self) -> Result<Option<Spanned<Exp>>> {
         fn unary_prec(op: UnOp) -> /*recursion*/ u8 {
             match op {
                 // binary ^ operator here
@@ -1821,6 +1841,21 @@ impl<'a> Parser<'a> {
             }
         }
 
+        let begin = self.pos();
+        if let Some(op) = self.try_peek_unary_op() {
+            // unop exp ...
+            self.read();
+            let rprec = unary_prec(op.base);
+            let exp = self.parse_partial_exp(rprec)?;
+            Ok(Some(Box::new(Ex::Un(op, exp)).with_loc(begin..self.last_pos())))
+        } else {
+            // atomicexp ...
+            self.try_parse_atomic_exp()
+        }
+    }
+
+    fn parse_partial_binary_exp(&mut self, minprec: u8, begin: Pos,
+                                mut exp: Spanned<Exp>) -> Result<Spanned<Exp>> {
         fn binary_prec(op: BinOp) -> (/*comparison*/ u8, /*recursion*/ u8) {
             match op {
                 BinOp::Pow => (10, 9),
@@ -1834,22 +1869,6 @@ impl<'a> Parser<'a> {
             }
         }
 
-        trace!("parsing exp with min prec {}", minprec);
-
-        let begin = self.pos();
-        let mut exp = if let Some(op) = self.try_peek_unary_op() {
-            // unop exp ...
-            self.read();
-            let rprec = unary_prec(op.base);
-            let exp = self.parse_partial_exp(rprec)?;
-            Box::new(Ex::Un(op, exp)).with_loc(begin..self.last_pos())
-        } else if let Some(exp) = self.try_parse_atomic_exp()? {
-            // atomicexp ...
-            exp
-        } else {
-            return Ok(None);
-        };
-
         // (unop exp | atomicexp) {binop <exp with lower prec>}
         while let Some(op) = self.try_peek_binary_op() {
             let (cprec, rprec) = binary_prec(op.base);
@@ -1859,7 +1878,7 @@ impl<'a> Parser<'a> {
             exp = Box::new(Ex::Bin(exp, op, exp2)).with_loc(begin..self.last_pos());
         }
 
-        Ok(Some(exp))
+        Ok(exp)
     }
 
     fn parse_partial_exp(&mut self, minprec: u8) -> Result<Spanned<Exp>> {
@@ -1877,6 +1896,20 @@ impl<'a> Parser<'a> {
 
     fn parse_exp(&mut self) -> Result<Spanned<Exp>> {
         self.parse_partial_exp(0)
+    }
+
+    fn parse_exp_after_name(&mut self, name: Spanned<Name>) -> Result<Spanned<Exp>> {
+        trace!("continuing to parse exp after name");
+
+        // NAME <...suffix...> <binop> <exp> ...
+        // |-- prefix exp ---|                 |
+        // |---- partial exp at minprec=0 -----|
+
+        let begin = self.pos();
+        let nameref = self.resolve_name(Name::from(name.base));
+        let exp = Box::new(Ex::Var(nameref.with_loc(name.span))).with_loc(name.span);
+        let exp = self.parse_prefix_exp_suffix(begin, exp)?;
+        self.parse_partial_binary_exp(0, begin, exp)
     }
 
     fn parse_var(&mut self) -> Result<Spanned<Var>> {
