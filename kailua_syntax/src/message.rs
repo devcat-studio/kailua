@@ -202,6 +202,22 @@ define_msg! { pub NoFunctionOrMethodBeforeSig<'a> { read: &'a Tok }:
     _    => "Expected a `function` or `method` before the function specification, got {read}",
 }
 
+define_msg! { pub DuplicateNameInSameScope:
+    "ko" => "이 변수는 같은 블록에 있고 이름이 같은 다른 변수를 덮어 씌웁니다",
+    _    => "This variable will overwrite another same-named variable in the same scope",
+}
+
+define_msg! { pub LegacyArgNameInSameScope:
+    "ko" => "가변 인자가 추가한 `arg` 변수가 같은 블록에 있는 다른 변수를 덮어 씌웁니다",
+    _    => "A variable `arg` generated from variadic arguments \
+             will overwrite another same-named variable in the same scope",
+}
+
+define_msg! { pub PreviousNameInSameScope:
+    "ko" => "이 변수가 덮어 씌워집니다",
+    _    => "This variable is being overwritten",
+}
+
 define_msg! { pub DuplicateTypeSpecInLocal:
     "ko" => "타입이 변수 이름과 `local` 선언의 뒷쪽에 동시에 나왔습니다",
     _    => "The type specification cannot appear both at variable names and \

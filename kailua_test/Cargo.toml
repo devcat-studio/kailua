@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 log = "0.3"
-term = "0.2"
+term = "0.4.4"
 regex = "0.1"
 lazy_static = "0.2"
 clap = "2"

@@ -3774,3 +3774,76 @@ u.u = 0 --@< Error: Cannot assign `0` into `{u: <...>, ...}`
         --@^ Note: The other type originates here
 --! error
 
+--8<-- duplicate-name-1
+local x, x = 3, 'string' --: integer, string
+--@^ Error: This variable will overwrite another same-named variable in the same scope
+--@^^ Note: This variable is being overwritten
+--@^^^ Error: Cannot redefine the type of a variable `x`
+-- XXX in fact x will be 'string' at this point
+x = 4
+x = 'hello' --@< Error: Cannot assign `"hello"` into `integer`
+            --@^ Note: The other type originates here
+--! error
+
+--8<-- duplicate-name-2
+--v function(x: integer, x: string)
+--@^ Error: This variable will overwrite another same-named variable in the same scope
+--@^^ Note: This variable is being overwritten
+function f(x, x)
+    x = 4 --@< Error: Cannot assign `4` into `string`
+          --@^ Note: The other type originates here
+    x = 'hello'
+end
+f(3, 'string')
+--! error
+
+--8<-- legacy-arg
+function f(...) --: string
+    local v = arg.n --: integer
+    local w = arg[42] --: string
+    arg.n = 42
+    arg[42] = 'string'
+end
+--! ok
+
+--8<-- legacy-arg-subtype-1
+function f(...) --: string
+    local x = arg --: table
+
+    local y = {} --: vector<string>
+    arg = y
+
+    local z = {n = 42} --: {n: integer}
+    arg = z
+
+    local w = {n = 42} --: {n: integer, ...}
+    arg = w
+end
+--! ok
+
+--8<-- legacy-arg-subtype-2
+function f(...) --: string
+    local w = {n = 42} --: {n: integer, ...}
+    arg = w -- w is no longer extensible
+    w.a = 54 --@< Error: Missing key "a" in `{n: integer}`
+end
+--! error
+
+--8<-- legacy-arg-subtype-3
+-- the type for `arg` is quite restricted, and while we have borrowed the notation
+-- for intersection types it is really not.
+function f(...) --: string
+    local a = arg --: vector<string>
+    --@^ Error: Cannot assign `vector<string> & {n: integer}` into `vector<string>`
+    --@^^ Note: The other type originates here
+
+    local b = arg --: map<integer, string>
+    --@^ Error: Cannot assign `vector<string> & {n: integer}` into `map<integer, string>`
+    --@^^ Note: The other type originates here
+
+    local c = arg --: map<integer|"n", integer|string>
+    --@^ Error: Cannot assign `vector<string> & {n: integer}` into `map<(integer|"n"), (integer|string)>`
+    --@^^ Note: The other type originates here
+end
+--! error
+

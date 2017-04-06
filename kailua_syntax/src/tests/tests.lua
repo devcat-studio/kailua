@@ -88,14 +88,14 @@ function r(p) --[[...]] end
 local function r(p,...)
 
 end
---! [FuncDecl(`r`$2, [`p`$1, ...: _] --> _, $1[])$2]
+--! [FuncDecl(`r`$2, [`p`$1, ...(arg=`arg`$1): _] --> _, $1[])$2]
 
 --8<-- local-func-without-sibling-scope-1
 local r
 function r(p,...)
 
 end
---! [Local([`r`$1], [])$1, FuncDecl(`r`$1, [`p`$2, ...: _] --> _, $2[])]
+--! [Local([`r`$1], [])$1, FuncDecl(`r`$1, [`p`$2, ...(arg=`arg`$2): _] --> _, $2[])]
 
 --8<-- local-func-without-sibling-scope-2
 local r
@@ -106,11 +106,27 @@ do
     end
 end
 --! [Local([`r`$1], [])$1, Do([Local([`s`$2], [])$2, \
---!                            FuncDecl(`r`$1, [`p`$3, ...: _] --> _, $3[])])]
+--!                            FuncDecl(`r`$1, [`p`$3, ...(arg=`arg`$3): _] --> _, $3[])])]
 
 --8<-- func-in-table
 function a.b.c(p) --[[...]] end
 --! [MethodDecl((`a`_.`b`.`c`), None, [`p`$1] --> _, $1[])]
+
+--8<-- func-duplicate-name
+function foo(
+    a,
+    a --@< Error: This variable will overwrite another same-named variable in the same scope
+)     --@^^ Note: This variable is being overwritten
+end
+--! [FuncDecl(`foo`_, [`a`$1, `a`$1] --> _, $1[])]
+
+--8<-- func-varargs-duplicate-arg
+function foo(
+    arg,
+    ... --@< Error: A variable `arg` generated from variadic arguments will overwrite another same-named variable in the same scope
+)       --@^^ Note: This variable is being overwritten
+end
+--! [FuncDecl(`foo`_, [`arg`$1, ...(arg=`arg`$1): _] --> _, $1[])]
 
 --8<-- method
 function a.b:c(p) --[[...]] end
@@ -223,6 +239,13 @@ local a, b, c = {} --: module, {}, module {}
 --8<-- local-module-recover
 local a = {} --: module { --@<-v Error: Expected a single type, got a newline
 --! [Local([`a`$1: Module Oops], [{}])$1]
+
+--8<-- local-duplicate-name
+local a,
+      a --@< Error: This variable will overwrite another same-named variable in the same scope
+      = --@^^ Note: This variable is being overwritten
+      3, 'foo'
+--! [Local([`a`$1, `a`$1], [3, "foo"])$1]
 
 --8<-- assign-1-1
 a = f()
@@ -1281,6 +1304,15 @@ function foo(b, a) end --@< Error: Mismatching argument name in the function spe
                        --@^^^^ Note: The corresponding argument was here
 --! [FuncDecl(`foo`_, [`a`$1: _ Integer, `b`$1: _ Integer], $1[])]
 
+--8<-- funcspec-duplicate-name
+-- error will occur early, and function decl will only verify them
+--v function(
+--v     a: integer,
+--v     a: string --@< Error: This variable will overwrite another same-named variable in the same scope
+--v )             --@^^ Note: This variable is being overwritten
+function foo(a, a) end
+--! [FuncDecl(`foo`_, [`a`$1: _ Integer, `a`$1: _ String], $1[])]
+
 --8<-- funcspec-1
 --v function(a: integer)
 local function foo(a) end
@@ -1301,7 +1333,7 @@ local function foo(a) end
  --v          ...)
  --v         --> string
  function(a, ...) end)()
---! [Void((Func([`a`$1: Const Integer, ...: _] --> String, $1[]))())]
+--! [Void((Func([`a`$1: Const Integer, ...(arg=`arg`$1): _] --> String, $1[]))())]
 
 --8<-- funcspec-attr-1
 --v [no_check] function()
@@ -1464,7 +1496,7 @@ f(--v function() --@< Error: No function literal after the function specificatio
 function foo(a, --: integer
              b, ...) --: string
 end
---! [FuncDecl(`foo`_, [`a`$1: _ Integer, `b`$1, ...: String] --> _, $1[])]
+--! [FuncDecl(`foo`_, [`a`$1: _ Integer, `b`$1, ...(arg=`arg`$1): String] --> _, $1[])]
 
 --8<-- funcspec-and-argtype
 --v function(a: integer, b: boolean, ...: string)
@@ -1472,7 +1504,7 @@ function foo(a, b, ...) --: string
     --@^ Error: Inline variadic argument type specification cannot appear with the function specification
     --@^^^ Note: The corresponding argument in the function specification was here
 end
---! [FuncDecl(`foo`_, [`a`$1: _ Integer, `b`$1: _ Boolean, ...: String], $1[])]
+--! [FuncDecl(`foo`_, [`a`$1: _ Integer, `b`$1: _ Boolean, ...(arg=`arg`$1): String], $1[])]
 
 --8<-- funcspec-less-varargs
 --v function(a: integer, b: boolean)
@@ -1486,25 +1518,34 @@ end
 --v function(a: integer, b: boolean, ...: string)
 function foo(a, b)
 end
---! [FuncDecl(`foo`_, [`a`$1: _ Integer, `b`$1: _ Boolean, ...: String], $1[])]
+--! [FuncDecl(`foo`_, [`a`$1: _ Integer, `b`$1: _ Boolean, ...(arg=`arg`$1): String], $1[])]
 
 --8<-- funcspec-varargs
 --v function(a: integer, b: boolean, ...: string)
 function foo(a, b, ...)
 end
---! [FuncDecl(`foo`_, [`a`$1: _ Integer, `b`$1: _ Boolean, ...: String], $1[])]
+--! [FuncDecl(`foo`_, [`a`$1: _ Integer, `b`$1: _ Boolean, ...(arg=`arg`$1): String], $1[])]
 
 --8<-- funcspec-varargs-0
 --v function(...: string)
 function foo(...)
 end
---! [FuncDecl(`foo`_, [...: String], $1[])]
+--! [FuncDecl(`foo`_, [...(arg=`arg`$1): String], $1[])]
+
+--8<-- funcspec-varargs-duplicate-arg
+--v function(
+--v     arg: integer,
+--v     ...: string --@< Error: A variable `arg` generated from variadic arguments will overwrite another same-named variable in the same scope
+--v )               --@^^ Note: This variable is being overwritten
+function foo(arg, ...)
+end
+--! [FuncDecl(`foo`_, [`arg`$1: _ Integer, ...(arg=`arg`$1): String], $1[])]
 
 --8<-- local-funcspec-varargs-0
 --v function(...: string)
 local function foo(...)
 end
---! [FuncDecl(`foo`$2, [...: String], $1[])$2]
+--! [FuncDecl(`foo`$2, [...(arg=`arg`$1): String], $1[])$2]
 
 --8<-- funcspec-method-wrong-prefix-1
 --v function() --@< Error: A function specification for methods should start with `method`
@@ -1768,7 +1809,7 @@ p(4)
 --8<-- argtype-slot
 function p(...) --: const integer --@< Error: Variadic argument specifier cannot have modifiers
 end
---! [FuncDecl(`p`_, [...: Integer] --> _, $1[])]
+--! [FuncDecl(`p`_, [...(arg=`arg`$1): Integer] --> _, $1[])]
 
 --8<-- table-recover-invalid-char
 f({x@})  --@< Error: Unexpected character

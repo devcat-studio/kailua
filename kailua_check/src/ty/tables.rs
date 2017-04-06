@@ -76,12 +76,19 @@ pub enum Tables {
     // determined only from the function usages, e.g. table.insert
     Array(Slot), // shared (non-linear) slots only, value implicitly unioned with nil
 
+    // almost same to Array but also allows for indexing `n` (always results in `integer`).
+    // used for modelling Lua 5.0 `arg` which is still present in Lua 5.1 as backcompat
+    ArrayN(Slot), // shared (non-linear) slots only, value implicitly unioned with nil
+
     // key should not contain nil (will be discarded)
     Map(Ty, Slot), // shared (non-linear) slots only, value implicitly unioned with nil
 
-    // ---
-
     All,
+}
+
+// the implied slot for `n` in `Tables::ArrayN(v)`
+fn nslot(v: &Slot) -> Slot {
+    Slot::new(v.flex(), Ty::new(T::Integer))
 }
 
 impl Tables {
@@ -89,6 +96,7 @@ impl Tables {
         match self {
             Tables::Fields(r) => Tables::Fields(ctx.copy_rvar(r)),
             Tables::Array(v) => Tables::Array(v.generalize(ctx)),
+            Tables::ArrayN(v) => Tables::ArrayN(v.generalize(ctx)),
             Tables::Map(k, v) => {
                 let k = k.generalize(ctx);
                 let v = v.generalize(ctx);
@@ -197,6 +205,16 @@ impl Tables {
                 Ok(())
             }
 
+            Tables::ArrayN(ref t) => {
+                // there is no such type, but the use of & is akin to overloading
+                write!(f, "vector<")?;
+                write_slot(t, f, true)?;
+                write!(f, "> & {{n: ")?;
+                write_slot(&nslot(t), f, true)?;
+                write!(f, "}}")?;
+                Ok(())
+            }
+
             Tables::Map(ref k, ref v) => {
                 write!(f, "map<")?;
                 write_ty(k, f)?;
@@ -218,9 +236,16 @@ impl Union for Tables {
                 (_, &Tables::All) | (&Tables::All, _) => Ok(Tables::All),
 
                 // for the same kind of tables, they should be equal to each other
+                // (with an exception of Array/ArrayN, where ArrayN is always preferred)
                 (&Tables::Array(ref a), &Tables::Array(ref b)) => {
                     a.assert_eq(b, ctx)?;
                     Ok(Tables::Array(a.clone()))
+                },
+                (&Tables::Array(ref a), &Tables::ArrayN(ref b)) |
+                (&Tables::ArrayN(ref a), &Tables::Array(ref b)) |
+                (&Tables::ArrayN(ref a), &Tables::ArrayN(ref b)) => {
+                    a.assert_eq(b, ctx)?;
+                    Ok(Tables::ArrayN(a.clone()))
                 },
                 (&Tables::Map(ref ak, ref av), &Tables::Map(ref bk, ref bv)) => {
                     ak.assert_eq(bk, ctx)?;
@@ -272,7 +297,10 @@ impl Lattice for Tables {
                     return ctx.assert_rvar_closed(rvar.clone());
                 },
 
-                (&Tables::Fields(ref rvar), &Tables::Array(ref value)) => {
+                (&Tables::Fields(ref rvar), &Tables::Array(ref value)) |
+                (&Tables::Fields(ref rvar), &Tables::ArrayN(ref value)) => {
+                    let has_n = if let Tables::ArrayN(_) = *other { true } else { false };
+
                     // the fields should have consecutive integer keys.
                     // since the fields listing is unordered, we check them by
                     // counting the number of integer keys and determining min and max key.
@@ -283,15 +311,22 @@ impl Lattice for Tables {
                     let mut max = i32::MIN;
                     let mut count = 0;
                     for (k, v) in ctx.get_rvar_fields(rvar.clone()) {
-                        if let Key::Int(k) = k {
-                            count += 1;
-                            if min > k { min = k; }
-                            if max < k { max = k; }
-                            v.assert_sub(&value.clone().with_nil(), ctx)?;
-                        } else {
-                            // regenerate an appropriate error
-                            k.to_type().assert_sub(&T::Integer, ctx)?;
-                            panic!("non-integral {:?} is typed as integral {:?}", k, k.to_type());
+                        match k {
+                            Key::Int(k) => {
+                                count += 1;
+                                if min > k { min = k; }
+                                if max < k { max = k; }
+                                v.assert_sub(&value.clone().with_nil(), ctx)?;
+                            }
+                            Key::Str(ref s) if has_n && &s[..] == &b"n"[..] => {
+                                v.assert_sub(&nslot(value), ctx)?;
+                            }
+                            Key::Str(_) => {
+                                // regenerate an appropriate error
+                                k.to_type().assert_sub(&T::Integer, ctx)?;
+                                panic!("non-integral {:?} is typed as integral {:?}",
+                                       k, k.to_type());
+                            }
                         }
                     }
 
@@ -301,10 +336,14 @@ impl Lattice for Tables {
 
                 (_, &Tables::Fields(..)) => false,
 
-                (&Tables::Array(ref value1), &Tables::Array(ref value2)) => {
+                (&Tables::Array(ref value1), &Tables::Array(ref value2)) |
+                (&Tables::Array(ref value1), &Tables::ArrayN(ref value2)) |
+                (&Tables::ArrayN(ref value1), &Tables::ArrayN(ref value2)) => {
                     value1.assert_sub(value2, ctx)?;
                     true
                 },
+
+                (&Tables::ArrayN(..), &Tables::Array(..)) => false,
 
                 (&Tables::Map(ref key1, ref value1), &Tables::Map(ref key2, ref value2)) => {
                     key1.assert_sub(key2, ctx)?;
@@ -317,7 +356,17 @@ impl Lattice for Tables {
                     value1.assert_sub(value2, ctx)?;
                     true
                 },
+
+                (&Tables::ArrayN(ref value1), &Tables::Map(ref key2, ref value2)) => {
+                    let akey = T::Integer | T::Str(Cow::Owned(Str::from(b"n"[..].to_owned())));
+                    let avalue = value1.union(&nslot(value1), false, ctx)?;
+                    akey.assert_sub(&**key2, ctx)?;
+                    avalue.assert_sub(value2, ctx)?;
+                    true
+                },
+
                 (&Tables::Map(..), &Tables::Array(..)) => false,
+                (&Tables::Map(..), &Tables::ArrayN(..)) => false,
             };
 
             if ok { Ok(()) } else { Err(ctx.gen_report()) }
@@ -329,6 +378,7 @@ impl Lattice for Tables {
             let ok = match (self, other) {
                 (&Tables::All, &Tables::All) => true,
                 (&Tables::Array(ref a), &Tables::Array(ref b)) => return a.assert_eq(b, ctx),
+                (&Tables::ArrayN(ref a), &Tables::ArrayN(ref b)) => return a.assert_eq(b, ctx),
                 (&Tables::Map(ref ak, ref av), &Tables::Map(ref bk, ref bv)) => {
                     ak.assert_eq(bk, ctx)?;
                     av.assert_eq(bv, ctx)?;
@@ -348,6 +398,7 @@ impl PartialEq for Tables {
         match (self, other) {
             (&Tables::All, &Tables::All) => true,
             (&Tables::Array(ref a), &Tables::Array(ref b)) => *a == *b,
+            (&Tables::ArrayN(ref a), &Tables::ArrayN(ref b)) => *a == *b,
             (&Tables::Map(ref ak, ref av), &Tables::Map(ref bk, ref bv)) =>
                 *ak == *bk && *av == *bv,
             (&Tables::Fields(ref ar), &Tables::Fields(ref br)) => *ar == *br,

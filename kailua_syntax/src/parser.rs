@@ -13,7 +13,7 @@ use lang::{Language, Lua, Kailua};
 use lex::{Tok, Punct, Keyword, NestedToken, NestingCategory, NestingSerial};
 use ast::{Name, NameRef, Str, Var, Seq, Presig, Sig, Attr, Args};
 use ast::{Ex, Exp, UnOp, BinOp, SelfParam, TypeScope, St, Stmt, Block};
-use ast::{M, MM, K, Kind, SlotKind, FuncKind, TypeSpec, Returns, Chunk};
+use ast::{M, MM, K, Kind, SlotKind, FuncKind, TypeSpec, Varargs, Returns, Chunk};
 
 pub struct Parser<'a> {
     iter: iter::Fuse<&'a mut Iterator<Item=NestedToken>>,
@@ -779,10 +779,24 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn add_spanned_local_name(&mut self, scope: Scope, name: Spanned<Name>) -> Spanned<ScopedId> {
+    fn add_spanned_local_name_with_prev_span(&mut self, scope: Scope, name: Spanned<Name>)
+        -> Result<(Spanned<ScopedId>, Option<Span>)>
+    {
         let id = name.map(|name| self.scope_map.add_name(scope, name));
-        self.decl_spans.insert(id.base.clone(), id.span);
-        id
+        let prevspan = self.decl_spans.insert(id.base.clone(), id.span);
+        Ok((id, prevspan))
+    }
+
+    fn add_spanned_local_name(&mut self, scope: Scope,
+                              name: Spanned<Name>) -> Result<Spanned<ScopedId>> {
+        let (id, prevspan) = self.add_spanned_local_name_with_prev_span(scope, name)?;
+        if let Some(prevspan) = prevspan {
+            self.error(id.span, m::DuplicateNameInSameScope {})
+                .note(prevspan, m::PreviousNameInSameScope {})
+                .done()?;
+            // and we proceed with the overwritten name
+        }
+        Ok(id)
     }
 
     fn generate_sibling_scope(&mut self) -> Scope {
@@ -871,21 +885,24 @@ impl<'a> Parser<'a> {
         block
     }
 
-    // same to `parse_block`, but will also set the scope in the block.
+    // same to `self.parse_block()` followed by `self.expect(Keyword::End)`,
+    // but will also set the scope in the block and recover from the error.
     // in order to keep the lexical order of scoped ids (purely for cosmetic & debugging reasons),
     // the block can be supplied to run on that scope before `parse_block`.
-    fn parse_block_with_scope<F, X>(&mut self, preblock: F) -> (X, Scope, Result<Spanned<Block>>)
-        where F: FnOnce(&mut Parser<'a>, Scope) -> X
+    fn parse_block_end_with_scope<F, X>(&mut self,
+                                        preblock: F) -> Result<(X, Scope, Spanned<Block>)>
+        where F: FnOnce(&mut Parser<'a>, Scope) -> Result<X>
     {
         let nscopes = self.scope_stack.len();
         let scope = self.generate_sibling_scope();
         self.push_scope(scope);
-        let preret = preblock(self, scope);
+        let preret = preblock(self, scope)?;
         self.block_depth += 1;
         let block = self._parse_block();
         self.block_depth -= 1;
         self.pop_scope_upto(nscopes);
-        (preret, scope, block)
+        let block = self.recover(|_| block, Keyword::End)?;
+        Ok((preret, scope, block))
     }
 
     // unlike `parse_block`, this will try to parse as much as possible until EOF
@@ -1065,10 +1082,9 @@ impl<'a> Parser<'a> {
                             None
                         };
                         self.expect(Keyword::Do)?;
-                        let (id, scope, block) = self.parse_block_with_scope(|parser, scope| {
+                        let (id, scope, block) = self.parse_block_end_with_scope(|parser, scope| {
                             parser.add_spanned_local_name(scope, name)
-                        });
-                        let block = self.recover(|_| block, Keyword::End)?;
+                        })?;
                         Box::new(St::For(id, start, end, step, scope, block))
                     };
 
@@ -1149,7 +1165,7 @@ impl<'a> Parser<'a> {
                                                                                   funcspec)? {
                             let sibling_scope = self.generate_sibling_scope();
                             self.push_scope(sibling_scope);
-                            let name = self.add_spanned_local_name(sibling_scope, name);
+                            let name = self.add_spanned_local_name(sibling_scope, name)?;
                             let name = name.map(NameRef::Local);
                             Box::new(St::FuncDecl(name, sig, scope, body, Some(sibling_scope)))
                         } else {
@@ -1189,13 +1205,12 @@ impl<'a> Parser<'a> {
                         let sibling_scope = self.generate_sibling_scope();
                         self.push_scope(sibling_scope);
                         // XXX should also mention all excess arguments
-                        let namerefs = names.map(|names: Vec<_>| {
-                            names.into_iter().map(|namespec: TypeSpec<_>| {
-                                namespec.map(|name: Spanned<Name>| {
-                                    self.add_spanned_local_name(sibling_scope, name)
-                                })
-                            }).collect()
-                        });
+                        let mut namerefs = Vec::new().with_loc(names.span);
+                        for namespec in names.base {
+                            let name = self.add_spanned_local_name(sibling_scope, namespec.base)?;
+                            namerefs.push(TypeSpec { base: name, modf: namespec.modf,
+                                                     kind: namespec.kind });
+                        }
                         Box::new(St::Local(namerefs, exps, sibling_scope))
                     };
 
@@ -1315,15 +1330,13 @@ impl<'a> Parser<'a> {
         let span = self.scan_list(Self::parse_exp, |exp| exps.push(exp))?;
         let exps = exps.with_loc(span);
         self.expect(Keyword::Do)?;
-        let (names, scope, block) = self.parse_block_with_scope(|parser, scope| {
-            let names = names.map(|names: Vec<_>| {
-                names.into_iter().map(|name: Spanned<Name>| {
-                    parser.add_spanned_local_name(scope, name)
-                }).collect()
-            });
-            names
-        });
-        let block = self.recover(|_| block, Keyword::End)?;
+        let (names, scope, block) = self.parse_block_end_with_scope(move |parser, scope| {
+            let mut names_ = Vec::new().with_loc(names.span);
+            for name in names.base {
+                names_.push(parser.add_spanned_local_name(scope, name)?);
+            }
+            Ok(names_)
+        })?;
         Ok(Box::new(St::ForIn(names, exps, scope, block)))
     }
 
@@ -1475,7 +1488,7 @@ impl<'a> Parser<'a> {
 
                 let args = presig.base.args.map(|args| {
                     Seq { head: args.head.into_iter().map(|arg| arg.base).collect(),
-                          tail: args.tail.map(|arg| arg.base) }
+                          tail: args.tail }
                 });
                 (attrs, Ok(args), presig.base.returns)
             } else {
@@ -1488,32 +1501,52 @@ impl<'a> Parser<'a> {
         let args = args.unwrap_or_else(|args| {
             Seq {
                 head: args.into_iter().map(|(n,s)| self.make_kailua_typespec(n, s)).collect(),
-                tail: varargs.map(|tt| tt.base),
+                tail: varargs,
             }.with_loc(begin..end)
         });
 
         // resolve every parameter (including self)
-        let ((selfparam, args), scope, block) = self.parse_block_with_scope(|parser, scope| {
+        let ((selfparam, args), scope, block) = self.parse_block_end_with_scope(move |parser,
+                                                                                      scope| {
             // attach all arguments to the function body scope
             // XXX should also mention all excess arguments
             // TODO should we add varargs?
             let selfparam = if selfparam {
                 // use `begin` (that is, right after `(`) as an implicit span
                 let selfname = Name::from(b"self"[..].to_owned()).with_loc(begin);
-                Some(parser.add_spanned_local_name(scope, selfname).map(SelfParam))
+                Some(parser.add_spanned_local_name(scope, selfname)?.map(SelfParam))
             } else {
                 None
             };
-            let args = args.map(|args: Seq<_, _>| {
-                args.map(|argspec: TypeSpec<_>| {
-                    argspec.map(|arg: Spanned<Name>| {
-                        parser.add_spanned_local_name(scope, arg)
-                    })
-                }, |varargspec| varargspec)
-            });
-            (selfparam, args)
-        });
-        let block = self.recover(|_| block, Keyword::End)?;
+
+            let mut head = Vec::new();
+            for argspec in args.base.head {
+                let name = parser.add_spanned_local_name(scope, argspec.base)?;
+                head.push(TypeSpec { base: name, modf: argspec.modf, kind: argspec.kind });
+            }
+
+            let tail = if let Some(varargspec) = args.base.tail {
+                let arg = if parser.language.lua() <= Lua::Lua51 { // legacy varargs
+                    let argname = Name::from(b"arg"[..].to_owned()).with_loc(&varargspec);
+                    let (id, prevspan) =
+                        parser.add_spanned_local_name_with_prev_span(scope, argname)?;
+                    if let Some(prevspan) = prevspan {
+                        parser.error(id.span, m::LegacyArgNameInSameScope {})
+                              .note(prevspan, m::PreviousNameInSameScope {})
+                              .done()?;
+                    }
+                    Some(id)
+                } else {
+                    None
+                };
+                Some(Varargs { kind: varargspec.base, legacy_arg: arg })
+            } else {
+                None
+            };
+
+            let args = Seq { head: head, tail: tail }.with_loc(args.span);
+            Ok((selfparam, args))
+        })?;
 
         let sig = Sig { attrs: attrs, args: args, returns: returns };
         Ok(Some((selfparam, sig, scope, block)))
@@ -2898,7 +2931,7 @@ impl<'a> Parser<'a> {
                                 let scope = parser.generate_sibling_scope();
                                 sibling_scope = Some(scope);
                                 let scoped_id = parser.add_spanned_local_name(scope,
-                                                                              rootname.clone());
+                                                                              rootname.clone())?;
                                 let rootname = rootname.map(|name| parser.resolve_name(name));
                                 (NameRef::Local(scoped_id.base), rootname)
                             };

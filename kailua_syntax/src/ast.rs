@@ -271,6 +271,29 @@ impl fmt::Debug for Returns {
     }
 }
 
+#[derive(Clone, PartialEq)]
+pub struct Varargs {
+    pub kind: Option<Spanned<Kind>>,
+    // if Lua 5.0 compat is enabled, a scoped id for `arg` (takes precedence over normal args!)
+    pub legacy_arg: Option<Spanned<ScopedId>>,
+}
+
+impl fmt::Debug for Varargs {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "...")?;
+        if let Some(ref scoped_id) = self.legacy_arg {
+            write!(f, "(arg={:?})", scoped_id)?;
+        }
+        write!(f, ": ")?;
+        if let Some(ref kind) = self.kind {
+            write!(f, "{:?}", *kind)?;
+        } else {
+            write!(f, "_")?;
+        }
+        Ok(())
+    }
+}
+
 // more spanned version of Sig, only used during the parsing
 #[derive(Clone, PartialEq)]
 pub struct Presig {
@@ -282,8 +305,7 @@ pub struct Presig {
 #[derive(Clone, PartialEq)]
 pub struct Sig {
     pub attrs: Vec<Spanned<Attr>>,
-    pub args: Spanned<Seq<TypeSpec<Spanned<ScopedId>>,
-                          Option<Spanned<Kind>>>>, // may have to be inferred; Const only
+    pub args: Spanned<Seq<TypeSpec<Spanned<ScopedId>>, Varargs>>, // may have to be inferred
     pub returns: Option<Returns>, // may have to be inferred
 }
 
@@ -295,15 +317,10 @@ impl fmt::Debug for Sig {
         write!(f, "[")?;
         let comma = Comma::new();
         for namespec in &self.args.head {
-            write!(f, "{}{:?}", comma, *namespec)?;
+            write!(f, "{}{:?}", comma, namespec)?;
         }
         if let Some(ref varargs) = self.args.tail {
-            write!(f, "{}...: ", comma)?;
-            if let Some(ref kind) = *varargs {
-                write!(f, "{:?}", *kind)?;
-            } else {
-                write!(f, "_")?;
-            }
+            write!(f, "{}{:?}", comma, varargs)?;
         }
         write!(f, "]")?;
         match self.returns {

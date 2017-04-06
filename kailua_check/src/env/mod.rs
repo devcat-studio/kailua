@@ -8,7 +8,7 @@ use std::collections::{hash_map, HashMap, HashSet};
 
 use kailua_env::{self, Span, Spanned, WithLoc, ScopedId, ScopeMap, SpanMap};
 use kailua_diag::{Result, Kind, Report, Reporter, Locale, Localize};
-use kailua_syntax::{Name, NameRef};
+use kailua_syntax::{Str, Name, NameRef};
 use diag::{TypeReportHint, TypeReportMore};
 use ty::{Displayed, Display};
 use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, Lattice, Union, Tag};
@@ -480,14 +480,26 @@ impl Output {
                 }
             }
 
-            // otherwise it should be a record
-            if let Some(&Tables::Fields(ref rvar)) = ty.get_tables() {
-                let mut fields = HashMap::new();
-                self.list_rvar_fields(rvar.clone(), &mut |k, v| -> result::Result<(), ()> {
-                    fields.insert(k.clone(), v.clone());
-                    Ok(())
-                }).expect("list_rvar_fields exited early while we haven't break");
-                return Some(fields);
+            // otherwise it should be a record or similar
+            match ty.get_tables() {
+                Some(&Tables::Fields(ref rvar)) => {
+                    let mut fields = HashMap::new();
+                    self.list_rvar_fields(rvar.clone(), &mut |k, v| -> result::Result<(), ()> {
+                        fields.insert(k.clone(), v.clone());
+                        Ok(())
+                    }).expect("list_rvar_fields exited early while we haven't break");
+                    return Some(fields);
+                }
+
+                Some(&Tables::ArrayN(ref value)) => {
+                    // has the only definite field `n`
+                    let mut fields = HashMap::new();
+                    fields.insert(Key::from(Str::from(b"n"[..].to_owned())),
+                                  Slot::new(value.flex(), Ty::new(T::Integer)));
+                    return Some(fields);
+                }
+
+                _ => {}
             }
         }
 

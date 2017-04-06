@@ -8,7 +8,7 @@ use take_mut::take;
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag::{self, Result, Report, Reporter};
 use kailua_syntax::{self, Str, Name, NameRef, Var, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
-use kailua_syntax::{SelfParam, TypeScope, Args, St, Stmt, Block, K, Attr, M, MM};
+use kailua_syntax::{SelfParam, TypeScope, Args, St, Stmt, Block, K, Attr, M, MM, Varargs};
 use diag::{TypeReport, TypeReportHint, TypeReportMore};
 use ty::{Displayed, Display};
 use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, Dummy, TypeContext};
@@ -560,6 +560,10 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                     (Ty::new(T::Dynamic(dyn)),
                      Slot::new(F::Dynamic(dyn), Ty::new(T::Dynamic(dyn))))
                 } else if tab.is_tabular() {
+                    let int_or_n = || {
+                        Ty::new(T::Integer | T::Str(Cow::Owned(Str::from(b"n"[..].to_owned()))))
+                    };
+
                     match tab.clone().unwrap() {
                         // map<k, v> -> (k, v)
                         T::Tables(Cow::Owned(Tables::Map(k, v))) =>
@@ -572,6 +576,12 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                             (Ty::new(T::Integer), v.with_nil()),
                         T::Tables(Cow::Borrowed(&Tables::Array(ref v))) =>
                             (Ty::new(T::Integer), v.clone().with_nil()),
+
+                        // vector<v> & {n: integer} -> (integer | "n", v)
+                        T::Tables(Cow::Owned(Tables::ArrayN(v))) =>
+                            (int_or_n(), v.with_nil()),
+                        T::Tables(Cow::Borrowed(&Tables::ArrayN(ref v))) =>
+                            (int_or_n(), v.clone().with_nil()),
 
                         _ => return,
                     }
@@ -852,8 +862,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             };
         let had_litkey = litkey.is_some();
         if let Some(litkey) = litkey {
-            match (ety.get_tables(), lval) {
-                (Some(&Tables::Fields(ref rvar)), lval) => {
+            match ety.get_tables() {
+                Some(&Tables::Fields(ref rvar)) => {
                     // find a field in the rvar
                     let mut vslot = None;
                     let _ = self.env.context().list_rvar_fields(rvar.clone(), &mut |k, v| {
@@ -891,6 +901,16 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                     }
                 }
 
+                Some(&Tables::ArrayN(ref value)) => {
+                    // special case `n`, otherwise use the general case (rejects non-int keys)
+                    if let Key::Str(ref s) = litkey {
+                        if &s[..] == &b"n"[..] {
+                            let nslot = Slot::new(value.flex(), Ty::new(T::Integer));
+                            return Ok(Index::Found(nslot));
+                        }
+                    }
+                }
+
                 _ => {}
             }
         }
@@ -915,12 +935,12 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 Ok(Index::dummy())
             },
 
-            Some(&Tables::Array(ref value)) if intkey => {
+            Some(&Tables::Array(ref value)) | Some(&Tables::ArrayN(ref value)) if intkey => {
                 if lval { value.adapt(ety0.flex(), self.types()); }
                 Ok(Index::Found((*value).clone().with_nil()))
             },
 
-            Some(&Tables::Array(..)) => {
+            Some(&Tables::Array(..)) | Some(&Tables::ArrayN(..)) => {
                 self.env.error(expspan,
                                m::IndexToArrayWithNonInt { tab: self.display(&*ety0),
                                                            key: self.display(&kty) })
@@ -935,8 +955,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             },
 
             Some(&Tables::All) => {
-                self.env.error(&*ety0,
-                               m::IndexToAnyTable { tab: self.display(&*ety0) }).done()?;
+                self.env.error(&*ety0, m::IndexToAnyTable { tab: self.display(&*ety0) })
+                        .done()?;
                 Ok(Index::dummy())
             },
         }
@@ -2000,7 +2020,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
         let vatype = match sig.args.tail {
             None => None,
 
-            Some(None) => {
+            Some(Varargs { kind: None, .. }) => {
                 // varargs present but types are unspecified
                 if let Some(hint) = hinttail {
                     // use a hint instead ([NO_CHECK] can rely on this hint as well)
@@ -2029,7 +2049,9 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 }
             },
 
-            Some(Some(ref k)) => Some(Ty::from_kind(k, &mut self.env)?),
+            Some(Varargs { kind: Some(ref k), .. }) => {
+                Some(Ty::from_kind(k, &mut self.env)?)
+            },
         };
 
         let vainfo = vatype.clone().map(|t| TySeq { head: Vec::new(), tail: Some(t) });
@@ -2128,6 +2150,14 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             let name = param.base.name(scope.env.scope_map());
             argnames.push(Some(name.clone().with_loc(&param.base)));
         }
+
+        // if we are in the legacy compat mode, also add `arg` to the scope as needed
+        if let Some(Varargs { legacy_arg: Some(ref argid), .. }) = sig.args.tail {
+            let argtab = Tables::ArrayN(Slot::var(vatype.as_ref().unwrap().clone()));
+            let arginfo = Slot::var(Ty::new(T::Tables(Cow::Owned(argtab)))).with_loc(argid);
+            scope.env.add_local_var_already_set(argid, arginfo)?;
+        }
+
         let args = TySeq { head: argshead, tail: vatype };
 
         if no_check.is_none() {
@@ -2354,7 +2384,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             self.env.resolve_exact_type(&hint.unlift()).and_then(|ty| {
                 match ty.get_tables() {
                     Some(&Tables::All) => Some(Target::Any),
-                    Some(&Tables::Array(ref v)) => {
+                    Some(&Tables::Array(ref v)) | Some(&Tables::ArrayN(ref v)) => {
                         let v = v.clone().with_nil().with_loc(&hint);
                         Some(Target::Array(v, i32::MAX, i32::MIN, 0))
                     },
