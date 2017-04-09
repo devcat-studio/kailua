@@ -9,23 +9,23 @@
 --#     {
 --#         `clock`: function() --> number;
 --#         -- TODO it is very hard to recognize '*t'|!'*t' from other string types, ugh
---#         `date`: function(string?, tm?) --> string | {
+--#         `date`: function(format: string?, time: tm?) --> string | {
 --#             year: integer, month: integer, day: integer,
 --#             hour: integer, min: integer, sec: integer,
 --#             wday: integer, yday: integer, isdst: boolean
 --#         };
---#         `difftime`: function(number, number) --> number;
---#         `execute`: function(string?) --> integer;
+--#         `difftime`: function(t2: number, t1: number) --> number;
+--#         `execute`: function(command: string?) --> integer;
 --#         -- TODO diverging function signature
---#         `exit`: function(integer?);
---#         `getenv`: function(string) --> string;
+--#         `exit`: function(code: integer?);
+--#         `getenv`: function(varname: string) --> string;
 --#         -- TODO sequence conditional union: (true) | (nil, string)
---#         -- there is alos an undocumented 3rd return type (integer) for errno, omitted here
---#         `remove`: function(string) --> (boolean, string);
+--#         -- there is also an undocumented 3rd return type (integer) for errno, omitted here
+--#         `remove`: function(filename: string) --> (boolean, string);
 --#         -- TODO sequence conditional union: (true) | (nil, string)
---#         `rename`: function(string, string) --> (boolean, string);
---#         `setlocale`: function(string?, string?) --> string;
---#         `time`: function(tm?) --> number;
+--#         `rename`: function(oldname: string, newname: string) --> (boolean, string);
+--#         `setlocale`: function(locale: string?, category: string?) --> string;
+--#         `time`: function(table: tm?) --> number;
 --#         `tmpname`: function() --> string;
 --#         ...
 --#     }

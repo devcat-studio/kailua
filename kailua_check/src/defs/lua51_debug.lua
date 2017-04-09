@@ -4,19 +4,32 @@
 --# assume global `debug`:
 --#     {
 --#         `debug`: function();
---#         `getfenv`: function;
---#         `gethook`: function;
---#         `getinfo`: function;
---#         `getlocal`: function;
---#         `getmetatable`: function;
---#         `getregistry`: function;
---#         `getupvalue`: function;
---#         `setfenv`: function;
---#         `sethook`: function;
---#         `setlocal`: function;
---#         `setmetatable`: function;
---#         `setupvalue`: function;
---#         `traceback`: function;
+--#         `getfenv`: function(o: WHATEVER) --> table;
+--#         `gethook`: function(thread: thread?) --> (WHATEVER, string, integer);
+--#         -- XXX overloading required
+--#         `getinfo`: function(`thread/function`: WHATEVER,
+--#                             `function/what`: WHATEVER, what: WHATEVER?) --> table;
+--#         -- XXX overloading required
+--#         `getlocal`: function(`thread/level`: WHATEVER,
+--#                              `level/local`: WHATEVER,
+--#                              `local`: WHATEVER?) --> (string, WHATEVER);
+--#         `getmetatable`: function(object: any) --> table;
+--#         `getregistry`: function() --> table;
+--#         `getupvalue`: function(func: function, up: integer) --> (string, WHATEVER);
+--#         `setfenv`: function(object: WHATEVER, table: table) --> table;
+--#         -- XXX overloading required
+--#         `sethook`: function(`thread/hook`: WHATEVER,
+--#                             `hook/mask`: WHATEVER,
+--#                             `mask/count`: WHATEVER, count: integer?);
+--#         -- XXX overloading required
+--#         `setlocal`: function(`thread/level`: WHATEVER,
+--#                              `level/local`: WHATEVER,
+--#                              `local/value`: WHATEVER, value: WHATEVER?) --> string;
+--#         `setmetatable`: function(object: any, table: table);
+--#         `setupvalue`: function(func: function, up: integer, value: WHATEVER) --> string;
+--#         -- XXX overloading required
+--#         `traceback`: function(`thread/message`: WHATEVER?,
+--#                               `message/level`: WHATEVER?, level: integer?) --> string;
 --#         ...
 --#     }
 

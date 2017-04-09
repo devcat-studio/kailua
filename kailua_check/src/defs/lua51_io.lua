@@ -2,35 +2,35 @@
 
 --# type local file = {
 --#     -- TODO method receivers and recursive types are generally not implemented yet
---#     `close`: function(WHATEVER);
---#     `flush`: function(WHATEVER);
---#     `lines`: function(WHATEVER) --> function() --> string?;
+--#     `close`: function(self: WHATEVER);
+--#     `flush`: function(self: WHATEVER);
+--#     `lines`: function(self: WHATEVER) --> function() --> string?;
 --#     -- TODO should be: function(self, '*n') --> number &
 --#     --                 function(self, '*a') --> string &
 --#     --                 function(self, '*l'|integer?) --> string
 --#     -- for now, let's ignore *n (which is most useless)
---#     `read`: function(WHATEVER, '*a'|'*l'|integer?) --> string;
---#     `seek`: function(WHATEVER, 'set'|'cur'|'end'?, integer?);
+--#     `read`: function(self: WHATEVER, format: '*a'|'*l'|integer?) --> string;
+--#     `seek`: function(self: WHATEVER, whence: 'set'|'cur'|'end'?, offset: integer?);
 --#     -- TODO again, 'no' does not accept an integer
---#     `setvbuf`: function(WHATEVER, 'no'|'full'|'line', integer?);
---#     `write`: function(WHATEVER, string|number);
+--#     `setvbuf`: function(self: WHATEVER, mode: 'no'|'full'|'line', size: integer?);
+--#     `write`: function(self: WHATEVER, string|number...);
 --# }
 --#
 --# assume global `io`:
 --#     {
---#         `close`: function(file?);
+--#         `close`: function(file: file?);
 --#         `flush`: function();
 --#         -- TODO should be separated
---#         `input`: function(string|file?) --> file;
---#         `lines`: function(string?) --> function() --> string?;
+--#         `input`: function(file: string|file?) --> file;
+--#         `lines`: function(filename: string?) --> function() --> string?;
 --#         -- TODO sequence conditional union: (file) | (nil, string)
---#         `open`: function(string, string?) --> (file, string);
---#         `output`: function(string|file?) --> file;
---#         `popen`: function(string, string?) --> file;
---#         `read`: function('*a'|'*l'|integer?) --> string;
+--#         `open`: function(filename: string, mode: string?) --> (file, string);
+--#         `output`: function(file: string|file?) --> file;
+--#         `popen`: function(prog: string, mode: string?) --> file;
+--#         `read`: function(format: '*a'|'*l'|integer?) --> string;
 --#         `tmpfile`: function() --> file;
---#         `type`: function(any) --> 'file'|'closed file';
---#         `write`: function(string|number);
+--#         `type`: function(obj: any) --> 'file'|'closed file';
+--#         `write`: function(string|number...);
 --#         ...
 --#     }
 

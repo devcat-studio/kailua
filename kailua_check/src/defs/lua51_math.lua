@@ -2,39 +2,44 @@
 
 --# assume global `math`:
 --#     {
---#         `abs`: function(number) --> number;
---#         `acos`: function(number) --> number;
---#         `asin`: function(number) --> number;
---#         `atan`: function(number) --> number;
---#         `atan2`: function(number, number) --> number;
---#         `ceil`: function(number) --> integer;
---#         `cos`: function(number) --> number;
---#         `cosh`: function(number) --> number;
---#         `deg`: function(number) --> number;
---#         `exp`: function(number) --> number;
---#         `floor`: function(number) --> integer;
---#         `fmod`: function(number, number) --> number;
---#         `frexp`: function(number) --> (number, integer);
+--#         `abs`: function(x: number) --> number;
+--#         `acos`: function(x: number) --> number;
+--#         `asin`: function(x: number) --> number;
+--#         `atan`: function(x: number) --> number;
+--#         `atan2`: function(y: number, x: number) --> number;
+--#         `ceil`: function(x: number) --> integer;
+--#         `cos`: function(x: number) --> number;
+--#         `cosh`: function(x: number) --> number;
+--#         `deg`: function(x: number) --> number;
+--#         `exp`: function(x: number) --> number;
+--#         `floor`: function(x: number) --> integer;
+--#         `fmod`: function(x: number, y: number) --> number;
+--#         `frexp`: function(x: number) --> (number, integer);
 --#         `huge`: number;
---#         `ldexp`: function(number, integer) --> number;
---#         `log`: function(number) --> number;
---#         `log10`: function(number) --> number;
---#         -- TODO should really be `function(integer...) --> integer & function(number...) --> number`
---#         `max`: function(number...) --> number;
---#         -- TODO should really be `function(integer...) --> integer & function(number...) --> number`
---#         `min`: function(number...) --> number;
---#         `modf`: function(number) --> (integer, number);
+--#         `ldexp`: function(m: number, e: integer) --> number;
+--#         `log`: function(x: number) --> number;
+--#         `log10`: function(x: number) --> number;
+--#         -- TODO should really be
+--#         --      `function(x: integer, integer...) --> integer &
+--#         --       function(x: number, number...) --> number`
+--#         `max`: function(x: number, number...) --> number;
+--#         -- TODO should really be
+--#         --      `function(x: integer, integer...) --> integer &
+--#         --       function(x: number, number...) --> number`
+--#         `min`: function(x: number, number...) --> number;
+--#         `modf`: function(x: number) --> (integer, number);
 --#         `pi`: number;
---#         `pow`: function(number, number) --> number;
---#         `rad`: function(number) --> number;
---#         -- TODO should really be `function() --> number & function(integer, integer?) --> integer`
---#         `random`: function(integer?, integer?) --> number;
---#         `randomseed`: function(integer);
---#         `sin`: function(number) --> number;
---#         `sinh`: function(number) --> number;
---#         `sqrt`: function(number) --> number;
---#         `tan`: function(number) --> number;
---#         `tanh`: function(number) --> number;
+--#         `pow`: function(x: number, y: number) --> number;
+--#         `rad`: function(x: number) --> number;
+--#         -- TODO should really be
+--#         --      `function() --> number & function(m: integer, n: integer?) --> integer`
+--#         `random`: function(m: integer?, n: integer?) --> number;
+--#         `randomseed`: function(x: integer);
+--#         `sin`: function(x: number) --> number;
+--#         `sinh`: function(x: number) --> number;
+--#         `sqrt`: function(x: number) --> number;
+--#         `tan`: function(x: number) --> number;
+--#         `tanh`: function(x: number) --> number;
 --#         ...
 --#     }
 

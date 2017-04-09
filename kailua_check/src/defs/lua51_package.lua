@@ -1,17 +1,17 @@
 -- definitions for Lua 5.1 package library
 
 --# assume global `module`:
---#     [become_module] function(string, function(table)...)
+--#     [become_module] function(name: string, function(table)...)
 --#
 --# assume global `require`:
---#     [require] function(string) --> any
+--#     [require] function(modname: string) --> any
 --#
 --# assume global `package`:
 --#     {
 --#         `cpath`: [package_cpath] string;
 --#         `loaded`: map<string, table>;
 --#         `loaders`: vector<function(string) --> (function|string)?>;
---#         `loadlib`: [geval] function(string, string);
+--#         `loadlib`: [geval] function(libname: string, funcname: string);
 --#         `path`: [package_path] string;
 --#         `preload`: vector<function(string) --> (function|string)?>;
 --#         -- TODO error type not yet supported (should it be a slot?)
