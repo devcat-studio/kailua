@@ -504,6 +504,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             return Ok(Exitable::dummy());
         }
 
+        // visit_func_call also does this, but check_callable can be called in the other way
         let functy = if let Some(func) = self.env.resolve_exact_type(&func) {
             func
         } else {
@@ -1656,7 +1657,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 let (tag, no_check) = self.visit_sig_attrs(&sig.attrs)?;
                 let functy = self.visit_func_body(tag, no_check, None, sig, block,
                                                   stmt.span, None)?;
-                if let Err(r) = T::TVar(funcv).assert_eq(&*functy.unlift(), self.types()) {
+                if let Err(r) = Ty::new(T::TVar(funcv)).assert_eq(&*functy.unlift(), self.types()) {
                     self.env.error(stmt, m::BadRecursiveCall {})
                         .report_types(r, TypeReportHint::None)
                         .done()?;
@@ -2178,18 +2179,23 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
 
     fn visit_func_call(&mut self, functy: &Spanned<Ty>, selfinfo: Option<Spanned<Slot>>,
                        args: &'inp Spanned<Args>, expspan: Span) -> Result<Exitable<SlotSeq>> {
+        let functy = if let Some(func) = self.env.resolve_exact_type(functy) {
+            func.with_loc(functy)
+        } else {
+            self.env.error(functy, m::CallToInexactType { func: self.display(functy) }).done()?;
+            return Ok(Exitable::dummy());
+        };
+
         // construct hints; they are given at the best effort basis
-        let hint = self.env.resolve_exact_type(functy).and_then(|ty| {
-            if let Some(&Functions::Simple(ref f)) = ty.get_functions() {
-                let mut args = f.args.clone();
-                if selfinfo.is_some() && !args.head.is_empty() {
-                    args.head.remove(0); // args do not contain self, so do hints
-                }
-                Some(SlotSeq::from_seq(args).all_with_loc(functy))
-            } else {
-                None
+        let hint = if let Some(&Functions::Simple(ref f)) = functy.get_functions() {
+            let mut args = f.args.clone();
+            if selfinfo.is_some() && !args.head.is_empty() {
+                args.head.remove(0); // args do not contain self, so do hints
             }
-        });
+            Some(SlotSeq::from_seq(args).all_with_loc(&functy))
+        } else {
+            None
+        };
 
         // should be visited first, otherwise a WHATEVER function will ignore slots in arguments
         let (nargs, Exitable(exit, mut argtys)) = match args.base {
@@ -2210,8 +2216,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             },
         };
 
-        if !self.env.get_type_bounds(functy).1.is_callable() {
-            self.env.error(functy, m::CallToNonFunc { func: self.display(functy) }).done()?;
+        if !self.env.get_type_bounds(&functy).1.is_callable() {
+            self.env.error(&functy, m::CallToNonFunc { func: self.display(&functy) }).done()?;
             return Ok(exit.with_dummy());
         }
         if let Some(dyn) = functy.get_dynamic() {
@@ -2359,7 +2365,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             false
         };
 
-        let Exitable(retexit, returns) = self.check_callable(functy, &argtys.unlift(), methodcall)?;
+        let Exitable(retexit, returns) =
+            self.check_callable(&functy, &argtys.unlift(), methodcall)?;
 
         // merge exits; do not use `ExprExit::then` as this is the only way to generate Stop.
         // TODO this should be Var instead of Just!!!!!

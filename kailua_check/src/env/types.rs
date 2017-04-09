@@ -445,7 +445,8 @@ impl Types {
     pub fn resolve_exact_type(&self, ty: &Ty) -> Option<Ty> {
         if let T::TVar(tv) = **ty {
             if let Some(ty2) = self.get_tvar_exact_type(tv) {
-                Some(ty2.union_nil(ty.nil()).with_tag(ty.tag()))
+                let tag = ty.tag().or(ty2.tag());
+                Some(ty2.union_nil(ty.nil()).with_tag(tag))
             } else {
                 None
             }

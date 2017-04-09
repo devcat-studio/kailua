@@ -1620,18 +1620,23 @@ macro_rules! define_ty_impls {
                     let $l = self;
                     let $r = other;
 
-                    if !tag_is_eq($ltag, $rtag) {
-                        return Err(ctx.gen_report());
-                    }
-
                     match ($lty, $rty) {
                         // Dynamic and All always contain nil, so handled separately here
-                        (&T::Dynamic(_), _) | (_, &T::Dynamic(_)) | (&T::All, &T::All) => Ok(()),
+                        (&T::Dynamic(_), _) | (_, &T::Dynamic(_)) | (&T::All, &T::All) => {
+                            if !tag_is_eq($ltag, $rtag) {
+                                return Err(ctx.gen_report());
+                            }
+                            Ok(())
+                        },
 
                         // conditions here are derived from the conditions of assert_sub,
                         // applied twice (as T <: U and U <: T implies T = U)
 
                         (&T::TVar(v1), &T::TVar(v2)) => {
+                            if !tag_is_eq($ltag, $rtag) {
+                                return Err(ctx.gen_report());
+                            }
+
                             // unlike assert_sub, if nil differs we cannot easily derive
                             // constraints for variables, so we require nils to be equal
                             if $lnil.is_eq($rnil) {
@@ -1642,6 +1647,7 @@ macro_rules! define_ty_impls {
                         },
 
                         (_, &T::TVar(v2)) => {
+                            // do not check tags, v2 will get tags if lhs had them
                             if $lnil.is_eq($rnil) {
                                 // nil can be removed from the constraint
                                 ctx.assert_tvar_eq(v2, $lhs_without_nil)
@@ -1651,6 +1657,7 @@ macro_rules! define_ty_impls {
                         },
 
                         (&T::TVar(v1), _) => {
+                            // do not check tags, v1 will get tags if rhs had them
                             if $lnil.is_eq($rnil) {
                                 ctx.assert_tvar_eq(v1, $rhs_as_is)
                             } else {
@@ -1659,6 +1666,10 @@ macro_rules! define_ty_impls {
                         },
 
                         (ty1, ty2) => {
+                            if !tag_is_eq($ltag, $rtag) {
+                                return Err(ctx.gen_report());
+                            }
+
                             if $lnil.is_eq($rnil) {
                                 ty1.assert_eq(ty2, ctx)
                             } else {

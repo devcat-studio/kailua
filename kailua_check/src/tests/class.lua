@@ -5,6 +5,14 @@
 Hello = class()
 --! ok
 
+--8<-- make-class-no-check
+--v [NO_CHECK] [make_class] function() --> table
+function class()
+    return {}
+end
+Hello = class()
+--! ok
+
 --8<-- make-class-unnamed
 --# assume `class`: [make_class] function() --> table
 local x = class() + 3
@@ -59,6 +67,17 @@ end
 
 --8<-- class-init
 --# assume `class`: [make_class] function() --> table
+Hello = class()
+function Hello:init()
+end
+local h = Hello.new() --: Hello
+--! ok
+
+--8<-- class-init-no-check
+--v [NO_CHECK] [make_class] function() --> table
+function class()
+    return {}
+end
 Hello = class()
 function Hello:init()
 end
