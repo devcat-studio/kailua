@@ -53,7 +53,7 @@ impl fmt::Debug for Unit {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Pos {
     unit: u32,
     pos: u32,
@@ -110,7 +110,7 @@ impl fmt::Debug for Pos {
 // span (0, y, z) for non-zero y and z is reserved.
 // span (x, y, y) for non-zero x and y indicates a point and can be lifted from Pos.
 // span (x, y, z) for non-zero x, y and z (y < z) is an ordinary span, with z exclusive.
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Span {
     unit: u32,
     begin: u32,

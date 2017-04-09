@@ -3745,35 +3745,6 @@ x.y = x
 x.z = x
 --! ok
 
---8<-- rec-recursive-display-1
-local x = {}
-x.x = x
-x.y = x
-x.z = x
-local a = x --: integer --@< Error: Cannot assign `{x: <...>, y: <...>, z: <...>, ...}` into `integer`
-                        --@^ Note: The other type originates here
---! error
-
---8<-- rec-recursive-display-2
-local x = {}
-x.x = x
-x.y = x
-x.z = x
-local y = {}
-y.x = y
-y.y = x
--- this error is actually quite wrong, because it occurred in midst of recursive rvar relation...
-x = y --@< Error: Cannot assign `{x: <...>, y: {x: <...>, y: <...>, z: <...>, ...}, ...}` into `{x: {x: <...>, y: <...>, ...}, y: <...>, z: <...>, ...}`
-      --@^ Note: The other type originates here
---! error
-
---8<-- rec-recursive-display-3
-local u = {}
-u.u = u
-u.u = 0 --@< Error: Cannot assign `0` into `{u: <...>, ...}`
-        --@^ Note: The other type originates here
---! error
-
 --8<-- duplicate-name-1
 local x, x = 3, 'string' --: integer, string
 --@^ Error: This variable will overwrite another same-named variable in the same scope

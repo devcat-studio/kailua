@@ -10,7 +10,7 @@ use kailua_env::{self, Span, Spanned, WithLoc, ScopedId, ScopeMap, SpanMap};
 use kailua_diag::{Result, Kind, Report, Reporter, Locale, Localize};
 use kailua_syntax::{Str, Name, NameRef};
 use diag::{TypeReportHint, TypeReportMore};
-use ty::{Displayed, Display};
+use ty::{Displayed, Display, DisplayName};
 use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, Lattice, Union, Tag};
 use ty::{TypeContext, TypeResolver, ClassId, Class, Tables, Functions, Function, Key};
 use ty::flags::*;
@@ -242,6 +242,13 @@ impl SlotSpec {
     pub fn slot(&self) -> &Spanned<Slot> {
         match *self {
             SlotSpec::Implicit(ref slot) | SlotSpec::Explicit(ref slot) => slot,
+        }
+    }
+
+    pub fn map<F: FnOnce(Slot) -> Slot>(self, f: F) -> SlotSpec {
+        match self {
+            SlotSpec::Implicit(slot) => SlotSpec::Implicit(slot.map(f)),
+            SlotSpec::Explicit(slot) => SlotSpec::Explicit(slot.map(f)),
         }
     }
 
@@ -1013,9 +1020,13 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             // name the class if it is currently unnamed
             self.name_class_if_any(&id, &initinfo)?;
 
-            NameSlot::Set(specinfo.base)
+            let varname = id.name(self.context).clone().with_loc(nameref);
+            let specinfo = specinfo.base.set_display(DisplayName::Var(varname));
+            NameSlot::Set(specinfo)
         } else if let Some(specinfo) = specinfo {
-            NameSlot::Unset(specinfo.unwrap().base)
+            let varname = id.name(self.context).clone().with_loc(nameref);
+            let specinfo = specinfo.unwrap().base.set_display(DisplayName::Var(varname));
+            NameSlot::Unset(specinfo)
         } else {
             NameSlot::None
         };
@@ -1036,7 +1047,9 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
         self.name_class_if_any(&id, &info)?;
 
-        self.context.ids.insert(id.base, NameDef { span: id.span, slot: NameSlot::Set(info.base) });
+        let varname = id.name(self.context).clone().with_loc(scoped_id);
+        let info = info.base.set_display(DisplayName::Var(varname));
+        self.context.ids.insert(id.base, NameDef { span: id.span, slot: NameSlot::Set(info) });
         Ok(())
     }
 
@@ -1055,10 +1068,11 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             def.slot = NameSlot::Set(previnfo.clone());
             (previnfo, prevset, needslotassign)
         } else {
+            let varname = id.name(self.context).clone().with_loc(nameref);
+            let info = info.base.clone().set_display(DisplayName::Var(varname));
             self.context.ids.insert(id.base.clone(),
-                                    NameDef { span: id.span,
-                                              slot: NameSlot::Set(info.base.clone()) });
-            (info.base.clone(), true, true)
+                                    NameDef { span: id.span, slot: NameSlot::Set(info.clone()) });
+            (info, true, true)
         };
         debug!("assigning {:?} to a variable {} with type {:?}",
                info, id.display(&self.context), previnfo);
@@ -1094,10 +1108,13 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
         self.assume_special(&info)?;
 
+        let varname = id.name(self.context).clone().with_loc(name);
+        let info = info.base.set_display(DisplayName::Var(varname));
+
         let mut def = self.context.ids.entry(id).or_insert_with(|| {
             NameDef { span: name.span, slot: NameSlot::None }
         });
-        def.slot = NameSlot::Set(info.base);
+        def.slot = NameSlot::Set(info);
 
         Ok(())
     }
@@ -1138,6 +1155,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             return Ok(());
         }
 
+        let ty = ty.and_display(DisplayName::Type(name.clone()));
         let ret = self.current_scope_mut().put_type(name.clone(), ty);
         assert!(ret, "failed to insert the type");
         Ok(())
@@ -1156,6 +1174,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             return Ok(());
         }
 
+        let ty = ty.and_display(DisplayName::Type(name.clone()));
         let ret = self.global_scope_mut().put_type(name.clone(), ty);
         assert!(ret, "failed to insert the type");
         Ok(())
@@ -1188,6 +1207,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         }
 
         // insert a locally scoped type
+        let ty = ty.and_display(DisplayName::Type(name.clone()));
         let ret = self.current_scope_mut().put_type(name.clone(), ty);
         assert!(ret, "failed to insert the type");
         Ok(())

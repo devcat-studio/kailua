@@ -3,13 +3,15 @@ use std::mem;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::atomic::{Ordering, AtomicUsize};
+use take_mut::take;
 use parking_lot::{RwLock, RwLockReadGuard};
 
 use kailua_env::{Span, Spanned};
 use kailua_syntax::{M, MM};
 use diag::Origin;
 use super::{Dyn, Nil, T, Ty, TypeContext, Lattice, Union, Dummy, TVar, Tag};
-use super::{Display, DisplayState, TypeReport, TypeResult};
+use super::{TypeReport, TypeResult};
+use super::display::{Display, DisplayState, DisplayName};
 use super::flags::Flags;
 
 // slot type flexibility (a superset of type mutability)
@@ -552,6 +554,13 @@ impl Slot {
 
     pub fn generalize(&self, ctx: &mut TypeContext) -> Slot {
         Slot::from((*self.0).clone().generalize(ctx))
+    }
+
+    // should *not* create a new slot! (the resulting slot is not a different type,
+    // but a same type with a display hint; the hint *should* be global.)
+    pub fn set_display(self, disp: DisplayName) -> Slot {
+        take(&mut *self.0.ty.write(), |t| t.and_display(disp));
+        self
     }
 }
 

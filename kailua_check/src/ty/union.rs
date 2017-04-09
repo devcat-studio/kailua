@@ -4,7 +4,8 @@ use std::collections::BTreeSet;
 
 use kailua_syntax::Str;
 use diag::{TypeReport, TypeResult, Origin};
-use super::{Display, DisplayState, T, TypeContext, Lattice, Union};
+use super::display::{Display, DisplayState, DisplayName};
+use super::{T, TypeContext, Lattice, Union};
 use super::{Numbers, Strings, Tables, Functions, Class};
 use super::flags::*;
 
@@ -17,13 +18,19 @@ pub struct Unioned {
     pub tables: Option<Tables>,
     pub functions: Option<Functions>,
     pub classes: BTreeSet<Class>,
+
+    // since Unioned destroys display hints otherwise, they are kept here separately.
+    // the flags initially represent the flags for given type,
+    // and reset when the Unioned is unioned with unnamed types.
+    // the hint is removed when flags are empty.
+    pub display_hints: Vec<(Flags, DisplayName)>,
 }
 
 impl Unioned {
     pub fn empty() -> Unioned {
         Unioned {
             simple: U_NONE, numbers: None, strings: None, tables: None,
-            functions: None, classes: BTreeSet::new(),
+            functions: None, classes: BTreeSet::new(), display_hints: Vec::new(),
         }
     }
 
@@ -31,21 +38,21 @@ impl Unioned {
         let simple = if b { U_TRUE } else { U_FALSE };
         Unioned {
             simple: simple, numbers: None, strings: None, tables: None,
-            functions: None, classes: BTreeSet::new(),
+            functions: None, classes: BTreeSet::new(), display_hints: Vec::new(),
         }
     }
 
     pub fn explicit_int(v: i32) -> Unioned {
         Unioned {
             simple: U_NONE, numbers: Some(Numbers::One(v)), strings: None, tables: None,
-            functions: None, classes: BTreeSet::new(),
+            functions: None, classes: BTreeSet::new(), display_hints: Vec::new(),
         }
     }
 
     pub fn explicit_str(s: Str) -> Unioned {
         Unioned {
             simple: U_NONE, numbers: None, strings: Some(Strings::One(s)), tables: None,
-            functions: None, classes: BTreeSet::new(),
+            functions: None, classes: BTreeSet::new(), display_hints: Vec::new(),
         }
     }
 
@@ -97,42 +104,77 @@ impl Unioned {
         flags
     }
 
-    pub fn visit<'a, E, F>(&'a self, mut f: F) -> Result<(), E>
-            where F: FnMut(T<'a>) -> Result<(), E> {
-        if self.simple.contains(U_TRUE) {
-            if self.simple.contains(U_FALSE) { f(T::Boolean)?; } else { f(T::True)?; }
-        } else if self.simple.contains(U_FALSE) {
+    pub fn visit<'a, E, F>(&'a self, mask: Flags, mut f: F) -> Result<(), E>
+        where F: FnMut(T<'a>) -> Result<(), E>,
+    {
+        let simple = self.simple & UnionedSimple::from_bits_truncate(mask.bits());
+        if simple.contains(U_TRUE) {
+            if simple.contains(U_FALSE) { f(T::Boolean)?; } else { f(T::True)?; }
+        } else if simple.contains(U_FALSE) {
             f(T::False)?;
         }
-        if self.simple.contains(U_THREAD) { f(T::Thread)?; }
-        if self.simple.contains(U_USERDATA) { f(T::UserData)?; }
+        if simple.contains(U_THREAD) { f(T::Thread)?; }
+        if simple.contains(U_USERDATA) { f(T::UserData)?; }
+
         match self.numbers {
-            Some(Numbers::All) => { f(T::Number)?; }
-            Some(Numbers::Int) => { f(T::Integer)?; }
-            Some(Numbers::Some(ref vv)) => {
+            Some(Numbers::All) if mask.intersects(T_NUMBER) => { f(T::Number)?; }
+            Some(Numbers::Int) if mask.intersects(T_INTEGER) => { f(T::Integer)?; }
+            Some(Numbers::Some(ref vv)) if mask.intersects(T_INTEGER) => {
                 for &v in vv { f(T::Int(v))?; }
             }
-            Some(Numbers::One(v)) => { f(T::Int(v))?; }
-            None => {}
+            Some(Numbers::One(v)) if mask.intersects(T_INTEGER) => { f(T::Int(v))?; }
+            _ => {}
         }
-        match self.strings {
-            Some(Strings::All) => { f(T::String)?; }
-            Some(Strings::Some(ref ss)) => {
-                for s in ss { f(T::Str(Cow::Borrowed(s)))?; }
+
+        if mask.contains(T_STRING) {
+            match self.strings {
+                Some(Strings::All) => { f(T::String)?; }
+                Some(Strings::Some(ref ss)) => {
+                    for s in ss { f(T::Str(Cow::Borrowed(s)))?; }
+                }
+                Some(Strings::One(ref s)) => {
+                    f(T::Str(Cow::Borrowed(s)))?;
+                }
+                None => {}
             }
-            Some(Strings::One(ref s)) => { f(T::Str(Cow::Borrowed(s)))?; }
-            None => {}
         }
-        if let Some(ref tab) = self.tables { f(T::Tables(Cow::Borrowed(tab)))? }
-        if let Some(ref func) = self.functions { f(T::Functions(Cow::Borrowed(func)))? }
-        for &c in &self.classes { f(T::Class(c))? }
+
+        if mask.contains(T_TABLE) {
+            if let Some(ref tab) = self.tables {
+                f(T::Tables(Cow::Borrowed(tab)))?;
+            }
+        }
+
+        if mask.contains(T_FUNCTION) {
+            if let Some(ref func) = self.functions {
+                f(T::Functions(Cow::Borrowed(func)))?;
+            }
+        }
+
+        if mask.contains(T_TABLE) {
+            for &c in &self.classes { f(T::Class(c))?; }
+        }
+
         Ok(())
+    }
+
+    pub fn add_display_hint(&mut self, flags: Flags, name: &DisplayName) {
+        if !self.display_hints.iter().any(|&(_, ref n)| *n == *name) { // TODO O(n^2)
+            self.display_hints.push((flags, name.clone()));
+        }
+    }
+
+    pub fn filter_display_hints(&mut self, removed: Flags) {
+        for &mut (ref mut flags, _) in &mut self.display_hints {
+            *flags &= !removed;
+        }
+        self.display_hints.retain(|&(flags, _)| flags != T_NONE);
     }
 
     pub fn simplify(self) -> T<'static> {
         let single = {
             let mut single = None;
-            let ret = self.visit(|ty| {
+            let ret = self.visit(T_ALL, |ty| {
                 if single.is_some() { return Err(()); }
 
                 // avoid simplifying explicitly written literal types
@@ -153,11 +195,26 @@ impl Unioned {
         single.unwrap_or_else(|| T::Union(Cow::Owned(self)))
     }
 
-    fn fmt_generic<WriteTy>(&self, f: &mut fmt::Formatter, mut write_ty: WriteTy) -> fmt::Result
-            where WriteTy: FnMut(&T, &mut fmt::Formatter) -> fmt::Result {
+    fn fmt_generic<WriteTy, WriteName>(&self, f: &mut fmt::Formatter,
+                                       hints: &[(Flags, DisplayName)],
+                                       mut write_ty: WriteTy,
+                                       mut write_name: WriteName) -> fmt::Result
+        where WriteTy: FnMut(&T, &mut fmt::Formatter) -> fmt::Result,
+              WriteName: FnMut(&DisplayName, &mut fmt::Formatter) -> fmt::Result
+    {
+        // we always ignore variable hints
+        let keep_hint = |&&(_, ref name): &&(Flags, DisplayName)| {
+            if let DisplayName::Var(_) = *name { false } else { true }
+        };
+
+        // named types are printed at the end,
+        // but flags associated to them should not be printed before them
+        let (mut count, mask) =
+            hints.iter().filter(&keep_hint)
+                        .fold((0, T_ALL), |(c, f), &(flags, _)| (c + 1, f & !flags));
+
         // count up to 2 items so that we can determine if parentheses are needed
-        let mut count = 0;
-        let _ = self.visit(|_| {
+        let _ = self.visit(mask, |_| {
             if count < 2 {
                 count += 1;
                 Ok(())
@@ -170,7 +227,7 @@ impl Unioned {
             write!(f, "(")?;
         }
         let mut first = true;
-        self.visit(|ty| {
+        self.visit(mask, |ty| {
             if first {
                 first = false;
             } else {
@@ -178,6 +235,14 @@ impl Unioned {
             }
             write_ty(&ty, f)
         })?;
+        for &(_, ref name) in hints.iter().filter(keep_hint) {
+            if first {
+                first = false;
+            } else {
+                write!(f, "|")?;
+            }
+            write_name(name, f)?;
+        }
         if count != 1 {
             write!(f, ")")?
         }
@@ -242,10 +307,16 @@ impl Union for Unioned {
             let mut classes = self.classes.clone();
             classes.extend(other.classes.iter().cloned());
 
-            Ok(Unioned {
+            let mut u = Unioned {
                 simple: simple, numbers: numbers, strings: strings,
                 tables: tables, functions: functions, classes: classes,
-            })
+                display_hints: self.display_hints.clone(),
+            };
+            for &(flags, ref name) in &other.display_hints {
+                u.add_display_hint(flags, name);
+            }
+
+            Ok(u)
         })().map_err(|r: TypeReport| r.cannot_union(Origin::Union, self, other, explicit, ctx))
     }
 }
@@ -316,13 +387,27 @@ impl Lattice for Unioned {
 
 impl Display for Unioned {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
-        self.fmt_generic(f, |t, f| fmt::Display::fmt(&t.display(st), f))
+        self.fmt_generic(
+            f, &self.display_hints,
+            |t, f| fmt::Display::fmt(&t.display(st), f),
+            |name, f| fmt::Display::fmt(&name.display(st), f),
+        )
     }
 }
 
 impl fmt::Debug for Unioned {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.fmt_generic(f, |t, f| fmt::Debug::fmt(t, f))
+        self.fmt_generic(
+            f, &[],
+            |t, f| fmt::Debug::fmt(t, f),
+            |_, _| panic!("no names allowed"),
+        )?;
+
+        if !self.display_hints.is_empty() {
+            write!(f, " <hint {:?}>", &self.display_hints)?;
+        }
+
+        Ok(())
     }
 }
 

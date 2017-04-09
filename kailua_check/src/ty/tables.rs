@@ -118,6 +118,12 @@ impl Tables {
 
             Tables::Fields(ref rvar) => {
                 if let Some(st) = st {
+                    if !st.can_recurse() {
+                        return match &st.locale[..] {
+                            "ko" => write!(f, "<생략>"),
+                            _    => write!(f, "<omitted>"),
+                        };
+                    }
                     if st.is_rvar_seen(rvar.clone()) {
                         return write!(f, "<...>");
                     }

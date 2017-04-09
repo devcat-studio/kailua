@@ -9,7 +9,8 @@ use kailua_env::{Spanned, WithLoc};
 use kailua_syntax::{K, Kind, SlotKind, Str, Name};
 use kailua_diag::{Result, Reporter};
 use diag::{Origin, TypeReport, TypeResult, TypeReportHint, TypeReportMore};
-use super::{Display, DisplayState, TypeContext, NoTypeContext, TypeResolver};
+use super::display::{Display, DisplayState, DisplayName};
+use super::{TypeContext, NoTypeContext, TypeResolver};
 use super::{F, Slot, Lattice, Union, Dummy};
 use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, Tag, Class};
 use super::flags::*;
@@ -161,28 +162,27 @@ impl<'a> T<'a> {
 
     // used for simplifying logical conditions
 
-    pub fn truthy(self) -> T<'a> {
-        match self {
-            T::Boolean => T::True,
-            T::False => T::None,
-            T::Union(u) => {
-                if u.simple.intersects(U_FALSE) {
-                    let mut u = u.into_owned();
-                    u.simple.remove(U_FALSE);
-                    u.simplify()
-                } else {
-                    T::Union(u)
-                }
+    pub fn truthy<'b>(&'b self) -> Cow<'b, T<'a>> {
+        match *self {
+            T::Boolean => Cow::Owned(T::True),
+            T::False => Cow::Owned(T::None),
+            T::Union(ref u) if u.simple.intersects(U_FALSE) => {
+                let mut u = u.clone().into_owned();
+                u.simple.remove(U_FALSE);
+                u.filter_display_hints(T_FALSE);
+                Cow::Owned(u.simplify())
             },
-            t => t,
+            _ => Cow::Borrowed(self),
         }
     }
 
-    pub fn falsy(&self) -> T<'static> {
+    pub fn falsy<'b>(&'b self) -> Cow<'b, T<'a>> {
         match *self {
-            T::Boolean | T::False => T::False,
-            T::Union(ref u) if u.simple & U_FALSE != U_NONE => T::False,
-            _ => T::None,
+            T::None | T::False => Cow::Borrowed(self),
+            T::Boolean => Cow::Owned(T::False),
+            // XXX should we really keep the display hints for this case????
+            T::Union(ref u) if u.simple & U_FALSE != U_NONE => Cow::Owned(T::False),
+            _ => Cow::Owned(T::None),
         }
     }
 
@@ -225,13 +225,6 @@ impl<'a> T<'a> {
         }
     }
 
-    pub fn split_tvar(&self) -> (Option<TVar>, Option<T<'a>>) {
-        match *self {
-            T::TVar(tv) => (Some(tv), None),
-            _ => (None, Some(self.clone())),
-        }
-    }
-
     pub fn as_string(&self) -> Option<&Str> {
         // unlike flags, type variable should not be present
         match *self {
@@ -267,42 +260,16 @@ impl<'a> T<'a> {
     //
     // - removes implicit literal types from `self`, by replacing them with `integer` or `string`.
     //   this does not affect explicit literal types from `Ty::from_kind`.
+    //   (this happens in the shallow way, as implicit types are incrementally constructed)
     //
     // this is used when new variable or field has been added without explicit types,
     // or upper & exact bounds for type variables get updated (lower bounds do not).
-    pub fn coerce(self) -> T<'static> {
-        match self {
-            T::Dynamic(dyn) => T::Dynamic(dyn),
-
-            T::All => T::All,
-            T::None => T::None,
-            T::Boolean | T::True | T::False => T::Boolean,
-            T::Thread => T::Thread,
-            T::UserData => T::UserData,
-
-            T::Number => T::Number,
-            T::Integer | T::Int(_) => T::Integer,
-            T::String | T::Str(_) => T::String,
-
-            // tables are recursively altered
-            T::Tables(tab) => {
-                let tab = match tab.into_owned() {
-                    Tables::Array(v) => Tables::Array(v.coerce()),
-                    Tables::Map(k, v) => Tables::Map(k.coerce(), v.coerce()),
-                    tab => tab,
-                };
-                T::Tables(Cow::Owned(tab))
-            },
-
-            // functions are _not_ recursively altered
-            // (the definitions should have been abstractized at the point of definition)
-            T::Functions(func) => T::Functions(Cow::Owned(func.into_owned())),
-
-            T::Class(c) => T::Class(c),
-            T::TVar(tv) => T::TVar(tv),
-
-            // unions are also _not_ recursively altered as they are always explicit
-            T::Union(u) => T::Union(Cow::Owned(u.into_owned())),
+    pub fn coerce<'b>(&'b self) -> Cow<'b, T<'a>> {
+        match *self {
+            T::True | T::False => Cow::Owned(T::Boolean),
+            T::Int(_) => Cow::Owned(T::Integer),
+            T::Str(_) => Cow::Owned(T::String),
+            _ => Cow::Borrowed(self),
         }
     }
 
@@ -372,7 +339,8 @@ impl<'a> T<'a> {
         }
     }
 
-    pub fn filter_by_flags(self, flags: Flags, ctx: &mut TypeContext) -> TypeResult<T<'a>> {
+    pub fn filter_by_flags<'b>(&'b self, flags: Flags,
+                               ctx: &mut TypeContext) -> TypeResult<Cow<'b, T<'a>>> {
         fn flags_to_ubound(flags: Flags) -> T<'static> {
             assert!(!flags.intersects(T_DYNAMIC));
 
@@ -410,44 +378,49 @@ impl<'a> T<'a> {
             Ok(i)
         }
 
-        let flags_or_none = |bit, t| if flags.contains(bit) { t } else { T::None };
+        let flags_or_none = |bit| {
+            if flags.contains(bit) { Cow::Borrowed(self) } else { Cow::Owned(T::None) }
+        };
 
-        match self {
-            T::Dynamic(dyn) => Ok(T::Dynamic(dyn)),
-            T::None => Ok(T::None),
-            T::All => Ok(flags_to_ubound(flags)),
+        match *self {
+            T::Dynamic(_) => Ok(Cow::Borrowed(self)),
+            T::None => Ok(Cow::Borrowed(self)),
+            T::All => Ok(Cow::Owned(flags_to_ubound(flags))),
             T::Boolean => match flags & T_BOOLEAN {
-                T_BOOLEAN => Ok(T::Boolean),
-                T_TRUE => Ok(T::True),
-                T_FALSE => Ok(T::False),
-                _ => Ok(T::None),
+                T_BOOLEAN => Ok(Cow::Borrowed(self)),
+                T_TRUE => Ok(Cow::Owned(T::True)),
+                T_FALSE => Ok(Cow::Owned(T::False)),
+                _ => Ok(Cow::Owned(T::None)),
             },
             T::Number => match flags & T_NUMBER {
-                T_NUMBER | T_NONINTEGER => Ok(T::Number),
-                T_INTEGER => Ok(T::Integer),
-                _ => Ok(T::None),
+                T_NUMBER | T_NONINTEGER => Ok(Cow::Borrowed(self)),
+                T_INTEGER => Ok(Cow::Owned(T::Integer)),
+                _ => Ok(Cow::Owned(T::None)),
             },
-            T::Integer         => Ok(flags_or_none(T_INTEGER,  T::Integer)),
-            T::Int(v)          => Ok(flags_or_none(T_INTEGER,  T::Int(v))),
-            T::True            => Ok(flags_or_none(T_TRUE,     T::True)),
-            T::False           => Ok(flags_or_none(T_FALSE,    T::False)),
-            T::Thread          => Ok(flags_or_none(T_THREAD,   T::Thread)),
-            T::UserData        => Ok(flags_or_none(T_USERDATA, T::UserData)),
-            T::String          => Ok(flags_or_none(T_STRING,   T::String)),
-            T::Str(s)          => Ok(flags_or_none(T_STRING,   T::Str(s))),
-            T::Tables(tab)     => Ok(flags_or_none(T_TABLE,    T::Tables(tab))),
-            T::Functions(func) => Ok(flags_or_none(T_FUNCTION, T::Functions(func))),
-            T::Class(c)        => Ok(flags_or_none(T_TABLE,    T::Class(c))),
 
-            T::TVar(tv) => {
-                Ok(T::TVar(narrow_tvar(tv, flags, ctx)?))
-            },
-            T::Union(u) => {
+            T::Integer  => Ok(flags_or_none(T_INTEGER)),
+            T::Int(_)   => Ok(flags_or_none(T_INTEGER)),
+            T::True     => Ok(flags_or_none(T_TRUE)),
+            T::False    => Ok(flags_or_none(T_FALSE)),
+            T::Thread   => Ok(flags_or_none(T_THREAD)),
+            T::UserData => Ok(flags_or_none(T_USERDATA)),
+            T::String   => Ok(flags_or_none(T_STRING)),
+
+            T::Str(_)       => Ok(flags_or_none(T_STRING)),
+            T::Tables(_)    => Ok(flags_or_none(T_TABLE)),
+            T::Functions(_) => Ok(flags_or_none(T_FUNCTION)),
+            T::Class(_)     => Ok(flags_or_none(T_TABLE)),
+
+            T::TVar(tv) => Ok(Cow::Owned(T::TVar(narrow_tvar(tv, flags, ctx)?))),
+
+            T::Union(ref u) => {
                 // compile a list of flags to remove, and only alter if there is any removal
                 let removed = !flags & u.flags();
-                if removed.is_empty() { return Ok(T::Union(u)); }
+                if removed.is_empty() {
+                    return Ok(Cow::Borrowed(self));
+                }
 
-                let mut u = u.into_owned();
+                let mut u = u.clone().into_owned();
                 let removed_simple = UnionedSimple::from_bits_truncate(removed.bits());
                 if !removed_simple.is_empty() { u.simple &= !removed_simple; }
                 if removed.intersects(T_NUMBER) {
@@ -457,7 +430,8 @@ impl<'a> T<'a> {
                 if removed.contains(T_STRING)   { u.strings   = None; }
                 if removed.contains(T_TABLE)    { u.tables    = None; }
                 if removed.contains(T_FUNCTION) { u.functions = None; }
-                Ok(u.simplify())
+                u.filter_display_hints(removed);
+                Ok(Cow::Owned(u.simplify()))
             },
         }
     }
@@ -574,118 +548,191 @@ impl<'a> Lattice<Unioned> for T<'a> {
 }
 
 impl<'a> T<'a> {
-    // not intended to be used in public, because it can result in either T or Ty
-    fn union<'b>(&self, other: &T<'b>, explicit: bool,
-                 ctx: &mut TypeContext) -> TypeResult<result::Result<T<'static>, Ty>> {
-        fn resolve<'t, 'u>(t: &'t T<'u>,
-                           ctx: &mut TypeContext) -> (Cow<'t, T<'u>>, Option<(Nil, Option<Tag>)>) {
+    // not intended to be used in public, because it can result in either T or Ty.
+    // Ty is used if it can have different nils, tags or display hints.
+    fn union_with_hints<'b>(&self, selfhint: Option<&DisplayHint>,
+                            other: &T<'b>, otherhint: Option<&DisplayHint>, explicit: bool,
+                            ctx: &mut TypeContext) -> TypeResult<result::Result<T<'static>, Ty>> {
+        fn resolve<'t, 'u>(t: &'t T<'u>, ctx: &mut TypeContext)
+            -> (Cow<'t, T<'u>>, Option<(Nil, Option<Tag>)>, Option<DisplayHint>)
+        {
             if let &T::TVar(tv) = t {
                 if let Some(ty) = ctx.get_tvar_exact_type(tv) {
                     let nil = ty.nil();
                     let tag = ty.tag();
-                    return (Cow::Owned(ty.unwrap()), Some((nil, tag)));
+                    let hint = ty.display_hint().cloned();
+                    return (Cow::Owned(ty.unwrap()), Some((nil, tag)), hint);
                 }
             }
-            (Cow::Borrowed(t), None)
+            (Cow::Borrowed(t), None, None)
         }
 
         (|| {
             // resolve type variables, which may result in Ty
-            let (t1, niltag1) = resolve(self, ctx);
-            let (t2, niltag2) = resolve(other, ctx);
+            let (t1, niltag1, hint1) = resolve(self, ctx);
+            let (t2, niltag2, hint2) = resolve(other, ctx);
 
-            let t = match (&*t1, &*t2) {
+            const BOTH: (bool, bool) = (true, true);
+            const LEFT: (bool, bool) = (true, false);
+            const RIGHT: (bool, bool) = (false, true);
+            const NONE: (bool, bool) = (false, false);
+
+            // union two `T`s, and determine which of two possible display hints should be kept
+            let (t, (keep1, keep2)) = match (&*t1, &*t2) {
                 // dynamic eclipses everything else
-                (&T::Dynamic(dyn1), &T::Dynamic(dyn2)) => T::Dynamic(dyn1.union(dyn2)),
-                (&T::Dynamic(dyn), _) => T::Dynamic(dyn),
-                (_, &T::Dynamic(dyn)) => T::Dynamic(dyn),
+                (&T::Dynamic(dyn1), &T::Dynamic(dyn2)) => {
+                    let dyn = dyn1.union(dyn2);
+                    (T::Dynamic(dyn), (dyn1 == dyn, dyn2 == dyn))
+                },
+                (&T::Dynamic(dyn), _) => (T::Dynamic(dyn), LEFT),
+                (_, &T::Dynamic(dyn)) => (T::Dynamic(dyn), RIGHT),
 
                 // top eclipses everything else except for dynamic and oops
-                (&T::All, _) => T::All,
-                (_, &T::All) => T::All,
+                (&T::All, &T::All) => (T::All, BOTH),
+                (&T::All, _) => (T::All, LEFT),
+                (_, &T::All) => (T::All, RIGHT),
 
-                (&T::None, ty) => ty.clone().into_send(),
-                (ty, &T::None) => ty.clone().into_send(),
+                (&T::None, &T::None) => (T::None, BOTH),
+                (&T::None, ty) => (ty.clone().into_send(), LEFT),
+                (ty, &T::None) => (ty.clone().into_send(), RIGHT),
 
-                (&T::Boolean,  &T::Boolean)  => T::Boolean,
-                (&T::Boolean,  &T::True)     => T::Boolean,
-                (&T::Boolean,  &T::False)    => T::Boolean,
-                (&T::True,     &T::Boolean)  => T::Boolean,
-                (&T::False,    &T::Boolean)  => T::Boolean,
-                (&T::True,     &T::True)     => T::True,
-                (&T::True,     &T::False)    if !explicit => T::Boolean,
-                (&T::False,    &T::True)     if !explicit => T::Boolean,
-                (&T::False,    &T::False)    => T::False,
-                (&T::Thread,   &T::Thread)   => T::Thread,
-                (&T::UserData, &T::UserData) => T::UserData,
+                (&T::Boolean,  &T::Boolean)  => (T::Boolean, BOTH),
+                (&T::Boolean,  &T::True)     => (T::Boolean, LEFT),
+                (&T::Boolean,  &T::False)    => (T::Boolean, LEFT),
+                (&T::True,     &T::Boolean)  => (T::Boolean, RIGHT),
+                (&T::False,    &T::Boolean)  => (T::Boolean, RIGHT),
+                (&T::True,     &T::True)     => (T::True, BOTH),
+                (&T::True,     &T::False)    if !explicit => (T::Boolean, NONE),
+                (&T::False,    &T::True)     if !explicit => (T::Boolean, NONE),
+                (&T::False,    &T::False)    => (T::False, BOTH),
+                (&T::Thread,   &T::Thread)   => (T::Thread, BOTH),
+                (&T::UserData, &T::UserData) => (T::UserData, BOTH),
 
-                (&T::Number,     &T::Number)     => T::Number,
-                (&T::Integer,    &T::Number)     => T::Number,
-                (&T::Int(_),     &T::Number)     => T::Number,
-                (&T::Number,     &T::Integer)    => T::Number,
-                (&T::Number,     &T::Int(_))     => T::Number,
-                (&T::Integer,    &T::Integer)    => T::Integer,
-                (&T::Int(_),     &T::Integer)    => T::Integer,
-                (&T::Integer,    &T::Int(_))     => T::Integer,
-                (&T::String,     &T::String)     => T::String,
-                (&T::Str(_),     &T::String)     => T::String,
-                (&T::String,     &T::Str(_))     => T::String,
+                (&T::Number,  &T::Number)  => (T::Number, BOTH),
+                (&T::Integer, &T::Number)  => (T::Number, RIGHT),
+                (&T::Int(_),  &T::Number)  => (T::Number, RIGHT),
+                (&T::Number,  &T::Integer) => (T::Number, LEFT),
+                (&T::Number,  &T::Int(_))  => (T::Number, LEFT),
+                (&T::Integer, &T::Integer) => (T::Integer, BOTH),
+                (&T::Int(_),  &T::Integer) => (T::Integer, RIGHT),
+                (&T::Integer, &T::Int(_))  => (T::Integer, LEFT),
+                (&T::String,  &T::String)  => (T::String, BOTH),
+                (&T::Str(_),  &T::String)  => (T::String, RIGHT),
+                (&T::String,  &T::Str(_))  => (T::String, LEFT),
 
-                (&T::Int(a), &T::Int(b)) if a == b => T::Int(a),
-                (&T::Int(_), &T::Int(_)) if !explicit => T::Integer,
+                (&T::Int(a), &T::Int(b)) if a == b => (T::Int(a), BOTH),
+                (&T::Int(_), &T::Int(_)) if !explicit => (T::Integer, NONE),
 
-                (&T::Str(ref a), &T::Str(ref b)) if a == b => T::Str(Cow::Owned((**a).to_owned())),
-                (&T::Str(_),     &T::Str(_))     if !explicit => T::String,
+                (&T::Str(ref a), &T::Str(ref b)) if a == b => {
+                    (T::Str(Cow::Owned((**a).to_owned())), BOTH)
+                },
+                (&T::Str(_), &T::Str(_)) if !explicit => (T::String, NONE),
 
-                (&T::Class(a), &T::Class(b)) if a == b => T::Class(a),
+                (&T::Class(a), &T::Class(b)) if a == b => (T::Class(a), BOTH),
                 (&T::Class(_), &T::Class(_)) if !explicit => return Err(ctx.gen_report()),
 
                 // tables cannot be unioned except when one operand is a record and another is
                 // a supertype of that record. otherwise (including the case of two records)
                 // they should be equal, so records can be seemingly unioned due to row extension
                 (&T::Tables(ref a), &T::Tables(ref b)) => {
-                    T::Tables(Cow::Owned(a.union(b, explicit, ctx)?))
+                    let u = a.union(b, explicit, ctx)?;
+                    let keep = (u == **a, u == **b);
+                    (T::Tables(Cow::Owned(u)), keep)
                 },
 
                 // functions cannot be unioned at all and unequal function always errors
                 (&T::Functions(ref a), &T::Functions(ref b)) => {
                     a.assert_eq(b, ctx)?;
-                    T::Functions(Cow::Owned(a.clone().into_owned()))
+                    (T::Functions(Cow::Owned(a.clone().into_owned())), BOTH)
                 },
 
                 // unresolved type variables should be equal to each other to be unioned
                 (&T::TVar(a), &T::TVar(b)) => {
                     ctx.assert_tvar_eq_tvar(a, b)?;
-                    T::TVar(a)
+                    (T::TVar(a), BOTH)
                 },
                 (&T::TVar(a), b) => {
+                    // TODO check if b has no tvars etc
                     ctx.assert_tvar_eq(a, &Ty::new(b.clone().into_send()))?;
-                    T::TVar(a)
+                    (T::TVar(a), BOTH)
                 },
                 (a, &T::TVar(b)) => {
+                    // TODO check if a has no tvars etc
                     ctx.assert_tvar_eq(b, &Ty::new(a.clone().into_send()))?;
-                    T::TVar(b)
+                    (T::TVar(b), BOTH)
                 },
 
                 (a, b) => {
-                    let a = Unioned::from(&a, ctx)?;
-                    let b = Unioned::from(&b, ctx)?;
-                    a.union(&b, explicit, ctx)?.simplify()
+                    let mut a_ = Unioned::from(&a, ctx)?;
+                    let mut b_ = Unioned::from(&b, ctx)?;
+
+                    // unions have their own display hints, so we have to copy
+                    // selfhint and otherhint to newly constructed Unioned.
+                    // a and b are not tvars, so there are no other display hints
+                    // we have to take care of (otherwise we need some checks...).
+                    if let Some(hint) = selfhint {
+                        // but we cannot include hints including ? or tags.
+                        if hint.includes_nil != Nil::Noisy && hint.includes_tag.is_none() {
+                            a_.add_display_hint(a.flags(), &hint.name);
+                        }
+                    }
+                    if let Some(hint) = otherhint {
+                        if hint.includes_nil != Nil::Noisy && hint.includes_tag.is_none() {
+                            b_.add_display_hint(b.flags(), &hint.name);
+                        }
+                    }
+
+                    let u = a_.union(&b_, explicit, ctx)?.simplify();
+                    let keep = (u == *a, u == *b);
+                    (u, keep)
                 },
             };
 
-            match (niltag1, niltag2) {
-                (Some((nil1, tag1)), Some((nil2, tag2))) => {
-                    let nil = nil1.union(nil2);
-                    let tag = if tag1 == tag2 { tag1 } else { None };
-                    Ok(Err(Ty { inner: Box::new(TyInner::new(t, nil, tag)) }))
+            // calculate display hints retained.
+            // - selfhint/otherhint shadows hint1/hint2 when given
+            // - hints not marked as kept are ignored no matter they come from
+            // - conflicting hints are discarded together
+            let mut selfhint = selfhint.map(Cow::Borrowed).or(hint1.map(Cow::Owned));
+            let mut otherhint = otherhint.map(Cow::Borrowed).or(hint2.map(Cow::Owned));
+            if !keep1 { selfhint = None; }
+            if !keep2 { otherhint = None; }
+            let hint = match (selfhint, otherhint) {
+                (Some(hint1), Some(hint2)) => {
+                    if *hint1 == *hint2 { Some(hint1) } else { None }
                 },
-                (Some((nil, tag)), None) | (None, Some((nil, tag))) => {
-                    Ok(Err(Ty { inner: Box::new(TyInner::new(t, nil, tag)) }))
+                (Some(hint1), None) => Some(hint1),
+                (None, Some(hint2)) => Some(hint2),
+                (None, None) => None,
+            };
+
+            // adjust for non-T parts and display hints
+            match (niltag1, niltag2, hint) {
+                (Some((nil1, tag1)), Some((nil2, tag2)), hint) => {
+                    // both have non-T parts and display hints, only add them when they are same
+                    let mut inner = TyInner::new(t, nil1.union(nil2));
+                    if tag1 == tag2 { inner.set_tag(tag1); }
+                    inner.set_display_hint(hint.map(|hint| Box::new(hint.into_owned())));
+                    Ok(Err(Ty { inner: Box::new(inner) }))
                 },
-                (None, None) => Ok(Ok(t)),
+                (Some((nil, tag)), None, hint) | (None, Some((nil, tag)), hint) => {
+                    let mut inner = TyInner::new(t, nil);
+                    inner.set_tag(tag);
+                    inner.set_display_hint(hint.map(|hint| Box::new(hint.into_owned())));
+                    Ok(Err(Ty { inner: Box::new(inner) }))
+                },
+                (None, None, Some(hint)) => {
+                    let mut inner = TyInner::new(t, Nil::Silent);
+                    inner.set_display_hint(Some(Box::new(hint.into_owned())));
+                    Ok(Err(Ty { inner: Box::new(inner) }))
+                }
+                (None, None, None) => Ok(Ok(t)),
             }
         })().map_err(|r: TypeReport| r.cannot_union(Origin::T, self, other, explicit, ctx))
+    }
+
+    fn union<'b>(&self, other: &T<'b>, explicit: bool,
+                 ctx: &mut TypeContext) -> TypeResult<result::Result<T<'static>, Ty>> {
+        self.union_with_hints(None, other, None, explicit, ctx)
     }
 }
 
@@ -737,7 +784,7 @@ impl<'a, 'b> Lattice<T<'b>> for T<'a> {
                 },
                 (&T::Union(ref a), b) => {
                     // a1 \/ a2 <: b === a1 <: b AND a2 <: b
-                    return a.visit(|i| i.assert_sub(b, ctx));
+                    return a.visit(T_ALL, |i| i.assert_sub(b, ctx));
                 },
 
                 (a, &T::Union(ref b)) => return a.assert_sub(&**b, ctx),
@@ -881,10 +928,10 @@ impl<'a> Display for T<'a> {
                 }
             },
 
-            T::Tables(ref tab)     => fmt::Display::fmt(&tab.display(st), f),
-            T::Functions(ref func) => fmt::Display::fmt(&func.display(st), f),
-            T::Class(c)            => fmt::Display::fmt(&c.display(st), f),
-            T::Union(ref u)        => fmt::Display::fmt(&u.display(st), f),
+            T::Tables(ref tab)      => fmt::Display::fmt(&tab.display(st), f),
+            T::Functions(ref func)  => fmt::Display::fmt(&func.display(st), f),
+            T::Class(c)             => fmt::Display::fmt(&c.display(st), f),
+            T::Union(ref u)         => fmt::Display::fmt(&u.display(st), f),
         }
     }
 }
@@ -966,17 +1013,28 @@ impl Nil {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct DisplayHint {
+    // these two fields determine what part of `nil` and `tag` in `TyInner` are
+    // included in the type represented by the hint, and thus should not appear.
+    includes_nil: Nil,
+    includes_tag: Option<Tag>,
+
+    name: DisplayName,
+}
+
 // XXX probably the layout can be improved a lot
 #[derive(Clone, PartialEq)]
 struct TyInner {
     ty: T<'static>,
     nil: Nil,
     tag: Option<Tag>,
+    display_hint: Option<Box<DisplayHint>>,
 }
 
 impl TyInner {
-    fn new(ty: T<'static>, nil: Nil, tag: Option<Tag>) -> TyInner {
-        TyInner { ty: ty, nil: nil, tag: tag }
+    fn new(ty: T<'static>, nil: Nil) -> TyInner {
+        TyInner { ty: ty, nil: nil, tag: None, display_hint: None }
     }
 
     fn nil(&self) -> Nil { self.nil }
@@ -985,20 +1043,50 @@ impl TyInner {
     fn ty(&self) -> &T<'static> { &self.ty }
     fn ty_mut(&mut self) -> &mut T<'static> { &mut self.ty }
 
-    fn remap_ty<F>(&mut self, f: F) where F: FnOnce(T<'static>) -> T<'static> {
+    fn remap_ty<F>(&mut self, f: F)
+        where F: FnOnce(T<'static>) -> T<'static>
+    {
         let ty = mem::replace(&mut self.ty, T::None);
         self.ty = f(ty);
     }
 
-    fn remap_ty_res<E, F>(&mut self, f: F) -> result::Result<(), E>
-            where F: FnOnce(T<'static>) -> result::Result<T<'static>, E> {
-        let ty = mem::replace(&mut self.ty, T::None);
-        self.ty = f(ty)?;
+    fn remap_ty_and_hint<F>(&mut self, f: F)
+        where F: for<'a> FnOnce(&'a T<'static>) -> Cow<'a, T<'static>>
+    {
+        if let Cow::Owned(newty) = f(&self.ty) {
+            self.ty = newty;
+            self.display_hint = None;
+        }
+    }
+
+    fn remap_ty_and_hint_res<E, F>(&mut self, f: F) -> result::Result<(), E>
+        where F: for<'a> FnOnce(&'a T<'static>) -> result::Result<Cow<'a, T<'static>>, E>
+    {
+        if let Cow::Owned(newty) = f(&self.ty)? {
+            self.ty = newty;
+            self.display_hint = None;
+        }
         Ok(())
     }
 
     fn tag(&self) -> Option<Tag> { self.tag }
     fn set_tag(&mut self, tag: Option<Tag>) { self.tag = tag; }
+
+    fn display_hint(&self) -> Option<&DisplayHint> {
+        self.display_hint.as_ref().map(|hint| &**hint)
+    }
+
+    fn set_display_hint(&mut self, disp: Option<Box<DisplayHint>>) {
+        self.display_hint = disp;
+    }
+
+    fn set_display_hint_with_name(&mut self, disp: Option<DisplayName>) {
+        self.display_hint = disp.map(|name| Box::new(DisplayHint {
+            includes_nil: self.nil,
+            includes_tag: self.tag,
+            name: name
+        }));
+    }
 
     fn union_nil(&mut self, nil: Nil) {
         self.nil = self.nil.union(nil);
@@ -1018,19 +1106,19 @@ pub struct Ty {
 
 impl Ty {
     pub fn dummy() -> Ty {
-        Ty { inner: Box::new(TyInner::new(T::dummy(), Nil::Silent, None)) }
+        Ty { inner: Box::new(TyInner::new(T::dummy(), Nil::Silent)) }
     }
 
     pub fn silent_nil() -> Ty {
-        Ty { inner: Box::new(TyInner::new(T::None, Nil::Silent, None)) }
+        Ty { inner: Box::new(TyInner::new(T::None, Nil::Silent)) }
     }
 
     pub fn noisy_nil() -> Ty {
-        Ty { inner: Box::new(TyInner::new(T::None, Nil::Noisy, None)) }
+        Ty { inner: Box::new(TyInner::new(T::None, Nil::Noisy)) }
     }
 
     pub fn new(ty: T<'static>) -> Ty {
-        Ty { inner: Box::new(TyInner::new(ty, Nil::Silent, None)) }
+        Ty { inner: Box::new(TyInner::new(ty, Nil::Silent)) }
     }
 
     pub fn from_kind(kind: &Spanned<Kind>, resolv: &mut TypeResolver) -> Result<Ty> {
@@ -1228,15 +1316,32 @@ impl Ty {
         self
     }
 
+    pub fn and_display(mut self, disp: DisplayName) -> Ty {
+        // update if there is no hint already set, or the new display can override the old hint
+        if self.inner.display_hint().map_or(true, |hint| disp.can_override(&hint.name)) {
+            self.inner.set_display_hint_with_name(Some(disp.clone()));
+
+            // also update the union if any, but only when there are no other hints for union
+            if let T::Union(ref mut u) = *self.inner.ty_mut() {
+                if u.display_hints.is_empty() {
+                    let flags = u.flags();
+                    u.to_mut().display_hints.push((flags, disp));
+                }
+            }
+        }
+
+        self
+    }
+
     pub fn truthy(mut self) -> Ty {
-        self.inner.remap_ty(|t| t.truthy());
+        self.inner.remap_ty_and_hint(|t| t.truthy());
         let nil = self.inner.nil().without_nil();
         self.inner.set_nil(nil);
         self
     }
 
     pub fn falsy(mut self) -> Ty {
-        self.inner.remap_ty(|t| t.falsy());
+        self.inner.remap_ty_and_hint(|t| t.falsy());
         self
     }
 
@@ -1249,14 +1354,6 @@ impl Ty {
     pub fn is_truthy(&self)   -> bool { self.flags().is_truthy() }
     pub fn is_falsy(&self)    -> bool { self.flags().is_falsy() }
 
-    pub fn split_tvar(&self) -> (Option<TVar>, Option<Ty>) {
-        let (tv, ty) = self.inner.ty().split_tvar();
-        let ty = ty.map(|t| {
-            Ty { inner: Box::new(TyInner::new(t, self.inner.nil(), self.inner.tag())) }
-        });
-        (tv, ty)
-    }
-
     pub fn as_string(&self) -> Option<&Str> {
         if self.inner.nil() == Nil::Noisy { None } else { self.inner.ty().as_string() }
     }
@@ -1266,12 +1363,13 @@ impl Ty {
     }
 
     pub fn coerce(mut self) -> Ty {
-        self.inner.remap_ty(|t| t.coerce());
+        self.inner.remap_ty_and_hint(|t| t.coerce());
         self
     }
 
     pub fn generalize(mut self, ctx: &mut TypeContext) -> Ty {
         self.inner.remap_ty(|t| t.generalize(ctx));
+        // this will only alter tvars/rvars, so display hint doesn't change
         self
     }
 
@@ -1284,12 +1382,58 @@ impl Ty {
     }
 
     pub fn filter_by_flags(mut self, flags: Flags, ctx: &mut TypeContext) -> TypeResult<Ty> {
-        self.inner.remap_ty_res(|t| t.filter_by_flags(flags, ctx))?;
+        self.inner.remap_ty_and_hint_res(|t| t.filter_by_flags(flags, ctx))?;
         if !flags.contains(T_NOISY_NIL) {
             let nil = self.inner.nil().without_nil();
             self.inner.set_nil(nil);
         }
         Ok(self)
+    }
+
+    fn display_hint(&self) -> Option<&DisplayHint> {
+        self.inner.display_hint()
+    }
+
+    fn display_repr(&self, st: &DisplayState,
+                    f: &fmt::Formatter) -> (Nil, Option<Tag>, Option<&DisplayName>) {
+        let mut nil = self.inner.nil();
+        let mut tag = self.inner.tag();
+        let mut name = None;
+
+        // we should ignore display hints at the top level if requested (by `{:0}`).
+        // the request is required because we may want to inspect the actual type for named types.
+        if st.is_top_level() && f.sign_aware_zero_pad() {
+            return (nil, tag, name);
+        }
+
+        if let Some(hint) = self.inner.display_hint() {
+            // if the hint is of a variable, only apply the hint when
+            // the type appears inside other types *and* the type is complex enough
+            if let DisplayName::Var(_) = hint.name {
+                let complex = match *self.inner.ty() {
+                    T::Tables(_) | T::Union(_) => true,
+                    _ => false,
+                };
+                if st.is_top_level() || !complex {
+                    return (nil, tag, name);
+                }
+            }
+
+            if tag == hint.includes_tag {
+                tag = None;
+            }
+
+            // since non-silent nils are "operators", they overwrite original nils.
+            // (e.g. if `T` is `string?`, `T!` is `string!`)
+            // so unless they are identical the value of `nil` should be retained.
+            if hint.includes_nil == nil {
+                nil = Nil::Silent;
+            }
+
+            name = Some(&hint.name);
+        }
+
+        (nil, tag, name)
     }
 
     pub fn unwrap(self) -> T<'static> {
@@ -1303,7 +1447,7 @@ impl Dummy for Ty {
 
 impl<'a> From<T<'a>> for Ty {
     fn from(ty: T<'a>) -> Ty {
-        Ty { inner: Box::new(TyInner::new(ty.into_send(), Nil::Silent, None)) }
+        Ty { inner: Box::new(TyInner::new(ty.into_send(), Nil::Silent)) }
     }
 }
 
@@ -1351,6 +1495,7 @@ macro_rules! define_ty_impls {
         ty = $lty:expr, $rty:expr;
         tag = $ltag:expr, $rtag:expr;
         nil = $lnil:expr, $rnil:expr;
+        display_hint = $lhint:expr, $rhint:expr;
         as_is = $lhs_as_is:expr, $rhs_as_is:expr;
         without_nil = $lhs_without_nil:expr, _;
         union_tag = $union_tag:expr;
@@ -1367,8 +1512,8 @@ macro_rules! define_ty_impls {
 
                 let $l = self;
                 let $r = other;
-                let mut ty = match $lty.union($rty, explicit, ctx) {
-                    Ok(Ok(t)) => Ty { inner: Box::new(TyInner::new(t, Nil::Absent, None)) },
+                let mut ty = match $lty.union_with_hints($lhint, $rty, $rhint, explicit, ctx) {
+                    Ok(Ok(t)) => Ty { inner: Box::new(TyInner::new(t, Nil::Absent)) },
                     Ok(Err(ty)) => ty,
                     Err(r) => return Err(r.cannot_union($origin, self, other, explicit, ctx)),
                 };
@@ -1534,6 +1679,7 @@ define_ty_impls! {
         ty  = lhs,         rhs.inner.ty();
         tag = None,        rhs.inner.tag();
         nil = Nil::Absent, rhs.inner.nil();
+        display_hint = None, rhs.inner.display_hint();
         as_is       = &Ty::new(lhs.clone().into_send()).or_nil(Nil::Absent), rhs;
         without_nil = &Ty::new(lhs.clone().into_send()).or_nil(Nil::Absent), _;
         union_tag = None;
@@ -1546,6 +1692,7 @@ define_ty_impls! {
         ty  = lhs.inner.ty(),  rhs;
         tag = lhs.inner.tag(), None;
         nil = lhs.inner.nil(), Nil::Absent;
+        display_hint = lhs.inner.display_hint(), None;
         as_is       = lhs, &Ty::new(rhs.clone().into_send()).or_nil(Nil::Absent);
         without_nil = &lhs.clone().without_nil(), _;
         union_tag = None;
@@ -1558,6 +1705,7 @@ define_ty_impls! {
         ty  = lhs.inner.ty(),  rhs.inner.ty();
         tag = lhs.inner.tag(), rhs.inner.tag();
         nil = lhs.inner.nil(), rhs.inner.nil();
+        display_hint = lhs.inner.display_hint(), rhs.inner.display_hint();
         as_is       = lhs, rhs;
         without_nil = &lhs.clone().without_nil(), _;
         union_tag = {
@@ -1570,20 +1718,24 @@ define_ty_impls! {
 
 impl Display for Ty {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
-        if let Some(tag) = self.tag() {
+        let ty = self.inner.ty();
+        let (nil, tag, name) = self.display_repr(st, f);
+        let nil = if f.alternate() { nil.with_nil() } else { nil };
+
+        if let Some(tag) = tag {
             write!(f, "[{}] ", tag.name())?;
         }
 
-        let ty = self.inner.ty();
-        let nil = self.inner.nil();
+        if let Some(name) = name {
+            write!(f, "{}", name.display(st))?;
+        } else {
+            match (ty, nil) {
+                // nil-derived types have their own representations
+                (&T::None, Nil::Silent) => return write!(f, "nil"),
+                (&T::None, Nil::Noisy) => return write!(f, "nil"),
 
-        let nil = if f.alternate() { nil.with_nil() } else { nil };
-        match (ty, nil) {
-            // nil-derived types have their own representations
-            (&T::None, Nil::Silent) => return write!(f, "nil"),
-            (&T::None, Nil::Noisy) => return write!(f, "nil"),
-
-            (_, _) => ty.fmt_displayed(f, st)?,
+                (_, _) => ty.fmt_displayed(f, st)?,
+            }
         }
 
         match nil {
@@ -1596,27 +1748,43 @@ impl Display for Ty {
 
 impl fmt::Debug for Ty {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if let Some(tag) = self.tag() {
+        let ty = self.inner.ty();
+        let nil = self.inner.nil();
+        let tag = self.inner.tag();
+        let nil = if f.alternate() { nil.with_nil() } else { nil };
+
+        if let Some(tag) = tag {
             write!(f, "[{}] ", tag.name())?;
         }
 
-        let ty = self.inner.ty();
-        let nil = self.inner.nil();
+        let nil_repr = |nil| {
+            match nil {
+                Nil::Silent => "",
+                Nil::Noisy => "?",
+                Nil::Absent => "!",
+            }
+        };
 
-        let nil = if f.alternate() { nil.with_nil() } else { nil };
         match (ty, nil) {
             // nil-derived types have their own representations
-            (&T::None, Nil::Silent) => return write!(f, "nil"),
-            (&T::None, Nil::Noisy) => return write!(f, "nil!"),
+            (&T::None, Nil::Silent) => write!(f, "nil")?,
+            (&T::None, Nil::Noisy) => write!(f, "nil!")?,
 
-            (_, _) => fmt::Debug::fmt(ty, f)?,
+            (_, _) => {
+                fmt::Debug::fmt(ty, f)?;
+                write!(f, "{}", nil_repr(nil))?;
+            }
         }
 
-        match nil {
-            Nil::Silent => Ok(()),
-            Nil::Noisy => write!(f, "?"),
-            Nil::Absent => write!(f, "!"),
+        if let Some(hint) = self.inner.display_hint() {
+            write!(f, " <hint: ")?;
+            if let Some(tag) = hint.includes_tag {
+                write!(f, "[{}] ", tag.name())?;
+            }
+            write!(f, "_{} = {:?}>", nil_repr(hint.includes_nil), hint.name)?;
         }
+
+        Ok(())
     }
 }
 

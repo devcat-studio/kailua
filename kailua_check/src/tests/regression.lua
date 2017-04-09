@@ -13,7 +13,7 @@ a,b; --@< Error: Expected `=`, got `;`
 --8<-- regression-recovering-recursive-rec-assign
 -- cargo-fuzz trophy case #5
 u = {u = 0}
-u = {u = u} --@< Error: Cannot assign `{u: {u: 0, ...}, ...}` into `{u: 0, ...}`
+u = {u = u} --@< Error: Cannot assign `{u: <variable u>, ...}` into `{u: 0, ...}`
             --@^ Note: The other type originates here
 --! error
 
@@ -21,7 +21,7 @@ u = {u = u} --@< Error: Cannot assign `{u: {u: 0, ...}, ...}` into `{u: 0, ...}`
 -- cargo-fuzz trophy case #6
 u = {}
 u = {u}
-u = {0} --@< Error: Cannot assign `{0, ...}` into `{<...>, ...}`
+u = {0} --@< Error: Cannot assign `{0, ...}` into `{<variable u>, ...}`
         --@^ Note: The other type originates here
 --! error
 

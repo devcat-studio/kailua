@@ -487,7 +487,7 @@ pub fn hover_help<F>(output: &Output, pos: Pos, source: &Source, mut localize: F
             contents: vec![
                 MarkedString {
                     language: format!("lua"),
-                    value: format!("{}{}", TYPE_PREFIX, localize(&slot.display(types))),
+                    value: format!("{}{:0.1}", TYPE_PREFIX, localize(&slot.display(types))),
                 }
             ],
             range: range,
