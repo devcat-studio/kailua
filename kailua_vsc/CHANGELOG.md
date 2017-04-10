@@ -1,3 +1,15 @@
+## 1.0.2 (2017-04-10)
+
+* Fixed some parser crashes.
+
+* Added support for an implicit `arg` argument for Lua 5.0 variadic arguments (which is still supported in Lua 5.1).
+
+* Improved the presentation of types. Most importantly, named types are now displayed in their names whenever possible, and deeply nested types are abbreviated in the helps.
+
+* Added argument names to all built-in definitions.
+
+* Fixed the use of other attributes (e.g. `[make_class]`) with `[NO_CHECK]`.
+
 ## 1.0.1 (2017-04-05)
 
 * Fixed subtyping of values in the table constructors with the explicit types. In particular, `local x = {a = 42} --: map<string, any>` used to error (in spite of `42` being a subtype of `any`), but it is now valid.
