@@ -294,14 +294,6 @@ impl fmt::Debug for Varargs {
     }
 }
 
-// more spanned version of Sig, only used during the parsing
-#[derive(Clone, PartialEq)]
-pub struct Presig {
-    pub prefix: Spanned<bool>, // true for `method`, false for `function` (span included)
-    pub args: Spanned<Seq<Spanned<TypeSpec<Spanned<Name>>>, Spanned<Option<Spanned<Kind>>>>>,
-    pub returns: Option<Returns>,
-}
-
 #[derive(Clone, PartialEq)]
 pub struct Sig {
     pub attrs: Vec<Spanned<Attr>>,
@@ -760,11 +752,56 @@ impl fmt::Debug for K {
 
 pub type Kind = Box<K>;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LocalNameKind {
+    User,
+
+    // implicitly created from method declarations
+    ImplicitSelf,
+
+    // implicitly created from variadic arguments (Lua 5.0 compat)
+    ImplicitLegacyArg,
+
+    // assumed to a local name (which itself is not assumed)
+    AssumedToLocal(ScopedId),
+
+    // assumed to a global name iwth the same name
+    AssumedToGlobal,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LocalName {
+    pub def_span: Span,
+    pub kind: LocalNameKind,
+}
+
+// additional informations generated for each token
+#[derive(Clone, Debug, PartialEq)]
+pub enum TokenAux {
+    None,
+
+    // the token is a Name referring to a local variable with given id
+    LocalVarName(ScopedId),
+
+    // the token is a Name referring to a global variable with the same name
+    GlobalVarName,
+}
+
 #[derive(Clone)]
 pub struct Chunk {
+    // the top-level block
     pub block: Spanned<Block>,
-    pub global_scope: HashMap<Name, Span>,
+
+    // scope map for this chunk
     pub map: ScopeMap<Name>,
-    pub decl_spans: HashMap<ScopedId, Span>,
+
+    // globally defined names with the first definition span (names only used are not included)
+    pub global_scope: HashMap<Name, Span>,
+
+    // local name informations for scoped local ids in this chunk
+    pub local_names: HashMap<ScopedId, LocalName>,
+
+    // auxiliary information for each input token in the order
+    pub token_aux: Vec<TokenAux>,
 }
 

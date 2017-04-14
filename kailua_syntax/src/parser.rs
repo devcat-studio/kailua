@@ -1,6 +1,8 @@
+use std::ops;
 use std::iter;
 use std::u8;
 use std::i32;
+use std::usize;
 use std::fmt;
 use std::result;
 use std::collections::{hash_map, HashMap};
@@ -11,21 +13,24 @@ use kailua_diag::{Locale, Report, Localize};
 use message as m;
 use lang::{Language, Lua, Kailua};
 use lex::{Tok, Punct, Keyword, NestedToken, NestingCategory, NestingSerial};
-use ast::{Name, NameRef, Str, Var, Seq, Presig, Sig, Attr, Args};
+use ast::{Name, NameRef, Str, Var, Seq, Sig, Attr, Args};
 use ast::{Ex, Exp, UnOp, BinOp, SelfParam, TypeScope, St, Stmt, Block};
-use ast::{M, MM, K, Kind, SlotKind, FuncKind, TypeSpec, Varargs, Returns, Chunk};
+use ast::{M, MM, K, Kind, SlotKind, FuncKind, TypeSpec, Varargs, Returns};
+use ast::{LocalName, LocalNameKind, TokenAux, Chunk};
 
 pub struct Parser<'a> {
     iter: iter::Fuse<&'a mut Iterator<Item=NestedToken>>,
     language: Language,
 
     // the lookahead stream (in this order)
-    elided_newline: Option<Span>, // same to Side.elided_tokens below
-    lookahead: Option<NestedToken>,
-    lookahead2: Option<NestedToken>,
+    elided_newline: Option<ElidedTokens>,
+    lookahead: Option<(usize, NestedToken)>,
+    lookahead2: Option<(usize, NestedToken)>,
     // ...follows self.iter.next()
 
-    // the spans for the most recent `read()` tokens
+    // token indices and spans for the most recent `read()` tokens
+    last_idx: usize,
+    last_idx2: usize,
     last_span: Span,
     last_span2: Span,
 
@@ -36,14 +41,19 @@ pub struct Parser<'a> {
     report: &'a Report,
 
     scope_map: ScopeMap<Name>,
-    decl_spans: HashMap<ScopedId, Span>,
+    local_names: HashMap<ScopedId, LocalName>,
+
     // the global scope; visible to every other file and does not go through a scope map
     // (the local root scopes are generated as needed, and invisible from the outside)
     global_scope: HashMap<Name, Span>,
+
     // Pos for the starting position
     // this is different from blocks, sibling scopes can be nested within one block
     scope_stack: Vec<(Scope, Pos)>,
     block_depth: usize,
+
+    // auxiliary info for each *input* token (i.e. including elided tokens)
+    token_aux: Vec<TokenAux>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -179,7 +189,7 @@ macro_rules! lastly {
 struct Side {
     // represents a sequence of elided tokens (one or more (newline + meta begin)s) when Some.
     // the span is used to reconstruct the token for meta beginning.
-    elided_tokens: ElidedTokens,
+    elided_tokens: Option<ElidedTokens>,
 
     // the prior nesting information before reading the token
     last_nesting_serial: NestingSerial,
@@ -192,7 +202,40 @@ struct Side {
 }
 
 #[derive(Copy, Clone, Debug)]
-struct ElidedTokens(Option<Span>);
+struct ElidedTokens {
+    // both refer for the last meta token elided
+    last_meta_idx: usize,
+    last_meta_span: Span,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+struct TokenIdx(usize);
+
+#[derive(Clone, Debug)]
+struct IndexedName {
+    idx: TokenIdx,
+    name: Name,
+}
+
+impl ops::Deref for IndexedName {
+    type Target = Name;
+    fn deref(&self) -> &Name { &self.name }
+}
+
+impl PartialEq for IndexedName {
+    fn eq(&self, other: &IndexedName) -> bool { self.name == other.name }
+}
+
+impl Eq for IndexedName {
+}
+
+// more spanned version of Sig, only used during the parsing
+#[derive(Clone, PartialEq)]
+struct Presig {
+    prefix: Spanned<bool>, // true for `method`, false for `function` (span included)
+    args: Spanned<Seq<Spanned<TypeSpec<Spanned<IndexedName>>>, Spanned<Option<Spanned<Kind>>>>>,
+    returns: Option<Returns>,
+}
 
 enum AtomicKind { One(Spanned<Kind>), Seq(Seq<Spanned<Kind>>) }
 
@@ -298,6 +341,8 @@ impl<'a> Parser<'a> {
             elided_newline: None,
             lookahead: None,
             lookahead2: None,
+            last_idx: usize::MAX, // triggers a panic whenever it is used
+            last_idx2: usize::MAX,
             last_span: Span::dummy(),
             last_span2: Span::dummy(),
             last_nesting_depth: 0,
@@ -305,28 +350,34 @@ impl<'a> Parser<'a> {
             ignore_after_newline: None,
             report: report,
             scope_map: ScopeMap::new(),
-            decl_spans: HashMap::new(),
+            local_names: HashMap::new(),
             global_scope: HashMap::new(),
             scope_stack: Vec::new(),
             block_depth: 0,
+            token_aux: Vec::new(),
         };
 
         // read the first token and fill the last_span
         let first = parser._next().expect("lexer gave no token");
-        parser.last_span = first.tok.span.begin().into();
+        parser.last_idx = first.0;
+        parser.last_span = first.1.tok.span.begin().into();
         parser.lookahead = Some(first);
         parser
     }
 
-    fn _next(&mut self) -> Option<NestedToken> {
+    fn _next(&mut self) -> Option<(usize, NestedToken)> {
         loop {
-            let mut next = self.iter.next();
+            let next = self.iter.next();
 
-            if let Some(ref mut t) = next {
-                trace!("got {:?}", *t);
+            let next = if let Some(mut t) = next {
+                trace!("got {:?}", t);
                 if false { // useful for debugging
                     let _ = self.info(t.tok.span, format!("got {:?}", t.tok.base)).done();
                 }
+
+                // add a room for the auxiliary info
+                let token_idx = self.token_aux.len();
+                self.token_aux.push(TokenAux::None);
 
                 // comments should be ignored in the parser
                 if let Tok::Comment = t.tok.base { continue; }
@@ -343,13 +394,17 @@ impl<'a> Parser<'a> {
                         t.tok.base = Tok::Name(kw.name().to_owned());
                     }
                 }
-            }
+
+                Some((token_idx, t))
+            } else {
+                None
+            };
 
             return next;
         }
     }
 
-    fn _read(&mut self) -> (ElidedTokens, NestedToken) {
+    fn _read(&mut self) -> (Option<ElidedTokens>, (usize, NestedToken)) {
         let mut next = self.lookahead.take().or_else(|| self.lookahead2.take())
                                             .or_else(|| self._next());
 
@@ -359,11 +414,15 @@ impl<'a> Parser<'a> {
             assert_eq!(self.lookahead, None);
             self.lookahead = self.lookahead2.take();
 
-            while next.as_ref().map(|t| &t.tok.base) == Some(&Tok::Punct(Punct::Newline)) {
+            while next.as_ref().map(|t| &t.1.tok.base) == Some(&Tok::Punct(Punct::Newline)) {
                 let next2 = self.lookahead.take().or_else(|| self._next());
-                if next2.as_ref().map(|t| &t.tok.base) == Some(&Tok::Punct(meta)) {
+                if next2.as_ref().map(|t| &t.1.tok.base) == Some(&Tok::Punct(meta)) {
                     // we can ignore them, but we may have another ignorable tokens there
-                    elided = Some(next2.unwrap().tok.span);
+                    let next2 = next2.unwrap();
+                    elided = Some(ElidedTokens {
+                        last_meta_idx: next2.0,
+                        last_meta_span: next2.1.tok.span,
+                    });
                     assert_eq!(self.lookahead, None); // yeah, we are now sure
                     next = self._next();
                 } else {
@@ -374,14 +433,14 @@ impl<'a> Parser<'a> {
             }
         } else {
             // token elision should have been handled by self.end_meta_comment
-            assert_eq!(elided, None);
+            assert!(elided.is_none());
         }
 
-        (ElidedTokens(elided), next.expect("Parser::read tried to read past EOF"))
+        (elided, next.expect("Parser::read tried to read past EOF"))
     }
 
     fn read(&mut self) -> (Side, Spanned<Tok>) {
-        let (elided, next) = self._read();
+        let (elided, (token_idx, next)) = self._read();
         let side = Side {
             elided_tokens: elided,
             last_nesting_serial: self.last_nesting_serial,
@@ -391,6 +450,8 @@ impl<'a> Parser<'a> {
             nesting_serial: next.serial,
         };
 
+        self.last_idx2 = self.last_idx;
+        self.last_idx = token_idx;
         self.last_span2 = self.last_span;
         self.last_span = next.tok.span;
         self.last_nesting_depth = next.depth;
@@ -399,7 +460,7 @@ impl<'a> Parser<'a> {
         (side, next.tok)
     }
 
-    fn _unread(&mut self, ElidedTokens(elided): ElidedTokens, tok: NestedToken) {
+    fn _unread(&mut self, elided: Option<ElidedTokens>, tok: (usize, NestedToken)) {
         assert!(self.lookahead.is_none() || self.lookahead2.is_none(),
                 "at most two lookahead tokens are supported:\n\
                  \tunread: {:?}\n\telided: {:?}\n\tlookahead: {:?}\n\tlookahead2: {:?}",
@@ -422,15 +483,18 @@ impl<'a> Parser<'a> {
             category: side.nesting_category,
             serial: side.nesting_serial,
         };
-        self._unread(side.elided_tokens, tok);
+        let idx = self.last_idx;
+        self._unread(side.elided_tokens, (idx, tok));
 
         // if we can, reconstruct the last span from the last elided token
-        if let ElidedTokens(Some(span)) = side.elided_tokens {
-            self.last_span = span;
+        if let Some(elided) = side.elided_tokens {
+            self.last_span = elided.last_meta_span;
         } else {
             self.last_span = self.last_span2;
             self.last_span2 = Span::dummy();
         }
+        self.last_idx = self.last_idx2;
+        self.last_idx2 = usize::MAX;
         self.last_nesting_depth = side.last_nesting_depth;
         self.last_nesting_serial = side.last_nesting_serial;
     }
@@ -441,7 +505,7 @@ impl<'a> Parser<'a> {
             let (elided, tok) = self._read();
             self._unread(elided, tok);
         }
-        &self.lookahead.as_ref().unwrap().tok
+        &self.lookahead.as_ref().unwrap().1.tok
     }
 
     fn expect<Tok: Expectable>(&mut self, tok: Tok) -> Result<()> {
@@ -674,6 +738,11 @@ impl<'a> Parser<'a> {
         self.last_span.end()
     }
 
+    fn last_token_idx(&self) -> TokenIdx {
+        assert!(self.last_idx != usize::MAX, "Parser::last_token_idx has lost prior token index");
+        TokenIdx(self.last_idx)
+    }
+
     // does *not* consume the meta comment!
     fn begin_meta_comment(&mut self, meta: Punct) {
         self.ignore_after_newline = Some(meta);
@@ -692,17 +761,17 @@ impl<'a> Parser<'a> {
             let elided = self.elided_newline.or(elided);
             self.elided_newline = None;
 
-            if let Some(metaspan) = elided {
+            if let Some(elided) = elided {
                 // newline (implicitly consumed) - meta - original lookahead
                 // meta will receive the same nesting information as the current token
                 assert_eq!(self.lookahead2, None);
                 self.lookahead2 = self.lookahead.take();
-                self.lookahead = Some(NestedToken {
-                    tok: Tok::Punct(meta).with_loc(metaspan),
+                self.lookahead = Some((elided.last_meta_idx, NestedToken {
+                    tok: Tok::Punct(meta).with_loc(elided.last_meta_span),
                     depth: self.last_nesting_depth,
                     category: NestingCategory::Meta,
                     serial: self.last_nesting_serial,
-                });
+                }));
             } else {
                 let next = self.peek().clone();
                 self.error(next.span, m::NoNewline { read: &next.base }).done()?;
@@ -764,32 +833,40 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn resolve_local_name(&mut self, name: &Name) -> Option<ScopedId> {
+    fn indexed_name_from<T: Into<Name>>(&self, name: T, span: Span) -> Spanned<IndexedName> {
+        IndexedName { idx: self.last_token_idx(), name: name.into() }.with_loc(span)
+    }
+
+    fn resolve_local_name_without_idx(&mut self, name: &Name) -> Option<ScopedId> {
         self.scope_stack.last().and_then(|&(scope, _)| {
             self.scope_map.find_name_in_scope(scope, name).map(|(_, scoped_id)| scoped_id)
         })
     }
 
     // resolve the name referenced in the current scope (might be global) into a reference
-    fn resolve_name(&mut self, name: Name) -> NameRef {
-        if let Some(scoped_id) = self.resolve_local_name(&name) {
+    fn resolve_name(&mut self, name: IndexedName) -> NameRef {
+        if let Some(scoped_id) = self.resolve_local_name_without_idx(&name.name) {
+            self.set_token_aux(name.idx, TokenAux::LocalVarName(scoped_id.clone()));
             NameRef::Local(scoped_id)
         } else {
-            NameRef::Global(name)
+            self.set_token_aux(name.idx, TokenAux::GlobalVarName);
+            NameRef::Global(name.name)
         }
     }
 
-    fn add_spanned_local_name_with_prev_span(&mut self, scope: Scope, name: Spanned<Name>)
+    fn add_spanned_local_name_with_prev_span(&mut self, scope: Scope, name: Spanned<Name>,
+                                             kind: LocalNameKind)
         -> Result<(Spanned<ScopedId>, Option<Span>)>
     {
         let id = name.map(|name| self.scope_map.add_name(scope, name));
-        let prevspan = self.decl_spans.insert(id.base.clone(), id.span);
-        Ok((id, prevspan))
+        let localname = LocalName { def_span: id.span, kind: kind };
+        let prevdef = self.local_names.insert(id.base.clone(), localname);
+        Ok((id, prevdef.map(|def| def.def_span)))
     }
 
-    fn add_spanned_local_name(&mut self, scope: Scope,
-                              name: Spanned<Name>) -> Result<Spanned<ScopedId>> {
-        let (id, prevspan) = self.add_spanned_local_name_with_prev_span(scope, name)?;
+    fn add_spanned_local_name_without_idx(&mut self, scope: Scope, name: Spanned<Name>,
+                                          kind: LocalNameKind) -> Result<Spanned<ScopedId>> {
+        let (id, prevspan) = self.add_spanned_local_name_with_prev_span(scope, name, kind)?;
         if let Some(prevspan) = prevspan {
             self.error(id.span, m::DuplicateNameInSameScope {})
                 .note(prevspan, m::PreviousNameInSameScope {})
@@ -797,6 +874,19 @@ impl<'a> Parser<'a> {
             // and we proceed with the overwritten name
         }
         Ok(id)
+    }
+
+    fn add_spanned_local_name_with_kind(&mut self, scope: Scope, name: Spanned<IndexedName>,
+                                        kind: LocalNameKind) -> Result<Spanned<ScopedId>> {
+        let idx = name.idx;
+        let id = self.add_spanned_local_name_without_idx(scope, name.map(|n| n.name), kind)?;
+        self.set_token_aux(idx, TokenAux::LocalVarName(id.base.clone()));
+        Ok(id)
+    }
+
+    fn add_spanned_local_name(&mut self, scope: Scope,
+                              name: Spanned<IndexedName>) -> Result<Spanned<ScopedId>> {
+        self.add_spanned_local_name_with_kind(scope, name, LocalNameKind::User)
     }
 
     fn generate_sibling_scope(&mut self) -> Scope {
@@ -824,16 +914,20 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn try_parse_name(&mut self) -> Option<Spanned<Name>> {
+    fn set_token_aux(&mut self, TokenIdx(idx): TokenIdx, aux: TokenAux) {
+        self.token_aux[idx] = aux;
+    }
+
+    fn try_parse_name(&mut self) -> Option<Spanned<IndexedName>> {
         match_next! { self;
-            Tok::Name(name) in span => Some(Name::from(name).with_loc(span));
+            Tok::Name(name) in span => Some(self.indexed_name_from(name, span));
             'unread: _ => None;
         }
     }
 
-    fn parse_name(&mut self) -> Result<Spanned<Name>> {
+    fn parse_name(&mut self) -> Result<Spanned<IndexedName>> {
         match_next! { self;
-            Tok::Name(name) in span => Ok(Name::from(name).with_loc(span));
+            Tok::Name(name) in span => Ok(self.indexed_name_from(name, span));
             'unread: _, m::NoName => Err(Stop::Recover);
         }
     }
@@ -1118,12 +1212,14 @@ impl<'a> Parser<'a> {
                 }
                 let mut names = Vec::new();
                 while self.may_expect(Punct::Dot) {
-                    names.push(self.parse_name()?);
+                    let name = self.parse_name()?;
+                    names.push(name.map(|n| n.name));
                 }
 
                 let selfparam = self.may_expect(Punct::Colon);
                 if selfparam {
-                    names.push(self.parse_name()?);
+                    let name = self.parse_name()?;
+                    names.push(name.map(|n| n.name));
                 }
                 let namesend = self.last_pos();
 
@@ -1325,7 +1421,7 @@ impl<'a> Parser<'a> {
         Ok(Some(stmt.with_loc(begin..self.last_pos())))
     }
 
-    fn parse_stmt_for_in(&mut self, names: Spanned<Vec<Spanned<Name>>>) -> Result<Stmt> {
+    fn parse_stmt_for_in(&mut self, names: Spanned<Vec<Spanned<IndexedName>>>) -> Result<Stmt> {
         let mut exps = Vec::new();
         let span = self.scan_list(Self::parse_exp, |exp| exps.push(exp))?;
         let exps = exps.with_loc(span);
@@ -1378,7 +1474,7 @@ impl<'a> Parser<'a> {
                 };
 
                 Tok::Name(name0) in span => {
-                    name = Some(Name::from(name0).with_loc(span));
+                    name = Some(parser.indexed_name_from(name0, span));
                     spec = parser.try_parse_kailua_type_spec()?; // 1)
                     while parser.may_expect(Punct::Comma) {
                         // try to read the type spec after a comma if there was no prior spec
@@ -1433,8 +1529,8 @@ impl<'a> Parser<'a> {
         let end = end.unwrap_or_else(|| self.last_pos());
         returns = self.try_parse_kailua_rettype_spec()?;
 
-        let (attrs, args, returns) = if let Some(Spanned { base: (attrs, presig), .. }) = funcspec {
-            if let Some(presig) = presig {
+        let (attrs, args, returns) = match funcspec {
+            Some(Spanned { base: (attrs, Some(presig)), .. }) => {
                 // before any checking, we should ensure that every parameter has a type attached
                 // (`self` is a notable exception, but should have been removed by now)
                 for arg in &presig.base.args.head {
@@ -1454,6 +1550,7 @@ impl<'a> Parser<'a> {
                     let span = excess.iter().fold(Span::dummy(), |span, i| span | i.span);
                     self.error(span, m::ExcessArgsInFuncSpec {}).done()?;
                 }
+
                 match (&varargs, &presig.base.args.tail) {
                     (&Some(ref v), &None) => {
                         self.error(v.span, m::MissingVarargsInFuncSpec {}).done()?;
@@ -1468,39 +1565,65 @@ impl<'a> Parser<'a> {
                     }
                     (_, _) => {}
                 }
-                for (arg, sigarg) in args.iter().zip(presig.base.args.head.iter()) {
-                    if arg.0.base != sigarg.base.base.base { // TODO might not be needed
-                        self.error(arg.0.span, m::ArgNameMismatchInFuncDecl {})
-                            .note(sigarg.base.base.span, m::PriorArgNameInFuncSpec {})
-                            .done()?;
+
+                // we will prefer the actual signature at the final AST,
+                // but we still need to record both token indices for each argument
+                // (only when they are identical)
+                let mut combinedargs = Vec::new();
+                let mut sigargs = presig.base.args.base.head.into_iter();
+                for (argname, argspec) in args {
+                    let sigarg = sigargs.next();
+
+                    let mut sigidx = None;
+                    if let Some(ref sigarg) = sigarg {
+                        if argname.name == sigarg.base.base.name {
+                            sigidx = Some(sigarg.base.base.idx);
+                        } else {
+                            self.error(argname.span, m::ArgNameMismatchInFuncDecl {})
+                                .note(sigarg.base.base.span, m::PriorArgNameInFuncSpec {})
+                                .done()?;
+                        }
                     }
-                    if let Some(ref spec) = arg.1 {
+                    if let Some(ref spec) = argspec {
                         self.error(spec.span, m::DuplicateSpecInFuncDecl {})
                             .note(presig.span, m::PriorFuncSpec {})
                             .done()?;
+                        // and ignore that
                     }
+
+                    let name = (argname, sigidx);
+                    let spec = if let Some(TypeSpec { modf, kind, .. }) = sigarg.map(|s| s.base) {
+                        TypeSpec { base: name, modf: modf, kind: kind }
+                    } else {
+                        self.make_kailua_typespec(name, argspec)
+                    };
+                    combinedargs.push(spec);
                 }
+
                 if let Some(returns) = returns {
                     self.error(returns.span, m::DuplicateReturnSpecInFuncDecl {})
                         .note(presig.span, m::PriorFuncSpec {})
                         .done()?;
                 }
 
-                let args = presig.base.args.map(|args| {
-                    Seq { head: args.head.into_iter().map(|arg| arg.base).collect(),
-                          tail: args.tail }
-                });
-                (attrs, Ok(args), presig.base.returns)
-            } else {
+                let args = Seq { head: combinedargs, tail: presig.base.args.base.tail };
+                (attrs, Ok(args.with_loc(presig.base.args.span)), presig.base.returns)
+            },
+
+            Some(Spanned { base: (attrs, None), .. }) => {
                 (attrs, Err(args), returns.map(|ret| ret.base))
-            }
-        } else {
-            (Vec::new(), Err(args), returns.map(|ret| ret.base))
+            },
+
+            None => {
+                (Vec::new(), Err(args), returns.map(|ret| ret.base))
+            },
         };
 
         let args = args.unwrap_or_else(|args| {
             Seq {
-                head: args.into_iter().map(|(n,s)| self.make_kailua_typespec(n, s)).collect(),
+                head: args.into_iter().map(|(name, spec)| {
+                    self.make_kailua_typespec((name, None), spec)
+                }).collect(),
                 tail: varargs,
             }.with_loc(begin..end)
         });
@@ -1514,22 +1637,28 @@ impl<'a> Parser<'a> {
             let selfparam = if selfparam {
                 // use `begin` (that is, right after `(`) as an implicit span
                 let selfname = Name::from(b"self"[..].to_owned()).with_loc(begin);
-                Some(parser.add_spanned_local_name(scope, selfname)?.map(SelfParam))
+                let id = parser.add_spanned_local_name_without_idx(scope, selfname,
+                                                                   LocalNameKind::ImplicitSelf)?;
+                Some(id.map(SelfParam))
             } else {
                 None
             };
 
             let mut head = Vec::new();
             for argspec in args.base.head {
-                let name = parser.add_spanned_local_name(scope, argspec.base)?;
+                let name = parser.add_spanned_local_name(scope, argspec.base.0)?;
+                if let Some(idx) = argspec.base.1 {
+                    parser.set_token_aux(idx, TokenAux::LocalVarName(name.base.clone()));
+                }
                 head.push(TypeSpec { base: name, modf: argspec.modf, kind: argspec.kind });
             }
 
             let tail = if let Some(varargspec) = args.base.tail {
                 let arg = if parser.language.lua() <= Lua::Lua51 { // legacy varargs
                     let argname = Name::from(b"arg"[..].to_owned()).with_loc(&varargspec);
-                    let (id, prevspan) =
-                        parser.add_spanned_local_name_with_prev_span(scope, argname)?;
+                    let (id, prevspan) = parser.add_spanned_local_name_with_prev_span(
+                        scope, argname, LocalNameKind::ImplicitLegacyArg,
+                    )?;
                     if let Some(prevspan) = prevspan {
                         parser.error(id.span, m::LegacyArgNameInSameScope {})
                               .note(prevspan, m::PreviousNameInSameScope {})
@@ -1605,7 +1734,7 @@ impl<'a> Parser<'a> {
                                 let value = parser.parse_exp()?;
                                 Ok((Some(key), value))
                             } else {
-                                let name = Name::from(name).with_loc(span);
+                                let name = parser.indexed_name_from(name, span);
                                 let value = parser.parse_exp_after_name(name)?;
                                 Ok((None, value))
                             }
@@ -1656,7 +1785,8 @@ impl<'a> Parser<'a> {
             };
 
             Tok::Name(name) in span => {
-                let nameref = self.resolve_name(Name::from(name));
+                let name = self.indexed_name_from(name, span);
+                let nameref = self.resolve_name(name.base);
                 Box::new(Ex::Var(nameref.with_loc(span))).with_loc(span)
             };
 
@@ -1675,6 +1805,7 @@ impl<'a> Parser<'a> {
                 // prefixexp "." ...
                 Tok::Punct(Punct::Dot) => {
                     if let Some(name) = self.try_parse_name() {
+                        let name = name.map(|n| n.name);
                         exp = Box::new(Ex::IndexName(exp, name)).with_loc(begin..self.last_pos());
                     } else {
                         error_with!(self, m::NoNameAfterExpDot);
@@ -1692,7 +1823,7 @@ impl<'a> Parser<'a> {
                 // prefixexp ":" ...
                 Tok::Punct(Punct::Colon) => {
                     let name = if let Some(name) = self.try_parse_name() {
-                        name
+                        name.map(|n| n.name)
                     } else {
                         error_with!(self, m::NoArgsAfterExpColon);
                         break;
@@ -1931,7 +2062,7 @@ impl<'a> Parser<'a> {
         self.parse_partial_exp(0)
     }
 
-    fn parse_exp_after_name(&mut self, name: Spanned<Name>) -> Result<Spanned<Exp>> {
+    fn parse_exp_after_name(&mut self, name: Spanned<IndexedName>) -> Result<Spanned<Exp>> {
         trace!("continuing to parse exp after name");
 
         // NAME <...suffix...> <binop> <exp> ...
@@ -1939,7 +2070,7 @@ impl<'a> Parser<'a> {
         // |---- partial exp at minprec=0 -----|
 
         let begin = self.pos();
-        let nameref = self.resolve_name(Name::from(name.base));
+        let nameref = self.resolve_name(name.base);
         let exp = Box::new(Ex::Var(nameref.with_loc(name.span))).with_loc(name.span);
         let exp = self.parse_prefix_exp_suffix(begin, exp)?;
         self.parse_partial_binary_exp(0, begin, exp)
@@ -2081,7 +2212,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_kailua_slotkind_after_name(&mut self, begin: Pos,
-                                        name: Spanned<Name>) -> Result<Spanned<SlotKind>> {
+                                        name: Spanned<IndexedName>) -> Result<Spanned<SlotKind>> {
         let kind = self.parse_kailua_kind_after_name(begin, name)?;
         Ok(SlotKind { modf: M::None, kind: kind }.with_loc(begin..self.last_pos()))
     }
@@ -2107,9 +2238,9 @@ impl<'a> Parser<'a> {
             let begin = parser.pos();
             match_next! { parser;
                 Tok::Name(name) in span => {
-                    let name = Name::from(name).with_loc(span);
+                    let name = parser.indexed_name_from(name, span);
                     if parser.lookahead(Punct::Colon) {
-                        match seen.entry(name.base.clone()) {
+                        match seen.entry(name.base.name.clone()) {
                             hash_map::Entry::Occupied(e) => {
                                 parser.error(span, m::DuplicateArgNameInFuncKind { name: &name })
                                       .note(*e.get(), m::FirstArgNameInFuncKind {})
@@ -2121,6 +2252,7 @@ impl<'a> Parser<'a> {
                         }
 
                         parser.expect(Punct::Colon)?;
+                        let name = name.map(|n| n.name);
                         let kind = parser.parse_kailua_kind()?;
                         Ok(Some((Some(name), kind)))
                     } else {
@@ -2190,7 +2322,7 @@ impl<'a> Parser<'a> {
     //
     // the caller is expected to error on unwanted cases.
     fn parse_kailua_namekindlist(&mut self)
-            -> Result<Spanned<Seq<Spanned<TypeSpec<Spanned<Name>>>,
+            -> Result<Spanned<Seq<Spanned<TypeSpec<Spanned<IndexedName>>>,
                                   Spanned<Option<Spanned<Kind>>>>>> {
         let mut variadic = None;
         let mut specs = Vec::new();
@@ -2199,8 +2331,8 @@ impl<'a> Parser<'a> {
         if self.may_expect(Punct::DotDotDot) { // "..." [":" KIND]
             variadic = Some(begin);
         } else { // NAME ":" KIND {"," NAME ":" KIND} ["," "..." [":" KIND]] or empty
-            let parse_named_type_spec = |parser: &mut Self, name: Spanned<Name>,
-                                         begin: Pos| -> Result<Spanned<TypeSpec<Spanned<Name>>>> {
+            let parse_named_type_spec = |parser: &mut Self, name: Spanned<IndexedName>, begin: Pos|
+                    -> Result<Spanned<TypeSpec<Spanned<IndexedName>>>> {
                 parser.expect(Punct::Colon)?;
                 let modf = parser.parse_kailua_modf_with_module()?;
                 let kind = parser.parse_kailua_kind()?;
@@ -2323,8 +2455,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_kailua_kind_after_name(&mut self, begin: Pos,
-                                    name: Spanned<Name>) -> Result<Spanned<Kind>> {
-        let kind = if *name.base == b"error"[..] {
+                                    name: Spanned<IndexedName>) -> Result<Spanned<Kind>> {
+        let kind = if *name.base.name == b"error"[..] {
             // may follow an error reason
             let reason = match_next! { self;
                 Tok::Str(s) in span => Some(Str::from(s).with_loc(span));
@@ -2333,14 +2465,14 @@ impl<'a> Parser<'a> {
             Box::new(K::Error(reason)).with_loc(name.span)
         } else {
             let namespan = name.span;
-            let kind = match self.builtin_kind(&name) {
+            let kind = match self.builtin_kind(&name.base.name) {
                 Some(Some(kind)) => kind,
                 Some(None) => {
                     self.error(&name, m::ReservedKindName { name: &name }).done()?;
                     K::Oops
                 },
                 None => {
-                    K::Named(name)
+                    K::Named(name.map(|n| n.name))
                 },
             };
             Box::new(kind).with_loc(namespan)
@@ -2387,7 +2519,7 @@ impl<'a> Parser<'a> {
             Tok::Punct(Punct::LBrace) => {
                 // "{" NAME ":" MODF KIND {"," NAME ":" MODF KIND} ["," "..."] "}"
                 // we have already read up to the first NAME
-                let parse_rec = |parser: &mut Self, first_name: Spanned<Name>| -> Result<K> {
+                let parse_rec = |parser: &mut Self, first_name: Spanned<IndexedName>| -> Result<K> {
                     let mut seen = HashMap::new(); // value denotes the first span
                     let mut first_name = Some(first_name);
                     let (extensible, fields) = parser.scan_tabular_body(true, |parser| {
@@ -2396,7 +2528,7 @@ impl<'a> Parser<'a> {
                         } else {
                             parser.parse_name()?
                         };
-                        match seen.entry(name.base.clone()) {
+                        match seen.entry(name.base.name.clone()) {
                             hash_map::Entry::Occupied(e) => {
                                 parser.error(name.span,
                                              m::DuplicateFieldNameInRec { name: &name.base })
@@ -2407,7 +2539,7 @@ impl<'a> Parser<'a> {
                                 e.insert(name.span);
                             }
                         }
-                        let name = Str::from(name.base).with_loc(name.span);
+                        let name = Str::from(name.base.name).with_loc(name.span);
                         parser.expect(Punct::Colon)?;
                         let slotkind = parser.parse_kailua_slotkind()?;
                         Ok((name, slotkind))
@@ -2450,7 +2582,7 @@ impl<'a> Parser<'a> {
                     // "{" NAME
                     // tuple or record -- distinguished by the secondary token
                     Tok::Name(name) in span => {
-                        let name = Name::from(name).with_loc(span);
+                        let name = self.indexed_name_from(name, span);
                         if self.lookahead(Punct::Colon) {
                             parse_rec(self, name)?
                         } else {
@@ -2511,7 +2643,7 @@ impl<'a> Parser<'a> {
             };
 
             Tok::Name(name) in span => {
-                let name = Name::from(name).with_loc(span);
+                let name = self.indexed_name_from(name, span);
                 let kind = self.parse_kailua_kind_after_name(begin, name)?;
                 return Ok(Some(AtomicKind::One(kind)));
             };
@@ -2832,6 +2964,152 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // assume [global] NAME ":" MODF KIND
+    // assume [static] NAME {"." NAME} ":" MODF KIND
+    // assume NAME {"." NAME} ":" MODF "method" ...
+    //
+    // returns a sibling scope if created.
+    fn try_parse_kailua_assume(&mut self) -> Result<(Stmt, Option<Scope>)> {
+        #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+        enum Scope { Implied, Global, Static }
+
+        #[derive(Clone, Debug)]
+        enum Kindlike {
+            Kind(Spanned<Kind>),
+            Method(Span, Option<Spanned<FuncKind>>),
+        }
+
+        let scopebegin = self.pos();
+        let scope = if self.may_expect(Keyword::Global) {
+            Scope::Global
+        } else if self.may_expect(Keyword::Static) {
+            Scope::Static
+        } else {
+            Scope::Implied
+        };
+        let scope = scope.with_loc(scopebegin..self.last_pos());
+
+        let namesbegin = self.pos();
+        let rootname = self.parse_name()?;
+        let mut names = Vec::new();
+        while self.may_expect(Punct::Dot) {
+            let name = self.parse_name()?;
+            names.push(name.map(|n| n.name));
+        }
+        let namesend = self.last_pos();
+
+        self.expect(Punct::Colon)?;
+        let modf = self.parse_kailua_modf()?.base;
+        let kindbegin = self.pos();
+        let kind = if self.may_expect(Keyword::Method) {
+            let funckind = self.recover_upto_with(|p| {
+                p.parse_kailua_funckind().map(Some)
+            }, || None)?;
+            // if the parsing fails later, we need a span to construct K::Func
+            Kindlike::Method(Span::new(kindbegin, self.last_pos()), funckind)
+        } else {
+            Kindlike::Kind(self.recover_upto(Self::parse_kailua_kind)?)
+        };
+
+        if names.is_empty() {
+            // method() special form is not available for non-fields;
+            // assume that it is a typo of function()
+            let kind = match kind {
+                Kindlike::Kind(kind) => kind,
+                Kindlike::Method(kindspan, funckind) => {
+                    self.error(kindspan, m::AssumeMethodToNonInstanceField {})
+                          .done()?;
+                    if let Some(funckind) = funckind {
+                        Box::new(K::Func(funckind)).with_loc(kindspan)
+                    } else {
+                        Kind::recover().with_loc(kindspan)
+                    }
+                }
+            };
+
+            let sibling_scope;
+            let (newnameref, rootname) = if scope.base == Scope::Global {
+                // assume global NAME ":" MODF KIND
+                let local_shadowing = self.resolve_local_name_without_idx(&rootname.name).is_some();
+                if self.block_depth > 0 {
+                    self.error(&scope, m::AssumeGlobalInLocalScope {}).done()?;
+                }
+                if local_shadowing {
+                    self.error(&rootname, m::AssumeShadowedGlobal { name: &rootname.name }).done()?;
+                }
+
+                self.set_token_aux(rootname.base.idx, TokenAux::GlobalVarName);
+                if self.block_depth == 0 && !local_shadowing {
+                    // only register a new global variable when it didn't error
+                    self.global_scope.insert(rootname.base.name.clone(), rootname.span);
+                }
+
+                sibling_scope = None;
+                (NameRef::Global(rootname.base.name.clone()),
+                 rootname.map(|n| NameRef::Global(n.name)))
+            } else {
+                // assume [static] NAME ":" MODF KIND (`static` is ignored)
+                if scope.base == Scope::Static {
+                    self.error(&scope, m::AssumeNameStatic {}).done()?;
+                }
+
+                let scope = self.generate_sibling_scope();
+                sibling_scope = Some(scope);
+                let rawrootname = rootname.clone();
+                let rootname = rootname.map(|name| self.resolve_name(name));
+                let kind = match rootname.base {
+                    NameRef::Local(ref scoped_id) => {
+                        // the scoped id itself can be assumed!
+                        let def = self.local_names.get(scoped_id).expect("unregistered scoped id");
+                        match def.kind {
+                            LocalNameKind::AssumedToGlobal => LocalNameKind::AssumedToGlobal,
+                            _ => LocalNameKind::AssumedToLocal(scoped_id.clone()),
+                        }
+                    },
+                    NameRef::Global(_) => LocalNameKind::AssumedToGlobal,
+                };
+                let scoped_id = self.add_spanned_local_name_with_kind(scope, rawrootname, kind)?;
+                (NameRef::Local(scoped_id.base), rootname)
+            };
+
+            Ok((Box::new(St::KailuaAssume(newnameref, rootname, modf, kind, sibling_scope)),
+                sibling_scope))
+        } else {
+            if scope.base == Scope::Global {
+                self.error(&scope, m::AssumeFieldGlobal {}).done()?;
+                // and treated as like Scope::Implied
+            }
+
+            let rootname0 = rootname.clone();
+            let rootname = rootname.map(|name| self.resolve_name(name));
+            if let NameRef::Global(_) = rootname.base {
+                if self.block_depth > 0 {
+                    self.error(&rootname0,
+                               m::AssumeFieldGlobalInLocalScope { name: &rootname0.name })
+                        .done()?;
+                }
+            }
+
+            let is_static = scope.base == Scope::Static;
+            let names = (rootname, names).with_loc(namesbegin..namesend);
+            let st = match kind {
+                Kindlike::Kind(kind) => St::KailuaAssumeField(is_static, names, modf, kind),
+                Kindlike::Method(kindspan, funckind) =>{
+                    if scope.base != Scope::Implied {
+                        self.error(kindspan, m::AssumeMethodToNonInstanceField {}).done()?;
+                    }
+                    if let Some(funckind) = funckind {
+                        St::KailuaAssumeMethod(names, modf, funckind)
+                    } else {
+                        St::KailuaAssumeField(is_static, names, modf,
+                                              Kind::recover().without_loc())
+                    }
+                },
+            };
+            Ok((Box::new(st), None))
+        }
+    }
+
     fn try_parse_kailua_spec(&mut self) -> Result<Option<Option<Spanned<Stmt>>>> {
         trace!("parsing kailua spec");
         let begin = self.pos();
@@ -2842,147 +3120,18 @@ impl<'a> Parser<'a> {
 
                 let mut sibling_scope = None;
                 let stmt = match_next! { parser;
-                    // assume [global] NAME ":" MODF KIND
-                    // assume [static] NAME {"." NAME} ":" MODF KIND
-                    // assume NAME {"." NAME} ":" MODF "method" ...
+                    // assume ...
                     Tok::Keyword(Keyword::Assume) => {
-                        #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-                        enum Scope { Implied, Global, Static }
-
-                        #[derive(Clone, Debug)]
-                        enum Kindlike {
-                            Kind(Spanned<Kind>),
-                            Method(Span, Option<Spanned<FuncKind>>),
-                        }
-
-                        let scopebegin = parser.pos();
-                        let scope = if parser.may_expect(Keyword::Global) {
-                            Scope::Global
-                        } else if parser.may_expect(Keyword::Static) {
-                            Scope::Static
-                        } else {
-                            Scope::Implied
-                        };
-                        let scope = scope.with_loc(scopebegin..parser.last_pos());
-
-                        let namesbegin = parser.pos();
-                        let rootname = parser.parse_name()?;
-                        let mut names = Vec::new();
-                        while parser.may_expect(Punct::Dot) {
-                            names.push(parser.parse_name()?);
-                        }
-                        let namesend = parser.last_pos();
-
-                        parser.expect(Punct::Colon)?;
-                        let modf = parser.parse_kailua_modf()?.base;
-                        let kindbegin = parser.pos();
-                        let kind = if parser.may_expect(Keyword::Method) {
-                            let funckind = parser.recover_upto_with(|p| {
-                                p.parse_kailua_funckind().map(Some)
-                            }, || None)?;
-                            // if the parsing fails later, we need a span to construct K::Func
-                            Kindlike::Method(Span::new(kindbegin, parser.last_pos()), funckind)
-                        } else {
-                            Kindlike::Kind(parser.recover_upto(Self::parse_kailua_kind)?)
-                        };
-
-                        if names.is_empty() {
-                            // method() special form is not available for non-fields;
-                            // assume that it is a typo of function()
-                            let kind = match kind {
-                                Kindlike::Kind(kind) => kind,
-                                Kindlike::Method(kindspan, funckind) => {
-                                    parser.error(kindspan, m::AssumeMethodToNonInstanceField {})
-                                          .done()?;
-                                    if let Some(funckind) = funckind {
-                                        Box::new(K::Func(funckind)).with_loc(kindspan)
-                                    } else {
-                                        Kind::recover().with_loc(kindspan)
-                                    }
-                                }
-                            };
-
-                            let (newnameref, rootname) = if scope.base == Scope::Global {
-                                // assume global NAME ":" MODF KIND
-                                let local_shadowing =
-                                    parser.resolve_local_name(&rootname).is_some();
-                                if parser.block_depth > 0 {
-                                    parser.error(&scope, m::AssumeGlobalInLocalScope {}).done()?;
-                                }
-                                if local_shadowing {
-                                    parser.error(&rootname,
-                                                 m::AssumeShadowedGlobal { name: &rootname })
-                                          .done()?;
-                                }
-
-                                if parser.block_depth == 0 && !local_shadowing {
-                                    // only register a new global variable when it didn't error
-                                    parser.global_scope.insert(rootname.base.clone(),
-                                                               rootname.span);
-                                }
-                                (NameRef::Global(rootname.base.clone()),
-                                 rootname.map(NameRef::Global))
-                            } else {
-                                // assume [static] NAME ":" MODF KIND (`static` is ignored)
-                                if scope.base == Scope::Static {
-                                    parser.error(&scope, m::AssumeNameStatic {}).done()?;
-                                }
-
-                                let scope = parser.generate_sibling_scope();
-                                sibling_scope = Some(scope);
-                                let scoped_id = parser.add_spanned_local_name(scope,
-                                                                              rootname.clone())?;
-                                let rootname = rootname.map(|name| parser.resolve_name(name));
-                                (NameRef::Local(scoped_id.base), rootname)
-                            };
-                            Some(Box::new(St::KailuaAssume(
-                                newnameref, rootname, modf, kind, sibling_scope,
-                            )))
-                        } else {
-                            if scope.base == Scope::Global {
-                                parser.error(&scope, m::AssumeFieldGlobal {}).done()?;
-                                // and treated as like Scope::Implied
-                            }
-
-                            let rootname0 = rootname.clone();
-                            let rootname = rootname.map(|name| parser.resolve_name(name));
-                            if let NameRef::Global(_) = rootname.base {
-                                if parser.block_depth > 0 {
-                                    parser.error(&rootname0,
-                                                 m::AssumeFieldGlobalInLocalScope {
-                                                     name: &rootname0
-                                                 })
-                                          .done()?;
-                                }
-                            }
-
-                            let is_static = scope.base == Scope::Static;
-                            let names = (rootname, names).with_loc(namesbegin..namesend);
-                            let st = match kind {
-                                Kindlike::Kind(kind) =>
-                                    St::KailuaAssumeField(is_static, names, modf, kind),
-                                Kindlike::Method(kindspan, funckind) =>{
-                                    if scope.base != Scope::Implied {
-                                        parser.error(kindspan, m::AssumeMethodToNonInstanceField {})
-                                              .done()?;
-                                    }
-                                    if let Some(funckind) = funckind {
-                                        St::KailuaAssumeMethod(names, modf, funckind)
-                                    } else {
-                                        St::KailuaAssumeField(is_static, names, modf,
-                                                              Kind::recover().without_loc())
-                                    }
-                                },
-                            };
-                            Some(Box::new(st))
-                        }
+                        let (stmt, new_sibling_scope) = parser.try_parse_kailua_assume()?;
+                        sibling_scope = new_sibling_scope;
+                        Some(stmt)
                     };
 
                     // open NAME
                     Tok::Keyword(Keyword::Open) => {
                         let name = parser.parse_name()?;
                         // TODO also set the parser option
-                        Some(Box::new(St::KailuaOpen(name)))
+                        Some(Box::new(St::KailuaOpen(name.map(|n| n.name))))
                     };
 
                     // type [local | global] NAME = KIND
@@ -3000,7 +3149,7 @@ impl<'a> Parser<'a> {
                         let kind = parser.recover_upto(Self::parse_kailua_kind)?;
 
                         // forbid overriding builtin types
-                        if parser.builtin_kind(&*name.base).is_some() {
+                        if parser.builtin_kind(&*name.base.name).is_some() {
                             parser.error(name.span, m::CannotRedefineBuiltin {}).done()?;
                         }
 
@@ -3018,7 +3167,7 @@ impl<'a> Parser<'a> {
                             }
                         }
 
-                        Some(Box::new(St::KailuaType(typescope, name, kind)))
+                        Some(Box::new(St::KailuaType(typescope, name.map(|n| n.name), kind)))
                     };
 
                     'unread: _ => None; // empty `--#` is valid
@@ -3059,7 +3208,8 @@ impl<'a> Parser<'a> {
                 block: block,
                 global_scope: self.global_scope,
                 map: self.scope_map,
-                decl_spans: self.decl_spans,
+                local_names: self.local_names,
+                token_aux: self.token_aux,
             })
         } else {
             Err(diag::Stop)

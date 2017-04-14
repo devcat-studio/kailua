@@ -247,6 +247,19 @@ local a,
       3, 'foo'
 --! [Local([`a`$1, `a`$1], [3, "foo"])$1]
 
+--8<-- method-local
+function a:b(c)
+    self = self
+    local self = self
+    local self = self
+    self = self
+end
+--! [MethodDecl((`a`_.`b`), Some(self=`self`$1), [`c`$1] --> _, \
+--!             $1[Assign([`self`$1], [`self`$1]), \
+--!                Local([`self`$2], [`self`$1])$2, \
+--!                Local([`self`$3], [`self`$2])$3, \
+--!                Assign([`self`$3], [`self`$3])])]
+
 --8<-- assign-1-1
 a = f()
 --! [Assign([`a`_], [`f`_()])]
@@ -1270,31 +1283,31 @@ function foo() end
 --v function(a: integer,
 --v          b: string) --@^-< Error: Excess arguments in the function specification
 function foo() end
---! [FuncDecl(`foo`_, [`a`$1: _ Integer, `b`$1: _ String], $1[])]
+--! [FuncDecl(`foo`_, [], $1[])]
 
 --8<-- funcspec-more-arity-2
 --v function(a: integer,
 --v          b: string) --@< Error: Excess arguments in the function specification
 function foo(a) end
---! [FuncDecl(`foo`_, [`a`$1: _ Integer, `b`$1: _ String], $1[])]
+--! [FuncDecl(`foo`_, [`a`$1: _ Integer], $1[])]
 
 --8<-- funcspec-wrong-name
 --v function(a: integer)
 function foo(b) end --@< Error: Mismatching argument name in the function specification
                     --@^^ Note: The corresponding argument was here
---! [FuncDecl(`foo`_, [`a`$1: _ Integer], $1[])]
+--! [FuncDecl(`foo`_, [`b`$1: _ Integer], $1[])]
 
 --8<-- funcspec-less-arity-1
 --v function()
 function foo(a,
              b) end --@^-< Error: Excess arguments in the function declaration
---! [FuncDecl(`foo`_, [], $1[])]
+--! [FuncDecl(`foo`_, [`a`$1, `b`$1], $1[])]
 
 --8<-- funcspec-less-arity-2
 --v function(a: integer)
 function foo(a,
              b) end --@< Error: Excess arguments in the function declaration
---! [FuncDecl(`foo`_, [`a`$1: _ Integer], $1[])]
+--! [FuncDecl(`foo`_, [`a`$1: _ Integer, `b`$1], $1[])]
 
 --8<-- funcspec-swapped-name
 --v function(a: integer, b: integer)
@@ -1302,15 +1315,15 @@ function foo(b, a) end --@< Error: Mismatching argument name in the function spe
                        --@^^ Note: The corresponding argument was here
                        --@^^ Error: Mismatching argument name in the function specification
                        --@^^^^ Note: The corresponding argument was here
---! [FuncDecl(`foo`_, [`a`$1: _ Integer, `b`$1: _ Integer], $1[])]
+--! [FuncDecl(`foo`_, [`b`$1: _ Integer, `a`$1: _ Integer], $1[])]
 
 --8<-- funcspec-duplicate-name
--- error will occur early, and function decl will only verify them
---v function(
---v     a: integer,
---v     a: string --@< Error: This variable will overwrite another same-named variable in the same scope
---v )             --@^^ Note: This variable is being overwritten
-function foo(a, a) end
+--v function(a: integer, a: string)
+function foo(
+    a,
+    a --@< Error: This variable will overwrite another same-named variable in the same scope
+)     --@^^ Note: This variable is being overwritten
+end
 --! [FuncDecl(`foo`_, [`a`$1: _ Integer, `a`$1: _ String], $1[])]
 
 --8<-- funcspec-1
@@ -1536,7 +1549,7 @@ end
 --v function(
 --v     arg: integer,
 --v     ...: string --@< Error: A variable `arg` generated from variadic arguments will overwrite another same-named variable in the same scope
---v )               --@^^ Note: This variable is being overwritten
+--v )               --@v Note: This variable is being overwritten
 function foo(arg, ...)
 end
 --! [FuncDecl(`foo`_, [`arg`$1: _ Integer, ...(arg=`arg`$1): String], $1[])]
@@ -1573,7 +1586,7 @@ function foo.bar(x) end
 function foo.bar(self, x) end --@< Error: Excess arguments in the function declaration
                               --@^ Error: Mismatching argument name in the function specification
                               --@^^^ Note: The corresponding argument was here
---! [MethodDecl((`foo`_.`bar`), None, [`x`$1: _ Integer], $1[])]
+--! [MethodDecl((`foo`_.`bar`), None, [`self`$1: _ Integer, `x`$1], $1[])]
 
 --8<-- assume-multiline-recover
 --# assume a: { integer, string

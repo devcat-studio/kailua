@@ -278,8 +278,9 @@ pub fn complete_name(tokens: &[NestedToken], name_idx: usize, nesting_category: 
         for (name, _scope, id) in last_chunk.map.names_and_scopes(scope) {
             if seen.insert(name) { // ignore shadowed names (always appear later)
                 let name = String::from_utf8_lossy(name).into_owned();
-                let detail =
-                    last_chunk.decl_spans.get(&id).and_then(|&s| detail_from_span(s, source));
+                let detail = last_chunk.local_names.get(&id).and_then(|def| {
+                    detail_from_span(def.def_span, source)
+                });
                 items.push(make_item(name, CompletionItemKind::Variable, detail));
             }
         }

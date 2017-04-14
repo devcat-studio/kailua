@@ -3758,8 +3758,8 @@ x = 'hello' --@< Error: Cannot assign `"hello"` into `integer`
 
 --8<-- duplicate-name-2
 --v function(x: integer, x: string)
---@^ Error: This variable will overwrite another same-named variable in the same scope
---@^^ Note: This variable is being overwritten
+--@vv Error: This variable will overwrite another same-named variable in the same scope
+--@v Note: This variable is being overwritten
 function f(x, x)
     x = 4 --@< Error: Cannot assign `4` into `string`
           --@^ Note: The other type originates here
