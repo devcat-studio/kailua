@@ -1,3 +1,7 @@
+## 1.0.3 (2017-04-14)
+
+* Go to definition and renaming now works for local and global variable names. Currently there are some known issues (e.g. renaming to an invalid or reserved name does not error).
+
 ## 1.0.2 (2017-04-10)
 
 * Fixed some parser crashes.

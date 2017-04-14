@@ -192,6 +192,10 @@ Play a bit with this code to see which errors Kailua can detect.
 
 * Help for types of most subexpressions on hover.
 
+* Go to definition for local and global names.
+
+* Mass renaming of local and global names.
+
 ## Kailua the Language
 
 ### Special Comments
