@@ -1208,7 +1208,7 @@ impl<'a> Parser<'a> {
                 let rootname = self.parse_name()?.map(|name| self.resolve_name(name));
                 if let NameRef::Global(ref name) = rootname.base {
                     // this will assign a global name, and is handled like a global assignment
-                    self.global_scope.insert(name.clone(), rootname.span);
+                    self.global_scope.entry(name.clone()).or_insert(rootname.span);
                 }
                 let mut names = Vec::new();
                 while self.may_expect(Punct::Dot) {
@@ -1870,7 +1870,7 @@ impl<'a> Parser<'a> {
                 // if Var refers to a global variable assignment,
                 // register its name to the global scope
                 if let NameRef::Global(ref name) = name.base {
-                    self.global_scope.insert(name.clone(), span);
+                    self.global_scope.entry(name.clone()).or_insert(span);
                 }
                 Ok(Var::Name(name).with_loc(span))
             },
@@ -3041,7 +3041,7 @@ impl<'a> Parser<'a> {
                 self.set_token_aux(rootname.base.idx, TokenAux::GlobalVarName);
                 if self.block_depth == 0 && !local_shadowing {
                     // only register a new global variable when it didn't error
-                    self.global_scope.insert(rootname.base.name.clone(), rootname.span);
+                    self.global_scope.entry(rootname.base.name.clone()).or_insert(rootname.span);
                 }
 
                 sibling_scope = None;
