@@ -28,6 +28,10 @@ impl<T> IsDefault for Vec<T> {
     fn is_default(&self) -> bool { self.is_empty() }
 }
 
+impl<K: Ord, V> IsDefault for Object<K, V> {
+    fn is_default(&self) -> bool { self.is_empty() }
+}
+
 impl IsDefault for () {
     fn is_default(&self) -> bool { true }
 }
@@ -637,8 +641,14 @@ interface! {
         pub newText: String,
     }
 
+    pub struct TextDocumentEdit {
+        pub textDocument: VersionedTextDocumentIdentifier,
+        pub edits: Vec<TextEdit>,
+    }
+
     pub struct WorkspaceEdit {
-        pub changes: Object<String, Vec<TextEdit>>,
+        pub changes?: Object<String, Vec<TextEdit>>,
+        pub documentChanges?: Vec<TextDocumentEdit>,
     }
 
     pub struct TextDocumentIdentifier {

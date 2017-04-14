@@ -5,6 +5,7 @@ use kailua_check::{Output, Slot};
 pub mod completion;
 pub mod hover;
 pub mod signature;
+pub mod definition; // also contains rename
 
 // common routines
 

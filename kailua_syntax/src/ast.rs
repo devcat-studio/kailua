@@ -765,7 +765,7 @@ pub enum LocalNameKind {
     // assumed to a local name (which itself is not assumed)
     AssumedToLocal(ScopedId),
 
-    // assumed to a global name iwth the same name
+    // assumed to a global name with the same name
     AssumedToGlobal,
 }
 

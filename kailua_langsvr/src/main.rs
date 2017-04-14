@@ -194,6 +194,8 @@ fn initialize_workspace(server: &Server) -> Workspace {
                             signatureHelpProvider: Some(SignatureHelpOptions {
                                 triggerCharacters: vec!["(".to_string(), ",".to_string()],
                             }),
+                            definitionProvider: true,
+                            renameProvider: true,
                             ..Default::default()
                         },
                     });
@@ -460,6 +462,31 @@ fn main_loop(server: Server, workspace: Arc<RwLock<Workspace>>) {
                 signature(server.clone(), workspace.clone(), id, file, token, &params.position);
             }
 
+            Received::Request(id, Request::GotoDefinition(params)) => {
+                let token = CancelToken::new();
+                cancel_tokens.insert(id.clone(), token.clone());
+
+                let uri = &params.textDocument.uri;
+                let file = try_or_notify!(workspace.read().file(uri).ok_or_else(|| {
+                    WorkspaceError("file does not exist for go to definition")
+                }));
+
+                definition(server.clone(), workspace.clone(), id, file, token, &params.position);
+            }
+
+            Received::Request(id, Request::Rename(params)) => {
+                let token = CancelToken::new();
+                cancel_tokens.insert(id.clone(), token.clone());
+
+                let uri = &params.textDocument.uri;
+                let file = try_or_notify!(workspace.read().file(uri).ok_or_else(|| {
+                    WorkspaceError("file does not exist for renaming")
+                }));
+
+                rename(server.clone(), workspace.clone(), id, file, token,
+                       &params.position, params.newName);
+            }
+
             _ => {}
         }
     }
@@ -642,6 +669,193 @@ fn signature(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id
             }).boxed()
         } else {
             future::ok(()).boxed()
+        }
+    });
+
+    workspace.read().pool().spawn(fut).forget();
+}
+
+fn definition(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
+              file: WorkspaceFile, cancel_token: CancelToken, position: &protocol::Position) {
+    use std::path::Path;
+    use futures::{future, stream, Stream};
+    use url::Url;
+    use kailua_env::{Span, Source};
+    use kailua_syntax::NameRef;
+    use ops::definition;
+    use protocol::*;
+
+    let tokens_fut = file.ensure_tokens().map_err(|e| e.as_ref().map(|_| ()));
+    let chunk_fut = file.ensure_chunk().map_err(|e| e.as_ref().map(|_| ()));
+    let pos_fut = file.translate_position(position);
+
+    let spare_workspace = workspace.clone();
+    let fut = tokens_fut.join(chunk_fut).join(pos_fut).and_then(move |((tokens, chunk), pos)| {
+        if let Err(e) = cancel_token.keep_going() {
+            return future::err(e).boxed();
+        }
+
+        let class = definition::classify(&tokens.0, &chunk.0, pos);
+        debug!("definition: {:?} {:#?}", class, pos);
+
+        fn send_spans(server: Server, id: protocol::Id, spans: &[Span], source: &Source) {
+            debug!("definition spans: {:#?}", spans);
+            let locs: Vec<_> = spans.iter().filter_map(|&span| {
+                diags::translate_span(span, source).and_then(|(path, range)| {
+                    Url::from_file_path(Path::new(&path)).ok().map(|url| {
+                        Location { uri: url.to_string(), range: range }
+                    })
+                })
+            }).collect();
+            let _ = server.send_ok(id, locs);
+        }
+
+        let workspace = spare_workspace.clone();
+        let ws = workspace.read();
+        match class {
+            Some(definition::Class::Var(_, NameRef::Local(scoped_id))) => {
+                if let Some(span) = definition::local_var_definition(&chunk.0, &scoped_id) {
+                    send_spans(server, id, &[span], &ws.source());
+                } else {
+                    send_spans(server, id, &[], &ws.source());
+                }
+                future::ok(()).boxed()
+            },
+
+            Some(definition::Class::Var(_, NameRef::Global(name))) => {
+                let spare_cancel_token = cancel_token.clone();
+
+                // should wait for all chunks being parsed
+                let chunk_futs: Vec<_> =
+                    ws.files().values().map(|f| Ok(f.ensure_chunk())).collect();
+                let chunk_stream = stream::iter(chunk_futs.into_iter()).and_then(|fut| fut);
+                let spans_fut = chunk_stream.filter_map(move |chunk| {
+                    if spare_cancel_token.is_canceled() {
+                        None
+                    } else {
+                        definition::global_var_definition(&chunk.0, &name)
+                    }
+                }).collect();
+
+                spans_fut.map_err(|e| e.as_ref().map(|_| ())).and_then(move |spans| {
+                    cancel_token.keep_going()?;
+                    let ws = spare_workspace.read();
+                    send_spans(server, id, &spans, &ws.source());
+                    Ok(())
+                }).boxed()
+            },
+
+            // XXX PossiblyRequire depends on package.path/cpath, which can change in runtime
+            Some(definition::Class::PossiblyRequire(_, _, _)) | None => {
+                send_spans(server, id, &[], &ws.source());
+                future::ok(()).boxed()
+            },
+        }
+    });
+
+    workspace.read().pool().spawn(fut).forget();
+}
+
+fn rename(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
+          file: WorkspaceFile, cancel_token: CancelToken,
+          position: &protocol::Position, new_name: String) {
+    use std::collections::HashMap;
+    use std::path::Path;
+    use futures::{future, stream, Stream};
+    use url::Url;
+    use kailua_env::{Span, Source};
+    use kailua_syntax::NameRef;
+    use ops::definition;
+    use protocol::*;
+
+    let tokens_fut = file.ensure_tokens().map_err(|e| e.as_ref().map(|_| ()));
+    let chunk_fut = file.ensure_chunk().map_err(|e| e.as_ref().map(|_| ()));
+    let pos_fut = file.translate_position(position);
+
+    let spare_workspace = workspace.clone();
+    let fut = tokens_fut.join(chunk_fut).join(pos_fut).and_then(move |((tokens, chunk), pos)| {
+        if let Err(e) = cancel_token.keep_going() {
+            return future::err(e).boxed();
+        }
+
+        let class = definition::classify(&tokens.0, &chunk.0, pos);
+        debug!("rename: {:?} {:#?}", class, pos);
+
+        fn send_spans(server: Server, id: protocol::Id, spans: &[Span],
+                      new_name: String, source: &Source) {
+            debug!("rename spans: {:#?}", spans);
+
+            let mut spansmap = HashMap::new();
+            for &span in spans {
+                let mut perunit = spansmap.entry(span.unit()).or_insert_with(|| {
+                    (source.get_file(span.unit()), Vec::new())
+                });
+                perunit.1.push(span);
+            }
+
+            let changes = spansmap.into_iter().flat_map(|(_unit, (file, spans))| {
+                file.and_then(|file| {
+                    Url::from_file_path(Path::new(file.path())).ok().map(|url| {
+                        let edits: Vec<_> = spans.into_iter().filter_map(|span| {
+                            diags::translate_span_without_path(span, file).map(|range| {
+                                TextEdit { range: range, newText: new_name.clone() }
+                            })
+                        }).collect();
+                        (url.to_string(), edits)
+                    })
+                })
+            }).collect();
+
+            let wsedit = WorkspaceEdit { changes: changes, documentChanges: Vec::new() };
+            let _ = server.send_ok(id, wsedit);
+        }
+
+        let workspace = spare_workspace.clone();
+        let ws = workspace.read();
+        match class {
+            Some(definition::Class::Var(_, NameRef::Local(scoped_id))) => {
+                let spans = definition::local_var_uses(&tokens.0, &chunk.0, &scoped_id);
+                send_spans(server, id, &spans, new_name, &ws.source());
+                future::ok(()).boxed()
+            },
+
+            Some(definition::Class::Var(_, NameRef::Global(name))) => {
+                let spare_cancel_token = cancel_token.clone();
+
+                // should wait for all chunks being parsed
+                let tokens_and_chunk_futs: Vec<_> = ws.files().values().map(|f| {
+                    Ok(f.ensure_tokens().join(f.ensure_chunk()))
+                }).collect();
+                let tokens_and_chunk_stream =
+                    stream::iter(tokens_and_chunk_futs.into_iter()).and_then(|fut| fut);
+                let spans_fut = tokens_and_chunk_stream.filter_map(move |tokens_and_chunk| {
+                    if spare_cancel_token.is_canceled() {
+                        None
+                    } else {
+                        let (tokens, chunk) = tokens_and_chunk;
+                        Some(definition::global_var_uses(&tokens.0, &chunk.0, &name))
+                    }
+                }).fold(Vec::new(), |mut a, b| { a.extend_from_slice(&b); Ok(a) });
+
+                spans_fut.map_err(|e| e.as_ref().map(|_| ())).and_then(move |spans| {
+                    cancel_token.keep_going()?;
+                    let ws = spare_workspace.read();
+                    send_spans(server, id, &spans, new_name, &ws.source());
+                    Ok(())
+                }).boxed()
+            },
+
+            _ => {
+                let _ = server.send_notify(
+                    Method::ShowMessage,
+                    ShowMessageParams {
+                        type_: MessageType::Warning,
+                        message: ws.localize(&message::CannotRename {}).to_string(),
+                    },
+                );
+                send_spans(server, id, &[], new_name, &ws.source());
+                future::ok(()).boxed()
+            },
         }
     });
 

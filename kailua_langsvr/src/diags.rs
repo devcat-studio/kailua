@@ -10,13 +10,13 @@ use kailua_diag::{self, Kind, Report, Locale, Localize, Localized};
 
 use protocol::{Position, Range, DiagnosticSeverity, Diagnostic};
 
-pub fn translate_span(span: Span, source: &Source) -> Option<(String, Range)> {
+pub fn translate_span_without_path(span: Span, file: &SourceFile) -> Option<Range> {
     // ignore any unknown span
-    let (file, (beginline, mut spans, endline)) = match source.get_file(span.unit()) {
-        Some(file) => match file.lines_from_span(span) {
-            Some(lines) => (file, lines),
-            None => return None,
-        },
+    if span.unit() != file.span().unit() {
+        return None;
+    }
+    let (beginline, mut spans, endline) = match file.lines_from_span(span) {
+        Some(lines) => lines,
         None => return None,
     };
 
@@ -51,10 +51,16 @@ pub fn translate_span(span: Span, source: &Source) -> Option<(String, Range)> {
     let mut endch = calculate_u16_offset(endspan.begin(), span.end(), file);
     if span.begin() == span.end() { endch += 1; } // avoid creating an empty range
 
-    Some((file.path().to_owned(), Range {
+    Some(Range {
         start: Position { line: beginline as u64, character: beginch as u64 },
         end: Position { line: endline as u64, character: endch as u64 }, // exclusive
-    }))
+    })
+}
+
+pub fn translate_span(span: Span, source: &Source) -> Option<(String, Range)> {
+    source.get_file(span.unit()).and_then(|file| {
+        translate_span_without_path(span, file).map(|range| (file.path().to_owned(), range))
+    })
 }
 
 // hierarchical diagnostics, forming a DAG.

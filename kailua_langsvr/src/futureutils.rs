@@ -56,8 +56,12 @@ impl CancelToken {
         }))
     }
 
+    pub fn is_canceled(&self) -> bool {
+        self.0.sender.lock().is_none()
+    }
+
     pub fn keep_going<T>(&self) -> Result<(), CancelError<T>> {
-        if self.0.sender.lock().is_none() {
+        if self.is_canceled() {
             Err(CancelError::Canceled)
         } else {
             Ok(())
