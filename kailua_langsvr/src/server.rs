@@ -154,9 +154,9 @@ impl Server {
                 if let Some(ref id) = msg.id {
                     if let Some(sender) = self.inner.futures.lock().remove(id) {
                         if let Some(error) = msg.error {
-                            sender.complete(Err(error));
+                            let _ = sender.send(Err(error));
                         } else {
-                            sender.complete(Ok(msg.result));
+                            let _ = sender.send(Ok(msg.result));
                         }
                     } else {
                         warn!("no callback registered for {:?}", msg);

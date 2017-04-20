@@ -75,7 +75,7 @@ impl CancelToken {
     pub fn cancel(&self) -> bool {
         if let Some(sender) = self.0.sender.lock().take() {
             // guaranteed to be entered by only one thread
-            sender.complete(());
+            let _ = sender.send(());
             true
         } else {
             false
