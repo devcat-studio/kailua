@@ -188,27 +188,9 @@ As annotating everything is not practical, Kailua supports two ways to avoid the
 
   `.kailua` files would frequently use `--# assume` as you should *assume* that the original code has given types.
 
-## Source Organization
+## See Also
 
-Kailua is a [Rust] application, composed of multiple [crates][crates-and-modules]:
-
-* [`kailua_env`](kailua_env/): Span information, source code management, scope mapping.
-
-* [`kailua_diag`](kailua_diag/): Rudimentary localization and reporting facility.
-
-* [`kailua_test`](kailua_test/): Testing harness for `kailua_syntax` and `kailua_check`. For those crates `cargo test` will include a battery of integration tests.
-
-* [`kailua_syntax`](kailua_syntax/): Fully recoverable Lua lexer and parser. Aware of Kailua extensions as well.
-
-* [`kailua_check`](kailua_check/): Main type checker for Kailua.
-
-* [`kailua_vs`](kailua_vs/): Working but now abandoned [Visual Studio][VS] IDE extension. Includes both [C#](kailua_vs/Source/) and [Rust](kailua_vs/src/) codes.
-
-* [`kailua_vsc`](kailua_vsc/): [Visual Studio Code][VSCode] IDE extension in progress.
-
-  * [`kailua_langsvr`](kailua_langsvr/): A standalone language server for [Visual Studio Code][VSCode].
-
-  * [`kailua_langsvr_protocol`](kailua_langsvr_protocol/): A macro-heavy portion of `kailua_langsvr`, separated in order to reduce compilation time.
+The internal documentation is available in a [different file][internals-doc].
 
 ## License
 
@@ -217,7 +199,5 @@ Kailua is a [Rust] application, composed of multiple [crates][crates-and-modules
 [Lua]: https://www.lua.org/
 [Rust]: https://www.rust-lang.org/
 [install Rust]: https://www.rust-lang.org/install.html
-[crates-and-modules]: https://doc.rust-lang.org/book/crates-and-modules.html
-[VS]: https://www.visualstudio.com/
 [VSCode]: https://code.visualstudio.com/
 

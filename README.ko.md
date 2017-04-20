@@ -188,27 +188,9 @@ print('Hello, world!')
 
   `.kailua` 파일에는 원래 대응되는 코드가 주어진 타입을 가지고 있다고 *가정*하기 위해 `--# assume` 명령을 많이 쓰게 됩니다.
 
-## 소스 구조
+## 같이 보기
 
-카일루아는 [러스트][Rust] 프로그램으로, 여러 [크레이트][crates-and-modules]로 나뉘어 있습니다.
-
-* [`kailua_env`](kailua_env/): 위치(span) 정보, 소스 코드 관리, 영역 매핑.
-
-* [`kailua_diag`](kailua_diag/): 기본적인 지역화와 보고 기능.
-
-* [`kailua_test`](kailua_test/): `kailua_syntax`와 `kailua_check`에서 쓰이는 테스트 러너. 이 크레이트들에서 `cargo test`는 통합 테스트를 포함합니다.
-
-* [`kailua_syntax`](kailua_syntax/): 오류 복구를 지원하는 루아 렉서 및 파서. 카일루아 확장도 물론 지원합니다.
-
-* [`kailua_check`](kailua_check/): 카일루아의 주 타입 검사기.
-
-* [`kailua_vs`](kailua_vs/): 동작은 하지만 더 이상 개발되지 않는 [Visual Studio][VS] IDE 확장. [C#](kailua_vs/Source/) 코드와 [Rust](kailua_vs/src/) 코드를 둘 다 포함합니다.
-
-* [`kailua_vsc`](kailua_vsc/): 개발 중인 [Visual Studio Code][VSCode] IDE 확장.
-
-  * [`kailua_langsvr`](kailua_langsvr/): [Visual Studio Code][VSCode]용 독립 언어 서버.
-
-  * [`kailua_langsvr_protocol`](kailua_langsvr_protocol/): 컴파일 시간을 줄이기 위해 분리한, 매크로를 많이 쓰는 `kailua_langsvr`의 일부분.
+카일루아의 내부에 대한 문서는 [별도의 파일][internals-doc](영문)에 따로 있습니다.
 
 ## 라이선스
 
@@ -217,7 +199,5 @@ print('Hello, world!')
 [Lua]: https://www.lua.org/
 [Rust]: https://www.rust-lang.org/
 [install Rust]: https://www.rust-lang.org/install.html
-[crates-and-modules]: https://doc.rust-lang.org/book/crates-and-modules.html
-[VS]: https://www.visualstudio.com/
 [VSCode]: https://code.visualstudio.com/
 
