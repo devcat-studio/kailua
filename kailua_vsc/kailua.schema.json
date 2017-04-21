@@ -4,7 +4,16 @@
     "properties": {
         "start_path": {
             "type": "string",
-            "description": "Specifies the path of the source file to begin the checking."
+            "description": "Specifies the path of the source file to begin the checking. The path is relative to the workspace directory."
+        },
+        "package_path": {
+            "type": "string",
+            "description": "Specifies the value of `package.path`. The paths are relative to the workspace directory. `package.path` can be dynamically set in the program, but such assignments will be ignored if the explicit value is given here."
+        },
+        "package_cpath": {
+            "type": "string",
+            "description": "Specifies the value of `package.cpath`. The paths are relative to the workspace directory. `package.cpath` can be dynamically set in the program, but such assignments will be ignored if the explicit value is given here."
         }
-    }
+    },
+    "required": ["start_path"]
 }

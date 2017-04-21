@@ -12,22 +12,22 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::path::Path;
 
-use kailua_env::{Source, SourceFile};
+use kailua_env::{Spanned, Source, SourceFile, WithLoc};
 use kailua_diag::{Stop, Report, ConsoleReport, TrackMaxKind};
 use kailua_syntax::{parse_chunk, Chunk};
 use kailua_check::{FsSource, FsOptions, Context, check_from_chunk};
 
 struct LocalFsSource {
     source: Rc<RefCell<Source>>,
-    report: Rc<Report>,
 }
 
 impl FsSource for LocalFsSource {
-    fn chunk_from_path(&self, resolved_path: &Path) -> Result<Option<Chunk>, Option<Stop>> {
-        match SourceFile::from_file(resolved_path) {
+    fn chunk_from_path(&self, resolved_path: Spanned<&Path>,
+                       report: &Report) -> Result<Option<Chunk>, Option<Stop>> {
+        match SourceFile::from_file(&resolved_path) {
             Ok(file) => {
                 let span = self.source.borrow_mut().add(file);
-                if let Ok(chunk) = parse_chunk(&self.source.borrow(), span, &*self.report) {
+                if let Ok(chunk) = parse_chunk(&self.source.borrow(), span, report) {
                     Ok(Some(chunk))
                 } else {
                     Err(Some(Stop)) // we have already reported parsing errors
@@ -49,8 +49,10 @@ fn parse_and_check(mainpath: &Path) -> Result<(), String> {
     let report = Rc::new(TrackMaxKind::new(ConsoleReport::new(source.clone())));
     let mut context = Context::new(report.clone());
 
-    let fssource = LocalFsSource { source: source, report: report.clone() };
-    let filechunk = fssource.chunk_from_path(mainpath).map_err(|_| format!("error while loading"))?;
+    let fssource = LocalFsSource { source: source };
+    let filechunk = fssource.chunk_from_path(mainpath.without_loc(), &report).map_err(|_| {
+        format!("error while loading")
+    })?;
     let filechunk = filechunk.ok_or_else(|| format!("cannot found the main path"))?;
 
     let root = mainpath.parent().unwrap_or(&Path::new(".."));

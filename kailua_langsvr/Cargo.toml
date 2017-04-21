@@ -27,5 +27,6 @@ kailua_env = { path = "../kailua_env" }
 kailua_diag = { path = "../kailua_diag" }
 kailua_syntax = { path = "../kailua_syntax" }
 kailua_check = { path = "../kailua_check" }
+kailua_workspace = { path = "../kailua_workspace" }
 kailua_langsvr_protocol = { path = "../kailua_langsvr_protocol" }
 

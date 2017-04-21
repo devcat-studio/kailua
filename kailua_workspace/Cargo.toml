@@ -1,14 +1,17 @@
 [package]
-name = "kailua_test"
+name = "kailua_workspace"
 version = "0.1.0"
 authors = ["Kang Seonghoon <public+git@mearie.org>"]
-publish = false
 
 [dependencies]
-log = "0.3"
-term = "0.4.4"
+serde = "0.9"
+serde_derive = "0.9"
+serde_json = "0.9"
 regex = "0.2.1"
 lazy_static = "0.2"
-clap = "2"
+parse-generics-shim = "0.1.0"
 kailua_env = { path = "../kailua_env" }
 kailua_diag = { path = "../kailua_diag" }
+kailua_syntax = { path = "../kailua_syntax" }
+kailua_check = { path = "../kailua_check" }
+

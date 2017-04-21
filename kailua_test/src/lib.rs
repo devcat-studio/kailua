@@ -123,7 +123,7 @@ fn split_line<'a>(s: &'a str, file: Option<&'a str>,
 
     assert!(lineno > 0);
     if let Some(m) = LINE_PATTERN.captures(s) {
-        let line = m.name("line").unwrap();
+        let line = m.name("line").unwrap().as_str();
 
         let parse_lineno = |s: &str| {
             if s.starts_with("<") {
@@ -140,9 +140,9 @@ fn split_line<'a>(s: &'a str, file: Option<&'a str>,
         };
 
         let pos = if let Some(line1) = m.name("line1") {
-            let line1 = parse_lineno(line1)?;
+            let line1 = parse_lineno(line1.as_str())?;
             let line2 = if let Some(line2) = m.name("line2") {
-                parse_lineno(line2)?
+                parse_lineno(line2.as_str())?
             } else {
                 line1
             };
@@ -152,8 +152,8 @@ fn split_line<'a>(s: &'a str, file: Option<&'a str>,
             None
         };
         let pos = pos.map(|(s,e)| (file.map(|f| f.into()), s, e));
-        let kind = kind_from_str(m.name("kind").unwrap()).ok_or_else(|| err())?;
-        let msg = m.name("msg").unwrap().trim();
+        let kind = kind_from_str(m.name("kind").unwrap().as_str()).ok_or_else(|| err())?;
+        let msg = m.name("msg").unwrap().as_str().trim();
         Ok((line, Some(Expected { pos: pos, kind: kind, msg: msg.into() })))
     } else if s.contains("--@") {
         Err(err()) // invalid syntax present

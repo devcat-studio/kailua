@@ -5,6 +5,7 @@ members = [
     "kailua_test",
     "kailua_syntax",
     "kailua_check",
+    "kailua_workspace",
     "kailua_langsvr",
     "kailua_langsvr_protocol",
 ]

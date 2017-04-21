@@ -528,7 +528,7 @@ define_msg! { pub DuplicateAttrInSig:
 define_msg! { pub CannotAssignToPackagePath<'a> { name: &'a str }:
     "ko" => "`{name}` 내장 변수에 값을 저장하다 문제가 생겨서 \
              `require` 경로를 찾는데 문제가 있을 수 있습니다",
-    _    => "Cannot assignto the `{name}` built-in variable; \
+    _    => "Cannot assign to the `{name}` built-in variable; \
              subsequent `require` may be unable to find the module path",
 }
 

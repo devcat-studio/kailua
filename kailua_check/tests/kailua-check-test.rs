@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::collections::HashMap;
 use clap::{App, Arg, ArgMatches};
-use kailua_env::{Source, Span};
+use kailua_env::{Source, Span, Spanned};
 use kailua_diag::{Stop, Locale, Report, Reporter, TrackMaxKind};
 use kailua_syntax::{Chunk, parse_chunk};
 use kailua_check::{Options, Context, TypeContext, Display, check_from_chunk};
@@ -52,20 +52,19 @@ impl kailua_test::Testing for Testing {
         struct Opts {
             source: Rc<RefCell<Source>>,
             filespans: HashMap<String, Span>,
-            report: Rc<TrackMaxKind<Rc<Report>>>,
         }
 
         impl Options for Opts {
-            fn require_chunk(&mut self, path: &[u8]) -> Result<Chunk, Option<Stop>> {
-                let path = str::from_utf8(path).map_err(|_| None)?;
+            fn require_chunk(&mut self, path: Spanned<&[u8]>,
+                             report: &Report) -> Result<Chunk, Option<Stop>> {
+                let path = str::from_utf8(&path).map_err(|_| None)?;
                 let span = *self.filespans.get(path).ok_or(None)?;
-                parse_chunk(&self.source.borrow(), span, &*self.report).map_err(|_| None)
+                parse_chunk(&self.source.borrow(), span, report).map_err(|_| None)
             }
         }
 
         let report = Rc::new(TrackMaxKind::new(report));
-        let opts = Rc::new(RefCell::new(Opts { source: source, filespans: filespans.clone(),
-                                               report: report.clone() }));
+        let opts = Rc::new(RefCell::new(Opts { source: source, filespans: filespans.clone() }));
         let mut context = Context::new(report.clone());
         let ret = check_from_chunk(&mut context, chunk, opts);
 

@@ -1,7 +1,6 @@
 use std::mem;
 use std::fmt;
 use std::io;
-use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::ffi::OsStr;
 use std::collections::{hash_map, HashMap};
@@ -11,15 +10,15 @@ use std::sync::Arc;
 
 use futures::{future, Future, BoxFuture};
 use futures_cpupool::CpuPool;
-use serde_json;
 use url::Url;
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use walkdir::WalkDir;
 
-use kailua_env::{Unit, Pos, Span, Source, SourceFile, SourceSlice};
+use kailua_env::{Unit, Pos, Span, Spanned, Source, SourceFile, SourceSlice};
 use kailua_diag::{self, Stop, Report, Locale, Localize, Localized};
 use kailua_syntax::{Lexer, Nest, NestedToken, Parser, Chunk};
-use kailua_check::{self, FsSource, FsOptions, Context, Output};
+use kailua_check::{self, FsSource, Context, Output};
+use kailua_workspace::{self, WorkspaceOptions};
 
 use fmtutils::Ellipsis;
 use diags::{self, ReportTree};
@@ -133,28 +132,6 @@ fn parse_to_chunk(tokens: Vec<NestedToken>, report: &Report) -> kailua_diag::Res
     let mut tokens = tokens.into_iter();
     let chunk = Parser::new(&mut tokens, report).into_chunk();
     chunk
-}
-
-// the expected contents of kailua.json at the project root
-#[derive(Deserialize, Clone, Debug)]
-struct WorkspaceConfig {
-    start_path: PathBuf,
-    message_lang: Option<String>, // defaults to VS Code UI locale
-}
-
-impl WorkspaceConfig {
-    fn config_path(base_dir: &Path) -> PathBuf {
-        base_dir.join(".vscode").join("kailua.json")
-    }
-
-    fn read(base_dir: &Path) -> io::Result<WorkspaceConfig> {
-        let f = File::open(Self::config_path(base_dir))?;
-        let mut config: WorkspaceConfig = serde_json::de::from_reader(f).map_err(|e| {
-            io::Error::new(io::ErrorKind::InvalidData, e)
-        })?;
-        config.start_path = base_dir.join(config.start_path);
-        Ok(config)
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -361,9 +338,8 @@ impl WorkspaceFile {
                             };
 
                             let path = inner.path.display().to_string();
-                            let config_path = WorkspaceConfig::config_path(
-                                &inner.workspace.read().base_dir
-                            ).display().to_string();
+                            let config_path = inner.workspace.read().base.config_path_or_default();
+                            let config_path = config_path.display().to_string();
 
                             let diags = ReportTree::new(inner.message_locale, Some(&path));
                             diags.add_diag(path, dummy_diag(&m::CannotOpenStartPath { error: e }));
@@ -474,13 +450,45 @@ impl WorkspaceFile {
     }
 }
 
+#[derive(Clone, Debug)]
+enum WorkspaceBase {
+    Config(kailua_workspace::Config),
+    Workspace(kailua_workspace::Workspace),
+}
+
+impl WorkspaceBase {
+    fn config_path(&self) -> Option<&Path> {
+        match *self {
+            WorkspaceBase::Config(ref config) => config.config_path(),
+            WorkspaceBase::Workspace(ref ws) => ws.config_path(),
+        }
+    }
+
+    fn config_path_or_default(&self) -> PathBuf {
+        if let Some(config_path) = self.config_path() {
+            config_path.to_owned()
+        } else {
+            // we allow both `kailua.json` or `.vscode/kailua.json`,
+            // for now we will issue an error at the latter
+            self.base_dir().join(".vscode").join("kailua.json")
+        }
+    }
+
+    fn base_dir(&self) -> &Path {
+        match *self {
+            WorkspaceBase::Config(ref config) => config.base_dir(),
+            WorkspaceBase::Workspace(ref ws) => ws.base_dir(),
+        }
+    }
+}
+
 // a portion of Workspace that should be shared across WorkspaceFile.
 // this should not be modified in the normal cases (otherwise it can be easily deadlocked),
 // with an exception of cascading cancellation.
 struct WorkspaceShared {
     cancel_token: CancelToken, // used for stopping ongoing checks
 
-    base_dir: PathBuf,
+    base: WorkspaceBase,
 
     check_output: Option<ReportFuture<Arc<Output>>>,
     last_check_output: Option<Arc<Output>>,
@@ -489,7 +497,7 @@ struct WorkspaceShared {
 impl fmt::Debug for WorkspaceShared {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("WorkspaceShared")
-         .field("base_dir", &self.base_dir)
+         .field("base", &self.base)
          .field("cancel_token", &self.cancel_token)
          .field("check_output", &self.check_output.as_ref().map(|_| Ellipsis))
          .finish()
@@ -523,7 +531,8 @@ struct WorkspaceFsSource {
 }
 
 impl FsSource for WorkspaceFsSource {
-    fn chunk_from_path(&self, path: &Path) -> Result<Option<Chunk>, Option<Stop>> {
+    fn chunk_from_path(&self, path: Spanned<&Path>,
+                       _report: &Report) -> Result<Option<Chunk>, Option<Stop>> {
         let mut fssource = self.inner.borrow_mut();
 
         fssource.cancel_token.keep_going::<()>().map_err(|_| Stop)?;
@@ -531,7 +540,7 @@ impl FsSource for WorkspaceFsSource {
         // try to use the client-maintained text as a source code
         let files = fssource.files.clone();
         let files = files.read();
-        if let Some(file) = files.get(path) {
+        if let Some(file) = files.get(path.base) {
             let (chunk, diags) = match file.ensure_chunk().wait() {
                 Ok(res) => {
                     let (ref chunk, ref diags) = *res;
@@ -550,13 +559,13 @@ impl FsSource for WorkspaceFsSource {
         drop(files); // avoid prolonged lock
 
         // try to use the already-read temporary chunk
-        if let Some(chunk) = fssource.temp_files.get(path) {
+        if let Some(chunk) = fssource.temp_files.get(path.base) {
             return Ok(Some(chunk.clone()));
         }
 
         // try to read the file (and finally raise an error if it can't be read)
 
-        let sourcefile = match SourceFile::from_file(path) {
+        let sourcefile = match SourceFile::from_file(path.base) {
             Ok(f) => f,
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(_) => return Err(None),
@@ -575,7 +584,7 @@ impl FsSource for WorkspaceFsSource {
         };
         match chunk {
             Ok(chunk) => {
-                fssource.temp_files.insert(path.to_owned(), chunk.clone());
+                fssource.temp_files.insert(path.base.to_owned(), chunk.clone());
                 Ok(Some(chunk))
             },
             Err(Stop) => Err(Some(Stop)), // we have already reported parsing errors
@@ -584,9 +593,7 @@ impl FsSource for WorkspaceFsSource {
 }
 
 pub struct Workspace {
-    start_path: Option<PathBuf>,
     message_locale: Locale,
-    config_read: bool,
 
     pool: Arc<CpuPool>,
     files: Arc<RwLock<HashMap<PathBuf, WorkspaceFile>>>,
@@ -601,9 +608,7 @@ pub struct Workspace {
 impl fmt::Debug for Workspace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Workspace")
-         .field("start_path", &self.start_path)
          .field("message_locale", &self.message_locale)
-         .field("config_read", &self.config_read)
          .field("pool", &Ellipsis)
          .field("files", &self.files)
          .field("source", &Ellipsis)
@@ -615,15 +620,13 @@ impl fmt::Debug for Workspace {
 impl Workspace {
     pub fn new(base_dir: PathBuf, pool: Arc<CpuPool>, default_locale: Locale) -> Workspace {
         Workspace {
-            start_path: None,
             message_locale: default_locale,
-            config_read: false,
             pool: pool,
             files: Arc::new(RwLock::new(HashMap::new())),
             source: Arc::new(RwLock::new(Source::new())),
             shared: Arc::new(RwLock::new(WorkspaceShared {
                 cancel_token: CancelToken::new(),
-                base_dir: base_dir,
+                base: WorkspaceBase::Config(kailua_workspace::Config::from_base_dir(base_dir)),
                 check_output: None,
                 last_check_output: None,
             })),
@@ -639,29 +642,34 @@ impl Workspace {
     }
 
     pub fn has_read_config(&self) -> bool {
-        self.config_read
+        if let WorkspaceBase::Workspace(_) = self.shared.read().base { true } else { false }
     }
 
-    pub fn config_path(&self) -> PathBuf {
-        WorkspaceConfig::config_path(&self.shared.read().base_dir)
+    pub fn config_path(&self) -> Option<PathBuf> {
+        self.shared.read().base.config_path().map(|p| p.to_owned())
+    }
+
+    pub fn config_path_or_default(&self) -> PathBuf {
+        self.shared.read().base.config_path_or_default()
     }
 
     pub fn read_config(&mut self) -> io::Result<()> {
-        let config = WorkspaceConfig::read(&self.shared.read().base_dir)?;
-        self.start_path = Some(config.start_path);
-        if let Some(lang) = config.message_lang {
-            if let Some(locale) = Locale::new(&lang) {
-                self.message_locale = locale;
-            } else {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid message language"));
-            }
+        let mut shared = self.shared.write();
+        let ws = if let WorkspaceBase::Config(ref mut config) = shared.base {
+            config.use_default_config_paths();
+            Some(kailua_workspace::Workspace::new(config, self.message_locale)?)
+        } else {
+            None
+        };
+        if let Some(ws) = ws {
+            shared.base = WorkspaceBase::Workspace(ws);
         }
-        self.config_read = true;
         Ok(())
     }
 
     pub fn populate_watchlist(&mut self) {
-        for e in WalkDir::new(&self.shared.read().base_dir).follow_links(true) {
+        let walker = WalkDir::new(self.shared.read().base.base_dir());
+        for e in walker.follow_links(true) {
             // we don't care about I/O errors and (in Unix) symlink loops
             let e = if let Ok(e) = e { e } else { continue };
 
@@ -778,21 +786,20 @@ impl Workspace {
     }
 
     pub fn ensure_check_output(&self) -> WorkspaceResult<ReportFuture<Arc<Output>>> {
-        let start_path = match self.start_path {
-            Some(ref path) => path,
-            None => {
-                return Err(WorkspaceError("cannot start checking without a start file specified"));
-            },
-        };
-
         let spare_shared = self.shared.clone();
         let mut shared = self.shared.write();
 
+        let start_path = match shared.base {
+            WorkspaceBase::Config(_) => {
+                return Err(WorkspaceError("cannot start checking without a start file specified"));
+            },
+            WorkspaceBase::Workspace(ref ws) => ws.start_path().to_owned(),
+        };
+
         if shared.check_output.is_none() {
             // get a future for the entrypoint's chunk
-            let start_chunk_fut = self.ensure_file(start_path).ensure_chunk();
+            let start_chunk_fut = self.ensure_file(&start_path).ensure_chunk();
 
-            let base_dir = shared.base_dir.clone();
             let files = self.files.clone();
             let source = self.source.clone();
             let cancel_token = shared.cancel_token.clone();
@@ -821,7 +828,18 @@ impl Workspace {
                     })),
                 };
 
-                let opts = Rc::new(RefCell::new(FsOptions::new(fssource.clone(), base_dir)));
+                let opts = match spare_shared.read().base {
+                    WorkspaceBase::Config(_) => {
+                        // it should not be the case, but if we ever get to this point,
+                        // we cannot proceed at all because there's no start path.
+                        // we should have been alerted though.
+                        return Err(From::from(diags));
+                    },
+                    WorkspaceBase::Workspace(ref ws) => {
+                        Rc::new(RefCell::new(WorkspaceOptions::new(fssource.clone(), ws)))
+                    },
+                };
+
                 let (ok, output) = {
                     // the translation should NOT lock the source (read or write) indefinitely.
                     // we also want to drop the proxy report as fast as possible.

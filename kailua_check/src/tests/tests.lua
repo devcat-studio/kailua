@@ -444,7 +444,7 @@ local p = f.index --@< Error: Cannot index `table` without further type informat
 local a = ('string' and 53) + 42
 --! ok
 
---8<-- conjunctive-lhs-1
+--8<-- conjunctive-lhs-2
 local a = (53 and 'string') + 42 --@< Error: Cannot apply + operator to `"string"` and `42`
                                  --@^ Cause: `"string"` is not a subtype of `number`
 --! error

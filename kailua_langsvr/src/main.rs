@@ -17,6 +17,7 @@ extern crate kailua_env;
 #[macro_use] extern crate kailua_diag;
 extern crate kailua_syntax;
 extern crate kailua_check;
+extern crate kailua_workspace;
 extern crate kailua_langsvr_protocol as protocol;
 
 mod fmtutils;
@@ -111,7 +112,7 @@ fn cannot_read_config(workspace: &Workspace, server: &Server, msg: &kailua_diag:
         },
     );
 
-    if let Ok(uri) = Url::from_file_path(&workspace.config_path()) {
+    if let Ok(uri) = Url::from_file_path(&workspace.config_path_or_default()) {
         let _ = server.send_notify(
             Method::PublishDiagnostics,
             PublishDiagnosticsParams {

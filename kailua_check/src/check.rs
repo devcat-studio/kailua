@@ -2239,11 +2239,13 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                     let mut module = self.context().get_loaded_module(&modname, expspan)?;
 
                     if module.is_none() {
+                        let modname = (&modname[..]).with_loc(&argtys.head[0]);
+
                         self.context().mark_module_as_loading(&modname, expspan);
 
                         info!("requiring {:?}", modname);
                         let opts = self.env.opts().clone();
-                        let chunk = match opts.borrow_mut().require_chunk(&modname) {
+                        let chunk = match opts.borrow_mut().require_chunk(modname, self.env) {
                             Ok(chunk) => chunk,
                             Err(_) => {
                                 self.env.warn(argtys.ensure_at(0),

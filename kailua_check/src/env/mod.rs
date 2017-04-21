@@ -802,9 +802,9 @@ impl<'ctx, R: Report> Env<'ctx, R> {
                 if let Some(s) = self.resolve_exact_type(&rhs.unlift())
                                      .and_then(|t| t.as_string().map(|s| s.to_owned())) {
                     let ret = if b == Tag::PackagePath {
-                        self.opts.borrow_mut().set_package_path(&s)
+                        self.opts.borrow_mut().set_package_path((&s[..]).with_loc(rhs), self)
                     } else {
-                        self.opts.borrow_mut().set_package_cpath(&s)
+                        self.opts.borrow_mut().set_package_cpath((&s[..]).with_loc(rhs), self)
                     };
 
                     // the implementation may have reported by its own

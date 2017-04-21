@@ -13,12 +13,16 @@ import {
 
 declare var v8debug: any;
 
-// we would like to have a comment here, but serde-json doesn't support that ;)
-const INITIAL_CONFIG_FILE = '\
+const INITIAL_CONFIG_FILE = `\
 {\n\
+    ${
+        vscode.env.language === 'ko' ?
+        '// 워크스페이스 디렉토리를 기준으로 체크를 시작할 파일명을 넣으세요.' :
+        '// Put a relative path to the workspace directory to begin the checking.'
+    }\n\
     "start_path": ""\n\
 }\
-';
+`;
 
 function isDebugging() {
     // roughly follows the logic in vscode-languageserver client:
