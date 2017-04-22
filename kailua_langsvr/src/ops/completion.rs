@@ -6,7 +6,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use kailua_env::{Pos, Span, Source};
-use kailua_syntax::{Tok, Punct, Keyword, NestedToken, NestingCategory, Chunk};
+use kailua_syntax::lex::{Tok, Punct, Keyword, NestedToken, NestingCategory};
+use kailua_syntax::ast::Chunk;
 use kailua_check::{Output, Key};
 
 use protocol::*;

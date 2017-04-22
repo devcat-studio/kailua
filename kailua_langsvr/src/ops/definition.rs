@@ -6,7 +6,9 @@
 // and go through the current file or all open files for the matching token
 
 use kailua_env::{Pos, Span, ScopedId};
-use kailua_syntax::{Tok, Punct, Str, Name, NameRef, NestedToken, TokenAux, LocalNameKind, Chunk};
+use kailua_syntax::{Str, Name};
+use kailua_syntax::lex::{Tok, Punct, NestedToken};
+use kailua_syntax::ast::{NameRef, TokenAux, LocalNameKind, Chunk};
 
 use super::last_non_comment;
 
@@ -57,10 +59,10 @@ pub fn classify(tokens: &[NestedToken], chunk: &Chunk, pos: Pos) -> Option<Class
                     match ptok.tok.base {
                         // NAME STR, the prefix expr ends after NAME
                         Tok::Name(_) =>
-                            Some(Class::PossiblyRequire(pidx + 1, idx, Str::from(s.clone()))),
+                            Some(Class::PossiblyRequire(pidx + 1, idx, s.clone())),
                         // `(` STR, the prefix expr ends before `(`
                         Tok::Punct(Punct::LParen) =>
-                            Some(Class::PossiblyRequire(pidx, idx, Str::from(s.clone()))),
+                            Some(Class::PossiblyRequire(pidx, idx, s.clone())),
                         // otherwise it's just a string
                         _ => None,
                     }
@@ -79,13 +81,13 @@ pub fn classify(tokens: &[NestedToken], chunk: &Chunk, pos: Pos) -> Option<Class
                             Some(&LocalNameKind::AssumedToLocal(ref id)) =>
                                 NameRef::Local(id.clone()),
                             Some(&LocalNameKind::AssumedToGlobal) =>
-                                NameRef::Global(Name::from(name.to_owned())),
+                                NameRef::Global(name.clone()),
                             _ => NameRef::Local(id.clone()),
                         };
                         Some(Class::Var(idx, nameref))
                     },
                     TokenAux::GlobalVarName => {
-                        Some(Class::Var(idx, NameRef::Global(Name::from(name.to_owned()))))
+                        Some(Class::Var(idx, NameRef::Global(name.clone())))
                     },
                 }
             },

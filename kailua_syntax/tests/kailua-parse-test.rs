@@ -12,7 +12,8 @@ use std::collections::HashMap;
 use clap::{App, Arg, ArgMatches};
 use kailua_env::{Source, Span};
 use kailua_diag::{Report, Reporter, TrackMaxKind};
-use kailua_syntax::{Lexer, Nest, NestedToken, Parser, Chunk, TokenAux};
+use kailua_syntax::{Lexer, Nest, NestedToken, Parser, Chunk};
+use kailua_syntax::ast::TokenAux;
 
 fn lex_and_parse_chunk(source: &Source, span: Span,
                        report: &Report) -> kailua_diag::Result<(Vec<NestedToken>, Chunk)> {

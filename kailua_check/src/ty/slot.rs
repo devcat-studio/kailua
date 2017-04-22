@@ -7,7 +7,7 @@ use take_mut::take;
 use parking_lot::{RwLock, RwLockReadGuard};
 
 use kailua_env::{Span, Spanned};
-use kailua_syntax::{M, MM};
+use kailua_syntax::ast::{M, MM};
 use diag::Origin;
 use super::{Dyn, Nil, T, Ty, TypeContext, Lattice, Union, Dummy, TVar, Tag};
 use super::{TypeReport, TypeResult};

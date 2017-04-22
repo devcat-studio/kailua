@@ -12,7 +12,8 @@ use kailua_diag::{report, Locale, Report, Reporter, Localize};
 use message as m;
 use lang::{Language, Lua, Kailua};
 use lex::{Tok, Punct, Keyword, NestedToken, NestingCategory, NestingSerial};
-use ast::{Name, NameRef, Str, Var, Seq, Sig, Attr, Args};
+use string::{Str, Name};
+use ast::{NameRef, Var, Seq, Sig, Attr, Args};
 use ast::{Ex, Exp, UnOp, BinOp, SelfParam, TypeScope, St, Stmt, Block};
 use ast::{M, MM, K, Kind, SlotKind, FuncKind, TypeSpec, Varargs, Returns};
 use ast::{LocalName, LocalNameKind, TokenAux, Chunk};
@@ -390,7 +391,7 @@ impl<'a> Parser<'a> {
                                           m::FutureKeyword { read: &t.tok.base, current: lua,
                                                              future: Lua::Lua52 })
                                     .done();
-                        t.tok.base = Tok::Name(kw.name().to_owned());
+                        t.tok.base = Tok::Name(kw.into());
                     }
                 }
 
@@ -832,8 +833,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn indexed_name_from<T: Into<Name>>(&self, name: T, span: Span) -> Spanned<IndexedName> {
-        IndexedName { idx: self.last_token_idx(), name: name.into() }.with_loc(span)
+    fn indexed_name_from(&self, name: Name, span: Span) -> Spanned<IndexedName> {
+        IndexedName { idx: self.last_token_idx(), name: name }.with_loc(span)
     }
 
     fn resolve_local_name_without_idx(&mut self, name: &Name) -> Option<ScopedId> {
@@ -933,8 +934,8 @@ impl<'a> Parser<'a> {
 
     fn try_name_or_keyword(&mut self) -> Result<Spanned<Name>> {
         match_next! { self;
-            Tok::Name(name) in span => Ok(Name::from(name).with_loc(span));
-            Tok::Keyword(keyword) in span => Ok(Name::from(keyword.name()).with_loc(span));
+            Tok::Name(name) in span => Ok(name.with_loc(span));
+            Tok::Keyword(keyword) in span => Ok(Name::from(keyword).with_loc(span));
             'unread: _, m::NoName => Err(Stop::Recover);
         }
     }
@@ -1763,7 +1764,7 @@ impl<'a> Parser<'a> {
                 Ok(Some(Args::List(args).with_loc(span)))
             };
 
-            Tok::Str(s) in span => Ok(Some(Args::Str(s.into()).with_loc(span)));
+            Tok::Str(s) in span => Ok(Some(Args::Str(s).with_loc(span)));
 
             Tok::Punct(Punct::LBrace) => {
                 let fields = self.parse_table_body()?;
@@ -1901,7 +1902,7 @@ impl<'a> Parser<'a> {
             Tok::Keyword(Keyword::False) in span => Ok(Some(Box::new(Ex::False).with_loc(span)));
             Tok::Keyword(Keyword::True) in span => Ok(Some(Box::new(Ex::True).with_loc(span)));
             Tok::Num(v) in span => Ok(Some(Box::new(Ex::Num(v)).with_loc(span)));
-            Tok::Str(s) in span => Ok(Some(Box::new(Ex::Str(s.into())).with_loc(span)));
+            Tok::Str(s) in span => Ok(Some(Box::new(Ex::Str(s)).with_loc(span)));
             Tok::Punct(Punct::DotDotDot) in span => Ok(Some(Box::new(Ex::Varargs).with_loc(span)));
 
             Tok::Keyword(Keyword::Function) => {
@@ -2458,7 +2459,7 @@ impl<'a> Parser<'a> {
         let kind = if *name.base.name == b"error"[..] {
             // may follow an error reason
             let reason = match_next! { self;
-                Tok::Str(s) in span => Some(Str::from(s).with_loc(span));
+                Tok::Str(s) in span => Some(s.with_loc(span));
                 'unread: _ => None;
             };
             Box::new(K::Error(reason)).with_loc(name.span)
@@ -2656,7 +2657,7 @@ impl<'a> Parser<'a> {
                 }
             };
 
-            Tok::Str(s) in span => Box::new(K::StringLit(s.into())).with_loc(span);
+            Tok::Str(s) in span => Box::new(K::StringLit(s)).with_loc(span);
 
             'unread: _ => return Ok(None);
         };

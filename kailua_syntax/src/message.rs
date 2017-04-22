@@ -1,6 +1,6 @@
 use lang::Lua;
 use lex::Tok;
-use ast::Name;
+use string::Name;
 use parser::Expectable;
 
 define_msg! { pub NoFileForSpan:

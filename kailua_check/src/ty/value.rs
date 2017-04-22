@@ -6,7 +6,8 @@ use std::result;
 use std::collections::{hash_map, HashMap};
 
 use kailua_env::{Spanned, WithLoc};
-use kailua_syntax::{K, Kind, SlotKind, Str, Name};
+use kailua_syntax::{Str, Name};
+use kailua_syntax::ast::{K, Kind, SlotKind};
 use kailua_diag::{Result, Reporter};
 use diag::{Origin, TypeReport, TypeResult, TypeReportHint, TypeReportMore};
 use super::display::{Display, DisplayState, DisplayName};

@@ -6,7 +6,7 @@ use std::iter;
 
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag;
-use kailua_syntax::{Seq, Kind};
+use kailua_syntax::ast::{Seq, Kind};
 use diag::{Origin, TypeReport, TypeResult};
 use super::{T, Ty, Slot, Lattice, Union, Dummy};
 use super::{Display, DisplayState, TypeContext, TypeResolver};

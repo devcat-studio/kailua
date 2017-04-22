@@ -1,5 +1,5 @@
 use kailua_diag::{Result, Reporter};
-use kailua_syntax::Attr;
+use kailua_syntax::ast::Attr;
 use super::TypeResolver;
 use message as m;
 

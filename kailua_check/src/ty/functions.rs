@@ -1,7 +1,8 @@
 use std::fmt;
 use kailua_env::Spanned;
 use kailua_diag::Result;
-use kailua_syntax::{Name, FuncKind, Returns};
+use kailua_syntax::Name;
+use kailua_syntax::ast::{FuncKind, Returns};
 
 use diag::{Origin, TypeReport, TypeResult};
 use super::{Display, DisplayState, Ty, TySeq, TypeContext, TypeResolver, Lattice};

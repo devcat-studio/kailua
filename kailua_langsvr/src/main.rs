@@ -25,7 +25,7 @@ pub mod server;
 pub mod diags;
 pub mod workspace;
 pub mod futureutils;
-pub mod message;
+mod message;
 pub mod ops;
 
 use std::io;
@@ -496,6 +496,7 @@ fn main_loop(server: Server, workspace: Arc<RwLock<Workspace>>) {
 fn complete(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
             file: WorkspaceFile, cancel_token: CancelToken, position: &protocol::Position) {
     use futures::future;
+    use kailua_syntax::Chunk;
     use ops::completion;
 
     let tokens_fut = file.ensure_tokens().map_err(|e| e.as_ref().map(|_| ()));
@@ -522,7 +523,7 @@ fn complete(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
         // second with actual parsing or checking outputs (when the first failed).
         match class {
             Some(completion::Class::Name(idx, category)) => {
-                let complete = move |chunk: &kailua_syntax::Chunk| {
+                let complete = move |chunk: &Chunk| {
                     let ws = workspace.read();
 
                     // the list of all chunks is used to get the global names
@@ -682,7 +683,7 @@ fn definition(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::I
     use futures::{future, stream, Stream};
     use url::Url;
     use kailua_env::{Span, Source};
-    use kailua_syntax::NameRef;
+    use kailua_syntax::ast::NameRef;
     use ops::definition;
     use protocol::*;
 
@@ -765,7 +766,7 @@ fn rename(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
     use futures::{future, stream, Stream};
     use url::Url;
     use kailua_env::{Span, Source};
-    use kailua_syntax::NameRef;
+    use kailua_syntax::ast::NameRef;
     use ops::definition;
     use protocol::*;
 

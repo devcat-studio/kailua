@@ -2,6 +2,7 @@ use std::str;
 use std::fmt;
 
 use kailua_diag::{Locale, Localize, Localized};
+use string::{Name, Str};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tok {
@@ -10,8 +11,8 @@ pub enum Tok {
     Punct(Punct),
     Keyword(Keyword),
     Num(f64),
-    Name(Vec<u8>),
-    Str(Vec<u8>),
+    Name(Name),
+    Str(Str),
     EOF,
 }
 
@@ -119,16 +120,6 @@ macro_rules! define_keywords {
                 match *self { $($ty::$i => $t,)* $($ty::$mi => $mt,)* }
             }
         }
-
-        impl Localize for $ty {
-            fn fmt_localized(&self, f: &mut fmt::Formatter, locale: Locale) -> fmt::Result {
-                let name = str::from_utf8(self.name()).unwrap();
-                match &locale[..] {
-                    "ko" => write!(f, "예약어 `{}`", name),
-                    _ => write!(f, "a keyword `{}`", name),
-                }
-            }
-        }
     );
 }
 
@@ -172,6 +163,28 @@ define_keywords! { Keyword:
         Type        b"type",
         Var         b"var",
         Vector      b"vector",
+    }
+}
+
+impl From<Keyword> for Str {
+    fn from(kw: Keyword) -> Str {
+        kw.name().into()
+    }
+}
+
+impl From<Keyword> for Name {
+    fn from(kw: Keyword) -> Name {
+        kw.name().into()
+    }
+}
+
+impl Localize for Keyword {
+    fn fmt_localized(&self, f: &mut fmt::Formatter, locale: Locale) -> fmt::Result {
+        let name = str::from_utf8(self.name()).unwrap();
+        match &locale[..] {
+            "ko" => write!(f, "예약어 `{}`", name),
+            _ => write!(f, "a keyword `{}`", name),
+        }
     }
 }
 

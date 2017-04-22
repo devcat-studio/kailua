@@ -8,7 +8,8 @@ use std::collections::{hash_map, HashMap, HashSet};
 
 use kailua_env::{self, Span, Spanned, WithLoc, ScopedId, ScopeMap, SpanMap};
 use kailua_diag::{Result, Kind, Report, Reporter, Locale, Localize};
-use kailua_syntax::{Str, Name, NameRef};
+use kailua_syntax::{Str, Name};
+use kailua_syntax::ast::NameRef;
 use diag::{TypeReportHint, TypeReportMore};
 use ty::{Displayed, Display, DisplayName};
 use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, Lattice, Union, Tag};

@@ -7,8 +7,9 @@ use take_mut::take;
 
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag::{self, Result, Report, Reporter};
-use kailua_syntax::{self, Str, Name, NameRef, Var, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
-use kailua_syntax::{SelfParam, TypeScope, Args, St, Stmt, Block, K, Attr, M, MM, Varargs};
+use kailua_syntax::{Str, Name};
+use kailua_syntax::ast::{self, NameRef, Var, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
+use kailua_syntax::ast::{SelfParam, TypeScope, Args, St, Stmt, Block, K, Attr, M, MM, Varargs};
 use diag::{TypeReport, TypeReportHint, TypeReportMore};
 use ty::{Displayed, Display};
 use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, Dummy, TypeContext};
@@ -2064,8 +2065,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
         // we probably need to put a type variable that is later equated to the actual returns
         let returns = if let Some(ref returns) = sig.returns {
             match *returns {
-                kailua_syntax::Returns::Never(_) => Returns::Never,
-                kailua_syntax::Returns::Seq(ref seq) =>
+                ast::Returns::Never(_) => Returns::Never,
+                ast::Returns::Seq(ref seq) =>
                     Returns::Explicit(TySeq::from_kind_seq(seq, |kind| kind, &mut self.env)?),
             }
         } else if let Some(hint) = hintreturns {

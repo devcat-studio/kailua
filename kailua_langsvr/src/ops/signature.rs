@@ -3,7 +3,7 @@
 
 use kailua_env::Pos;
 use kailua_diag::{Localize, Localized};
-use kailua_syntax::{Tok, Punct, NestedToken};
+use kailua_syntax::lex::{Tok, Punct, NestedToken};
 use kailua_check::{TypeContext, Display, Output, Nil, Functions};
 
 use protocol::*;

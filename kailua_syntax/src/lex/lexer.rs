@@ -356,7 +356,7 @@ impl<'a> Lexer<'a> {
                     if let Some(keyword) = Keyword::from(&name, self.meta) {
                         return tok!(Keyword(keyword));
                     } else {
-                        return tok!(Name(name));
+                        return tok!(Name(name.into()));
                     }
                 }
 
@@ -421,7 +421,7 @@ impl<'a> Lexer<'a> {
                 U8(q @ b'\'') | U8(q @ b'"') => {
                     let mut s = Vec::new();
                     self.scan_quoted_string(begin, q, |c| s.push(c))?;
-                    return tok!(Str(s));
+                    return tok!(Str(s.into()));
                 }
 
                 U8(b'[') => {
@@ -436,7 +436,7 @@ impl<'a> Lexer<'a> {
                             &m::LongStringStart {},
                             &m::NoNewlineInLongStringInMeta {},
                         )?;
-                        return tok!(Str(s));
+                        return tok!(Str(s.into()));
                     }
                     return tok!(LBracket);
                 }
@@ -529,7 +529,7 @@ impl<'a> Lexer<'a> {
                 U8(q @ b'`') if self.meta => {
                     let mut s = Vec::new();
                     self.scan_quoted_string(begin, q, |c| s.push(c))?;
-                    return tok!(Name(s));
+                    return tok!(Name(s.into()));
                 }
                 U8(b'\r') | U8(b'\n') if self.meta => {
                     self.meta = false;
