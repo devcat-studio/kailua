@@ -1,3 +1,5 @@
+//! Diagnostics and rudimentary localization support for Kailua.
+
 extern crate term;
 extern crate unicode_width;
 extern crate parse_generics_shim;
@@ -6,11 +8,11 @@ extern crate parse_generics_shim;
 #[cfg(windows)] extern crate kernel32;
 extern crate kailua_env;
 
-pub use message::{Locale, Localize, Localized, get_message_locale};
-pub use report::{Kind, Stop, Result, Report, ReportMore, Reporter};
+pub use message::{Locale, Localize, Localized};
+pub use report::{Kind, Stop, Result, Report, Reporter};
 pub use report::{ConsoleReport, CollectedReport, NoReport, TrackMaxKind};
 
-mod message;
-mod report;
+pub mod message;
+pub mod report;
 mod dummy_term;
 

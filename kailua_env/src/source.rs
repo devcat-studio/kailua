@@ -1,3 +1,5 @@
+//! The resolver for locations.
+
 use std::io;
 use std::io::Read;
 use std::fs;
@@ -7,6 +9,7 @@ use std::collections::hash_map::{self, HashMap};
 use loc::{Unit, Pos, Span, Spanned, WithLoc};
 use loc::{unit_from_u32, pos_from_u32, span_from_u32};
 
+/// Yields each span for lines in the `SourceFile`, in the order.
 #[derive(Clone)]
 pub struct SourceLineSpans<'a> {
     slice: &'a [u32],
@@ -75,6 +78,9 @@ enum SourceBuf {
     U16(Vec<u16>),
 }
 
+/// A single file mapped in the `Source`.
+///
+/// Different `SourceFile`s are distinguished by its `Unit`.
 pub struct SourceFile {
     path: String, // not PathBuf since it is solely for reporting
     buf: SourceBuf,
@@ -323,9 +329,18 @@ fn test_source_file() {
                    vec![mk_span(0, 3), mk_span(3, 4)]);
 }
 
+/// A byte or two-byte word slice.
 #[derive(Clone, Debug)]
 pub enum SourceSlice<'a> {
+    /// A byte slice.
+    ///
+    /// The encoding is not specified as per Lua (which has no notion of encodings whatsoever).
+    /// Kailua does try to calculate the Unicode-aware column number if the line is a valid UTF-8.
+    /// Otherwise it is considered a legacy encoding, which column number mostly agrees to
+    /// the byte offset.
     U8(&'a [u8]),
+
+    /// A two-byte word slice. There is a good chance that this is a valid UTF-16.
     U16(&'a [u16]),
 }
 
@@ -344,10 +359,14 @@ enum SourceSliceIter<'a> {
     U16(slice::Iter<'a, u16>),
 }
 
+/// A "character" from iterating a `SourceSlice`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SourceData {
+    /// A byte (as in `SourceSlice::U8`).
     U8(u8),
+    /// A two-byte unit (as in `SourceSlice::U16`).
     U16(u16),
+    /// The end of file.
     EOF,
 }
 
@@ -367,6 +386,7 @@ impl SourceData {
     }
 }
 
+/// Yields each `SourceData` in given `SourceSlice`, including the end of file (`SourceData::EOF`).
 #[derive(Clone)]
 pub struct SourceDataIter<'a> {
     iter: SourceSliceIter<'a>,
@@ -408,6 +428,11 @@ impl<'a> Iterator for SourceDataIter<'a> {
     }
 }
 
+/// A source used for resolving locations.
+///
+/// All source-dependent `Unit` values are issued by `Source`, by adding a new file.
+/// Files themselves can be updated or removed in the interactive setting;
+/// it is the caller's responsibility that existing locations are properly updated to a new file.
 pub struct Source {
     files: HashMap<Unit, SourceFile>,
     next_unit: u32,

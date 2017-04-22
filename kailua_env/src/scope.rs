@@ -1,3 +1,5 @@
+//! Scope identifiers and a location-to-scope map.
+
 use std::fmt;
 use std::ops;
 use std::slice;
@@ -8,6 +10,11 @@ use std::collections::HashMap;
 use loc::{Pos, Span, Spanned};
 use spanmap::SpanMap;
 
+/// A scope identifier, unique in the originating `ScopeMap`.
+///
+/// A *scope* is a collection of names (whatever they mean) available to some span.
+/// A scope is nested: scopes can contain other scopes (hopefully with smaller spans),
+/// and names in inner scopes can shadow names in the outer scope.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Scope {
     // unlike the unit, scope #0 is reserved and never instantiated.
@@ -21,17 +28,17 @@ impl Scope {
     }
 }
 
+/// In the debugging output the scope is denoted <code>$<i>scope</i></code>.
 impl fmt::Debug for Scope {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "${}", self.scope)
     }
 }
 
-// a combined identifier from unique name and scope (can be zero).
-// the identifier should be interpreted along with the associated scope map.
+/// A combined identifier from a unique name and its scope, unique in the originating `ScopeMap`.
 #[derive(Clone)]
 pub struct ScopedId {
-    id: u32,
+    id: u32, // can be zero
 }
 
 impl ScopedId {
@@ -78,12 +85,17 @@ impl Hash for ScopedId {
     }
 }
 
+/// In the debugging output the scope is denoted <code>&lt;<i>id</i>&gt;</code>.
+///
+/// Note that `kailua_test` will automatically convert it to the more readable form,
+/// <code><i>Name</i>$<i>scope</i></code>.
 impl fmt::Debug for ScopedId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "<{}>", self.id)
     }
 }
 
+/// Yields all scopes in the `ScopeMap`.
 pub struct AllScopes<'a, Name: 'a> {
     scopes: &'a [ScopeItem<Name>],
     range: ops::Range<u32>,
@@ -100,6 +112,7 @@ impl<'a, Name: 'a> Iterator for AllScopes<'a, Name> {
     }
 }
 
+/// Yields all ancestor scopes for given scope in the `ScopeMap`.
 pub struct AncestorScopes<'a, Name: 'a> {
     scopes: &'a [ScopeItem<Name>],
     current: u32,
@@ -123,6 +136,8 @@ impl<'a, Name: 'a> Iterator for AncestorScopes<'a, Name> {
     }
 }
 
+/// Yields all names and corresponding scoped identifiers,
+/// visible from given scope in the `ScopeMap`.
 pub struct Names<'a, Name: 'a> {
     iter: slice::Iter<'a, (Name, u32)>,
 }
@@ -135,6 +150,8 @@ impl<'a, Name: 'a + fmt::Debug> Iterator for Names<'a, Name> {
     }
 }
 
+/// Yields all names, corresponding scoped identifiers and the containing scope
+/// visible from given scope in the `ScopeMap`.
 pub struct NamesAndScopes<'a, Name: 'a> {
     scopes: &'a [ScopeItem<Name>],
     current: u32,
@@ -185,6 +202,8 @@ impl<Name> ScopeItem<Name> {
     }
 }
 
+/// A mapping from the position to the innermost scope containing it.
+/// Also manages the names in each scope.
 #[derive(Debug, Clone)]
 pub struct ScopeMap<Name: Clone + Hash + Eq> {
     // an implicit mapping from the scope to the item

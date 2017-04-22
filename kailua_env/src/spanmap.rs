@@ -1,8 +1,12 @@
+//! An arbitrary mapping from location ranges to values.
+
 use std::fmt;
 use std::cmp::Ordering;
 use std::collections::{hash_map, HashMap};
 use loc::{Unit, Pos, Span, Spanned, span_from_u32};
 
+/// An efficient mapping from spans to values.
+//
 // segment-point interval tree (self-balanced as like AVL), used to make a mapping
 // from the pos/span to a list of overlapping spans associated with arbitrary data.
 #[derive(Clone)]
@@ -213,6 +217,7 @@ impl<'a, V> IntoIterator for &'a SpanMap<V> {
     fn into_iter(self) -> SpannedValues<'a, V> { self.iter() }
 }
 
+/// Yields each span in the `SpanMap` with the associated value. The order is unspecified.
 pub struct SpannedValues<'a, V: 'a> {
     iter: hash_map::Iter<'a, Unit, Option<Box<Node<V>>>>,
     unit: Unit,
@@ -263,12 +268,14 @@ impl<'a, V: 'a> Iterator for SpannedValues<'a, V> {
 
 macro_rules! impl_traversals {
     ($(
+        $(#[$attr:meta])*
         pub traversal $name:ident($($field:ident),*) {
             ubound $overlaps_ubound:expr;
             lbound $overlaps_lbound:expr;
             span $overlaps_span:expr;
         }
     )*) => ($(
+        $(#[$attr])*
         pub struct $name<'a, V: 'a> {
             stack: Vec<&'a Node<V>>,
             unit: Unit,
@@ -325,18 +332,24 @@ macro_rules! impl_traversals {
 }
 
 impl_traversals! {
+    /// Yields each span in the `SpanMap` containing given position, with the associated value.
+    /// The order is unspecified.
     pub traversal Contains(pos) {
         ubound |it: &Self, high| it.pos < high;
         lbound |low, it: &Self| low <= it.pos;
         span |low, it: &Self, high| low <= it.pos && it.pos < high;
     }
 
+    /// Yields each span in the `SpanMap` that has a non-empty intersection with given span,
+    /// with the associated value. The order is unspecified.
     pub traversal Overlaps(low, high) { // high is exclusive
         ubound |it: &Self, high| it.low < high;
         lbound |low, it: &Self| low < it.high;
         span |low, it: &Self, high| low < it.high && it.low < high;
     }
 
+    /// Yields each span in the `SpanMap` that has a (possibly empty) intersection with given span,
+    /// with the associated value. The order is unspecified.
     pub traversal Adjacencies(low, high) { // high is inclusive
         ubound |it: &Self, high| it.low <= high;
         lbound |low, it: &Self| low <= it.high;

@@ -7,8 +7,7 @@ use std::fmt;
 use std::result;
 use std::collections::{hash_map, HashMap};
 use kailua_env::{Pos, Span, Spanned, WithLoc, Scope, ScopedId, ScopeMap};
-use kailua_diag as diag;
-use kailua_diag::{Locale, Report, Localize};
+use kailua_diag::{report, Locale, Report, Reporter, Localize};
 
 use message as m;
 use lang::{Language, Lua, Kailua};
@@ -69,8 +68,8 @@ enum Stop {
     Recover,
 }
 
-impl From<diag::Stop> for Stop {
-    fn from(_: diag::Stop) -> Stop { Stop::Fatal }
+impl From<report::Stop> for Stop {
+    fn from(_: report::Stop) -> Stop { Stop::Fatal }
 }
 
 // parser keeps the internal information to recover as much as possible
@@ -244,31 +243,31 @@ impl<'a> Report for Parser<'a> {
         self.report.message_locale()
     }
 
-    fn add_span(&self, k: diag::Kind, s: Span, m: &Localize) -> diag::Result<()> {
+    fn add_span(&self, k: report::Kind, s: Span, m: &Localize) -> report::Result<()> {
         self.report.add_span(k, s, m)
     }
 }
 
-// wrappers around kailua_diag::{ReportMore, Reporter}, used to remap `done` method
+// wrappers around kailua_diag::report::{ReportMore, Reporter}, used to remap `done` method
 #[must_use]
-struct ReportMore<'a, T>(diag::ReportMore<'a, T>);
+struct ReportMore<'a, T>(report::ReportMore<'a, T>);
 
 #[allow(dead_code)]
 impl<'a> Parser<'a> {
     fn fatal<Loc: Into<Span>, Msg: Localize, T>(&self, loc: Loc, msg: Msg) -> ReportMore<T> {
-        ReportMore(diag::Reporter::fatal(self, loc, msg))
+        ReportMore(Reporter::fatal(self, loc, msg))
     }
 
     fn error<Loc: Into<Span>, Msg: Localize>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
-        ReportMore(diag::Reporter::error(self, loc, msg))
+        ReportMore(Reporter::error(self, loc, msg))
     }
 
     fn warn<Loc: Into<Span>, Msg: Localize>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
-        ReportMore(diag::Reporter::warn(self, loc, msg))
+        ReportMore(Reporter::warn(self, loc, msg))
     }
 
     fn info<Loc: Into<Span>, Msg: Localize>(&self, loc: Loc, msg: Msg) -> ReportMore<()> {
-        ReportMore(diag::Reporter::info(self, loc, msg))
+        ReportMore(Reporter::info(self, loc, msg))
     }
 }
 
@@ -3191,7 +3190,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn into_chunk(mut self) -> diag::Result<Chunk> {
+    pub fn into_chunk(mut self) -> report::Result<Chunk> {
         self.scope_stack = vec![];
         self.block_depth = 0;
         let ret = self.parse_block_until_eof();
@@ -3212,7 +3211,7 @@ impl<'a> Parser<'a> {
                 token_aux: self.token_aux,
             })
         } else {
-            Err(diag::Stop)
+            Err(report::Stop)
         }
     }
 }

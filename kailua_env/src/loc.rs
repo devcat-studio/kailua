@@ -1,8 +1,17 @@
+//! Location types and a location-bundled container.
+
 use std::ops;
 use std::cmp;
 use std::fmt;
 use std::borrow::Borrow;
 
+/// An identifier for the code *unit*, unique in the originating `Source`.
+///
+/// There are two special units, collectively known as "source-independent" units
+/// (as they never require `Source` for the resolution):
+///
+/// * `Unit::dummy()` denotes the lack of source informations.
+/// * `Unit::builtin()` is used for all built-in definitions, which are not exposed.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Unit {
     unit: u32,
@@ -37,6 +46,8 @@ impl Unit {
     }
 }
 
+/// In the debugging output the unit is denoted `@_` or <code>@<i>unit</i></code>.
+/// It is only displayed when the alternate flag is enabled.
 impl fmt::Debug for Unit {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if f.alternate() {
@@ -53,6 +64,13 @@ impl fmt::Debug for Unit {
     }
 }
 
+/// A *position* in the originating `Source`.
+///
+/// The position is composed of the `Unit` and an offset to the corresponding source.
+/// An offset ranges from 0 to the length of that source (inclusive).
+/// The actual meaning of the offset is resolved by `Source`;
+/// it can be either a byte offset or a two-byte word offset (for the FFI compatibility).
+/// The "source-independent" units have no corresponding source and the offset is always zero.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Pos {
     unit: u32,
@@ -90,6 +108,8 @@ impl Pos {
     }
 }
 
+/// In the debugging output the position is denoted `@_` or <code>@<i>unit</i>/<i>off</i></code>.
+/// It is only displayed when the alternate flag is enabled.
 impl fmt::Debug for Pos {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if f.alternate() {
@@ -106,6 +126,13 @@ impl fmt::Debug for Pos {
     }
 }
 
+/// A *span* of the range in the originating `Source`.
+///
+/// The span is (conceptually) composed of two `Pos` with the same `Unit`.
+/// The first `Pos` (inclusive) should be ahead of the second `Pos` (exclusive);
+/// they can be equal to each other, in which case the span has the same meaning to `Pos`.
+/// The "source-independent" units have no corresponding source and the offsets are always zero.
+//
 // span (0, 0, 0) is dummy and indicates the absence of appropriate span infos.
 // span (0, y, z) for non-zero y and z is reserved.
 // span (x, y, y) for non-zero x and y indicates a point and can be lifted from Pos.
@@ -243,6 +270,7 @@ impl ops::BitOrAssign for Span {
     fn bitor_assign(&mut self, other: Span) { *self = *self | other; }
 }
 
+/// The span can be used as an iterator and yields all positions in the span.
 impl Iterator for Span {
     type Item = Pos;
 
@@ -284,6 +312,7 @@ impl Iterator for Span {
     }
 }
 
+/// The span can be used as an iterator and yields all positions in the span.
 impl DoubleEndedIterator for Span {
     fn next_back(&mut self) -> Option<Pos> {
         if self.is_source_dependent() && self.begin < self.end {
@@ -296,6 +325,9 @@ impl DoubleEndedIterator for Span {
     }
 }
 
+/// In the debugging output the span is denoted `@_` or
+/// <code>@<i>unit</i>/<i>start</i>[-<i>end</i>]</code>.
+/// It is only displayed when the alternate flag is enabled.
 impl fmt::Debug for Span {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if f.alternate() {
@@ -314,6 +346,9 @@ impl fmt::Debug for Span {
     }
 }
 
+/// A value with optional `Span`.
+///
+/// Can be constructed with `.with_loc(span)` or `.without_loc()` from the `WithLoc` trait.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Spanned<T> {
     pub span: Span,
@@ -367,12 +402,14 @@ impl<T> Borrow<T> for Spanned<T> {
     fn borrow(&self) -> &T { &self.base }
 }
 
+/// The span is ignored in the display.
 impl<T: fmt::Display> fmt::Display for Spanned<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(&self.base, f)
     }
 }
 
+/// The span is only printed (after the value) when the alternate flag is enabled.
 impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&self.base, f)?;
@@ -381,6 +418,7 @@ impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
     }
 }
 
+/// A helper trait for constructing `Spanned<T>` value.
 pub trait WithLoc: Sized {
     fn with_loc<Loc: Into<Span>>(self, loc: Loc) -> Spanned<Self> {
         Spanned { span: loc.into(), base: self }

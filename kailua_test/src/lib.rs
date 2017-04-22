@@ -1,3 +1,145 @@
+//! Test harness for Kailua.
+//!
+//! Most integration tests in Kailua are composed of the input, the expected output and
+//! expected reports to `kailua_diag::Report`. This cannot be easily done with unit tests,
+//! so this library simplifies the creation of such test harness for individual applications.
+//!
+//! A crate can add the following section to its `Cargo.toml`...
+//!
+//! ```toml
+//! [[test]]
+//! name = "integration-test"
+//! harness = false
+//! ```
+//!
+//! ...and put the following to the corresponding source file.
+//!
+//! ```rust
+//! extern crate kailua_env;
+//! extern crate kailua_diag;
+//! extern crate kailua_test;
+//!
+//! use std::cell::RefCell;
+//! use std::rc::Rc;
+//! use std::collections::HashMap;
+//! use kailua_env::{Source, Span};
+//! use kailua_diag::Report;
+//!
+//! struct Testing;
+//! impl kailua_test::Testing for Testing {
+//!     fn run(&self, source: Rc<RefCell<Source>>, span: Span,
+//!            filespans: &HashMap<String, Span>, report: Rc<Report>) -> String {
+//!         format!("Expected test output")
+//!     }
+//! }
+//!
+//! fn main() {
+//! #   return; // we only check if this compiles
+//!     kailua_test::Tester::new("integration-test", Testing).scan("src/tests").done();
+//! }
+//! ```
+//!
+//! This will scan all `*.lua` files in `src/tests` and
+//! test all them according to the command-line options.
+//! It is possible to add more methods to `Testing` to further customize the test application.
+//!
+//! # Test Format
+//!
+//! ```lua
+//! this part is ignored, put some descriptions here.
+//!
+//!
+//! --8<-- test-name-1 -- options options ...
+//! --@v Error: this error should occur in the following line
+//! local x = 'some testing code' --@< Note: this note should occur in this exact line
+//! --@^ Warning: this warning should occur in the preceding line
+//!
+//! --@v-vvv Fatal: this fatal error should span following three lines
+//! do
+//!     return
+//! end
+//!
+//! --! expected output here; long line can be concatenated \
+//! --!     like this, where preceding whitespaces are ignored in this line.
+//!
+//!
+//! -->8-- test-name-2
+//! this test is ignored unless `-f` is given.
+//!
+//!
+//! --8<-- test-name-3
+//! local a = require 'x'
+//!
+//! --& x
+//! -- it is possible to use multiple input files.
+//! return 42
+//!
+//! --&
+//! -- duplicate input file names are invalid, except for the empty file name.
+//! -- this means that the preceding file (named or not) should be trimmed following whitespaces,
+//! -- required by parser tests which tend to be sensitive to the final whitespaces.
+//! -- the code block itself gets ignored.
+//! ```
+//!
+//! More on report formats:
+//!
+//! * The explicit line can be also given (`--@3-8 ...`);
+//!   the line number is 1-based and renumbered for each code block.
+//!
+//! * The line number can be also missing,
+//!   in which case the report should not have any associated span.
+//!
+//! * All report `Kind`s except for `Kind::Info` can be used.
+//!   The `info` report is normally used for debugging informations,
+//!   so it cannot be suppressed nor checked against.
+//!
+//! Supported test options:
+//!
+//! * `exact` means that the test should not tolerate additional reports
+//!   (normally only enabled when `-e` is given).
+//!
+//! * `feature:FEATURE` enables the test only when a particular feature is enabled.
+//!   There can be multiple feature options, all of them are required to enable the test.
+//!   Note that this is different from Cargo features;
+//!   you should manually set the flag with `Tester::feature` in the `main` function.
+//!
+//! * `feature:!FEATURE` enables the test only when a particular feature is disabled.
+//!
+//! # Test invocation
+//!
+//! `cargo test` (or if you have multiple test binaries, `cargo test --test NAME`)
+//! will do all the jobs. The process will exit on any error.
+//!
+//! The test binary itself can be given options.
+//! Note that this will conflict with Cargo's own options,
+//! so they should be in principle given after `--`: `cargo test -- --option-for-tester`.
+//! Since this is annoying you can also replace preceding hyphens with pluses:
+//! `cargo test ++option-for-tester` will be same and easier to run.
+//!
+//! Supported options:
+//!
+//! * `-v`, `--verbose`: Displays all test outputs even when the test passes.
+//!
+//! * `-e`, `--exact-diags`: Fails the test when additional reports exist.
+//!   This is same to put the `exact` option to all tests.
+//!
+//! * `-h`, `--highlight-mismatch`: Highlights any mismatch in the reports or output.
+//!
+//! * `-l LOCALE`, `--message-locale LOCALE`: Let reports use given locale.
+//!   Likely to fail most tests as the reports are compared by their localized texts.
+//!
+//! * `-p`, `--stop-on-panic`: Stops on the first panic. Also enables `RUST_BACKTRACE=1`.
+//!
+//! * `-pp`: Same to `-p` but will enable `RUST_BACKTRACE=full` instead.
+//!
+//! * `-f`, `--force`: Run the explicitly ignored (`-->8--`) tests.
+//!
+//! * `-ff`: Same to `-f` but will also run tests which are ignored by feature options.
+//!
+//! * The implementation can supply its own options by adding `Testing::augment_args` method.
+//!
+//! The remaining argument, if any, is a regular expression for filtering test names.
+
 extern crate regex;
 #[macro_use] extern crate lazy_static;
 extern crate term;
@@ -29,18 +171,29 @@ use clap::{App, Arg, ArgMatches};
 use kailua_env::{Source, SourceFile, Span};
 use kailua_diag::{Locale, Kind, Report, CollectedReport};
 
+/// A customizable portion of the tester.
 pub trait Testing {
+    /// Runs the test with given input, producing an output and (optionally) reports.
+    ///
+    /// `source` holds all inputs. `span` is the span for the (unnamed) main file;
+    /// `filespans` are for everything else.
     fn run(&self, source: Rc<RefCell<Source>>, span: Span, filespans: &HashMap<String, Span>,
            report: Rc<Report>) -> String;
 
+    /// Checks if the actual output and expected output matches.
+    /// By default it is a simple string equivalence.
     fn check_output(&self, actual: &str, expected: &str) -> bool { actual == expected }
 
+    /// Alters the command-line parser (built with `clap`).
+    /// Normally used to add additional options, and does nothing by default.
     fn augment_args<'a, 'b: 'a>(&self, app: App<'a, 'b>) -> App<'a, 'b> { app }
+
+    /// Collects the parsed command-line options. Does nothing by default.
     fn collect_args<'a>(&mut self, _matches: &ArgMatches<'a>) { }
 }
 
 #[derive(Debug)]
-pub struct TestError {
+struct TestError {
     desc: String,
     cause: Option<Box<Error>>,
 }
@@ -74,11 +227,11 @@ impl<T: fmt::Debug + Error + 'static> From<Box<T>> for TestError {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
-pub struct Expected<'a> {
+struct Expected<'a> {
     // the path is None when it is a main file (the tester will fill the temporary name)
-    pub pos: Option<(Option<Cow<'a, str>>, usize, usize)>,
-    pub kind: Kind,
-    pub msg: Cow<'a, str>,
+    pos: Option<(Option<Cow<'a, str>>, usize, usize)>,
+    kind: Kind,
+    msg: Cow<'a, str>,
 }
 
 impl<'a> Expected<'a> {
@@ -241,17 +394,17 @@ fn test_split_line() {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Test {
-    pub file: PathBuf,
-    pub first_line: usize, // the first line after the divider
-    pub name: String, // can be an empty string
-    pub input: Vec<String>,
-    pub files: HashMap<String, Vec<String>>,
-    pub output: Vec<String>,
-    pub reports: Vec<Expected<'static>>,
-    pub ignored: bool,
-    pub exact: bool,
-    pub features: HashSet<String>,
+struct Test {
+    file: PathBuf,
+    first_line: usize, // the first line after the divider
+    name: String, // can be an empty string
+    input: Vec<String>,
+    files: HashMap<String, Vec<String>>,
+    output: Vec<String>,
+    reports: Vec<Expected<'static>>,
+    ignored: bool,
+    exact: bool,
+    features: HashSet<String>,
 }
 
 fn extract_tests(path: &Path) -> Result<Vec<Test>, TestError> {
@@ -413,6 +566,7 @@ struct TestLog {
     reports_aux: Vec<bool /*mismatch*/>, // corresponds to each report in `test.reports`
 }
 
+/// The tester. It is parameterized over test-specific `Testing` implementations.
 #[must_use]
 pub struct Tester<T> {
     testing: T,
@@ -437,6 +591,11 @@ const MAIN_PATH: &'static str = "<test main>";
 enum TestResult { Passed, Failed, Panicked, Ignored }
 
 impl<T: Testing> Tester<T> {
+    /// Creates a new tester with given `Testing` implementation,
+    /// and parses command-line options (while calling `Testing::augment_args` and
+    /// `Testing::collect_args` methods if any).
+    ///
+    /// The name is used for command-line helps and otherwise irrelevant.
     pub fn new(name: &str, mut testing: T) -> Tester<T> {
         // `cargo test` will pass args to every tester, so we need to avoid hyphens as a prefix
         let args = env::args().map(|s| {
@@ -459,7 +618,7 @@ impl<T: Testing> Tester<T> {
             .arg(Arg::with_name("highlight_mismatch")
                 .short("h")
                 .long("highlight-mismatch")
-                .help("Puts a prefix to any mismatch in the reports or output."))
+                .help("Highlights any mismatch in the reports or output."))
             .arg(Arg::with_name("message_locale")
                 .short("l")
                 .long("message-locale")
@@ -511,14 +670,16 @@ impl<T: Testing> Tester<T> {
         }
     }
 
+    /// Adds a feature (as recognized by `feature:*` test options) and enables or disables that.
     pub fn feature(mut self, name: &str, value: bool) -> Tester<T> {
-        info!("feature {} is turned {}", name, if value { "on" } else { "off " });
+        info!("feature {} is turned {}", name, if value { "on" } else { "off" });
         if value {
             self.features.insert(name.to_owned());
         }
         self
     }
 
+    /// Scans a given directory for test files and tests any of them in the current setting.
     pub fn scan<P: AsRef<Path>>(mut self, dir: P) -> Tester<T> {
         for f in fs::read_dir(dir).expect("failed to read the test directory") {
             let path = f.expect("failed to read the test directory").path();
@@ -559,6 +720,8 @@ impl<T: Testing> Tester<T> {
         self
     }
 
+    /// Finishes the test by printing summaries and any failed test outputs.
+    /// Additionally terminates the current process with exit code 1 on any error.
     pub fn done(mut self) {
         let _ = writeln!(self.term, "");
         let _ = writeln!(self.term, "{} passed, {} ignored, {} failed",

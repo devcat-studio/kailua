@@ -200,4 +200,5 @@ The internal documentation is available in a [different file][internals-doc].
 [Rust]: https://www.rust-lang.org/
 [install Rust]: https://www.rust-lang.org/install.html
 [VSCode]: https://code.visualstudio.com/
+[internals-doc]: ./INTERNALS.md
 

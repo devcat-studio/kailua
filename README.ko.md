@@ -200,4 +200,5 @@ print('Hello, world!')
 [Rust]: https://www.rust-lang.org/
 [install Rust]: https://www.rust-lang.org/install.html
 [VSCode]: https://code.visualstudio.com/
+[internals-doc]: ./INTERNALS.md
 

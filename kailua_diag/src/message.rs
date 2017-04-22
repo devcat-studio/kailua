@@ -1,14 +1,44 @@
+//! Message localization support.
+//!
+//! The current localization support in Kailua is quite rudimentary;
+//! it needs lots of custom types to get the correct message in just two languages.
+
 use std::fmt;
 use std::ops;
 use std::str;
 use std::env;
 
+/// The message locale.
+///
+/// This is equivalent to a small (up to 8 byte) ASCII string, but normalizes appropriately.
+/// It can be derefed to a string slice, so the following is possible:
+///
+/// ```rust
+/// # let locale = Locale::new("en");
+/// match &locale[..] {
+///     "en" => println!("Hello"),
+///     "de" => println!("Willkommen"),
+///     // the locale is always stored in the normalized form, `ko-KR` or `ko_kr` won't match
+///     "ko-kr" => println!("안녕하세요"),
+///     _ => println!("*unintelligible gibberish*"),
+/// }
+/// ```
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Locale {
     lang: [u8; 8],
 }
 
 impl Locale {
+    /// Parses and creates a new message locale.
+    ///
+    /// The locale identifier should be an [IETF language tag][bcp-47] restricted to 8 letters,
+    /// and gets normalized to lowercased letters separated by `-`.
+    /// In practice the limitation doesn't matter,
+    /// as most use cases are of the form `LL(L)`, `LL(L)-RR(R)` or `LL(L)-SSSS`
+    /// where `LL(L)` is an ISO 639-1/2 language code, `RR(R)` is an ISO 3166-1 country code and
+    /// `SSSS` is an ISO 15924 script code. Other combinations are rare enough for Kailua.
+    ///
+    /// [bcp-47]: https://tools.ietf.org/rfc/bcp/bcp47.txt
     pub fn new(locale: &str) -> Option<Locale> {
         // should be 2--8 bytes long
         if locale.len() < 2 || locale.len() > 8 {
@@ -35,6 +65,7 @@ impl Locale {
         Some(Locale { lang: lang })
     }
 
+    /// A dummy locale (`xx`) used when no appropriate locale information is available.
     pub fn dummy() -> Locale {
         Locale { lang: *b"xx\0\0\0\0\0\0" }
     }
@@ -74,6 +105,7 @@ fn test_locale_names() {
     assert!(Locale::new("ko-KR-x-qqq").is_none());
 }
 
+/// Any type that can be formatted into a localized text.
 pub trait Localize: fmt::Debug {
     fn fmt_localized(&self, f: &mut fmt::Formatter, locale: Locale) -> fmt::Result;
 }
@@ -90,6 +122,9 @@ impl<T: fmt::Display + fmt::Debug> Localize for T {
     }
 }
 
+/// A helper type for formatting the localized text.
+///
+/// For example, `format!("{}", Localized::new(&v))` will give a localized string for `v`.
 pub struct Localized<'b, T: Localize + ?Sized + 'b> {
     base: &'b T,
     locale: Locale,
@@ -159,6 +194,20 @@ macro_rules! define_msg_internal {
     );
 }
 
+/// A helper macro for defining a localizable message.
+///
+/// ```rust,ignore
+/// define_msg! { pub StructName { param: OtherLocalizableType }:
+///     "lang1" => "Some localized string with a parameter {param}",
+///     "lang2" => "Some other localized string with a differently formatted parameter {param:10}",
+///     _       => "The default string with a parameter {param}, normally in English",
+/// }
+/// ```
+///
+/// Each parameter should be localizable.
+/// `pub` and the parameters can be omitted, and type or lifetime parameters can be given.
+/// (But note that the constructor itself is a struct, so `StructName {}` is required
+/// even when there are no message parameters.)
 #[macro_export]
 macro_rules! define_msg {
     ($(#[$meta:meta])* pub $name:ident $($t:tt)*) => (
@@ -224,6 +273,7 @@ fn get_locale_string() -> Option<String> {
     get_locale_string_from_env()
 }
 
+/// Returns a default locale for the current environment, if any.
 pub fn get_message_locale() -> Option<Locale> {
     get_locale_string().and_then(|locale| Locale::new(&locale))
 }

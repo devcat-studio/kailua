@@ -4,6 +4,8 @@ version = "0.1.0"
 authors = ["Kang Seonghoon <public+git@mearie.org>"]
 publish = false
 
+description = "Test harness for Kailua"
+
 [dependencies]
 log = "0.3"
 term = "0.4.4"

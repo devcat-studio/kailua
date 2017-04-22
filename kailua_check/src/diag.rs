@@ -2,7 +2,8 @@ use std::fmt;
 use std::cell::RefCell;
 
 use kailua_env::{Span, Spanned, WithLoc};
-use kailua_diag::{ReportMore, Locale, Localize, Localized};
+use kailua_diag::report::ReportMore;
+use kailua_diag::message::{Locale, Localize, Localized};
 use message as m;
 use ty::{TypeContext, Display, Key};
 
