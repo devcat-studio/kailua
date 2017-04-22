@@ -1,3 +1,24 @@
+//! Language server protocol types for Kailua.
+//!
+//! This crate closely mirrors the version 3.0 of the [Language Server Protocol][lsp],
+//! and provides both `serde::Serialize` and `serde::Deserialize` implementations for most types,
+//! with the following deviations:
+//!
+//! * Enums are mapped to Rust modules.
+//!
+//! * Anonymous nested interfaces are given unique names from its field name.
+//!   Since this results in many ambiguous types for client capabilities,
+//!   client capabilities are put to a separate module `client_caps`.
+//!
+//! * Some types like `number | string` are not yet properly implemented
+//!   and fixed to a most probable type.
+//!
+//! * `ServerCapabilities.textDocumentSync` should be a `TextDocumentSyncOptions` in 3.0,
+//!   but this causes a bug in `vscode-languageclient<=3.2.0`,
+//!   so it is reverted to a backward-compatible `TextDocumentSyncKind`.
+//!
+//! [lsp]: https://github.com/Microsoft/language-server-protocol
+
 extern crate serde;
 #[macro_use] extern crate serde_derive;
 extern crate serde_json;

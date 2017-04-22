@@ -1,3 +1,5 @@
+//! The user-configurable portion of the type checker.
+
 use std::str;
 use std::ascii::AsciiExt;
 use std::path::{Path, PathBuf, MAIN_SEPARATOR};
@@ -6,36 +8,54 @@ use kailua_env::{Spanned, WithLoc};
 use kailua_diag::{Report, Stop};
 use kailua_syntax::Chunk;
 
+/// Options for customizing the type checker.
+///
+/// All of those methods return `Err(None)` if the error occurred and has not been reported,
+/// or `Err(Some(Stop))` if the error occurred and the caller wants to bail out.
+/// If the implementation has a handle to the reporter and wants to do its own reporting,
+/// it can report and return `Ok` (recovery) or `Err(Some(Stop))` (error propagation).
 pub trait Options {
-    // all of those methods return `Err(None)` if the error occurred and has not been reported,
-    // or `Err(Some(Stop))` if the error occurred and the caller wants to bail out.
-    // if the implementation has a handle to the reporter and wants to do its own reporting,
-    // it can report and return `Ok` (recovery) or `Err(Some(Stop))` (error propagation).
-
+    /// Called when `package.path` gets assigned to a string literal type.
+    ///
+    /// Does nothing by default.
     fn set_package_path(&mut self, _path: Spanned<&[u8]>,
                         _report: &Report) -> Result<(), Option<Stop>> {
         Ok(())
     }
 
+    /// Called when `package.cpath` gets assigned to a string literal type.
+    ///
+    /// Does nothing by default.
     fn set_package_cpath(&mut self, _path: Spanned<&[u8]>,
                          _report: &Report) -> Result<(), Option<Stop>> {
         Ok(())
     }
 
+    /// Called when `require` is called with a string literal type.
+    ///
+    /// Errors by default; the checker will use its own error message.
     fn require_chunk(&mut self, _path: Spanned<&[u8]>,
                      _report: &Report) -> Result<Chunk, Option<Stop>> {
         Err(None)
     }
 }
 
+/// Checker options that are tailored to loading from the file system.
+///
+/// Follows the same error conventions as `Options`.
 pub trait FsSource {
-    // `Ok(Some(chunk))` normally; `Ok(None)` if path doesn't exist and search should continue;
-    // `Err(None)` and `Err(Some(Stop))` follow the convention of `Options`.
+    /// Should try to load a given fully resolved path and return a chunk or `None`.
+    ///
+    /// `None` here means that the path doesn't exist and the search should continue.
+    /// Other error cases can be reported as `Err(..)` as with `Options`.
     fn chunk_from_path(&self, resolved_path: Spanned<&Path>,
                        report: &Report) -> Result<Option<Chunk>, Option<Stop>>;
 
+    /// Should try to parse a byte string containing a relative path to a path buffer.
+    ///
+    /// Used to delegate the encoding decision to the user.
+    /// This will only parse ASCII paths by default, in order to avoid the confusion.
     fn to_path_buf(&self, path: Spanned<&[u8]>, _report: &Report) -> Result<PathBuf, Option<Stop>> {
-        // by default we avoid parsing multibyte paths as it depends on the system encoding
         if path.is_ascii() {
             Ok(Path::new(str::from_utf8(&path).unwrap()).to_owned())
         } else {
@@ -44,6 +64,9 @@ pub trait FsSource {
     }
 }
 
+/// An implementation of `Options` that loads from the file system.
+///
+/// The user should provide `FsSource`, which provides a simpler interface for this use case.
 pub struct FsOptions<S> {
     source: S,
     root: PathBuf,

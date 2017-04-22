@@ -1,3 +1,9 @@
+//! Workspace support for Kailua.
+//!
+//! While the type checker itself processes files organically, starting from a start file,
+//! many Kailua projects are organized as a workspace---source files and an optional configuration.
+//! This crate abstracts the common procedure for determining such configurations.
+
 extern crate serde;
 #[macro_use] extern crate serde_derive;
 extern crate serde_json;
@@ -19,13 +25,38 @@ use kailua_check::options::{Options, FsSource, FsOptions};
 
 mod message;
 
+/// A configuration being built.
+///
+/// A configuration can be either built incrementally (e.g. from command-line options),
+/// or automatically built from a configuration file.
+/// There is a set of known paths for the configuration file
+/// (currently `BASE_DIR/kailua.json` and `BASE_DIR/.vscode/kailua.json`),
+/// so the caller can simply call `Config::use_default_config_paths`
+/// when no configuration file is given.
 #[derive(Clone, Debug)]
 pub struct Config {
+    /// A base dir (the workspace root).
     base_dir: PathBuf,
-    config_path: Option<PathBuf>, // for diagnostics
+
+    /// A path to the configuration file, if read. Used for diagnostics.
+    config_path: Option<PathBuf>,
+
+    /// A path to the start file, if any.
     pub start_path: Option<PathBuf>,
+
+    /// The explicit value of `package.path`, if any.
+    ///
+    /// If this value is set, assigning to `package.path` does *not* change
+    /// the checker's behavior and will rather issue an warning.
     pub package_path: Option<Vec<u8>>,
+
+    /// The explicit value of `package.cpath`, if any.
+    ///
+    /// If this value is set, assigning to `package.cpath` does *not* change
+    /// the checker's behavior and will rather issue an warning.
     pub package_cpath: Option<Vec<u8>>,
+
+    /// A preferred message locale, if any.
     pub message_locale: Option<Locale>,
 }
 
@@ -102,6 +133,9 @@ impl Config {
     }
 }
 
+/// A workspace.
+///
+/// The configuration has been resolved and can be used to make `Options` for the type checker.
 #[derive(Clone, Debug)]
 pub struct Workspace {
     base_dir: PathBuf,
@@ -147,6 +181,7 @@ impl Workspace {
     }
 }
 
+/// An extension to `FsOptions` that is initialized from an workspace.
 pub struct WorkspaceOptions<S> {
     options: FsOptions<S>,
     can_update_package_path: bool,

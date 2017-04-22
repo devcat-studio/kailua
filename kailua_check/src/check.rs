@@ -207,12 +207,20 @@ impl<'inp> PendingModule<'inp> {
     }
 }
 
+/// The actual type checker.
+///
+/// This depends on both the per-file context `Env`
+/// (which in turn depends on the global context `Context`)
+/// and also a lifetime of the input chunk.
+/// Therefore the checker is actually per-file,
+/// but it internally creates nested `Env` and checkers to load other modules.
 pub struct Checker<'inp, 'envr, 'env: 'envr, R: 'env> {
     env: &'envr mut Env<'env, R>,
     pending_modules: Vec<HashMap<*const Ty, PendingModule<'inp>>>,
 }
 
 impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
+    /// Creates a new checker from the per-file context.
     pub fn new(env: &'envr mut Env<'env, R>) -> Checker<'inp, 'envr, 'env, R> {
         Checker { env: env, pending_modules: Vec::new() }
     }
@@ -1301,6 +1309,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
         Ok(())
     }
 
+    /// Type-checks a given chunk (here is same to the top-level block).
     pub fn visit(&mut self, chunk: &'inp Spanned<Block>) -> Result<()> {
         self.visit_block(chunk)?;
         Ok(())

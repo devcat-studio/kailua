@@ -3,6 +3,8 @@ name = "kailua_workspace"
 version = "0.1.0"
 authors = ["Kang Seonghoon <public+git@mearie.org>"]
 
+description = "Workspace support for Kailua"
+
 [dependencies]
 serde = "0.9"
 serde_derive = "0.9"

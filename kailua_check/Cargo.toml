@@ -4,6 +4,8 @@ version = "0.1.0"
 authors = ["Kang Seonghoon <public+git@mearie.org>"]
 publish = false
 
+description = "Type checker for Kailua"
+
 [[bin]]
 name = "kailua-check"
 doc = false

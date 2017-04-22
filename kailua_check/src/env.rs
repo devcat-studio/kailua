@@ -1,3 +1,5 @@
+//! The type checker environment.
+
 use std::ops;
 use std::str;
 use std::fmt;
@@ -21,9 +23,15 @@ use options::Options;
 use check::Checker;
 use message as m;
 
+/// A globally unique name reference.
+///
+/// This is an expanded version of `NameRef` that can be used across multiple files.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Id {
+    /// A local name, identified with an index to a per-file scope map and a scoped identifier.
     Local(usize, ScopedId),
+
+    /// A global name, simply identified with its name.
     Global(Name),
 }
 
@@ -62,12 +70,16 @@ impl Id {
     }
 }
 
+/// Displays a globally unique name reference in the human-readable form.
 #[must_use]
 pub struct IdDisplay<'a, R: 'a> {
     id: &'a Id,
     ctx: &'a Context<R>,
 }
 
+/// In the debugging output a globally unique name reference is denoted
+/// <code>`<i>Name</i>`$<i>MAP</i><i>id</i></code> or <code>`<i>Name</i>`_</code>,
+/// where <code><i>MAP</i></code> is a unique alphabetic code for the scope map index.
 impl<'a, R: Report> fmt::Display for IdDisplay<'a, R> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self.id {
@@ -98,12 +110,22 @@ impl<'a, R: Report> fmt::Display for IdDisplay<'a, R> {
     }
 }
 
+/// A return type, that may have been inferred.
 #[derive(Clone, Debug)]
 pub enum Returns<T> {
-    None, // the function hasn't returned and has no rettype spec
-    Never, // the function has a diverging rettype spec
-    Implicit(T), // the function returns but has no rettype spec, returns will be unioned
-    Explicit(T), // the function has a rettype spec, cannot be updated
+    /// The function hasn't returned and has no explicit return types.
+    None,
+
+    /// The function is explicitly marked as diverging.
+    Never,
+
+    /// The function returns but has no explicit return types;
+    /// following return types will be implicitly unioned.
+    Implicit(T),
+
+    /// The function has explicit return types,
+    /// following return types will be simply checked against them.
+    Explicit(T),
 }
 
 impl<T> Returns<T> {
@@ -126,22 +148,36 @@ impl<T> Returns<T> {
     }
 }
 
+/// A function frame.
 #[derive(Clone, Debug)]
 pub struct Frame {
+    /// A type of `...` in given frame, if any.
     pub vararg: Option<TySeq>,
+
+    /// Return types.
     pub returns: Returns<TySeq>,
 }
 
+/// A name definition.
 #[derive(Clone, Debug)]
 pub struct NameDef {
+    /// The definition span.
     pub span: Span,
+
+    /// The associated slot type and the initialization status.
     pub slot: NameSlot,
 }
 
+/// A slot type with the initialization status.
 #[derive(Clone, Debug)]
 pub enum NameSlot {
-    None, // not initialized, no type specified
+    /// The slot has not been initialized nor its type specified.
+    None,
+
+    /// The slot has been its type specified, but hasn't been initialized.
     Unset(Slot),
+
+    /// The slot has been initialized and has a known type.
     Set(Slot),
 }
 
@@ -161,19 +197,42 @@ impl NameSlot {
     }
 }
 
+/// A named type definition.
 #[derive(Clone, Debug)]
 pub struct TypeDef {
+    /// The definition span.
     pub span: Span,
+
+    /// The type.
     pub ty: Ty,
 }
 
+/// A (extended) class definition.
+///
+/// The type environment also has its class definition (mostly for names);
+/// this type is distinguished by having a list of class and instance fields, hence the name.
 #[derive(Clone, Debug)]
 pub struct ClassFields {
+    /// The definition span.
     pub span: Span,
+
+    /// A list of class fields.
+    ///
+    /// This can be updated by assigning to the class prototype type.
     pub class_ty: HashMap<Key, Slot>,
+
+    /// A list of instance fields.
+    ///
+    /// This can be updated by assigning to the class instance type.
     pub instance_ty: HashMap<Key, Slot>,
 }
 
+/// A scope.
+///
+/// This is currently used to track the function frame and type names.
+/// Local names are resolved at the parser level so it can be uniquely identified.
+/// In the future type names will be also handled in the similar manner,
+/// removing the needs for this type.
 #[derive(Clone, Debug)]
 pub struct Scope {
     frame: Option<Frame>,
@@ -208,9 +267,13 @@ impl Scope {
     }
 }
 
+/// The resolved information about the module loaded by `require` or similar.
 #[derive(Clone, Debug)]
 pub struct Module {
-    pub returns: Option<Slot>, // None if the module never returns
+    /// The return types from the module if any. `None` if the module never returns.
+    pub returns: Option<Slot>,
+
+    /// A list of exported type definitions.
     pub exported_types: HashMap<Name, TypeDef>,
 }
 
@@ -226,12 +289,17 @@ enum LoadStatus {
     Ongoing(Span), // span for who to blame
 }
 
+/// A slot type "specification".
+///
+/// It is possible that the slot type is constructed first and then it gets "initialized",
+/// because we can put a type specification to table fields which may yield a new empty slot.
 #[derive(Clone, Debug)]
 pub enum SlotSpec {
-    // the slot is constructed implicitly (e.g. from `--: const`),
-    // so the type should be still copied directly from the initialization
+    /// The slot is constructed implicitly (e.g. from `--: const`),
+    /// so the type should be still copied directly from the initialization.
     Implicit(Spanned<Slot>),
-    // the slot is specified explicitly and the initialization should be its subtype
+
+    /// The slot is specified explicitly and the initialization should be its subtype.
     Explicit(Spanned<Slot>),
 }
 
@@ -256,14 +324,17 @@ impl SlotSpec {
     }
 }
 
-// global context (also acts as a type context).
-// anything has to be retained across multiple files should be here
+/// The global context, which also contains the type context.
+///
+/// Anything that has to be retained across multiple files should be here.
+/// Due to the presence of a report receiver this is not easily shared or sent across threads;
+/// `Context::into_output` will give a report-free type that is suitable for analysis.
 pub struct Context<R> {
     report: R,
     output: Output,
 }
 
-// a "reportless" version of Context, used for analysis
+/// A report-free version of `Context`. Suitable for analysis.
 pub struct Output {
     // name, scope and span information
     ids: HashMap<Id, NameDef>,
@@ -539,7 +610,7 @@ impl<R: Report> Report for Context<R> {
     }
 }
 
-// per-file environment
+/// A per-file environment which depends to `Context`.
 pub struct Env<'ctx, R: 'ctx> {
     context: &'ctx mut Context<R>,
     opts: Rc<RefCell<Options>>,
@@ -602,15 +673,17 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         debug!("leaving from a scope {:#?}", scope);
     }
 
-    // returns a pair of type flags that is an exact lower and upper bound for that type
-    // used as an approximate type bound testing like arithmetics;
-    // better be replaced with a non-instantiating assertion though.
+    /// Returns a pair of type flags that is an exact lower and upper bound for that type.
+    ///
+    /// Used as an approximate type bound testing like arithmetics.
+    /// If possible, however, better be replaced with a non-instantiating assertion though.
     pub fn get_type_bounds(&self, ty: &Ty) -> (/*lb*/ Flags, /*ub*/ Flags) {
         self.context.get_type_bounds(ty)
     }
 
-    // exactly resolves the type variable inside `ty` if possible
-    // this is a requirement for table indexing and function calls
+    /// Exactly resolves the type variable inside `ty` if possible.
+    ///
+    /// This is a requirement for table indexing and function calls.
     pub fn resolve_exact_type<'a>(&self, ty: &Ty) -> Option<Ty> {
         self.context.resolve_exact_type(ty)
     }
@@ -846,8 +919,8 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         Ok(())
     }
 
-    // same to Slot::accept but also able to handle the built-in semantics;
-    // should be used for any kind of non-internal assignments.
+    /// Same to `Slot::accept` but also able to handle the built-in semantics;
+    /// should be used for any kind of non-internal assignments.
     pub fn assign(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> Result<()> {
         trace!("assigning {:?} to an existing slot {:?}", rhs, lhs);
         self.assign_(lhs, rhs, false)
@@ -885,11 +958,12 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         }
     }
 
-    // same to `assign` but the slot is assumed to be newly created (out of field)
-    // and the strict equality instead of subtyping is applied.
-    // this is required because the slot itself is generated before doing any assignment;
-    // the usual notion of accepting by subtyping does not work well here.
-    // this is technically two assignments, of which the latter is done via the strict equality.
+    /// Same to `Env::assign` but the slot is assumed to be newly created (out of field)
+    /// and the strict equality instead of subtyping is applied.
+    ///
+    /// This is required because the slot itself is generated before doing any assignment;
+    /// the usual notion of accepting by subtyping does not work well here.
+    /// This is technically two assignments, of which the latter is done via the strict equality.
     pub fn assign_new(&mut self, lhs: &Spanned<Slot>, initrhs: &Spanned<Slot>,
                       specrhs: Option<&SlotSpec>) -> Result<()> {
         trace!("assigning {:?} to a new slot {:?} with type {:?}", initrhs, lhs, specrhs);
@@ -994,7 +1068,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         Ok(())
     }
 
-    // adds a local variable with the explicit type `specinfo` and the implicit type `initinfo`.
+    /// Adds a local variable with the explicit type `specinfo` and the implicit type `initinfo`.
     pub fn add_var(&mut self, nameref: &Spanned<NameRef>,
                    specinfo: Option<SlotSpec>,
                    initinfo: Option<Spanned<Slot>>) -> Result<()> {
@@ -1050,8 +1124,9 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         Ok(())
     }
 
-    // assigns to a global or local variable with a right-hand-side type of `info`.
-    // it may create a new global variable if there is no variable with that name.
+    /// Assigns to a global or local variable with a right-hand-side type of `info`.
+    ///
+    /// This may create a new global variable if there is no variable with that name.
     pub fn assign_to_var(&mut self, nameref: &Spanned<NameRef>, info: Spanned<Slot>) -> Result<()> {
         let id = self.id_from_nameref(nameref);
 
