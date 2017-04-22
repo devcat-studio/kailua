@@ -21,8 +21,8 @@ warn_on_useless_conds = []
 warn_on_dead_code = []
 
 [dependencies]
-log = "0.3"
-env_logger = "0.3"
+log = "0.3.7"
+env_logger = "0.4.2"
 take_mut = "0.1"
 parse-generics-shim = "0.1.0"
 kailua_env = { path = "../kailua_env" }

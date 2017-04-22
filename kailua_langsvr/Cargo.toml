@@ -10,8 +10,8 @@ description = "Language server implementation for Kailua"
 name = "kailua-langsvr"
 
 [dependencies]
-log = "0.3"
-env_logger = "0.3"
+log = "0.3.7"
+env_logger = "0.4.2"
 serde = "0.9"
 serde_derive = "0.9"
 serde_json = "0.9"

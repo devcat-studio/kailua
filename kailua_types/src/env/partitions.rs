@@ -19,10 +19,10 @@ impl<T: Partition> Partitions<T> {
     }
 
     pub fn find(&self, i: usize) -> usize {
-        if let Some(u) = self.map.get(&i) {
+        if let Some(u) = self.map.get(i) {
             let (mut parent, _) = u.read();
             if parent != i { // path compression
-                while let Some(v) = self.map.get(&parent) {
+                while let Some(v) = self.map.get(parent) {
                     let (newparent, _) = v.read();
                     if newparent == parent { break; }
                     parent = newparent;
@@ -46,16 +46,16 @@ impl<T: Partition> Partitions<T> {
         let (_, rrank) = self.map.entry(rhs).or_insert_with(|| Partition::create(rhs, 0)).read();
         match lrank.cmp(&rrank) {
             Ordering::Less => {
-                self.map.get_mut(&lhs).unwrap().write_parent(rhs);
+                self.map.get_mut(lhs).unwrap().write_parent(rhs);
                 rhs
             }
             Ordering::Greater => {
-                self.map.get_mut(&rhs).unwrap().write_parent(lhs);
+                self.map.get_mut(rhs).unwrap().write_parent(lhs);
                 lhs
             }
             Ordering::Equal => {
-                self.map.get_mut(&rhs).unwrap().write_parent(lhs);
-                self.map.get_mut(&lhs).unwrap().increment_rank();
+                self.map.get_mut(rhs).unwrap().write_parent(lhs);
+                self.map.get_mut(lhs).unwrap().increment_rank();
                 lhs
             }
         }

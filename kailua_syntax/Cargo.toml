@@ -15,13 +15,13 @@ name = "kailua-parse-test"
 harness = false
 
 [dependencies]
-log = "0.3"
+log = "0.3.7"
 parse-generics-shim = "0.1.0"
 kailua_env = { path = "../kailua_env" }
 kailua_diag = { path = "../kailua_diag" }
 
 [dev-dependencies]
-env_logger = "0.3"
-regex = "0.1"
+env_logger = "0.4.2"
+regex = "0.2.1"
 clap = "2"
 kailua_test = { path = "../kailua_test" }

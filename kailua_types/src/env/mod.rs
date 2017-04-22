@@ -71,7 +71,7 @@ impl Constraints {
 
     fn get_bound<'a>(&'a self, lhs: TVar) -> Option<&'a Bound> {
         let lhs = self.bounds.find(lhs.0 as usize);
-        self.bounds.get(&lhs).map(|b| &**b)
+        self.bounds.get(lhs).map(|b| &**b)
     }
 
     // Some(bound) indicates that the bound already exists and is not consistent to rhs
@@ -95,7 +95,7 @@ impl Constraints {
         if lhs_ == rhs_ { return true; }
 
         fn take_bound(bounds: &mut VecMap<Box<Bound>>, i: usize) -> Option<Ty> {
-            if let Some(b) = bounds.get_mut(&i) {
+            if let Some(b) = bounds.get_mut(i) {
                 mem::replace(&mut b.bound, None)
             } else {
                 None
@@ -122,7 +122,7 @@ impl Constraints {
         let new = self.bounds.union(lhs_, rhs_);
         if !is_bound_trivial(&bound) {
             // the merged entry should have non-zero rank, so unwrap() is fine
-            self.bounds.get_mut(&new).unwrap().bound = bound;
+            self.bounds.get_mut(new).unwrap().bound = bound;
         }
 
         true
@@ -398,7 +398,7 @@ impl Types {
         trace!("{:?} already had {:?} and {:?}", lhs, fields, next);
 
         let e = inner(self, lhs, includes, nilable, &mut fields, next);
-        self.row_infos.get_mut(&lhs_).unwrap().fields = Some(fields);
+        self.row_infos.get_mut(lhs_).unwrap().fields = Some(fields);
         return e;
 
         fn inner(ctx: &mut Types, _lhs: RVar, includes: &[(Key, Slot)], nilable: bool,
@@ -628,7 +628,7 @@ impl TypeContext for Types {
                 return rvar0;
             }
 
-            if let Some(info) = self.row_infos.get(&rvar.to_usize()) {
+            if let Some(info) = self.row_infos.get(rvar.to_usize()) {
                 for (k, v) in info.fields.as_ref().unwrap().iter() {
                     if let Some(ref v) = *v {
                         // positive fields can overwrite negative fields
@@ -711,7 +711,7 @@ impl TypeContext for Types {
             if slowtick {
                 slowtick = false;
             } else {
-                slowrvar = self.row_infos.get(&slowrvar.to_usize()).unwrap().next.clone().unwrap();
+                slowrvar = self.row_infos.get(slowrvar.to_usize()).unwrap().next.clone().unwrap();
                 if slowrvar == rvar {
                     return Err(self.gen_report().recursive_record());
                 }
@@ -724,7 +724,7 @@ impl TypeContext for Types {
         &self, mut rvar: RVar, f: &mut FnMut(&Key, &Slot) -> Result<(), ()>
     ) -> Result<RVar, ()> {
         loop {
-            if let Some(info) = self.row_infos.get(&rvar.to_usize()) {
+            if let Some(info) = self.row_infos.get(rvar.to_usize()) {
                 if let Some(ref fields) = info.fields {
                     trace!("{:?} contains {:?}", rvar, fields);
                     for (k, v) in fields.iter() {
