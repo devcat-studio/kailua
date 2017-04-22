@@ -1,6 +1,7 @@
-// nesting analysis.
-// this is a post-processing engine after tokenization, to give useful information to
-// the autocompletion engine and parser (for error recovery).
+/// Nesting analysis.
+///
+/// This is a post-processing engine after lexical analysis, to give useful information to
+/// the autocompletion engine and parser (for error recovery).
 
 use std::cmp;
 use std::cell::Cell;
@@ -43,15 +44,16 @@ impl Nesting {
     }
 }
 
-// the major category of the current nesting, most commonly used for autocompletion
+/// The major category of the current nesting, most commonly used for autocompletion.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum NestingCategory {
     Expr = 0,
     Meta = 1,
 }
 
-// a monotonically increasing serial number, only incremented when the nesting changes.
-// the exact number has no meaning, only useful for the comparison.
+/// A monotonically increasing serial number, only incremented when the nesting changes.
+///
+/// The exact number has no meaning, it is only useful for the comparison.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct NestingSerial(u32);
 
@@ -61,16 +63,30 @@ impl NestingSerial {
     pub fn to_usize(&self) -> usize { self.0 as usize }
 }
 
+/// A token with the nesting information.
+///
+/// Conceptually each token updates the current list of open nestings,
+/// so the nesting information here applies to applies to the token and following whitespaces.
+/// For example, `do return end` has one nesting, which span is `do return` and one space.
 #[derive(Clone, PartialEq, Debug)]
 pub struct NestedToken {
+    /// The base token.
     pub tok: Spanned<Tok>,
 
-    // conceptually this nesting information applies to the token and following whitespaces
+    /// The current nesting depth.
     pub depth: u16,
+
+    /// The major category of the current nesting.
     pub category: NestingCategory,
+
+    /// The serial number of the current nesting.
     pub serial: NestingSerial,
 }
 
+/// The nesting analyzer.
+///
+/// Externally this is a simple iterator adapter that converts spanned tokens
+/// to spanned tokens with nesting informations.
 pub struct Nest<'a> {
     iter: &'a mut Iterator<Item=Spanned<Tok>>,
     open_nestings: Vec<(Nesting, u32)>,
@@ -79,6 +95,7 @@ pub struct Nest<'a> {
 }
 
 impl<'a> Nest<'a> {
+    /// Creates a new nesting analyzer with given stream of spanned tokens.
     pub fn new(iter: &'a mut Iterator<Item=Spanned<Tok>>) -> Nest<'a> {
         Nest {
             iter: iter,

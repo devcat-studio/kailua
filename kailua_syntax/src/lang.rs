@@ -1,13 +1,17 @@
+//! Source language description.
+//!
+//! Right now Kailua only supports the entirety of Lua 5.1 and its own extension syntax,
+//! but these types may allow other versions of Lua in the future.
+
 use std::fmt;
 use kailua_diag::{Locale, Localize, Localized};
 
-// a number describing a language version being used.
-// this affects the parsing but not the lexing (well, at least currently).
-//
-// this is a combination of two bit fields 0xLLKK0000
-// where 0xLL is the Lua version and 0xKK is the Kailua version (or 0x00 if disabled).
-// lower 16 bits are reserved for the future usage and significant extensions.
-// 0x00000000 is reserved for the absence of language information.
+/// Describes a language version being used.
+///
+/// Internally this is a combination of two bit fields `0xLLKK0000`,
+/// where `0xLL` is the Lua version and `0xKK` is the Kailua version (or `0x00` if disabled).
+/// Lower 16 bits are reserved for the future usage and significant extensions.
+/// `0x00000000` is reserved for the absence of language information.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Language(u32);
 
@@ -67,10 +71,16 @@ impl Localize for Language {
     }
 }
 
+/// Lua version.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Lua {
+    /// Lua 5.1.
     Lua51 = 0x51,
+
+    /// Lua 5.2.
     Lua52 = 0x52,
+
+    /// Lua 5.3.
     Lua53 = 0x53,
 }
 
@@ -105,23 +115,29 @@ impl Localize for Lua {
     }
 }
 
+/// Kailua version.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Kailua {
     // 0x00 is reserved for no extension
-    Kailua01 = 0x01, // to be updated later
+
+    /// Kaliua 1.0.x.
+    ///
+    /// Please note that they had been in flux because of heavy development
+    /// and no strong compatibility is guaranteed.
+    Kailua10 = 0x10,
 }
 
 impl Kailua {
     pub fn from_u32(v: u32) -> Option<Kailua> {
         match v {
-            0x01 => Some(Kailua::Kailua01),
+            0x10 => Some(Kailua::Kailua10),
             _ => None,
         }
     }
 
     pub fn name(&self) -> &'static str {
         match *self {
-            Kailua::Kailua01 => "Kailua 0.1",
+            Kailua::Kailua10 => "Kailua 1.0.x",
         }
     }
 }

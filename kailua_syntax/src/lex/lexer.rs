@@ -22,6 +22,10 @@ fn normalize_data(c: SourceData) -> SourceData {
     }
 }
 
+/// The lexical analyzer.
+///
+/// Externally this is a simple iterator adapter that converts spanned source data
+/// to spanned tokens plus the EOF token. Reports are generated out of band.
 pub struct Lexer<'a> {
     bytes: &'a mut Iterator<Item=Spanned<SourceData>>,
     pos: Pos,
@@ -35,6 +39,7 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
+    /// Creates a lexer with given stream of spanned source data and the report receiver.
     pub fn new(bytes: &'a mut Iterator<Item=Spanned<SourceData>>,
                report: &'a Report) -> Lexer<'a> {
         let first = bytes.next().expect("Lexer should have got at least one token");

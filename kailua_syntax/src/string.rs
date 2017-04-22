@@ -1,3 +1,5 @@
+//! Common string-like types and routines.
+
 use std::fmt;
 use std::ops;
 use lex::Keyword;
@@ -30,11 +32,18 @@ fn format_ascii_vec(f: &mut fmt::Formatter, s: &[u8]) -> fmt::Result {
     Ok(())
 }
 
+/// A name from the source code.
+///
+/// This may include non-identifier bytes if constructed from a quoted name in the meta block.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Name(Box<[u8]>);
 
 impl Name {
+    /// Returns true if the name is not an ordinary identifier
+    /// for all known versions of Lua and Kailua.
     pub fn quote_required(&self) -> bool { !is_unquotable(&self.0) }
+
+    /// Extracts the owned slice.
     pub fn into_bytes(self) -> Box<[u8]> { self.0 }
 }
 
@@ -51,12 +60,22 @@ impl ops::Deref for Name {
     fn deref(&self) -> &[u8] { &self.0[..] }
 }
 
+/// Same to the `Debug` implementation.
 impl fmt::Display for Name {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(self, f)
     }
 }
 
+/// A name can be formatted in three ways:
+///
+/// * `{}` will always print backquotes. Suitable for error messages.
+/// * `{:-}` won't print any backquotes.
+/// * `{:+}` will print backquotes when required (see also `Name::quote_required`).
+///
+/// In any case, non-printable bytes are escaped as like `\r` or `\xab`;
+/// any quotes (`'`, `"` or `` ` ``) are also escaped.
+/// This makes switching quotes possible: `"{:-}"` will equal to the `Str` output.
 impl fmt::Debug for Name {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let quote = if f.sign_plus() { self.quote_required() } else { !f.sign_minus() };
@@ -67,11 +86,16 @@ impl fmt::Debug for Name {
     }
 }
 
+/// A string (or sometimes a desugared name) from the source code.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Str(Box<[u8]>);
 
 impl Str {
+    /// Returns true if the string is not an ordinary identifier
+    /// for all known versions of Lua and Kailua.
     pub fn quote_required(&self) -> bool { !is_unquotable(&self.0) }
+
+    /// Extracts the owned slice.
     pub fn into_bytes(self) -> Box<[u8]> { self.0 }
 }
 
@@ -94,6 +118,15 @@ impl fmt::Display for Str {
     }
 }
 
+/// A string can be formatted in three ways:
+///
+/// * `{}` will always print double quotes. Suitable for error messages.
+/// * `{:-}` won't print any double quotes.
+/// * `{:+}` will print double quotes when required (see also `Str::quote_required`).
+///
+/// In any case, non-printable bytes are escaped as like `\r` or `\xab`;
+/// any quotes (`'`, `"` or `` ` ``) are also escaped.
+/// This makes switching quotes possible: `` `{:-}` `` will equal to the `Name` output.
 impl fmt::Debug for Str {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let quote = if f.sign_plus() { self.quote_required() } else { !f.sign_minus() };

@@ -13,11 +13,12 @@ use message as m;
 use lang::{Language, Lua, Kailua};
 use lex::{Tok, Punct, Keyword, NestedToken, NestingCategory, NestingSerial};
 use string::{Str, Name};
-use ast::{NameRef, Var, Seq, Sig, Attr, Args};
+use ast::{NameRef, Var, Seq, Sig, Attr, Args, Table};
 use ast::{Ex, Exp, UnOp, BinOp, SelfParam, TypeScope, St, Stmt, Block};
 use ast::{M, MM, K, Kind, SlotKind, FuncKind, TypeSpec, Varargs, Returns};
 use ast::{LocalName, LocalNameKind, TokenAux, Chunk};
 
+/// The parser.
 pub struct Parser<'a> {
     iter: iter::Fuse<&'a mut Iterator<Item=NestedToken>>,
     language: Language,
@@ -334,10 +335,12 @@ macro_rules! match_next {
 }
 
 impl<'a> Parser<'a> {
+    /// Creates a new nesting analyzer with given stream of spanned tokens
+    /// with nesting informations and the report receiver.
     pub fn new(iter: &'a mut Iterator<Item=NestedToken>, report: &'a Report) -> Parser<'a> {
         let mut parser = Parser {
             iter: iter.fuse(),
-            language: Language::new(Lua::Lua51, Kailua::Kailua01), // XXX for now
+            language: Language::new(Lua::Lua51, Kailua::Kailua10), // XXX should be configurable
             elided_newline: None,
             lookahead: None,
             lookahead2: None,
@@ -1715,7 +1718,7 @@ impl<'a> Parser<'a> {
         Ok((ellipsis, items))
     }
 
-    fn parse_table_body(&mut self) -> Result<Vec<(Option<Spanned<Exp>>, Spanned<Exp>)>> {
+    fn parse_table_body(&mut self) -> Result<Table> {
         let (_ellipsis, items) = self.scan_tabular_body(false, |parser| {
             parser.recover_upto(|parser| {
                 if parser.may_expect(Punct::LBracket) {
@@ -1748,7 +1751,7 @@ impl<'a> Parser<'a> {
                 }
             })
         })?;
-        Ok(items)
+        Ok(Table { items: items })
     }
 
     fn try_parse_args(&mut self) -> Result<Option<Spanned<Args>>> {
@@ -3191,6 +3194,11 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parses the entire file and returns a chunk (while generating reports).
+    ///
+    /// Most parsing errors can be recovered, so the caller should also determine if
+    /// it can continue in spite of reported errors.
+    /// `kailua_diag::report::TrackMaxKind` is useful for this.
     pub fn into_chunk(mut self) -> report::Result<Chunk> {
         self.scope_stack = vec![];
         self.block_depth = 0;

@@ -8,7 +8,7 @@ use take_mut::take;
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag::{self, Result, Report, Reporter};
 use kailua_syntax::{Str, Name};
-use kailua_syntax::ast::{self, NameRef, Var, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp};
+use kailua_syntax::ast::{self, NameRef, Var, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp, Table};
 use kailua_syntax::ast::{SelfParam, TypeScope, Args, St, Stmt, Block, K, Attr, M, MM, Varargs};
 use diag::{TypeReport, TypeReportHint, TypeReportMore};
 use ty::{Displayed, Display};
@@ -2210,9 +2210,9 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 (1, Exitable::new(SpannedSlotSeq::from(strty)))
             },
 
-            Args::Table(ref fields) => {
+            Args::Table(ref tab) => {
                 let hint = hint.map(|seq| seq.into_first());
-                let table = self.visit_table(fields, args.span, hint)?;
+                let table = self.visit_table(tab, args.span, hint)?;
                 (1, table.map(|table| SpannedSlotSeq::from(table.with_loc(args))))
             },
         };
@@ -2376,7 +2376,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
         Ok(Exitable(cmp::max(exit, retexit), SlotSeq::from_seq(returns)))
     }
 
-    fn visit_table(&mut self, fields: &'inp [(Option<Spanned<Exp>>, Spanned<Exp>)], tabspan: Span,
+    fn visit_table(&mut self, tab: &'inp Table, tabspan: Span,
                    hint: Option<Spanned<Slot>>) -> Result<Exitable<T<'static>>> {
         // the finally resolved type depends on the hint type
         #[derive(Debug)]
@@ -2525,9 +2525,9 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
 
         let mut len = 0;
         let mut exprexit = ExprExit::None;
-        for (idx, &(ref key, ref value)) in fields.iter().enumerate() {
+        for (idx, &(ref key, ref value)) in tab.items.iter().enumerate() {
             // if this is the last entry and no explicit index is set, splice the values
-            if idx == fields.len() - 1 && key.is_none() {
+            if idx == tab.items.len() - 1 && key.is_none() {
                 let Exitable(exit, vty) = self.visit_exp(value, None)?;
                 exprexit = exprexit.collide(exit);
                 for ty in vty.head.into_iter() {
@@ -2669,9 +2669,9 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                                                    exp.span, hint)?;
                 Exitable::new(SlotSeq::from(returns))
             },
-            Ex::Table(ref fields) => {
+            Ex::Table(ref tab) => {
                 let hint = hint.map(|seq| seq.into_first());
-                self.visit_table(fields, exp.span, hint)?.map(SlotSeq::from)
+                self.visit_table(tab, exp.span, hint)?.map(SlotSeq::from)
             },
 
             Ex::FuncCall(ref func, ref args) => {
@@ -2857,8 +2857,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                         let argstr = Str::from(s[..].to_owned());
                         Some(Slot::just(Ty::new(T::Str(Cow::Owned(argstr)))).with_loc(args))
                     },
-                    Args::Table(ref fields) => {
-                        let Exitable(_, table) = self.visit_table(fields, args.span, None)?;
+                    Args::Table(ref tab) => {
+                        let Exitable(_, table) = self.visit_table(tab, args.span, None)?;
                         Some(Slot::just(Ty::new(table)).with_loc(args))
                     },
                 }

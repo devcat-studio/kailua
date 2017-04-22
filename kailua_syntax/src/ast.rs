@@ -1,3 +1,10 @@
+//! The abstract syntax tree (AST).
+//!
+//! The basic AST roughly follows Lua's own [syntax description][lua51-syntax].
+//! All Kailua-specific variants have names starting with `Kailua`.
+//!
+//! [lua51-syntax]: https://www.lua.org/manual/5.1/manual.html#8
+
 use std::fmt;
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -21,6 +28,8 @@ impl fmt::Display for Comma {
     }
 }
 
+/// A resolved reference to the name, either local or global.
+//
 // why don't we use scoped ids everywhere? scoped ids are bound to the scope map,
 // and we may have multiple ASTs (thus multiple scope maps) there!
 // scoped ids can be paired with the scope map (implicitly), but this only works for local names.
@@ -28,10 +37,19 @@ impl fmt::Display for Comma {
 // also associated (however non-unique) scoped ids for them.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum NameRef {
+    /// A local name, represented by a scoped identifier bound to the scope map.
+    /// A (portion of) `Chunk` is required for mapping.
     Local(ScopedId),
+
+    /// A global name, represented by a name.
     Global(Name),
 }
 
+/// In the debugging output the name reference is denoted
+/// either <code>&lt;<i>id</i>&gt;</code> (local) or <code>`<i>Name</i>`_</code> (global).
+///
+/// Note that `kailua_test` will automatically convert it to the more readable form
+/// for local names: <code>`<i>Name</i>`$<i>scope</i></code>.
 impl fmt::Debug for NameRef {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -41,6 +59,7 @@ impl fmt::Debug for NameRef {
     }
 }
 
+/// An `[attribute]` syntax in the Kailua types.
 #[derive(Clone, PartialEq)]
 pub struct Attr {
     pub name: Spanned<Name>,
@@ -52,6 +71,7 @@ impl fmt::Debug for Attr {
     }
 }
 
+/// A sequence of items, optionally having a "tail" item for the remainder (e.g. varargs).
 #[derive(Clone, PartialEq)]
 pub struct Seq<Head, Tail=Head> {
     pub head: Vec<Head>,
@@ -79,10 +99,16 @@ impl<Head: fmt::Debug, Tail: fmt::Debug> fmt::Debug for Seq<Head, Tail> {
     }
 }
 
+/// A left-hand side of the assignment.
 #[derive(Clone, PartialEq)]
 pub enum Var {
+    /// `name`.
     Name(Spanned<NameRef>),
+
+    /// `exp[exp]`.
     Index(Spanned<Exp>, Spanned<Exp>),
+
+    /// `exp.name`. Distinguished from `Var::Index` for the purpose of IDE support.
     IndexName(Spanned<Exp>, Spanned<Name>),
 }
 
@@ -96,10 +122,19 @@ impl fmt::Debug for Var {
     }
 }
 
+/// Any node that can be optionally annotated with a Kailua type.
 #[derive(Clone, PartialEq)]
 pub struct TypeSpec<T> {
+    /// The base node.
     pub base: T,
-    pub modf: MM, // allows for modules
+
+    /// An extended modifier (e.g. `const` or `module`) for the type.
+    ///
+    /// Defaults to `MM::None` when the annotation is absent.
+    /// This is distinct from the type because `--: const` etc. are allowed.
+    pub modf: MM,
+
+    /// The type, if explicitly given.
     pub kind: Option<Spanned<Kind>>,
 }
 
@@ -120,10 +155,16 @@ impl<T: fmt::Debug> fmt::Debug for TypeSpec<T> {
     }
 }
 
+/// A return type of a function in the Kailua type.
 #[derive(Clone, PartialEq)]
 pub enum Returns {
+    /// `--> type` or `--> (type, type...)`.
     Seq(Seq<Spanned<Kind>>),
-    Never(Span), // a span for `!`
+
+    /// `--> !`.
+    ///
+    /// The span points to a token `!`.
+    Never(Span),
 }
 
 impl fmt::Debug for Returns {
@@ -144,10 +185,14 @@ impl fmt::Debug for Returns {
     }
 }
 
+/// A Kailua type for variadic arguments.
 #[derive(Clone, PartialEq)]
 pub struct Varargs {
+    /// A type of each variadic argument. Inferred if missing.
     pub kind: Option<Spanned<Kind>>,
-    // if Lua 5.0 compat is enabled, a scoped id for `arg` (takes precedence over normal args!)
+
+    /// A scoped identifier for `arg` (an implicit variable for varargs in Lua 5.0).
+    /// This is only used in Lua 5.1 for the compatibility.
     pub legacy_arg: Option<Spanned<ScopedId>>,
 }
 
@@ -167,11 +212,17 @@ impl fmt::Debug for Varargs {
     }
 }
 
+/// A Kailua-specific function signature.
 #[derive(Clone, PartialEq)]
 pub struct Sig {
+    /// A list of attributes.
     pub attrs: Vec<Spanned<Attr>>,
-    pub args: Spanned<Seq<TypeSpec<Spanned<ScopedId>>, Varargs>>, // may have to be inferred
-    pub returns: Option<Returns>, // may have to be inferred
+
+    /// A list of arguments (resolved to scoped identifiers) and associated types if any.
+    pub args: Spanned<Seq<TypeSpec<Spanned<ScopedId>>, Varargs>>,
+
+    /// A list of return types, if explicitly given. Inferred if missing.
+    pub returns: Option<Returns>,
 }
 
 impl fmt::Debug for Sig {
@@ -207,11 +258,39 @@ impl fmt::Debug for Sig {
     }
 }
 
+/// A table constructor.
+#[derive(Clone, PartialEq)]
+pub struct Table {
+    /// An ordered list of items, which may or may not have an index.
+    pub items: Vec<(Option<Spanned<Exp>>, Spanned<Exp>)>,
+}
+
+impl fmt::Debug for Table {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{{")?;
+        let comma = Comma::new();
+        for &(ref k, ref v) in &self.items {
+            write!(f, "{}", comma)?;
+            if let Some(ref k) = *k { write!(f, "[{:?}] = ", k)?; }
+            write!(f, "{:?}", v)?;
+        }
+        write!(f, "}}")
+    }
+}
+
+/// Arguments to a function call.
 #[derive(Clone, PartialEq)]
 pub enum Args {
-    List(Vec<Spanned<Exp>>), // f(...)
-    Str(Str), // f"string", f[[string]]
-    Table(Vec<(Option<Spanned<Exp>>, Spanned<Exp>)>), // f{1, 2, 3}
+    /// `f(a, b, c)` (span doesn't include `f`).
+    List(Vec<Spanned<Exp>>),
+
+    /// `f"string"` or `f[[string]]` (span doesn't include `f`).
+    /// Distinguished from `Args::List` for the purpose of IDE support.
+    Str(Str),
+
+    /// `f{1, 2, 3}` (span doesn't include `f`).
+    /// Distinguished from `Args::List` for the purpose of IDE support.
+    Table(Table),
 }
 
 impl fmt::Debug for Args {
@@ -224,42 +303,74 @@ impl fmt::Debug for Args {
                 write!(f, ")")
             },
             Args::Str(ref s) => write!(f, "{:?}", s),
-            Args::Table(ref fs) => {
-                write!(f, "{{")?;
-                let comma = Comma::new();
-                for &(ref k, ref v) in fs {
-                    write!(f, "{}", comma)?;
-                    if let Some(ref k) = *k { write!(f, "[{:?}] = ", k)?; }
-                    write!(f, "{:?}", v)?;
-                }
-                write!(f, "}}")
-            },
+            Args::Table(ref tab) => write!(f, "{:?}", tab),
         }
     }
 }
 
+/// An expression.
 #[derive(Clone, PartialEq)]
 pub enum Ex {
+    /// A dummy node resulting from a parsing error.
+    ///
+    /// Technically the type checker "evaluates" this node into an error type.
     Oops,
 
-    // literals
+    /// `nil`.
     Nil,
-    False,
-    True,
-    Num(f64),
-    Str(Str),
-    Varargs,
-    Func(Sig, Scope, Spanned<Block>),
-    Table(Vec<(Option<Spanned<Exp>>, Spanned<Exp>)>),
 
-    // expressions
+    /// `false`.
+    False,
+
+    /// `true`.
+    True,
+
+    /// A number literal.
+    Num(f64),
+
+    /// A string literal.
+    ///
+    /// A difference between `"string"` and `[[string]]` is not recorded.
+    Str(Str),
+
+    /// `...`.
+    Varargs,
+
+    /// A function literal (`function() ... end`).
+    ///
+    /// An associated scope is for the function body.
+    Func(Sig, Scope, Spanned<Block>),
+
+    /// `{1, 2, 3}`.
+    Table(Table),
+
+    /// A variable reference.
     Var(Spanned<NameRef>),
-    Exp(Spanned<Exp>), // mostly for parentheses
+
+    /// Another expression.
+    ///
+    /// This is primarily used to keep parentheses,
+    /// so that `(3)` is composed of two expression nodes with two different spans.
+    Exp(Spanned<Exp>),
+
+    /// `f()` or `f.g()` (the latter will have an `Ex::IndexName` node).
     FuncCall(Spanned<Exp>, Spanned<Args>),
+
+    /// `f:g()` or `f.g:h()` (the latter will have an `Ex::IndexName` node).
+    ///
+    /// A span for the entire `f:g` or `f.g:h` part is separately recorded for autocompletion.
     MethodCall(Spanned<(Spanned<Exp>, Spanned<Name>)>, Spanned<Args>),
+
+    /// `exp[exp]`.
     Index(Spanned<Exp>, Spanned<Exp>),
+
+    /// `exp.name`. Distinguished from `Ex::Index` for the purpose of IDE support.
     IndexName(Spanned<Exp>, Spanned<Name>),
+
+    /// `unop exp`.
     Un(Spanned<UnOp>, Spanned<Exp>),
+
+    /// `exp binop exp`.
     Bin(Spanned<Exp>, Spanned<BinOp>, Spanned<Exp>),
 }
 
@@ -274,16 +385,7 @@ impl fmt::Debug for Ex {
             Ex::Str(ref s) => write!(f, "{:?}", *s),
             Ex::Varargs => write!(f, "..."),
             Ex::Func(ref p, bs, ref b) => write!(f, "Func({:?}, {:?}{:?})", *p, bs, *b),
-            Ex::Table(ref fs) => {
-                write!(f, "{{")?;
-                let comma = Comma::new();
-                for &(ref k, ref v) in fs {
-                    write!(f, "{}", comma)?;
-                    if let Some(ref k) = *k { write!(f, "[{:?}] = ", k)?; }
-                    write!(f, "{:?}", v)?;
-                }
-                write!(f, "}}")
-            },
+            Ex::Table(ref tab) => write!(f, "{:?}", tab),
 
             Ex::Var(ref id) => write!(f, "{:?}", id),
             Ex::Exp(ref e) => write!(f, "({:?})", e),
@@ -298,12 +400,17 @@ impl fmt::Debug for Ex {
     }
 }
 
+/// A boxed expression node.
 pub type Exp = Box<Ex>;
 
+/// A unary operator.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum UnOp {
+    /// `-`.
     Neg,
+    /// `not`.
     Not,
+    /// `#`.
     Len,
 }
 
@@ -317,22 +424,38 @@ impl UnOp {
     }
 }
 
+/// A bunary operator.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BinOp {
+    /// `+`.
     Add,
+    /// `-`.
     Sub,
+    /// `*`.
     Mul,
+    /// `/`.
     Div,
+    /// `^`.
     Pow,
+    /// `%`.
     Mod,
+    /// `..`.
     Cat,
+    /// `<`.
     Lt,
+    /// `<=`.
     Le,
+    /// `>`.
     Gt,
+    /// `>=`.
     Ge,
+    /// `==`.
     Eq,
+    /// `~=`.
     Ne,
+    /// `and`.
     And,
+    /// `or`.
     Or,
 }
 
@@ -358,6 +481,7 @@ impl BinOp {
     }
 }
 
+/// A scoped identifier for the implicit `self` parameter.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SelfParam(pub ScopedId);
 
@@ -367,46 +491,116 @@ impl fmt::Debug for SelfParam {
     }
 }
 
+/// A scope of the named Kailua type (from `--# type`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TypeScope {
+    /// A type name is local to the current (Lua) scope.
     Local,
+
+    /// A type name is globally usable.
     Global,
+
+    /// A type name is local to the current (Lua) scope,
+    /// but `require`ing the current module will copy it to the callee's local scope.
     Exported,
 }
 
+/// A statement.
+///
+/// Many statement nodes have associated scopes.
+/// The scope, if present, is associated to the following node,
+/// except when the scope is the last field,
+/// in which case it is a "sibling" scope applied to the remaining statements in the block.
+/// Note that not all statements introducing scopes have them,
+/// as local names will have associated sibling scopes anyway. 
 #[derive(Clone, PartialEq)]
 pub enum St {
+    /// A dummy node resulting from a parsing error.
+    ///
+    /// Technically the type checker "evaluates" this node by ignoring it.
     Oops,
 
-    // every scope is associated to the following node, except when the scope is the last field,
-    // in which case it is a sibling scope applied to the following stmts.
+    /// An expression used as a statement.
+    ///
+    /// The actual Lua syntax only allows for a function call here,
+    /// but the node itself allows for any expression to account for the partially valid code.
+    Void(Spanned<Exp>),
 
-    Void(Spanned<Exp>), // technically not every Exp is valid here, but for simplicity.
+    /// `var, exp.name, exp[exp] = exp, exp... --: type, type...`.
+    ///
+    /// The right-hand side can be missing if l-values are not followed by `=`.
+    /// The parser only tries to recognize l-values when there is a following comma,
+    /// so `3` or `f` is a (invalid) `St::Void` while `a,` or `a,b` is a (invalid) `St::Assign`.
     Assign(Spanned<Vec<TypeSpec<Spanned<Var>>>>, Option<Spanned<Vec<Spanned<Exp>>>>),
+
+    /// `do ... end`.
     Do(Spanned<Block>),
+
+    /// `while exp do ... end`.
     While(Spanned<Exp>, Spanned<Block>),
+
+    /// `repeat ... until exp`.
     Repeat(Spanned<Block>, Spanned<Exp>),
+
+    /// `if exp then ... else if exp then ... else ... end`.
     If(Vec<Spanned<(Spanned<Exp>, Spanned<Block>)>>, Option<Spanned<Block>>),
+
+    /// `for name = exp, exp[, exp] do ... end`.
     For(Spanned<ScopedId>, Spanned<Exp>, Spanned<Exp>, Option<Spanned<Exp>>, Scope, Spanned<Block>),
+
+    /// `for name, ... in exp, ... do ... end`.
     ForIn(Spanned<Vec<Spanned<ScopedId>>>, Spanned<Vec<Spanned<Exp>>>, Scope, Spanned<Block>),
+
+    /// `[local] function name(...) do ... end`.
     FuncDecl(Spanned<NameRef>, Sig, Scope, Spanned<Block>, Option<Scope>),
+
+    /// `function name.field...field.method(...) do ... end` (when `SelfParam` is missing) or
+    /// `function name.field...field:method(...) do ... end` (when `SelfParam` is given).
     MethodDecl(Spanned<(Spanned<NameRef>, Vec<Spanned<Name>>)>,
                Option<Spanned<SelfParam>>, Sig, Scope, Spanned<Block>),
+
+    /// `local name, ... = exp, ...`.
     Local(Spanned<Vec<TypeSpec<Spanned<ScopedId>>>>, Spanned<Vec<Spanned<Exp>>>, Scope),
+
+    /// `return exp, ...`.
     Return(Spanned<Vec<Spanned<Exp>>>),
+
+    /// `break`.
     Break,
 
-    // Kailua extensions
+    /// `--# open name`.
     KailuaOpen(Spanned<Name>),
+
+    /// `--# type [scope] name = type`.
     KailuaType(TypeScope, Spanned<Name>, Spanned<Kind>),
-    KailuaAssume(NameRef, // a final name reference to be created
-                 Spanned<NameRef>, // a name being updated
-                 M, Spanned<Kind>, Option<Scope>),
+
+    /// `--# assume [global] name: type`.
+    ///
+    /// The first `NameRef` is a final name to be created,
+    /// while the second `NameRef` is a name being updated (and won't be used from that point).
+    /// The sibling scope only exists when the statement is redefining a local name.
+    KailuaAssume(NameRef, Spanned<NameRef>, M, Spanned<Kind>, Option<Scope>),
+
+    /// `--# assume [static] name.field.field: type`.
+    ///
+    /// The first `bool` is true when `static` is present.
     KailuaAssumeField(bool /*static*/, Spanned<(Spanned<NameRef>, Vec<Spanned<Name>>)>,
                       M, Spanned<Kind>),
+
+    /// `--# assume name.field.field: method(...) --> ...`.
+    ///
+    /// This is distinct from `St::KailuaAssumeField` because it is not possible to
+    /// desugar it without knowing the type of `self`.
     KailuaAssumeMethod(Spanned<(Spanned<NameRef>, Vec<Spanned<Name>>)>, M, Spanned<FuncKind>),
 }
 
+/// In the debugging output scopes are printed in two ways:
+///
+/// * Scopes associated to a nested block are printed *before* that block:
+///   <code>$<i>scope</i>[...]</code>.
+///
+/// * Scopes associated to the remaining statements in the current block ("sibling scope")
+///   are printed *after* the closing parenthesis: <code><i>Node</i>(...)$<i>scope</i></code>.
 impl fmt::Debug for St {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -470,12 +664,21 @@ impl fmt::Debug for St {
     }
 }
 
+/// A boxed statement node.
 pub type Stmt = Box<St>;
+
+/// A sequence of spanned statements.
 pub type Block = Vec<Spanned<Stmt>>;
 
+/// A type modifier for Kailua.
+///
+/// A modifier primarily determines whether a field or variable can be modified or not.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum M {
+    /// Mutable (default, no separate keyword exists).
     None,
+
+    /// Immutable (`const`).
     Const,
 }
 
@@ -488,11 +691,23 @@ impl fmt::Debug for M {
     }
 }
 
+/// An extended type modifier for Kailua.
+///
+/// This is a superset of `M` used only for variables.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum MM {
+    /// Mutable (default, no separate keyword exists).
     None,
+
+    /// Immutable (`const`).
     Const,
-    Module, // a special modifier (same to None otherwise) for delayed type checking
+
+    /// Mutable, but registers for the delayed type checking (`module`).
+    ///
+    /// Indexing such variables will require an explicit type,
+    /// and assignments to resulting fields are stored to the current scope (and not checked).
+    /// Stored nodes are checked at the end of the scope where variables were registered.
+    Module,
 }
 
 impl fmt::Debug for MM {
@@ -505,9 +720,13 @@ impl fmt::Debug for MM {
     }
 }
 
+/// A type with a modifier, used for nested field types ("slot types").
 #[derive(Clone, PartialEq)]
 pub struct SlotKind {
+    /// A modifier.
     pub modf: M,
+
+    /// A type.
     pub kind: Spanned<Kind>,
 }
 
@@ -517,11 +736,17 @@ impl fmt::Debug for SlotKind {
     }
 }
 
+/// A function type for Kailua.
 #[derive(Clone, PartialEq)]
 pub struct FuncKind {
-    // the name is purely for description and has no effect in the type.
-    // in a valid code all of them (and all unique) or none of them would be present.
+    /// A list of argument types with optional names.
+    ///
+    /// The name is purely for description and has no effect in the type.
+    /// The parser will issue an error if some arguments have names and others don't
+    /// or names are not distinct, but the type checker should not care.
     pub args: Seq<(Option<Spanned<Name>>, Spanned<Kind>), Spanned<Kind>>,
+
+    /// A return type.
     pub returns: Returns,
 }
 
@@ -543,35 +768,103 @@ impl fmt::Debug for FuncKind {
     }
 }
 
-// not "type" to avoid a conflict (and it's not really a type but a spec that leads to a type)
+/// A Kailua type.
+///
+/// The syntax-level type is actually termed a "kind",
+/// because this and the actual type are frequently used altogether,
+/// and it is not really a "type" but a specification that leads to a type.
 #[derive(Clone, PartialEq)]
 pub enum K {
+    /// An error type resulting from a parsing error.
     Oops,
+
+    /// `WHATEVER`.
     Dynamic,
+
+    /// `any`.
     Any,
+
+    /// `nil`.
     Nil,
+
+    /// `boolean` or `bool`.
     Boolean,
+
+    /// A boolean literal type (`true` or `false`).
     BooleanLit(bool),
+
+    /// `number`.
     Number,
+
+    /// `integer` or `int`.
     Integer,
+
+    /// An integral literal type.
     IntegerLit(i32),
+
+    /// `string`.
     String,
+
+    /// A string literal type.
     StringLit(Str),
+
+    /// `table`.
     Table,
+
+    /// `{}`.
     EmptyTable,
+
+    /// `{a: T, b: U}` (inextensible) or `{a: T, b: U, ...}` (extensible).
+    ///
+    /// The second `bool` is true if the record type is extensible.
     Record(Vec<(Spanned<Str>, Spanned<SlotKind>)>, bool /*extensible*/),
+
+    /// `{T, U}`.
+    ///
+    /// The tuple type is never extensible,
+    /// though the checker can internally have extensible tuples.
     Tuple(Vec<Spanned<SlotKind>>),
+
+    /// `vector<T>`. (The name "array" is a historic artifact.)
     Array(Spanned<SlotKind>),
+
+    /// `map<T, U>`.
     Map(Spanned<Kind>, Spanned<SlotKind>),
+
+    /// `function`.
     Function,
+
+    /// `function(...) -> ...`.
     Func(Spanned<FuncKind>),
+
+    /// `thread`.
     Thread,
+
+    /// `userdata`.
     UserData,
+
+    /// A named type.
     Named(Spanned<Name>),
+
+    /// `T?`.
+    ///
+    /// The checker distinguishes a plain type and a "nilable" type,
+    /// but in the syntax `?` is considered a (non-associative) type operator.
     WithNil(Spanned<Kind>),
+
+    /// `T!`.
+    ///
+    /// The checker distinguishes a plain type and a "nilable" type,
+    /// but in the syntax `!` is considered a (non-associative) type operator.
     WithoutNil(Spanned<Kind>),
+
+    /// `T | U | ...`.
     Union(Vec<Spanned<Kind>>),
+
+    /// `[attribute] T`.
     Attr(Spanned<Kind>, Spanned<Attr>),
+
+    /// `error "message"`. Currently parsed but not checked.
     Error(Option<Spanned<Str>>),
 }
 
@@ -623,58 +916,72 @@ impl fmt::Debug for K {
     }
 }
 
+/// A boxed Kailua type node.
 pub type Kind = Box<K>;
 
+/// The category of local names.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LocalNameKind {
+    /// Explicitly defined.
     User,
 
-    // implicitly created from method declarations
+    /// Implicitly created from method declarations.
     ImplicitSelf,
 
-    // implicitly created from variadic arguments (Lua 5.0 compat)
+    /// Implicitly created from variadic arguments (Lua 5.0 compatibility).
     ImplicitLegacyArg,
 
-    // assumed to a local name (which itself is not assumed)
+    /// Created by `--# assume` to a local name with given scoped identifier,
+    /// which itself is defined otherwise.
     AssumedToLocal(ScopedId),
 
-    // assumed to a global name with the same name
+    /// Created by `--# assume` to a global name with the same name.
     AssumedToGlobal,
 }
 
+/// Resolved information about each local name.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LocalName {
+    /// The span of the first occurrence of the name (i.e. from its definition).
     pub def_span: Span,
+
+    /// A category of the local name.
     pub kind: LocalNameKind,
 }
 
-// additional informations generated for each token
+/// An auxiliary information generated for each token.
+///
+/// Each information is assumed to be interpreted with the corresponding token.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TokenAux {
+    /// No additional information.
     None,
 
-    // the token is a Name referring to a local variable with given id
+    /// The token is a `Tok::Name` referring to a local variable with given scoped identifier.
     LocalVarName(ScopedId),
 
-    // the token is a Name referring to a global variable with the same name
+    /// The token is a `Tok::Name` referring to a global variable with the same name.
     GlobalVarName,
 }
 
+/// The parsed chunk, representing a single source file with associated side informations.
 #[derive(Clone)]
 pub struct Chunk {
-    // the top-level block
+    /// The top-level block.
     pub block: Spanned<Block>,
 
-    // scope map for this chunk
+    /// An associated scope map for local names.
     pub map: ScopeMap<Name>,
 
-    // globally defined names with the first definition span (names only used are not included)
+    /// A map from globally assigned names to spans to their first occurrences.
+    ///
+    /// Global names that has been used are not recorded.
     pub global_scope: HashMap<Name, Span>,
 
-    // local name informations for scoped local ids in this chunk
+    /// A map from local names (in the form of scoped identifiers) to the resolved information.
     pub local_names: HashMap<ScopedId, LocalName>,
 
-    // auxiliary information for each input token in the order
+    /// Auxiliary informations for each input token (including `Tok::EOF`), in the order.
     pub token_aux: Vec<TokenAux>,
 }
 

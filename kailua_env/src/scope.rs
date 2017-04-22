@@ -88,7 +88,7 @@ impl Hash for ScopedId {
 /// In the debugging output the scope is denoted <code>&lt;<i>id</i>&gt;</code>.
 ///
 /// Note that `kailua_test` will automatically convert it to the more readable form,
-/// <code><i>Name</i>$<i>scope</i></code>.
+/// <code>`<i>Name</i>`$<i>scope</i></code>.
 impl fmt::Debug for ScopedId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "<{}>", self.id)
