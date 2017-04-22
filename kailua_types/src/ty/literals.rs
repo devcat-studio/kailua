@@ -5,11 +5,19 @@ use kailua_syntax::Str;
 use diag::{Origin, TypeResult};
 use super::{Display, DisplayState, TypeContext, Lattice, Union};
 
+/// Number types.
 #[derive(Clone)]
 pub enum Numbers {
+    /// A single integer literal.
     One(i32),
+
+    /// Multiple integer literals.
     Some(BTreeSet<i32>),
+
+    /// Any integer.
     Int,
+
+    /// Any number.
     All,
 }
 
@@ -152,10 +160,16 @@ impl fmt::Debug for Numbers {
     }
 }
 
+/// String types.
 #[derive(Clone)]
 pub enum Strings {
+    /// A single string literal.
     One(Str),
+
+    /// Multiple string literals.
     Some(BTreeSet<Str>),
+
+    /// Any string.
     All,
 }
 

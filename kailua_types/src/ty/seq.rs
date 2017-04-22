@@ -11,6 +11,10 @@ use diag::{Origin, TypeReport, TypeResult};
 use super::{T, Ty, Slot, Lattice, Union, Dummy};
 use super::{Display, DisplayState, TypeContext, TypeResolver};
 
+/// Yields each element type.
+///
+/// Stops if there is no tail type and all head types have been consumed.
+/// Use `SeqIterWithNil` or `SeqIterWithNone` to control this case.
 pub struct SeqIter<Item: Clone> {
     head: vec::IntoIter<Item>,
     tail: Option<Item>,
@@ -28,9 +32,12 @@ impl<Item: Clone> Iterator for SeqIter<Item> {
     }
 }
 
+/// Yields each element type, where the missing tail is infinitely filled with a `nil`.
 pub type SeqIterWithNil<Item> =
     iter::Chain<SeqIter<Item>, iter::Repeat<Item>>;
 
+/// Yields a `Some` of each element type,
+/// where the missing tail is infinitely filled with a `None`.
 pub type SeqIterWithNone<Item> =
     iter::Chain<iter::Map<SeqIter<Item>, fn(Item) -> Option<Item>>, iter::Repeat<Option<Item>>>;
 
@@ -95,6 +102,7 @@ macro_rules! make_assert_body {
 
 macro_rules! define_tyseq {
     ($(
+        $(#[$m:meta])*
         type $tyseq:ident {
             t = [$($tt:tt)*] $t:ty;
             ty = $ty:ty;
@@ -114,22 +122,31 @@ macro_rules! define_tyseq {
             };)*
         }
     )*) => ($(
+        $(#[$m])*
         #[derive(Clone, PartialEq)]
         pub struct $tyseq {
+            /// The "head" types, a list of finite types at the beginning of the sequence.
             pub head: Vec<$ty>,
 
-            // implicitly unioned with `nil` in every possible handling.
-            // why? the TySeq (and others) is never infinite,
-            // so there should be a `nil` somewhere. since we don't know where it ends,
-            // the tail is implicitly unioned with `nil` in all practical sense.
-            //
-            // None is same to Some(Ty::noisy_nil()) but has a display hint
-            // and has a different behavior for the arity calculation.
-            // (we may need this because, well, C/C++ API *can* count the proper number of args)
+            /// The optional "tail" type. If present, it repeats indefinitely after "head".
+            ///
+            /// This is implicitly nilable, because the *actual* value represented by the sequence
+            /// is never infinite, so there should be a `nil` somewhere.
+            /// Since we don't know where it ends,
+            /// the tail should be implicitly unioned with `nil` in all practical sense.
+            ///
+            /// We may implicitly put the `nil` here if it's missing,
+            /// but the absence of the tail type makes a few important differences in checking.
+            /// For example, function arguments are a sequence,
+            /// and excess parameters to non-variadic arguments should be forbidden
+            /// even if those excess parameters are always `nil`.
+            /// This is only possible when we have a separate way to mark a missing tail.
             pub tail: Option<$ty>,
 
-            // this span is used for finer diagnostics
-            $(pub $span: $spanty,)*
+            $(
+                /// A span of the entire sequence. Used for finer diagnostics.
+                pub $span: $spanty,
+            )*
         }
 
         impl<$($tt)*> From<$t> for $tyseq {
@@ -326,6 +343,7 @@ macro_rules! define_tyseq {
 
 macro_rules! define_slotseq {
     ($(
+        $(#[$m:meta])*
         type $slotseq:ident <- $tyseq:ident {
             slot = $slot:ty;
             t = [$($tt:tt)*] $t:ty;
@@ -346,11 +364,31 @@ macro_rules! define_slotseq {
             };)*
         }
     )*) => ($(
+        $(#[$m])*
         #[derive(Clone, PartialEq)]
         pub struct $slotseq {
+            /// The "head" types, a list of finite types at the beginning of the sequence.
             pub head: Vec<$slot>,
+
+            /// The optional "tail" type. If present, it repeats indefinitely after "head".
+            ///
+            /// This is implicitly nilable, because the *actual* value represented by the sequence
+            /// is never infinite, so there should be a `nil` somewhere.
+            /// Since we don't know where it ends,
+            /// the tail should be implicitly unioned with `nil` in all practical sense.
+            ///
+            /// We may implicitly put the `nil` here if it's missing,
+            /// but the absence of the tail type makes a few important differences in checking.
+            /// For example, function arguments are a sequence,
+            /// and excess parameters to non-variadic arguments should be forbidden
+            /// even if those excess parameters are always `nil`.
+            /// This is only possible when we have a separate way to mark a missing tail.
             pub tail: Option<$slot>,
-            $(pub $span: $spanty,)*
+
+            $(
+                /// A span of the entire sequence. Used for finer diagnostics.
+                pub $span: $spanty,
+            )*
         }
 
         impl<$($tt)*> From<$t> for $slotseq {
@@ -553,6 +591,7 @@ macro_rules! define_slotseq {
 }
 
 define_tyseq! {
+    /// A sequence of value types.
     type TySeq {
         t = ['a] T<'a>;
         ty = Ty;
@@ -565,6 +604,7 @@ define_tyseq! {
         ty_with_nil = |t: Ty| t.with_nil();
     }
 
+    /// A sequence of spanned value types. The sequence itself also contains its span.
     type SpannedTySeq {
         t = ['a] Spanned<T<'a>>;
         ty = Spanned<Ty>;
@@ -590,6 +630,7 @@ define_tyseq! {
 }
 
 define_slotseq! {
+    /// A sequence of slot types.
     type SlotSeq <- TySeq {
         slot = Slot;
         t = ['a] T<'a>;
@@ -604,6 +645,7 @@ define_slotseq! {
         slot_with_nil = |s: Slot| s.with_nil();
     }
 
+    /// A sequence of spanned slot types. The sequence itself also contains its span.
     type SpannedSlotSeq <- SpannedTySeq {
         slot = Spanned<Slot>;
         t = ['a] Spanned<T<'a>>;

@@ -7,6 +7,7 @@ use kailua_syntax::Str;
 use diag::{Origin, TypeReport, TypeResult};
 use super::{Display, DisplayState, T, Ty, Slot, TypeContext, Union, Lattice, RVar};
 
+/// A key allowed in the row variable.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Key {
     Int(i32),
@@ -66,23 +67,32 @@ impl fmt::Debug for Key {
     }
 }
 
+/// Table types.
 #[derive(Clone)]
 pub enum Tables {
-    // tuples and records are internally treated equally, and stored as a row variable
-    // also includes an empty table
+    /// A tuple or record type, represented by a row variable.
+    ///
+    /// An empty inextensible table is represented as `Tables::Fields(RVar::empty())`.
     Fields(RVar),
 
-    // does not appear naturally (indistinguishable from Map from integers)
-    // determined only from the function usages, e.g. table.insert
-    Array(Slot), // shared (non-linear) slots only, value implicitly unioned with nil
+    /// An array type `vector<T>`, where `T` is implicitly nilable.
+    ///
+    /// This type should be explicit (as it's indistinguishable from `map<integer, T>`).
+    Array(Slot),
 
-    // almost same to Array but also allows for indexing `n` (always results in `integer`).
-    // used for modelling Lua 5.0 `arg` which is still present in Lua 5.1 as backcompat
-    ArrayN(Slot), // shared (non-linear) slots only, value implicitly unioned with nil
+    /// Almost same to `Tables::Array`
+    /// but also allows for indexing `n` (always results in `integer`).
+    ///
+    /// This is used for an implicit `arg` variable for variadic arguments in Lua 5.0.
+    /// Kailua supports this in Lua 5.1 for the backward compatibility.
+    ArrayN(Slot),
 
-    // key should not contain nil (will be discarded)
-    Map(Ty, Slot), // shared (non-linear) slots only, value implicitly unioned with nil
+    /// A map type `map<T, U>`, where `T` is implicitly non-nilable and `U` is implicitly nilable.
+    ///
+    /// This type should be explicit (as `map<integer, U>` is indistinguishable from `vector<U>`).
+    Map(Ty, Slot),
 
+    /// Any table type.
     All,
 }
 

@@ -7,9 +7,13 @@ use kailua_diag::{Locale, Localize, Localized};
 use kailua_syntax::Name;
 use super::{TypeContext, S, TVar, RVar};
 
+/// A display state to catch recursive types and handle display hints.
 pub struct DisplayState<'a> {
+    /// A message locale.
     pub locale: Locale,
+    /// An associated type context.
     pub context: &'a TypeContext,
+
     disambiguators: RefCell<HashMap<Name, HashMap<Span, usize>>>,
     slots_seen: RefCell<HashSet<*const S>>,
     tvars_seen: RefCell<HashSet<u32>>,
@@ -78,6 +82,11 @@ impl<'a> DisplayState<'a> {
     }
 }
 
+/// The disambiguator for same names with different origins.
+///
+/// If we have three same names to print, the first printed name will print as is,
+/// and second and third names will be suffixed with `#1` and `#2`.
+/// The origin is determined by a span, so it always prints `#?` when the span is a dummy.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Disambiguator(Option<usize>);
 
@@ -101,11 +110,19 @@ impl fmt::Debug for Disambiguator {
     }
 }
 
+/// A display name associated to the type or a portion of the type (in the `Unioned`).
 #[derive(Clone, Debug)]
 pub enum DisplayName {
-    // type name is always displayed.
+    /// The type originates from a type name.
+    ///
+    /// This is always displayed, but an option can be used to ignore it on the top-level.
+    /// Currently the option is enabled for printing a type from the hover help.
     Type(Spanned<Name>),
-    // variable name is only displayed when the type is complex enough. (TODO)
+
+    /// The type originates from a variable.
+    ///
+    /// This is a weak hint, as this is only useful when the containing type is complex enough
+    /// that *any* hint will be useful. Type names will override this hint.
     Var(Spanned<Name>),
 }
 
@@ -149,8 +166,9 @@ impl Display for DisplayName {
     }
 }
 
-// human-readable description of various types requiring the type context.
-// expected to implement fmt::Display.
+/// Human-readable description of various types requiring the type context.
+///
+/// Expected to implement `std::fmt::Display`.
 pub trait Display: fmt::Debug + Sized {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result;
 
@@ -195,7 +213,7 @@ impl<'a> Display for &'a str {
     }
 }
 
-// a `fmt_displayed` wrapper for a particular context (`&DisplayState` or `&TypeContext`)
+/// A `fmt_displayed` wrapper for a particular context (`&DisplayState` or `&TypeContext`).
 pub struct Displayed<'b, T: Display + 'b, C> {
     base: &'b T,
     ctx: C,

@@ -14,23 +14,32 @@ use super::{TypeReport, TypeResult};
 use super::display::{Display, DisplayState, DisplayName};
 use super::flags::Flags;
 
-// slot type flexibility (a superset of type mutability)
+/// A slot type flexibility.
+///
+/// This is a superset of the type modifier, because of the existence of r-value only types.
 #[derive(Copy, Clone, PartialEq)]
 pub enum F {
-    // unknown flexibility (e.g. right after the generation but before the initialization)
+    /// Unknown flexibility (e.g. right after the generation but before the initialization)
     Unknown,
-    // dynamic slot; all assignments are allowed and ignored
+
+    /// Dynamic slot; all assignments are allowed and ignored.
     Dynamic(Dyn),
-    // temporary r-value slot
-    // updates in place to Var (default) or Const depending on the unification
+
+    /// Temporary r-value slot.
+    ///
+    /// Gets updated to `Var` (default) or `Const` in place depending on the unification.
     Just,
-    // covariant immutable slot
+
+    /// Covariant immutable slot.
     Const,
-    // invariant mutable slot
+
+    /// Invariant mutable slot.
     Var,
-    // postponed invariant mutable slot
-    // this is a variant of Var but only allows for indexing (no subtyping), and any types
-    // assigned via indexing will be marked as type-checked later
+
+    /// Postponed invariant mutable slot.
+    ///
+    /// This is a variant of `Var` but only allows for indexing (no subtyping), and any types
+    /// assigned via indexing will be marked as type-checked later.
     Module,
 }
 
@@ -152,6 +161,7 @@ impl PartialEq for Bits {
     }
 }
 
+/// A proxy to the value type from `Ty::unlift()`.
 pub struct UnliftedSlot<'a>(RwLockReadGuard<'a, Ty>);
 
 impl<'a> Deref for UnliftedSlot<'a> {
@@ -189,7 +199,10 @@ impl<'a, 'b> Lattice<T<'b>> for UnliftedSlot<'a> {
     }
 }
 
-// slot types
+/// Slot types, used for variables and table values.
+///
+/// Externally this is rarely used separately because slot types need to be mutable;
+/// the `Slot` container should be used instead in most cases.
 pub struct S {
     bits: AtomicUsize,
     ty: RwLock<Ty>,
@@ -391,6 +404,7 @@ impl fmt::Debug for S {
     }
 }
 
+/// A container for slot types.
 #[derive(Clone)]
 pub struct Slot(Arc<S>);
 

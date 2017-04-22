@@ -3,6 +3,8 @@ name = "kailua_types"
 version = "0.1.0"
 authors = ["Kang Seonghoon <public+git@mearie.org>"]
 
+description = "Type system for Kailua"
+
 [dependencies]
 log = "0.3"
 env_logger = "0.3"

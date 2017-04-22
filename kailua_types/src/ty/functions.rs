@@ -7,11 +7,17 @@ use kailua_syntax::ast::{FuncKind, Returns};
 use diag::{Origin, TypeReport, TypeResult};
 use super::{Display, DisplayState, Ty, TySeq, TypeContext, TypeResolver, Lattice};
 
+/// A function type.
 #[derive(Clone, PartialEq)]
 pub struct Function {
+    /// Argument types.
     pub args: TySeq,
-    pub argnames: Vec<Option<Spanned<Name>>>, // diagnostics only
-    pub returns: Option<TySeq>, // None if diverges
+
+    /// Optional argument names, used for diagnostics only.
+    pub argnames: Vec<Option<Spanned<Name>>>,
+
+    /// Return types, or `None` if the function diverges.
+    pub returns: Option<TySeq>,
 }
 
 impl Function {
@@ -127,9 +133,13 @@ impl fmt::Debug for Function {
     }
 }
 
+/// Function types.
 #[derive(Clone)]
 pub enum Functions {
+    /// A single, not overloaded function.
     Simple(Function),
+
+    /// Any function. (This is not really callable.)
     All,
 }
 

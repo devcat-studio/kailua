@@ -1,3 +1,5 @@
+//! Type environments.
+
 use std::mem;
 use std::str;
 use std::collections::{HashMap, HashSet};
@@ -152,6 +154,7 @@ struct ClassDef {
     parent: Option<ClassId>,
 }
 
+/// The type environment.
 pub struct Types {
     message_locale: Locale,
 
@@ -170,6 +173,7 @@ pub struct Types {
 }
 
 impl Types {
+    /// Creates a new fresh type environment.
     pub fn new(locale: Locale) -> Types {
         Types {
             message_locale: locale,
@@ -183,14 +187,17 @@ impl Types {
         }
     }
 
+    /// Returns the current message locale.
     pub fn locale(&self) -> Locale {
         self.message_locale
     }
 
+    /// Sets the current message locale.
     pub fn set_locale(&mut self, locale: Locale) {
         self.message_locale = locale;
     }
 
+    /// Registers a new class (a nominal instantiable type) with an optional parent class.
     pub fn make_class(&mut self, parent: Option<ClassId>) -> ClassId {
         assert!(parent.map_or(true, |cid| (cid.0 as usize) < self.classes.len()));
 
@@ -199,6 +206,10 @@ impl Types {
         cid
     }
 
+    /// Names an existing class with given name.
+    ///
+    /// Returns an `Err` with a previous nmae when the same class is named twice.
+    /// The span is mostly used to give an appropriate error in this case.
     pub fn name_class(&mut self, cid: ClassId, name: Spanned<Name>) -> Result<(), &Spanned<Name>> {
         let cls = &mut self.classes[cid.0 as usize];
         if let Some(ref prevname) = cls.name {
@@ -210,6 +221,7 @@ impl Types {
         }
     }
 
+    /// Returns a parent class of given class, if any.
     pub fn get_parent_class(&self, cid: ClassId) -> Option<ClassId> {
         self.classes.get(cid.0 as usize).and_then(|cls| cls.parent)
     }
@@ -432,17 +444,19 @@ impl Types {
         }
     }
 
-    // returns a pair of type flags that is an exact lower and upper bound for that type
-    // used as an approximate type bound testing like arithmetics;
-    // better be replaced with a non-instantiating assertion though.
+    /// Returns a pair of type flags that is an exact lower and upper bound for that type.
+    ///
+    /// Used as an approximate type bound testing like arithmetics.
+    /// If possible, however, better be replaced with a non-instantiating assertion though.
     pub fn get_type_bounds(&self, ty: &Ty) -> (/*lb*/ Flags, /*ub*/ Flags) {
         let flags = ty.flags();
         let (lb, ub) = ty.get_tvar().map_or((T_NONE, T_NONE), |v| self.get_tvar_bounds(v));
         (flags | lb, flags | ub)
     }
 
-    // exactly resolves the type variable inside `ty` if possible
-    // this is a requirement for table indexing and function calls
+    /// Exactly resolves the type variable inside `ty` if possible.
+    ///
+    /// This is a requirement for table indexing and function calls.
     pub fn resolve_exact_type(&self, ty: &Ty) -> Option<Ty> {
         if let T::TVar(tv) = **ty {
             if let Some(ty2) = self.get_tvar_exact_type(tv) {

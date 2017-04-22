@@ -17,10 +17,17 @@ use super::{Numbers, Strings, Key, Tables, Function, Functions, Unioned, TVar, T
 use super::flags::*;
 use message as m;
 
+/// A dynamic type.
+///
+/// The dynamic type comes from gradual typing and
+/// most operations with the dynamic type will result in the dynamic type.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Dyn {
-    User, // user-generated dynamic type: WHATEVER
-    Oops, // checker-generated dynamic type: <error type>
+    /// User-generated dynamic type, i.e. `WHATEVER`.
+    User,
+
+    /// Error type from parser and checker.
+    Oops,
 }
 
 impl Dyn {
@@ -40,32 +47,73 @@ impl Dyn {
     }
 }
 
-// a value type excluding nil (which is specially treated).
-// unions are specially treated in that they can be generated only from the type specification.
-// also, literal types in `T` are "implicit" in that they will be converted to supertypes
-// when being assigned (otherwise it would be very cumbersome to use);
-// the type specification generates unions for literal types (even when there is only one item),
-// so explicitly written literal types are retained on assignment.
+/// A value type, except for `nil` which is specially treated.
+///
+/// Unions are also special in that they can be generated only from the type specification.
+/// Also, literal types in `T` are "implicit" in that they will be converted to supertypes
+/// when being assigned (otherwise it would be very cumbersome to use);
+/// the type specification generates unions for literal types (even when there is only one item),
+/// so explicitly written literal types are retained on assignment.
 #[derive(Clone)]
 pub enum T<'a> {
-    Dynamic(Dyn),                       // dynamic type
-    All,                                // any (top)
-    None,                               // (bottom); possibly nil or nil!
-    Boolean,                            // boolean
-    True,                               // true (implicit)
-    False,                              // false (implicit)
-    Integer,                            // integer
-    Number,                             // number
-    String,                             // string
-    Thread,                             // thread
-    UserData,                           // userdata
-    Int(i32),                           // an integer literal (implicit)
-    Str(Cow<'a, Str>),                  // a string literal (implicit)
-    Tables(Cow<'a, Tables>),            // table, ...
-    Functions(Cow<'a, Functions>),      // function, ...
-    Class(Class),                       // nominal type
-    TVar(TVar),                         // type variable
-    Union(Cow<'a, Unioned>),            // union types A | B | ...
+    /// Dynamic type.
+    Dynamic(Dyn),
+
+    /// `any` (the top type).
+    All,
+
+    /// A bottom type.
+    ///
+    /// This is not equivalent to a diverging type (only allowed in return types)
+    /// because in Kailua `T`, `T!` and `T?` can be almost freely mixed.
+    /// Consequently, this represents either a silent nil (`nil`), a noisy nil (`nil?`)
+    /// or a type that can be used in any way except for the conversion (`nil!`).
+    None,
+
+    /// `boolean`.
+    Boolean,
+
+    /// `true` generated from an implicit Lua expression.
+    True,
+
+    /// `false` generated from an implicit Lua expression.
+    False,
+
+    /// `integer`.
+    Integer,
+
+    /// `number`.
+    Number,
+
+    /// `string`.
+    String,
+
+    /// `thread`.
+    Thread,
+
+    /// `userdata`.
+    UserData,
+
+    /// An integer literal type generated from an implicit Lua expression.
+    Int(i32),
+
+    /// A string literal type generated from an implicit Lua expression.
+    Str(Cow<'a, Str>),
+
+    /// Table types.
+    Tables(Cow<'a, Tables>),
+
+    /// Function types.
+    Functions(Cow<'a, Functions>),
+
+    /// Nominal types.
+    Class(Class),
+
+    /// A type variable.
+    TVar(TVar),
+
+    /// Union types, or explicit literal types.
+    Union(Cow<'a, Unioned>),
 }
 
 impl<'a> T<'a> {
@@ -256,15 +304,18 @@ impl<'a> T<'a> {
         }
     }
 
-    // coerces "implicit" types into "explicit" types. this is the only possible way in Kailua
-    // for implicit coercions to happen, and does the following:
-    //
-    // - removes implicit literal types from `self`, by replacing them with `integer` or `string`.
-    //   this does not affect explicit literal types from `Ty::from_kind`.
-    //   (this happens in the shallow way, as implicit types are incrementally constructed)
-    //
-    // this is used when new variable or field has been added without explicit types,
-    // or upper & exact bounds for type variables get updated (lower bounds do not).
+    /// Coerces "implicit" types into "explicit" types.
+    ///
+    /// This is the only possible way in Kailua for implicit coercions to happen,
+    /// and does the following:
+    ///
+    /// - Removes implicit literal types from `self`,
+    ///   by replacing them with `boolean`, `integer` or `string`.
+    ///   This does not affect explicit literal types from `Ty::from_kind`.
+    ///   (This happens in the shallow way, as implicit types are incrementally constructed.)
+    ///
+    /// This is used when new variable or field has been added without explicit types,
+    /// or upper & exact bounds for type variables get updated (lower bounds do not).
     pub fn coerce<'b>(&'b self) -> Cow<'b, T<'a>> {
         match *self {
             T::True | T::False => Cow::Owned(T::Boolean),
@@ -274,9 +325,10 @@ impl<'a> T<'a> {
         }
     }
 
-    // replaces type and row variables present in given type to their fresh copies.
-    // primarily used for function calls where all tvars & rvars are made fresh per each call,
-    // so that prior calls cannot affect constraints to later calls.
+    /// Replaces type and row variables present in given type to their fresh copies.
+    ///
+    /// Primarily used for function calls where all type variable and row variables are
+    /// made fresh per each call, so that prior calls cannot affect constraints to later calls.
     pub fn generalize(self, ctx: &mut TypeContext) -> T<'static> {
         match self {
             T::Dynamic(dyn) => T::Dynamic(dyn),
@@ -966,11 +1018,18 @@ impl<'a> fmt::Debug for T<'a> {
     }
 }
 
+/// Different kinds of `nil`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Nil {
-    Silent, // nil can be present but not checked; risks runtime errors
-    Noisy,  // nil can be present and checked
-    Absent, // nil cannot be present
+    /// `nil` is assumed to be present, but the assumption is not checked.
+    Silent,
+
+    /// `nil` is assumed to be present, and the assumption gets checked
+    /// (e.g. `integer?` doesn't support arithmetic operations).
+    Noisy,
+
+    /// `nil` is assumed to be absent.
+    Absent,
 }
 
 impl Nil {
@@ -1099,7 +1158,10 @@ impl TyInner {
     fn unwrap_ty(self) -> T<'static> { self.ty }
 }
 
-// a "type pointer". nil is implicitly unioned to type.
+/// A value type, which is also a sort of pointer (to handle recursively defined `T`).
+///
+/// The full value type consists of a non-nilable portion (`T`), the `nil` (`Nil`),
+/// an optional type tag (`Tag`) and an optional display name (`DisplayName`).
 #[derive(Clone, PartialEq)]
 pub struct Ty {
     inner: Box<TyInner>,

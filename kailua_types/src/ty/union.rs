@@ -9,20 +9,44 @@ use super::{T, TypeContext, Lattice, Union};
 use super::{Numbers, Strings, Tables, Functions, Class};
 use super::flags::*;
 
-// expanded value types for unions
+/// An expanded value type for unions.
+///
+/// This type is only constructed explicitly (that's why it doesn't contain, e.g. type variables).
+/// Any implicit type operation will try to destroy the union.
+/// As an exception, normally an explicitly constructed union type with
+/// a single boolean, number or string literal should be simplified to a simple value type
+/// but they are retained in order to coerce explicitly written literal types.
 #[derive(Clone, PartialEq)]
 pub struct Unioned {
+    /// A set of types that do not interact to each other in the union type.
     pub simple: UnionedSimple,
+
+    /// Number types, if any.
     pub numbers: Option<Numbers>,
+
+    /// String types, if any.
     pub strings: Option<Strings>,
+
+    /// Table types, if any.
     pub tables: Option<Tables>,
+
+    /// Function types, if any.
     pub functions: Option<Functions>,
+
+    /// A set of nominal types.
     pub classes: BTreeSet<Class>,
 
-    // since Unioned destroys display hints otherwise, they are kept here separately.
-    // the flags initially represent the flags for given type,
-    // and reset when the Unioned is unioned with unnamed types.
-    // the hint is removed when flags are empty.
+    /// Optional display hints.
+    ///
+    /// This contains a list of the display name and its (approximate) upper bound.
+    /// A type operation that shrinks the union type will remove the hint
+    /// if the union type no longer contains any portion of a type represented by the hint.
+    /// It's conceptually same to the display hint in the value type (`Ty`),
+    /// but as we don't store `Ty` itself in the union type it has to be duplicated.
+    ///
+    /// In order to support this operation, `Unioned::filter_display_hints` method will
+    /// receive type flags that have been removed to filter the hints and
+    /// remove any hint with empty flags.
     pub display_hints: Vec<(Flags, DisplayName)>,
 }
 

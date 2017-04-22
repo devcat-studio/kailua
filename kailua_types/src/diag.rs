@@ -1,3 +1,10 @@
+//! Type-level diagnostics.
+//!
+//! Unlike normal reports, type operations can issue recursive reports with nested causes.
+//! A separate reporting system is provided to process such recursive reports.
+//! Ideally the resulting "type report" should form a tree;
+//! currently only a linear data structure is implemented, which is reasonable for now.
+
 use kailua_env::{Span, Spanned, WithLoc};
 use kailua_diag::report::ReportMore;
 use kailua_diag::message::{Locale, Localize, Localized};
@@ -5,30 +12,57 @@ use message as m;
 use l10nutils::{Ordinal, QuotedList};
 use ty::{TypeContext, Display, Key};
 
-// type-level report is used to collect hierarchical information about failures.
-// this is distinct from `kailua_diag::Result` which is non-hierarchical by nature.
+/// Type-level report.
+///
+/// This is used to collect hierarchical information about type operation failures.
+/// Distinct from `kailua_diag::Report` which is non-hierarchical by nature.
 #[derive(Clone, Debug)]
 pub struct TypeReport {
     locale: Locale,
     messages: Vec<ReportItem>, // in the reverse chronological order
 }
 
-// a single report item can be composed of multiple errors at each layer of type operation.
-// since showing all of them is not desirable, we use "origins" to distinguish each layer
-// and to determine whether to flatten the item.
-//
-// for this reason origins are hierarchically ordered and the origin at higher classes can
-// only be preceded by the origin at lower classes. if the origin "inversion" does occur,
-// that would mean that an _irrelevant_ report item has been placed and should not be flattened.
+/// The originating position of type operation failures.
+///
+/// A single report item can be composed of multiple errors at each layer of type operation.
+/// Since showing all of them is not desirable, we use "origins" to distinguish each layer
+/// and to determine whether to flatten the item.
+///
+/// For this reason origins are hierarchically ordered and the origin at higher classes can
+/// only be preceded by the origin at lower classes. If the origin "inversion" does occur,
+/// that would mean that an _irrelevant_ report item has been placed and should not be flattened.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Origin {
-    RVar = 0x00, TVar = 0x01,
-    Tables = 0x10, Numbers = 0x11, Strings = 0x12, Functions = 0x13,
+    /// From an operation with `RVar`.
+    RVar = 0x00,
+    /// From an operation with `TVar`.
+    TVar = 0x01,
+
+    /// From an operation with `Tables`.
+    Tables = 0x10,
+    /// From an operation with `Numbers`.
+    Numbers = 0x11,
+    /// From an operation with `Strings`.
+    Strings = 0x12,
+    /// From an operation with `Functions`.
+    Functions = 0x13,
+
+    /// From an operation with `Union`.
     Union = 0x20,
-    TUnion = 0x30, // binary operation between T and Union
+
+    /// From a binary operation between `T` and `Union`.
+    TUnion = 0x30,
+
+    /// From an operation with `T`.
     T = 0x40,
+
+    /// From a binary operation between `T` and `Ty`.
     TTy = 0x50, // binary operation between T and Ty
+
+    /// From an operation with `Ty`.
     Ty = 0x60,
+
+    /// From an operation with `Slot`.
     Slot = 0x70,
 }
 
@@ -274,15 +308,26 @@ impl TypeReport {
     }
 }
 
+/// A hint about the context where given type operation occurred.
+/// Used to give better messages for the topmost errors.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TypeReportHint {
+    /// No context is given.
     None,
+
+    /// The type operation has occurred during checking a sequence type for the function arguments.
     FuncArgs,
+
+    /// Same to `TypeReportHint::FuncArgs` but for the method calls; the index should shift by one.
     MethodArgs,
+
+    /// The type operation has occurred during checking a sequence type for return types.
     Returns,
 }
 
+/// An extension to `kailua_diag::ReportMore` for type reports.
 pub trait TypeReportMore {
+    /// Generates (normal) reports from given type report with an optional display hint.
     fn report_types(self, r: TypeReport, hint: TypeReportHint) -> Self;
 }
 
@@ -495,5 +540,6 @@ impl<'a, T> TypeReportMore for ReportMore<'a, T> {
     }
 }
 
+/// The result type for any procedure that can generate type reports.
 pub type TypeResult<T> = Result<T, TypeReport>;
 
