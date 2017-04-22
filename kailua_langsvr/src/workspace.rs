@@ -17,7 +17,9 @@ use walkdir::WalkDir;
 use kailua_env::{Unit, Pos, Span, Spanned, Source, SourceFile, SourceSlice};
 use kailua_diag::{self, Stop, Report, Locale, Localize, Localized};
 use kailua_syntax::{Lexer, Nest, NestedToken, Parser, Chunk};
-use kailua_check::{self, FsSource, Context, Output};
+use kailua_check;
+use kailua_check::options::FsSource;
+use kailua_check::env::{Context, Output};
 use kailua_workspace::{self, WorkspaceOptions};
 
 use fmtutils::Ellipsis;

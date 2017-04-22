@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use kailua_env::{Spanned, WithLoc};
 use kailua_diag::{Report, NoReport, Reporter, Stop, Locale};
 use kailua_syntax::Chunk;
-use kailua_check::{Options, FsSource, FsOptions};
+use kailua_check::options::{Options, FsSource, FsOptions};
 
 mod message;
 

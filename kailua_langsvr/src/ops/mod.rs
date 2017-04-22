@@ -1,6 +1,7 @@
 use kailua_env::Span;
 use kailua_syntax::lex::{Tok, NestedToken};
-use kailua_check::{Output, Slot};
+use kailua_types::ty::Slot;
+use kailua_check::env::Output;
 
 pub mod completion;
 pub mod hover;

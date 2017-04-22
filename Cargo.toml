@@ -4,6 +4,7 @@ members = [
     "kailua_diag",
     "kailua_test",
     "kailua_syntax",
+    "kailua_types",
     "kailua_check",
     "kailua_workspace",
     "kailua_langsvr",

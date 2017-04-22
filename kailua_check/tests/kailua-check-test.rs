@@ -5,6 +5,7 @@ extern crate kailua_test;
 extern crate kailua_env;
 extern crate kailua_diag;
 extern crate kailua_syntax;
+extern crate kailua_types;
 extern crate kailua_check;
 
 use std::str;
@@ -16,7 +17,10 @@ use clap::{App, Arg, ArgMatches};
 use kailua_env::{Source, Span, Spanned};
 use kailua_diag::{Stop, Locale, Report, Reporter, TrackMaxKind};
 use kailua_syntax::{Chunk, parse_chunk};
-use kailua_check::{Options, Context, TypeContext, Display, check_from_chunk};
+use kailua_types::ty::{TypeContext, Display};
+use kailua_check::check_from_chunk;
+use kailua_check::options::Options;
+use kailua_check::env::Context;
 
 struct Testing {
     note_spanned_infos: bool,

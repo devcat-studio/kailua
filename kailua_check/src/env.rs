@@ -10,20 +10,16 @@ use kailua_env::{self, Span, Spanned, WithLoc, ScopedId, ScopeMap, SpanMap};
 use kailua_diag::{Result, Kind, Report, Reporter, Locale, Localize};
 use kailua_syntax::{Str, Name};
 use kailua_syntax::ast::NameRef;
-use diag::{TypeReportHint, TypeReportMore};
-use ty::{Displayed, Display, DisplayName};
-use ty::{Ty, TySeq, Nil, T, Slot, F, TVar, Lattice, Union, Tag};
-use ty::{TypeContext, TypeResolver, ClassId, Class, Tables, Functions, Function, Key};
-use ty::flags::*;
+use kailua_types::diag::{TypeReportHint, TypeReportMore};
+use kailua_types::ty::{Displayed, Display, DisplayName};
+use kailua_types::ty::{Ty, TySeq, Nil, T, Slot, F, TVar, Lattice, Union, Tag};
+use kailua_types::ty::{TypeContext, TypeResolver, ClassId, Class, Tables, Functions, Function, Key};
+use kailua_types::ty::flags::*;
+use kailua_types::env::Types;
 use defs::get_defs;
 use options::Options;
 use check::Checker;
 use message as m;
-
-pub use self::types::Types;
-
-mod partitions;
-mod types;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Id {

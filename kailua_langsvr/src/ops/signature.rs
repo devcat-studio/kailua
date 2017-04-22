@@ -4,7 +4,8 @@
 use kailua_env::Pos;
 use kailua_diag::{Localize, Localized};
 use kailua_syntax::lex::{Tok, Punct, NestedToken};
-use kailua_check::{TypeContext, Display, Output, Nil, Functions};
+use kailua_types::ty::{TypeContext, Display, Nil, Functions};
+use kailua_check::env::Output;
 
 use protocol::*;
 use message as m;

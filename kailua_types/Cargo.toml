@@ -1,0 +1,18 @@
+[package]
+name = "kailua_types"
+version = "0.1.0"
+authors = ["Kang Seonghoon <public+git@mearie.org>"]
+
+[dependencies]
+log = "0.3"
+env_logger = "0.3"
+bitflags = "0.7"
+vec_map = "0.4"
+take_mut = "0.1"
+parse-generics-shim = "0.1.0"
+atomic = "0.3"
+parking_lot = "0.3"
+kailua_env = { path = "../kailua_env" }
+kailua_diag = { path = "../kailua_diag" }
+kailua_syntax = { path = "../kailua_syntax" }
+

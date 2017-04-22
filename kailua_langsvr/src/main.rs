@@ -16,6 +16,7 @@ extern crate walkdir;
 extern crate kailua_env;
 #[macro_use] extern crate kailua_diag;
 extern crate kailua_syntax;
+extern crate kailua_types;
 extern crate kailua_check;
 extern crate kailua_workspace;
 extern crate kailua_langsvr_protocol as protocol;

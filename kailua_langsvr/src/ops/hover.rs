@@ -2,7 +2,8 @@
 
 use kailua_env::{Pos, Source};
 use kailua_diag::{Localize, Localized};
-use kailua_check::{TypeContext, Display, Output};
+use kailua_types::ty::{TypeContext, Display};
+use kailua_check::env::Output;
 
 use diags;
 use protocol::*;

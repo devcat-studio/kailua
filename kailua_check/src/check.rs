@@ -10,13 +10,14 @@ use kailua_diag::{self, Result, Report, Reporter};
 use kailua_syntax::{Str, Name};
 use kailua_syntax::ast::{self, NameRef, Var, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp, Table};
 use kailua_syntax::ast::{SelfParam, TypeScope, Args, St, Stmt, Block, K, Attr, M, MM, Varargs};
-use diag::{TypeReport, TypeReportHint, TypeReportMore};
-use ty::{Displayed, Display};
-use ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, Dummy, TypeContext};
-use ty::{Key, Tables, Function, Functions};
-use ty::{F, Slot, SlotSeq, SpannedSlotSeq, Tag, Class, ClassId};
-use ty::flags::*;
-use env::{Env, Returns, Frame, Scope, Context, Types, SlotSpec};
+use kailua_types::diag::{TypeReport, TypeReportHint, TypeReportMore};
+use kailua_types::ty::{Displayed, Display};
+use kailua_types::ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, Dummy, TypeContext};
+use kailua_types::ty::{Key, Tables, Function, Functions};
+use kailua_types::ty::{F, Slot, SlotSeq, SpannedSlotSeq, Tag, Class, ClassId};
+use kailua_types::ty::flags::*;
+use kailua_types::env::Types;
+use env::{Env, Returns, Frame, Scope, Context, SlotSpec};
 use message as m;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]

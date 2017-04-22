@@ -8,7 +8,8 @@ use std::sync::Arc;
 use kailua_env::{Pos, Span, Source};
 use kailua_syntax::lex::{Tok, Punct, Keyword, NestedToken, NestingCategory};
 use kailua_syntax::ast::Chunk;
-use kailua_check::{Output, Key};
+use kailua_types::ty::Key;
+use kailua_check::env::Output;
 
 use protocol::*;
 use super::{get_prefix_expr_slot, PrefixExprSlot};

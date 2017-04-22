@@ -12,8 +12,9 @@ use diag::{Origin, TypeReport, TypeResult};
 use ty::{Ty, T, Slot, TVar, RVar, Lattice};
 use ty::{TypeContext, ClassId, Key};
 use ty::flags::*;
+use self::partitions::{Partition, Partitions};
 
-use super::partitions::{Partition, Partitions};
+mod partitions;
 
 #[derive(Debug)]
 struct Bound {

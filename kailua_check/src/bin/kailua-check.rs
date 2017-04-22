@@ -15,7 +15,9 @@ use std::path::Path;
 use kailua_env::{Spanned, Source, SourceFile, WithLoc};
 use kailua_diag::{Stop, Report, ConsoleReport, TrackMaxKind};
 use kailua_syntax::{parse_chunk, Chunk};
-use kailua_check::{FsSource, FsOptions, Context, check_from_chunk};
+use kailua_check::check_from_chunk;
+use kailua_check::env::Context;
+use kailua_check::options::{FsSource, FsOptions};
 
 struct LocalFsSource {
     source: Rc<RefCell<Source>>,
