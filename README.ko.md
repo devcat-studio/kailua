@@ -40,7 +40,9 @@ cargo install kailua
 
 수동으로 편집할 경우 `.vscode/kailua.json`에 다음 내용이 필요합니다.
 
-```json
+<!-- what Kailua really supports is not exactly JSON5, but probably it's closer than JSON. -->
+
+```json5
 {
     // 보통의 JSON과는 다르게 주석이나 마지막 쉼표도 허용됩니다.
     "start_path": "<검사를 시작할 파일 경로>",

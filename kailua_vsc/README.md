@@ -163,7 +163,9 @@ P/+V8pNf/4yPxIGP/egRXiETYcQ0i+X/OwapXJl3aMkAAAAASUVORK5CYII=)
 
 The following content is required for `.vscode/kailua.json`, in case you are editing it by hand:
 
-```json
+<!-- what Kailua really supports is not exactly JSON5, but probably it's closer than JSON. -->
+
+```json5
 {
     // Unlike a normal JSON, a comment or a stray comma is allowed.
     "start_path": "<path to the entry point>",
