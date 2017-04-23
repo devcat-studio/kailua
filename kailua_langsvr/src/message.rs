@@ -2,11 +2,11 @@ use std::error::Error;
 
 // general notifications
 
-define_msg! { pub CannotReadConfig<'a> { error: &'a Error }:
+define_msg! { pub CannotReadConfig:
     "ko" => "프로젝트에서 `kailua.json`이나 `.vscode/kailua.json`을 읽을 수 없습니다. \
-             이번 세션에서 타입 체크가 비활성화됩니다. (이유: {error})",
+             이번 세션에서 타입 체크가 비활성화됩니다.",
     _    => "Cannot read `kailua.json` or `.vscode/kailua.json` in the project; \
-             type checking is disabled for this session. (Cause: {error})",
+             type checking is disabled for this session.",
 }
 
 define_msg! { pub NoStartPath:

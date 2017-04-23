@@ -117,7 +117,7 @@ impl kailua_test::Testing for Testing {
                     caps[0].to_owned()
                 }
             });
-            return s;
+            return s.into_owned();
         }
         String::from("error")
     }

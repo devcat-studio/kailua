@@ -2,16 +2,11 @@
 name = "kailua_langsvr"
 version = "0.1.0"
 authors = ["Kang Seonghoon <public+git@mearie.org>"]
-publish = false
 
 description = "Language server implementation for Kailua"
 
-[[bin]]
-name = "kailua-langsvr"
-
 [dependencies]
 log = "0.3.7"
-env_logger = "0.4.2"
 serde = "0.9"
 serde_derive = "0.9"
 serde_json = "0.9"
@@ -22,14 +17,13 @@ tokio-timer = "0.1.0"
 owning_ref = "0.2"
 num_cpus = "1.2"
 parking_lot = "0.3"
-errln = "0.1"
 walkdir = "1"
 parse-generics-shim = "0.1.0"
-kailua_env = { path = "../kailua_env" }
-kailua_diag = { path = "../kailua_diag" }
-kailua_syntax = { path = "../kailua_syntax" }
-kailua_types = { path = "../kailua_types" }
-kailua_check = { path = "../kailua_check" }
-kailua_workspace = { path = "../kailua_workspace" }
-kailua_langsvr_protocol = { path = "../kailua_langsvr_protocol" }
+kailua_env = { version = "0.1.0", path = "../kailua_env" }
+kailua_diag = { version = "0.1.0", path = "../kailua_diag" }
+kailua_syntax = { version = "0.1.0", path = "../kailua_syntax" }
+kailua_types = { version = "0.1.0", path = "../kailua_types" }
+kailua_check = { version = "0.1.0", path = "../kailua_check" }
+kailua_workspace = { version = "0.1.0", path = "../kailua_workspace" }
+kailua_langsvr_protocol = { version = "0.1.0", path = "../kailua_langsvr_protocol" }
 

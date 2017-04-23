@@ -2,7 +2,6 @@
 name = "kailua_test"
 version = "0.1.0"
 authors = ["Kang Seonghoon <public+git@mearie.org>"]
-publish = false
 
 description = "Test harness for Kailua"
 
@@ -12,5 +11,5 @@ term = "0.4.4"
 regex = "0.2.1"
 lazy_static = "0.2"
 clap = "2"
-kailua_env = { path = "../kailua_env" }
-kailua_diag = { path = "../kailua_diag" }
+kailua_env = { version = "0.1.0", path = "../kailua_env" }
+kailua_diag = { version = "0.1.0", path = "../kailua_diag" }

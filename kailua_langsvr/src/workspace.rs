@@ -246,6 +246,7 @@ impl WorkspaceFile {
         inner.workspace.write().cancel();
     }
 
+    #[allow(dead_code)]
     pub fn path(&self) -> PathBuf {
         self.inner.read().path.clone()
     }
@@ -647,6 +648,7 @@ impl Workspace {
         if let WorkspaceBase::Workspace(_) = self.shared.read().base { true } else { false }
     }
 
+    #[allow(dead_code)]
     pub fn config_path(&self) -> Option<PathBuf> {
         self.shared.read().base.config_path().map(|p| p.to_owned())
     }
@@ -655,18 +657,22 @@ impl Workspace {
         self.shared.read().base.config_path_or_default()
     }
 
-    pub fn read_config(&mut self) -> io::Result<()> {
+    pub fn read_config(&mut self) -> bool {
         let mut shared = self.shared.write();
         let ws = if let WorkspaceBase::Config(ref mut config) = shared.base {
             config.use_default_config_paths();
-            Some(kailua_workspace::Workspace::new(config, self.message_locale)?)
+            if let Some(ws) = kailua_workspace::Workspace::new(config, self.message_locale) {
+                Some(ws)
+            } else {
+                return false;
+            }
         } else {
             None
         };
         if let Some(ws) = ws {
             shared.base = WorkspaceBase::Workspace(ws);
         }
-        Ok(())
+        true
     }
 
     pub fn populate_watchlist(&mut self) {
@@ -779,6 +785,7 @@ impl Workspace {
         }
     }
 
+    #[allow(dead_code)]
     pub fn cancel(&self) {
         self.shared.write().cancel();
     }

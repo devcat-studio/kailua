@@ -2,7 +2,6 @@
 name = "kailua_check"
 version = "0.1.0"
 authors = ["Kang Seonghoon <public+git@mearie.org>"]
-publish = false
 
 description = "Type checker for Kailua"
 
@@ -25,11 +24,11 @@ log = "0.3.7"
 env_logger = "0.4.2"
 take_mut = "0.1"
 parse-generics-shim = "0.1.0"
-kailua_env = { path = "../kailua_env" }
-kailua_diag = { path = "../kailua_diag" }
-kailua_syntax = { path = "../kailua_syntax" }
-kailua_types = { path = "../kailua_types" }
+kailua_env = { version = "0.1.0", path = "../kailua_env" }
+kailua_diag = { version = "0.1.0", path = "../kailua_diag" }
+kailua_syntax = { version = "0.1.0", path = "../kailua_syntax" }
+kailua_types = { version = "0.1.0", path = "../kailua_types" }
 
 [dev-dependencies]
 clap = "2"
-kailua_test = { path = "../kailua_test" }
+kailua_test = { version = "0.1.0", path = "../kailua_test" }

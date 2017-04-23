@@ -14,7 +14,7 @@ take_mut = "0.1"
 parse-generics-shim = "0.1.0"
 atomic = "0.3"
 parking_lot = "0.3"
-kailua_env = { path = "../kailua_env" }
-kailua_diag = { path = "../kailua_diag" }
-kailua_syntax = { path = "../kailua_syntax" }
+kailua_env = { version = "0.1.0", path = "../kailua_env" }
+kailua_diag = { version = "0.1.0", path = "../kailua_diag" }
+kailua_syntax = { version = "0.1.0", path = "../kailua_syntax" }
 

@@ -213,6 +213,7 @@ impl Server {
         self.send_msg(&buf)
     }
 
+    #[allow(dead_code)]
     pub fn send_req<T: Serialize>(&self, method: Method, params: T)
         -> io::Result<BoxFuture<Option<Value>, ResponseError<Value>>>
     {

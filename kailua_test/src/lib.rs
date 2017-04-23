@@ -146,7 +146,7 @@ extern crate term;
 extern crate kailua_env;
 extern crate kailua_diag;
 #[macro_use] extern crate log;
-extern crate clap;
+#[macro_use] extern crate clap;
 
 use std::str;
 use std::fmt;
@@ -167,7 +167,7 @@ use std::error::Error;
 use std::collections::{HashMap, HashSet};
 use regex::Regex;
 use term::StderrTerminal;
-use clap::{App, Arg, ArgMatches};
+use clap::{App, ArgMatches};
 use kailua_env::{Source, SourceFile, Span};
 use kailua_diag::{Locale, Kind, Report, CollectedReport};
 
@@ -603,40 +603,26 @@ impl<T: Testing> Tester<T> {
             format!("{:->pluses$}{}", "", &s[pluses..], pluses = pluses)
         });
 
-        let app = App::new(name)
-            .arg(Arg::with_name("verbose")
-                .short("v")
-                .long("verbose")
-                .help("Displays all test outputs regardless of the result.\n\
-                       Note that unexpected \"info\" reports are always displayed,\n\
-                       as it is commonly an output of other flags."))
-            .arg(Arg::with_name("exact_diags")
-                .short("e")
-                .long("exact-diags")
-                .help("Requires the exact output for reports.\n\
-                       Without this flag the excess reports are ignored."))
-            .arg(Arg::with_name("highlight_mismatch")
-                .short("h")
-                .long("highlight-mismatch")
-                .help("Highlights any mismatch in the reports or output."))
-            .arg(Arg::with_name("message_locale")
-                .short("l")
-                .long("message-locale")
-                .takes_value(true)
-                .help("Switches to given language/locale for reports.\n\
-                       Likely to fail most tests."))
-            .arg(Arg::with_name("stop_on_panic")
-                .short("p")
-                .long("stop-on-panic")
-                .multiple(true)
-                .help("Stops on the first panic. Also enables `RUST_BACKTRACE=1`."))
-            .arg(Arg::with_name("force_level")
-                .short("f")
-                .long("force")
-                .multiple(true)
-                .help("Run the ignored tests. \
-                       Will also run feature-blocked tests when given twice."))
-            .arg(Arg::with_name("filter"));
+        let app = clap_app!((name) =>
+            (@setting UnifiedHelpMessage)
+            (@arg verbose: -v --verbose
+                "Displays all test outputs regardless of the result.\n\
+                 Note that unexpected \"info\" reports are always displayed,\n\
+                 as it is commonly an output of other flags.")
+            (@arg exact_diags: -e --("exact-diags")
+                "Requires the exact output for reports.\n\
+                 Without this flag the excess reports are ignored.")
+            (@arg highlight_mismatch: -h --("highlight-mismatch")
+                "Highlights any mismatch in the reports or output.")
+            (@arg message_locale: -l --("message-locale") [LOCALE]
+                "Switches to given language/locale for reports.\n\
+                 Likely to fail most tests.")
+            (@arg stop_on_panic: -p --("stop-on-panic") +multiple
+                "Stops on the first panic. Also enables `RUST_BACKTRACE=1`.")
+            (@arg force_level: -f --force +multiple
+                "Run the ignored tests. Will also run feature-blocked tests when given twice.")
+            (@arg filter: "A regular expression to filter the test name.")
+        );
         let app = testing.augment_args(app);
         let matches = app.get_matches_from(args);
 

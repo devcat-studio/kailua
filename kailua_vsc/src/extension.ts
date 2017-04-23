@@ -66,9 +66,9 @@ function openConfigurationFile() {
 function initializeLanguageServer(context: vscode.ExtensionContext) {
     // in the debug mode: the debug executable at the Cargo workspace is exclusively used
     // in the release mode: try the executable at the Cargo workspace first, then the bundled executable
-    const debugDevPath = context.asAbsolutePath(path.join('..', 'target', 'debug', 'kailua-langsvr'));
-    const releaseDevPath = context.asAbsolutePath(path.join('..', 'target', 'release', 'kailua-langsvr'));
-    const releasePath = context.asAbsolutePath(path.join('bin', 'kailua-langsvr'));
+    const debugDevPath = context.asAbsolutePath(path.join('..', 'target', 'debug', 'kailua'));
+    const releaseDevPath = context.asAbsolutePath(path.join('..', 'target', 'release', 'kailua'));
+    const releasePath = context.asAbsolutePath(path.join('bin', 'kailua'));
 
     const extension = process.platform === 'win32' ? '.exe' : '';
 
@@ -109,12 +109,12 @@ function initializeLanguageServer(context: vscode.ExtensionContext) {
                 resolve({ reader: socket, writer: socket });
             });
             server.listen(0 /*random port*/, '127.0.0.1', () => {
-                const cp = spawnWithArgs(`--packets-via-tcp=127.0.0.1:${server.address().port}`);
+                const cp = spawnWithArgs('langsvr', `--tcp=127.0.0.1:${server.address().port}`);
                 // if we are using TCP the stdout is no longer used and any output should be logged as well
                 cp.stdout.on('data', data => languageClient.outputChannel.append(_.isString(data) ? data : data.toString('utf-8')));
             });
         } else {
-            resolve(spawnWithArgs('--packets-via-stdio'));
+            resolve(spawnWithArgs('langsvr', '--stdio'));
         }
     });
 

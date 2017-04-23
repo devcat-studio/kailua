@@ -1,6 +1,5 @@
 # Rust-specific
 target
-Cargo.lock
 
 # Node-specific
 out

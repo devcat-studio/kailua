@@ -147,14 +147,14 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    pub fn new(config: &Config, default_locale: Locale) -> io::Result<Workspace> {
+    pub fn new(config: &Config, default_locale: Locale) -> Option<Workspace> {
         let start_path = if let Some(ref path) = config.start_path {
             path.clone()
         } else {
-            return Err(io::Error::new(io::ErrorKind::Other, "start path is missing"));
+            return None;
         };
 
-        Ok(Workspace {
+        Some(Workspace {
             base_dir: config.base_dir.clone(),
             config_path: config.config_path.clone(),
             start_path: start_path,

@@ -14,7 +14,7 @@ use std::env;
 /// It can be derefed to a string slice, so the following is possible:
 ///
 /// ```rust
-/// # let locale = Locale::new("en");
+/// # let locale = kailua_diag::Locale::new("en").unwrap();
 /// match &locale[..] {
 ///     "en" => println!("Hello"),
 ///     "de" => println!("Willkommen"),

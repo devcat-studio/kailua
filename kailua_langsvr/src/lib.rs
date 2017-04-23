@@ -1,7 +1,11 @@
 //! Language server implementation for Kailua.
+//!
+//! This crate provides a bulk of implementation details for the language server,
+//! but itself is not an executable.
+//! The external crate is expected to parse the command-line options and
+//! completely delegate to this crate to switch to the language server mode.
 
 #[macro_use] extern crate log;
-extern crate env_logger;
 extern crate serde;
 #[macro_use] extern crate serde_derive;
 extern crate serde_json;
@@ -12,7 +16,6 @@ extern crate tokio_timer;
 extern crate owning_ref;
 extern crate num_cpus;
 extern crate parking_lot;
-#[macro_use] extern crate errln;
 extern crate walkdir;
 #[macro_use] extern crate parse_generics_shim;
 extern crate kailua_env;
@@ -24,14 +27,15 @@ extern crate kailua_workspace;
 extern crate kailua_langsvr_protocol as protocol;
 
 mod fmtutils;
-pub mod server;
-pub mod diags;
-pub mod workspace;
-pub mod futureutils;
+mod server;
+mod diags;
+mod workspace;
+mod futureutils;
 mod message;
-pub mod ops;
+mod ops;
 
 use std::io;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use parking_lot::RwLock;
 use futures::{Future, BoxFuture};
@@ -41,38 +45,6 @@ use server::Server;
 use futureutils::{CancelToken, CancelError};
 use diags::ReportTree;
 use workspace::{Workspace, WorkspaceFile};
-
-fn connect_to_client() -> Server {
-    use std::env;
-    use std::net::{SocketAddr, TcpStream};
-    use std::process;
-    use server::Server;
-
-    let mut server = None;
-    if let Some(firstopt) = env::args().nth(1) {
-        if firstopt == "--packets-via-stdio" {
-            server = Some(Server::from_stdio());
-        } else if firstopt.starts_with("--packets-via-tcp=") {
-            if let Ok(ip) = firstopt["--packets-via-tcp=".len()..].parse::<SocketAddr>() {
-                match TcpStream::connect(ip).and_then(Server::from_tcp_stream) {
-                    Ok(s) => server = Some(s),
-                    Err(e) => {
-                        errln!("*** Couldn't connect to the client: {}", e);
-                        process::exit(1);
-                    }
-                }
-            }
-        }
-    }
-
-    if server.is_none() {
-        errln!("Kailua language server is intended to be used with VS Code. \
-                Use the Kailua extension instead.");
-        process::exit(1);
-    }
-
-    server.unwrap()
-}
 
 // initialization options supposed to be sent from the extension
 struct InitOptions {
@@ -167,8 +139,8 @@ fn initialize_workspace(server: &Server) -> Workspace {
                                                        initopts.default_locale);
 
                     // try to read the config...
-                    let config_res = workspace.read_config();
-                    if config_res.is_ok() {
+                    let config_read = workspace.read_config();
+                    if config_read {
                         // ...then try to initially scan the directory (should happen before sending
                         // an initialize response so that changes reported later are not dups)
                         workspace.populate_watchlist();
@@ -205,8 +177,8 @@ fn initialize_workspace(server: &Server) -> Workspace {
                     });
 
                     // configuration error may include diagnostics and should be sent after init
-                    if let Err(e) = workspace.read_config() {
-                        cannot_read_config(&workspace, &server, &m::CannotReadConfig { error: &e });
+                    if !config_read {
+                        cannot_read_config(&workspace, &server, &m::CannotReadConfig {});
                     }
 
                     return workspace;
@@ -867,12 +839,40 @@ fn rename(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
     workspace.read().pool().spawn(fut).forget();
 }
 
-pub fn main() {
-    env_logger::init().unwrap();
-    let server = connect_to_client();
+/// The connection target of the language server.
+///
+/// In any case the stderr remains unused, so it is reserved for debugging outputs.
+pub enum Target {
+    /// Communicate via stdin/stdout.
+    ///
+    /// The caller should not write anything to them when using this target.
+    Stdio,
+
+    /// Communicate via a specified TCP socket.
+    TCP(SocketAddr),
+}
+
+/// Tries to connect to given target and launches a language server.
+///
+/// This may return early if it couldn't connect to the target.
+/// Also returns after receiving a shutdown request.
+pub fn main(target: Target) -> io::Result<()> {
+    use std::net::TcpStream;
+
+    let server = match target {
+        Target::Stdio => Server::from_stdio(),
+        Target::TCP(addr) => {
+            let stream = TcpStream::connect(addr)?;
+            Server::from_tcp_stream(stream)?
+        },
+    };
     info!("established connection");
+
     let workspace = Arc::new(RwLock::new(initialize_workspace(&server)));
     info!("initialized workspace, starting a main loop");
+
     main_loop(server, workspace);
+
+    Ok(())
 }
 

@@ -14,8 +14,8 @@ import * as fs from 'fs';
 import { spawn } from 'child_process';
 const fs_extra = require('fs-extra') as any;
 
-const CRATE_PATH = '../kailua_langsvr';
-const BINARY_NAME = 'kailua-langsvr' + (process.platform === 'win32' ? '.exe' : '');
+const CRATE_PATH = '..';
+const BINARY_NAME = 'kailua' + (process.platform === 'win32' ? '.exe' : '');
 const BINARY_PATH = '../target/release';
 const PUBLISHED_BINARY_PATH = 'bin';
 
