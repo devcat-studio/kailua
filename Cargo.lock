@@ -1,11 +1,11 @@
 [root]
 name = "kailua_workspace"
-version = "0.1.0"
+version = "1.0.4"
 dependencies = [
- "kailua_check 0.1.0",
- "kailua_diag 0.1.0",
- "kailua_env 0.1.0",
- "kailua_syntax 0.1.0",
+ "kailua_check 1.0.4",
+ "kailua_diag 1.0.4",
+ "kailua_env 1.0.4",
+ "kailua_syntax 1.0.4",
  "lazy_static 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "parse-generics-shim 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "regex 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -77,11 +77,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "errln"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-
-[[package]]
 name = "futures"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -112,30 +107,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "kailua"
-version = "0.1.0"
+version = "1.0.4"
 dependencies = [
  "clap 2.23.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "errln 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "kailua_check 0.1.0",
- "kailua_diag 0.1.0",
- "kailua_env 0.1.0",
- "kailua_langsvr 0.1.0",
- "kailua_syntax 0.1.0",
- "kailua_workspace 0.1.0",
+ "kailua_check 1.0.4",
+ "kailua_diag 1.0.4",
+ "kailua_env 1.0.4",
+ "kailua_langsvr 1.0.4",
+ "kailua_syntax 1.0.4",
+ "kailua_workspace 1.0.4",
 ]
 
 [[package]]
 name = "kailua_check"
-version = "0.1.0"
+version = "1.0.4"
 dependencies = [
  "clap 2.23.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "kailua_diag 0.1.0",
- "kailua_env 0.1.0",
- "kailua_syntax 0.1.0",
- "kailua_test 0.1.0",
- "kailua_types 0.1.0",
+ "kailua_diag 1.0.4",
+ "kailua_env 1.0.4",
+ "kailua_syntax 1.0.4",
+ "kailua_test 1.0.4",
+ "kailua_types 1.0.4",
  "log 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "parse-generics-shim 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "take_mut 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -143,9 +137,9 @@ dependencies = [
 
 [[package]]
 name = "kailua_diag"
-version = "0.1.0"
+version = "1.0.4"
 dependencies = [
- "kailua_env 0.1.0",
+ "kailua_env 1.0.4",
  "kernel32-sys 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "parse-generics-shim 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -156,21 +150,21 @@ dependencies = [
 
 [[package]]
 name = "kailua_env"
-version = "0.1.0"
+version = "1.0.4"
 
 [[package]]
 name = "kailua_langsvr"
-version = "0.1.0"
+version = "1.0.4"
 dependencies = [
  "futures 0.1.13 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures-cpupool 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "kailua_check 0.1.0",
- "kailua_diag 0.1.0",
- "kailua_env 0.1.0",
- "kailua_langsvr_protocol 0.1.0",
- "kailua_syntax 0.1.0",
- "kailua_types 0.1.0",
- "kailua_workspace 0.1.0",
+ "kailua_check 1.0.4",
+ "kailua_diag 1.0.4",
+ "kailua_env 1.0.4",
+ "kailua_langsvr_protocol 1.0.4",
+ "kailua_syntax 1.0.4",
+ "kailua_types 1.0.4",
+ "kailua_workspace 1.0.4",
  "log 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "num_cpus 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "owning_ref 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -186,7 +180,7 @@ dependencies = [
 
 [[package]]
 name = "kailua_langsvr_protocol"
-version = "0.1.0"
+version = "1.0.4"
 dependencies = [
  "serde 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_derive 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -195,13 +189,13 @@ dependencies = [
 
 [[package]]
 name = "kailua_syntax"
-version = "0.1.0"
+version = "1.0.4"
 dependencies = [
  "clap 2.23.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "kailua_diag 0.1.0",
- "kailua_env 0.1.0",
- "kailua_test 0.1.0",
+ "kailua_diag 1.0.4",
+ "kailua_env 1.0.4",
+ "kailua_test 1.0.4",
  "log 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "parse-generics-shim 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "regex 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -209,11 +203,11 @@ dependencies = [
 
 [[package]]
 name = "kailua_test"
-version = "0.1.0"
+version = "1.0.4"
 dependencies = [
  "clap 2.23.3 (registry+https://github.com/rust-lang/crates.io-index)",
- "kailua_diag 0.1.0",
- "kailua_env 0.1.0",
+ "kailua_diag 1.0.4",
+ "kailua_env 1.0.4",
  "lazy_static 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "regex 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -222,14 +216,14 @@ dependencies = [
 
 [[package]]
 name = "kailua_types"
-version = "0.1.0"
+version = "1.0.4"
 dependencies = [
  "atomic 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "bitflags 0.8.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "kailua_diag 0.1.0",
- "kailua_env 0.1.0",
- "kailua_syntax 0.1.0",
+ "kailua_diag 1.0.4",
+ "kailua_env 1.0.4",
+ "kailua_syntax 1.0.4",
  "log 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "parking_lot 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "parse-generics-shim 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -566,7 +560,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum clap 2.23.3 (registry+https://github.com/rust-lang/crates.io-index)" = "f57e9b63057a545ad2ecd773ea61e49422ed1b1d63d74d5da5ecaee55b3396cd"
 "checksum dtoa 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "80c8b71fd71146990a9742fc06dcbbde19161a267e0ad4e572c35162f4578c90"
 "checksum env_logger 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)" = "e3856f1697098606fc6cb97a93de88ca3f3bc35bb878c725920e6e82ecf05e83"
-"checksum errln 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "6aba822d3275762d55fd527b698dcf8f233a488885ea5e75c683fb5fd94af946"
 "checksum futures 0.1.13 (registry+https://github.com/rust-lang/crates.io-index)" = "55f0008e13fc853f79ea8fc86e931486860d4c4c156cdffb59fa5f7fa833660a"
 "checksum futures-cpupool 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)" = "a283c84501e92cade5ea673a2a7ca44f71f209ccdd302a3e0896f50083d2c5ff"
 "checksum idna 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "6ac85ec3f80c8e4e99d9325521337e14ec7555c458a14e377d189659a427f375"

@@ -1,9 +1,15 @@
 [package]
 name = "kailua_diag"
-version = "0.1.0"
-authors = ["Kang Seonghoon <public+git@mearie.org>"]
+version = "1.0.4"
+authors = ["Nexon Corporation", "Kang Seonghoon <public+git@mearie.org>"]
 
 description = "Diagnostics and rudimentary localization support for Kailua"
+homepage = "https://github.com/devcat-studio/kailua"
+documentation = "https://docs.rs/kailua_diag/"
+repository = "https://github.com/devcat-studio/kailua.git"
+keywords = ["kailua", "diagnostics"]
+categories = ["development-tools"]
+license = "MIT/Apache-2.0"
 
 [dependencies]
 log = "0.3"
@@ -12,4 +18,4 @@ unicode-width = "0.1.3"
 parse-generics-shim = "0.1.0" # this should be fixed
 winapi = "0.2.7"
 kernel32-sys = "0.2.2"
-kailua_env = { version = "0.1.0", path = "../kailua_env" }
+kailua_env = { version = "1.0.4", path = "../kailua_env" }

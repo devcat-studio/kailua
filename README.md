@@ -203,6 +203,8 @@ The internal documentation is available in a [different file][internals-doc].
 
 ## License
 
+Kailua is dual-licensed under the [MIT license][license-mit] and [Apache license 2.0][license-apl] at your option. By contributing to Kailua you agree that your contributions will be licensed under these two licenses.
+
 <!-- -->
 
 [Lua]: https://www.lua.org/
@@ -210,4 +212,6 @@ The internal documentation is available in a [different file][internals-doc].
 [install Rust]: https://www.rust-lang.org/install.html
 [VSCode]: https://code.visualstudio.com/
 [internals-doc]: ./INTERNALS.md
+[license-mit]: ./LICENSE-MIT
+[license-apl]: ./LICENSE-APACHE
 

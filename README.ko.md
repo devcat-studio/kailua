@@ -203,6 +203,8 @@ print('Hello, world!')
 
 ## 라이선스
 
+카일루아는 [MIT 라이선스][license-mit]와 [아파치 라이선스 2.0][license-apl]으로 라이선스되어 있으며 둘 중 하나를 선택할 수 있습니다. 카일루아에 기여하면 기여된 내용이 이 두 라이선스로 라이선스된다는 데 동의하게 됩니다.
+
 <!-- -->
 
 [Lua]: https://www.lua.org/
@@ -210,4 +212,6 @@ print('Hello, world!')
 [install Rust]: https://www.rust-lang.org/install.html
 [VSCode]: https://code.visualstudio.com/
 [internals-doc]: ./INTERNALS.md
+[license-mit]: ./LICENSE-MIT
+[license-apl]: ./LICENSE-APACHE
 

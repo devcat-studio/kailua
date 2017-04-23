@@ -1,8 +1,14 @@
 [package]
 name = "kailua_env"
-version = "0.1.0"
-authors = ["Kang Seonghoon <public+git@mearie.org>"]
+version = "1.0.4"
+authors = ["Nexon Corporation", "Kang Seonghoon <public+git@mearie.org>"]
 
 description = "Basic environments for Kailua"
+homepage = "https://github.com/devcat-studio/kailua"
+documentation = "https://docs.rs/kailua_env/"
+repository = "https://github.com/devcat-studio/kailua.git"
+keywords = ["kailua"]
+categories = ["development-tools", "data-structures"]
+license = "MIT/Apache-2.0"
 
 [dependencies]

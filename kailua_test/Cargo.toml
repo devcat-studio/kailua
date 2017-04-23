@@ -1,9 +1,15 @@
 [package]
 name = "kailua_test"
-version = "0.1.0"
-authors = ["Kang Seonghoon <public+git@mearie.org>"]
+version = "1.0.4"
+authors = ["Nexon Corporation", "Kang Seonghoon <public+git@mearie.org>"]
 
 description = "Test harness for Kailua"
+homepage = "https://github.com/devcat-studio/kailua"
+documentation = "https://docs.rs/kailua_test/"
+repository = "https://github.com/devcat-studio/kailua.git"
+keywords = ["kailua", "language"]
+categories = ["development-tools"]
+license = "MIT/Apache-2.0"
 
 [dependencies]
 log = "0.3"
@@ -11,5 +17,5 @@ term = "0.4.4"
 regex = "0.2.1"
 lazy_static = "0.2"
 clap = "2"
-kailua_env = { version = "0.1.0", path = "../kailua_env" }
-kailua_diag = { version = "0.1.0", path = "../kailua_diag" }
+kailua_env = { version = "1.0.4", path = "../kailua_env" }
+kailua_diag = { version = "1.0.4", path = "../kailua_diag" }

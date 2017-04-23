@@ -1,9 +1,15 @@
 [package]
 name = "kailua_langsvr_protocol"
-version = "0.1.0"
-authors = ["Kang Seonghoon <public+git@mearie.org>"]
+version = "1.0.4"
+authors = ["Nexon Corporation", "Kang Seonghoon <public+git@mearie.org>"]
 
 description = "Language server protocol types for Kailua"
+homepage = "https://github.com/devcat-studio/kailua"
+documentation = "https://docs.rs/kailua_langsvr_protocol/"
+repository = "https://github.com/devcat-studio/kailua.git"
+keywords = ["language-server"]
+categories = ["development-tools"]
+license = "MIT/Apache-2.0"
 
 [dependencies]
 serde = "1.0"
