@@ -23,7 +23,7 @@ warn_on_dead_code = []
 log = "0.3.7"
 env_logger = "0.4.2"
 take_mut = "0.1"
-parse-generics-shim = "0.1.0"
+parse-generics-shim = "*"
 kailua_env = { version = "0.1.0", path = "../kailua_env" }
 kailua_diag = { version = "0.1.0", path = "../kailua_diag" }
 kailua_syntax = { version = "0.1.0", path = "../kailua_syntax" }

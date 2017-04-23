@@ -13,3 +13,5 @@ Kailua is a [Rust] application. For now, use the generated documentations hosted
 * [`kailua_langsvr_protocol`](https://docs.rs/kailua_langsvr_protocol/)
 * [`kailua`](https://docs.rs/kailua/)
 
+[Rust]: https://rust-lang.org/
+

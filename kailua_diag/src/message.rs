@@ -208,6 +208,22 @@ macro_rules! define_msg_internal {
 /// `pub` and the parameters can be omitted, and type or lifetime parameters can be given.
 /// (But note that the constructor itself is a struct, so `StructName {}` is required
 /// even when there are no message parameters.)
+///
+/// # Dependencies
+///
+/// This macro internally depends a `parse_generics_shim` crate,
+/// so any crate using this macro should put the following to the `Cargo.toml`...
+///
+/// ```toml
+/// [dependencies]
+/// parse-generics-shim = "*"
+/// ```
+///
+/// ...and the following to the crate root.
+///
+/// ```rust,ignore
+/// #[macro_use] extern crate parse_generics_shim;
+/// ```
 #[macro_export]
 macro_rules! define_msg {
     ($(#[$meta:meta])* pub $name:ident $($t:tt)*) => (
