@@ -7,9 +7,9 @@ description = "Language server implementation for Kailua"
 
 [dependencies]
 log = "0.3.7"
-serde = "0.9"
-serde_derive = "0.9"
-serde_json = "0.9"
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"
 url = "1.2"
 futures = "0.1.13"
 futures-cpupool = "0.1.5"

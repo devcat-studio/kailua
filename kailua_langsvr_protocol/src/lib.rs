@@ -129,10 +129,10 @@ macro_rules! enum_number {
             }
         }
 
-        impl Deserialize for $name {
-            fn deserialize<D: Deserializer>(d: D) -> Result<Self, D::Error> {
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
                 struct EnumVisitor;
-                impl de::Visitor for EnumVisitor {
+                impl<'de> de::Visitor<'de> for EnumVisitor {
                     type Value = $name;
                     fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
                         write!(f, "{}", stringify!($name))
@@ -194,10 +194,10 @@ impl Serialize for Version {
     }
 }
 
-impl Deserialize for Version {
-    fn deserialize<D: Deserializer>(d: D) -> Result<Version, D::Error> {
+impl<'de> Deserialize<'de> for Version {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Version, D::Error> {
         struct VersionVisitor;
-        impl de::Visitor for VersionVisitor {
+        impl<'de> de::Visitor<'de> for VersionVisitor {
             type Value = Version;
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 write!(f, "a string `2.0`")
@@ -235,10 +235,10 @@ impl Serialize for Id {
     }
 }
 
-impl Deserialize for Id {
-    fn deserialize<D: Deserializer>(d: D) -> Result<Id, D::Error> {
+impl<'de> Deserialize<'de> for Id {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Id, D::Error> {
         struct IdVisitor;
-        impl de::Visitor for IdVisitor {
+        impl<'de> de::Visitor<'de> for IdVisitor {
             type Value = Id;
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 write!(f, "a string or an integer")
@@ -257,7 +257,7 @@ impl Deserialize for Id {
                 Ok(Id::String(v))
             }
         }
-        d.deserialize(IdVisitor)
+        d.deserialize_any(IdVisitor)
     }
 }
 
@@ -278,8 +278,8 @@ impl Serialize for Message {
     }
 }
 
-impl Deserialize for Message {
-    fn deserialize<D: Deserializer>(d: D) -> Result<Message, D::Error> {
+impl<'de> Deserialize<'de> for Message {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Message, D::Error> {
         #[derive(Deserialize)]
         struct MessageInternal {
             #[serde(rename = "jsonrpc")] version: Version,
@@ -346,7 +346,7 @@ impl Deserialize for Message {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(bound(serialize = "T: Serialize", deserialize = "T: Deserialize"))]
+#[serde(bound(serialize = "T: Serialize", deserialize = "T: Deserialize<'de>"))]
 pub struct RequestMessage<T = Value> {
     #[serde(rename = "jsonrpc")] pub version: Version,
     pub id: Id,
@@ -355,7 +355,7 @@ pub struct RequestMessage<T = Value> {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(bound(serialize = "T: Serialize", deserialize = "T: Deserialize"))]
+#[serde(bound(serialize = "T: Serialize", deserialize = "T: Deserialize<'de>"))]
 pub struct NotificationMessage<T = Value> {
     #[serde(rename = "jsonrpc")] pub version: Version,
     pub method: String,
@@ -364,7 +364,7 @@ pub struct NotificationMessage<T = Value> {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(bound(serialize = "R: Serialize, E: Serialize",
-              deserialize = "R: Deserialize, E: Deserialize"))]
+              deserialize = "R: Deserialize<'de>, E: Deserialize<'de>"))]
 pub struct ResponseMessage<R = Value, E = Value> {
     #[serde(rename = "jsonrpc")] pub version: Version,
     pub id: Option<Id>,
@@ -373,7 +373,7 @@ pub struct ResponseMessage<R = Value, E = Value> {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(bound(serialize = "T: Serialize", deserialize = "T: Deserialize"))]
+#[serde(bound(serialize = "T: Serialize", deserialize = "T: Deserialize<'de>"))]
 pub struct ResponseError<T> {
     pub code: i64,
     pub message: String,
@@ -520,7 +520,7 @@ pub enum Request {
 impl Request {
     pub fn from_message(msg: RequestMessage) -> (Id, Result<Request, MessageError>) {
         fn parse<T, F>(msg: RequestMessage, wrap: F) -> (Id, Result<Request, MessageError>)
-            where T: Deserialize, F: Fn(T) -> Request
+            where T: for<'de> Deserialize<'de>, F: Fn(T) -> Request
         {
             if let Some(params) = msg.params {
                 match serde_json::from_value(params) {
@@ -589,7 +589,7 @@ pub enum Notification {
 impl Notification {
     pub fn from_message(msg: NotificationMessage) -> Result<Notification, MessageError> {
         fn parse<T, F>(msg: NotificationMessage, wrap: F) -> Result<Notification, MessageError>
-            where T: Deserialize, F: Fn(T) -> Notification
+            where T: for<'de> Deserialize<'de>, F: Fn(T) -> Notification
         {
             if let Some(params) = msg.params {
                 match serde_json::from_value(params) {
