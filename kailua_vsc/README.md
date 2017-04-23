@@ -165,7 +165,13 @@ The following content is required for `.vscode/kailua.json`, in case you are edi
 
 ```json
 {
-    "start_path": "<path to the entry point>"
+    // Unlike a normal JSON, a comment or a stray comma is allowed.
+    "start_path": "<path to the entry point>",
+
+    // You can also put the following:
+    //
+    //"package_path": "<the value of `package.path`, determined from assignments if missing>",
+    //"package_cpath": "<the value of `package.cpath`, determined from assignments if missing>",
 }
 ```
 

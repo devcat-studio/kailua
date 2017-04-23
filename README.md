@@ -8,20 +8,21 @@
 
 ## Installation and Usage
 
-Kailua can be used as a standalone checker (`kailua-check`) or an IDE plugin.
+Kailua can be used as a standalone checker or an IDE plugin.
 
 ### Standalone Checker
 
-To install a standalone checker, [install Rust] first (1.15 or later required), then checkout this repository and then type the following:
+To install a standalone checker, [install Rust] first (1.15 or later required), then type the following:
 
 ```
-cd kailua_check
-cargo install
+cargo install kailua
 ```
 
-You can run `kailua-check <path to the entry point>` now.
+You can run `kailua check <path to the entry point>` now.
 
 ![](etc/images/kailua-check.png)
+
+You can also run `kailua check <path to the directory>`, if you have `kailua.json` or `.vscode/kailua.json` in that directory. See the following section on the configuration format.
 
 ### Visual Studio Code
 
@@ -41,7 +42,13 @@ The following content is required for `.vscode/kailua.json`, in case you are edi
 
 ```json
 {
-    "start_path": "<path to the entry point>"
+    // Unlike a normal JSON, a comment or a stray comma is allowed.
+    "start_path": "<path to the entry point>",
+
+    // You can also put the following:
+    //
+    //"package_path": "<the value of `package.path`, determined from assignments if missing>",
+    //"package_cpath": "<the value of `package.cpath`, determined from assignments if missing>",
 }
 ```
 

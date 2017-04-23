@@ -8,20 +8,21 @@
 
 ## 설치와 사용
 
-카일루아는 독립 검사기(`kailua-check`)로도 쓸 수 있고 IDE 플러그인으로도 쓸 수 있습니다.
+카일루아는 독립 검사기로도 쓸 수 있고 IDE 플러그인으로도 쓸 수 있습니다.
 
 ### 독립 검사기
 
-독립 검사기를 설치하려면 먼저 [러스트를 설치][install Rust]한 뒤(1.15 이상이 필요합니다), 이 저장소를 체크아웃하고 다음을 입력합니다.
+독립 검사기를 설치하려면 먼저 [러스트를 설치][install Rust]한 뒤(1.15 이상이 필요합니다), 다음을 입력합니다.
 
 ```
-cd kailua_check
-cargo install
+cargo install kailua
 ```
 
-`kailua-check <검사를 시작할 파일 경로>`로 실행할 수 있습니다.
+`kailua check <검사를 시작할 파일 경로>`로 실행할 수 있습니다.
 
 ![](etc/images/kailua-check.png)
+
+또한 `kailua.json`이나 `.vscode/kailua.json`이 해당 디렉토리에 있다면 `kailua check <검사할 디렉토리 경로>`로 실행할 수도 있습니다. 설정 파일의 포맷은 다음 장을 참고하십시오.
 
 ### Visual Studio Code
 
@@ -41,7 +42,13 @@ cargo install
 
 ```json
 {
-    "start_path": "<검사를 시작할 파일 경로>"
+    // 보통의 JSON과는 다르게 주석이나 마지막 쉼표도 허용됩니다.
+    "start_path": "<검사를 시작할 파일 경로>",
+
+    // 다음 필드도 지정할 수 있습니다.
+    //
+    //"package_path": "<`package.path`의 값, 없다면 해당 필드에 대입되는 값들로부터 추론됨>",
+    //"package_cpath": "<`package.cpath`의 값, 없다면 해당 필드에 대입되는 값들로부터 추론됨>",
 }
 ```
 
