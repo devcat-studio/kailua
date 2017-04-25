@@ -9,7 +9,7 @@ checklist:
 * convert all images into the data URIs
 -->
 
-<!--[한국어](https://github.com/devcat-studio/kailua/tree/master/README.ko.md) currently not reachable-->
+[한국어](https://github.com/devcat-studio/kailua/tree/master/README.ko.md)
 
 **Kailua** is an experimental type checker and integrated development environment (IDE) for the [Lua] programming language (currently only Lua 5.1 is supported).
 

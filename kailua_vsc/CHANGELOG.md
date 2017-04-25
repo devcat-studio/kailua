@@ -1,3 +1,9 @@
+## 1.0.4 (2017-04-25)
+
+The first public, free and open-source version of Kailua.
+
+* The configuration format has been expanded. In particular, `package.path` and `package.cpath` can be set ahead of time, and assignments to them will cause an warning rather than affecting the path resolution when set. The configuration path can be now `kailua.json` instead of `.vscode/kailua.json` (if you don't use VS Code), and the file can contain comments and stray commas unlike normal JSONs.
+
 ## 1.0.3 (2017-04-14)
 
 * Go to definition and renaming now works for local and global variable names. Currently there are some known issues (e.g. renaming to an invalid or reserved name does not error).
