@@ -21,7 +21,7 @@ harness = false
 
 [dependencies]
 log = "0.3.7"
-parse-generics-shim = "*"
+parse-generics-shim = "0.1.0"
 kailua_env = { version = "1.0.4", path = "../kailua_env" }
 kailua_diag = { version = "1.0.4", path = "../kailua_diag" }
 

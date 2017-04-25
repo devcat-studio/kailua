@@ -24,7 +24,7 @@ owning_ref = "0.2"
 num_cpus = "1.2"
 parking_lot = "0.3"
 walkdir = "1"
-parse-generics-shim = "*"
+parse-generics-shim = "0.1.0"
 kailua_env = { version = "1.0.4", path = "../kailua_env" }
 kailua_diag = { version = "1.0.4", path = "../kailua_diag" }
 kailua_syntax = { version = "1.0.4", path = "../kailua_syntax" }

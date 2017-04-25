@@ -17,7 +17,7 @@ serde_derive = "1.0"
 serde_json = "1.0"
 regex = "0.2.1"
 lazy_static = "0.2"
-parse-generics-shim = "*"
+parse-generics-shim = "0.1.0"
 kailua_env = { version = "1.0.4", path = "../kailua_env" }
 kailua_diag = { version = "1.0.4", path = "../kailua_diag" }
 kailua_syntax = { version = "1.0.4", path = "../kailua_syntax" }
