@@ -14,15 +14,35 @@
                     }
                 }
             ],
-            "description": "Specifies the path(s) of the source file to begin the checking. The path is relative to the workspace directory. Multiple paths are allowed and individually checked."
+            "description": "Path(s) of the source file to begin the checking. The path is relative to the workspace directory. Multiple paths are allowed and individually checked."
         },
         "package_path": {
             "type": "string",
-            "description": "Specifies the value of `package.path`. The paths are relative to the workspace directory. `package.path` can be dynamically set in the program, but such assignments will be ignored if the explicit value is given here."
+            "description": "A value of `package.path`. The paths are relative to the workspace directory. `package.path` can be dynamically set in the program, but such assignments will be ignored if the explicit value is given here."
         },
         "package_cpath": {
             "type": "string",
-            "description": "Specifies the value of `package.cpath`. The paths are relative to the workspace directory. `package.cpath` can be dynamically set in the program, but such assignments will be ignored if the explicit value is given here."
+            "description": "A value of `package.cpath`. The paths are relative to the workspace directory. `package.cpath` can be dynamically set in the program, but such assignments will be ignored if the explicit value is given here."
+        },
+        "preload": {
+            "type": "object",
+            "properties": {
+                "open": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "A list of built-in libraries loaded as like `--# open`. Takes precedence over `require`."
+                },
+                "require": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "A list of libraries loaded via `require()`."
+                }
+            },
+            "description": "A list of default libraries that will be preloaded into the environment before checking."
         }
     },
     "required": ["start_path"]

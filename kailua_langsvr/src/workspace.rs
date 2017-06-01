@@ -843,7 +843,7 @@ impl Workspace {
                 })),
             };
 
-            let opts = match spare_shared.read().base {
+            let (opts, preload) = match spare_shared.read().base {
                 WorkspaceBase::Config(_) => {
                     // it should not be the case, but if we ever get to this point,
                     // we cannot proceed at all because there's no start path.
@@ -851,7 +851,8 @@ impl Workspace {
                     return Err(From::from(diags));
                 },
                 WorkspaceBase::Workspace(ref ws) => {
-                    Rc::new(RefCell::new(WorkspaceOptions::new(fssource.clone(), ws)))
+                    (Rc::new(RefCell::new(WorkspaceOptions::new(fssource.clone(), ws))),
+                     ws.preload().clone())
                 },
             };
 
@@ -861,8 +862,8 @@ impl Workspace {
                 let mut context = Context::new(diags.report(|span| {
                     diags::translate_span(span, &source.read())
                 }));
-                let ok = kailua_check::check_from_chunk(&mut context, start_chunk,
-                                                        opts).is_ok();
+                let ok = kailua_check::check_from_chunk_with_preloading(&mut context, start_chunk,
+                                                                        opts, &preload).is_ok();
                 (ok, context.into_output())
             };
 

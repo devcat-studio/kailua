@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use kailua_env::{Spanned, WithLoc};
 use kailua_diag::{Report, NoReport, Reporter, Stop, Locale};
 use kailua_syntax::Chunk;
+use kailua_check::Preload;
 use kailua_check::options::{Options, FsSource, FsOptions};
 
 mod message;
@@ -56,6 +57,9 @@ pub struct Config {
     /// the checker's behavior and will rather issue an warning.
     pub package_cpath: Option<Vec<u8>>,
 
+    /// Preloading options.
+    pub preload: Preload,
+
     /// A preferred message locale, if any.
     pub message_locale: Option<Locale>,
 }
@@ -69,6 +73,7 @@ impl Config {
             start_paths: vec![start_path],
             package_path: None,
             package_cpath: None,
+            preload: Preload::default(),
             message_locale: None,
         }
     }
@@ -80,6 +85,7 @@ impl Config {
             start_paths: Vec::new(),
             package_path: None,
             package_cpath: None,
+            preload: Preload::default(),
             message_locale: None,
         }
     }
@@ -99,11 +105,18 @@ impl Config {
             package_path: Option<String>,
             package_cpath: Option<String>,
             message_lang: Option<String>,
+            preload: Option<Preload>,
         }
 
         #[derive(Deserialize, Clone, Debug)]
         #[serde(untagged)]
         enum StartPath { Single(PathBuf), Multi(Vec<PathBuf>) }
+
+        #[derive(Deserialize, Clone, Debug)]
+        struct Preload {
+            #[serde(default)] open: Vec<String>,
+            #[serde(default)] require: Vec<String>,
+        }
 
         let mut data = String::new();
         File::open(&path)?.read_to_string(&mut data)?;
@@ -127,6 +140,14 @@ impl Config {
         } else {
             None
         };
+        if let Some(preload) = data.preload {
+            self.preload.open = preload.open.into_iter().map(|s| {
+                s.into_bytes().without_loc()
+            }).collect();
+            self.preload.require = preload.require.into_iter().map(|s| {
+                s.into_bytes().without_loc()
+            }).collect();
+        }
 
         Ok(true)
     }
@@ -150,6 +171,7 @@ pub struct Workspace {
     start_paths: Vec<PathBuf>,
     package_path: Option<Vec<u8>>,
     package_cpath: Option<Vec<u8>>,
+    preload: Preload,
     message_locale: Locale,
 }
 
@@ -165,6 +187,7 @@ impl Workspace {
             start_paths: config.start_paths.clone(),
             package_path: config.package_path.clone(),
             package_cpath: config.package_cpath.clone(),
+            preload: config.preload.clone(),
             message_locale: config.message_locale.unwrap_or(default_locale),
         })
     }
@@ -179,6 +202,10 @@ impl Workspace {
 
     pub fn start_paths(&self) -> &[PathBuf] {
         &self.start_paths
+    }
+
+    pub fn preload(&self) -> &Preload {
+        &self.preload
     }
 
     pub fn message_locale(&self) -> Locale {

@@ -386,7 +386,7 @@ impl<R: Report> Context<R> {
         &self.report
     }
 
-    pub fn open_library(&mut self, name: &Spanned<Name>, opts: Rc<RefCell<Options>>) -> Result<()> {
+    pub fn open_library(&mut self, name: Spanned<&[u8]>, opts: Rc<RefCell<Options>>) -> Result<()> {
         if let Some(defs) = str::from_utf8(&name.base).ok().and_then(get_defs) {
             // one library may consist of multiple files, so we defer duplicate check
             for def in defs {
