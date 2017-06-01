@@ -17,7 +17,7 @@ use kailua_types::ty::{Key, Tables, Function, Functions};
 use kailua_types::ty::{F, Slot, SlotSeq, SpannedSlotSeq, Tag, Class, ClassId};
 use kailua_types::ty::flags::*;
 use kailua_types::env::Types;
-use env::{Env, Returns, Frame, Scope, Context, SlotSpec};
+use env::{Env, Returns, Frame, Scope, Module, Context, SlotSpec};
 use message as m;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -1788,7 +1788,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
 
             St::KailuaOpen(ref name) => {
                 let opts = self.env.opts().clone();
-                self.env.context().open_library(name, opts)?;
+                self.env.context().open_library(name.as_ref().map(|n| &n[..]), opts)?;
                 Ok(Exit::None)
             }
 
@@ -2247,32 +2247,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
 
                 let arg = self.env.resolve_exact_type(&argtys.ensure_at(0).unlift());
                 if let Some(modname) = arg.and_then(|t| t.as_string().map(|s| s.to_owned())) {
-                    let mut module = self.context().get_loaded_module(&modname, expspan)?;
-
-                    if module.is_none() {
-                        let modname = (&modname[..]).with_loc(&argtys.head[0]);
-
-                        self.context().mark_module_as_loading(&modname, expspan);
-
-                        info!("requiring {:?}", modname);
-                        let opts = self.env.opts().clone();
-                        let chunk = match opts.borrow_mut().require_chunk(modname, self.env) {
-                            Ok(chunk) => chunk,
-                            Err(_) => {
-                                self.env.warn(argtys.ensure_at(0),
-                                              m::CannotResolveModName {}).done()?;
-                                return Ok(exit.with(SlotSeq::from(T::All)));
-                            }
-                        };
-                        let mut env = Env::new(self.env.context(), opts, chunk.map);
-                        let exit = {
-                            let mut sub = Checker::new(&mut env);
-                            sub.visit_block(&chunk.block)?
-                        };
-                        module = env.return_from_module(&modname, exit >= Exit::Stop, expspan)?;
-                    }
-
-                    if let Some(module) = module {
+                    let modname = (&modname[..]).with_loc(&argtys.head[0]);
+                    if let Some(module) = self.require(modname, expspan)? {
                         self.env.import_types(module.exported_types.with_loc(expspan))?;
                         if let Some(ref returns) = module.returns {
                             return Ok(exit.with(SlotSeq::from(returns.clone())));
@@ -2833,6 +2809,50 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
         } else {
             Ok(Some(SlotSpec::Implicit(slot)))
         }
+    }
+
+    /// `Require`s a given module name and returns the resulting module.
+    /// Essentially same to the specialized `require(modname)` call,
+    /// and normally used to provide the preloaded environment.
+    /// (Use `Context::open_library` for preloading `--# open`, by the way.)
+    ///
+    /// There are two spans associated: the name span and the expression span.
+    /// The former span is used to pinpoint the problematic module name from the reports;
+    /// the latter span is used to track the `require` call (e.g. recursive `require`).
+    ///
+    /// Returns the resulting module (that may have diverged, in which case `returns` is `None`)
+    /// or `None` when the error occurred and has been recovered.
+    pub fn require(&mut self, modname: Spanned<&[u8]>, expspan: Span) -> Result<Option<Module>> {
+        let mut module = self.context().get_loaded_module(&modname, expspan)?;
+
+        if module.is_none() {
+            self.context().mark_module_as_loading(&modname, expspan);
+
+            info!("requiring {:?}", modname);
+            let opts = self.env.opts().clone();
+            let chunk = match opts.borrow_mut().require_chunk(modname, self.env) {
+                Ok(chunk) => chunk,
+                Err(_) => {
+                    self.env.warn(modname, m::CannotResolveModName {}).done()?;
+
+                    // since the failure to resolve the module name is a mere warning,
+                    // we don't want to return the dummy type here
+                    return Ok(Some(Module {
+                        returns: Some(Slot::just(Ty::new(T::All))),
+                        exported_types: HashMap::new(),
+                    }));
+                }
+            };
+
+            let mut env = Env::new(self.env.context(), opts, chunk.map);
+            let exit = {
+                let mut sub = Checker::new(&mut env);
+                sub.visit_block(&chunk.block)?
+            };
+            module = env.return_from_module(&modname, exit >= Exit::Stop, expspan)?;
+        }
+
+        Ok(module)
     }
 
     fn register_module_if_needed(&mut self, slot: &Slot) {

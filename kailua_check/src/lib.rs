@@ -28,6 +28,7 @@ extern crate take_mut;
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use kailua_env::Spanned;
 use kailua_diag::Report;
 
 pub use check::Checker;
@@ -38,12 +39,56 @@ pub mod env;
 mod defs;
 mod check;
 
+/// Options to populate the execution environment before checking.
+///
+/// They are essentially identical to a series of `--# open` statements and
+/// `require` function calls in the order of arguments.
+#[derive(Clone, Debug)]
+pub struct Preload {
+    /// A list of preloaded built-in libraries.
+    pub open: Vec<Spanned<Vec<u8>>>,
+
+    /// A list of preloaded `require` targets.
+    pub require: Vec<Spanned<Vec<u8>>>,
+}
+
+impl Default for Preload {
+    fn default() -> Preload {
+        Preload { open: Vec::new(), require: Vec::new() }
+    }
+}
+
 /// An one-off function to check a chunk with given `Options`.
-pub fn check_from_chunk<R: Report>(context: &mut env::Context<R>,
-                                   chunk: kailua_syntax::Chunk,
-                                   opts: Rc<RefCell<options::Options>>) -> kailua_diag::Result<()> {
+pub fn check_from_chunk<R: Report>(
+    context: &mut env::Context<R>,
+    chunk: kailua_syntax::Chunk,
+    opts: Rc<RefCell<options::Options>>
+) -> kailua_diag::Result<()> {
     let mut env = env::Env::new(context, opts, chunk.map);
     let mut checker = Checker::new(&mut env);
+    checker.visit(&chunk.block)
+}
+
+/// Same to `check_from_chunk` but with preloading.
+pub fn check_from_chunk_with_preloading<R: Report>(
+    context: &mut env::Context<R>,
+    chunk: kailua_syntax::Chunk,
+    opts: Rc<RefCell<options::Options>>,
+    preload: &Preload
+) -> kailua_diag::Result<()> {
+    // preload `--# open`s into the context
+    for name in &preload.open {
+        context.open_library(name.as_ref().map(|n| &n[..]), opts.clone())?;
+    }
+
+    let mut env = env::Env::new(context, opts, chunk.map);
+    let mut checker = Checker::new(&mut env);
+
+    // preload `require`s into the checker
+    for name in &preload.require {
+        checker.require(name.as_ref().map(|n| &n[..]), name.span)?;
+    }
+
     checker.visit(&chunk.block)
 }
 

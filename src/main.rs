@@ -25,7 +25,7 @@ fn parse_and_check(workspace: &Workspace, quiet: bool) -> Result<(), String> {
     use kailua_diag::message::{Locale, Localize};
     use kailua_diag::report::{Stop, Kind, Report, ConsoleReport, TrackMaxKind};
     use kailua_syntax::{parse_chunk, Chunk};
-    use kailua_check::check_from_chunk;
+    use kailua_check::check_from_chunk_with_preloading;
     use kailua_check::env::Context;
     use kailua_check::options::FsSource;
     use kailua_workspace::WorkspaceOptions;
@@ -101,7 +101,9 @@ fn parse_and_check(workspace: &Workspace, quiet: bool) -> Result<(), String> {
 
         let opts = Rc::new(RefCell::new(WorkspaceOptions::new(fssource, workspace)));
 
-        if !(check_from_chunk(&mut context, filechunk, opts).is_ok() && report.can_continue()) {
+        let output = check_from_chunk_with_preloading(&mut context, filechunk, opts,
+                                                      workspace.preload());
+        if !(output.is_ok() && report.can_continue()) {
             return Err(format!("Stopped due to prior errors"));
         }
     }
