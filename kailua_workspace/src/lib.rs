@@ -41,8 +41,8 @@ pub struct Config {
     /// A path to the configuration file, if read. Used for diagnostics.
     config_path: Option<PathBuf>,
 
-    /// A path to the start file, if any.
-    pub start_path: Option<PathBuf>,
+    /// Paths to the start file, if any.
+    pub start_paths: Vec<PathBuf>,
 
     /// The explicit value of `package.path`, if any.
     ///
@@ -66,7 +66,7 @@ impl Config {
         Config {
             base_dir: base_dir,
             config_path: None,
-            start_path: Some(start_path),
+            start_paths: vec![start_path],
             package_path: None,
             package_cpath: None,
             message_locale: None,
@@ -77,7 +77,7 @@ impl Config {
         Config {
             base_dir: base_dir,
             config_path: None,
-            start_path: None,
+            start_paths: Vec::new(),
             package_path: None,
             package_cpath: None,
             message_locale: None,
@@ -95,11 +95,15 @@ impl Config {
 
         #[derive(Deserialize, Clone, Debug)]
         struct ConfigData {
-            start_path: PathBuf,
+            start_path: StartPath,
             package_path: Option<String>,
             package_cpath: Option<String>,
             message_lang: Option<String>,
         }
+
+        #[derive(Deserialize, Clone, Debug)]
+        #[serde(untagged)]
+        enum StartPath { Single(PathBuf), Multi(Vec<PathBuf>) }
 
         let mut data = String::new();
         File::open(&path)?.read_to_string(&mut data)?;
@@ -108,7 +112,10 @@ impl Config {
             io::Error::new(io::ErrorKind::InvalidData, e)
         })?;
         self.config_path = Some(path);
-        self.start_path = Some(self.base_dir.join(data.start_path));
+        self.start_paths = match data.start_path {
+            StartPath::Single(p) => vec![self.base_dir.join(p)],
+            StartPath::Multi(pp) => pp.into_iter().map(|p| self.base_dir.join(p)).collect(),
+        };
         self.package_path = data.package_path.map(|s| s.into_bytes());
         self.package_cpath = data.package_cpath.map(|s| s.into_bytes());
         self.message_locale = if let Some(lang) = data.message_lang {
@@ -140,7 +147,7 @@ impl Config {
 pub struct Workspace {
     base_dir: PathBuf,
     config_path: Option<PathBuf>,
-    start_path: PathBuf,
+    start_paths: Vec<PathBuf>,
     package_path: Option<Vec<u8>>,
     package_cpath: Option<Vec<u8>>,
     message_locale: Locale,
@@ -148,16 +155,14 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(config: &Config, default_locale: Locale) -> Option<Workspace> {
-        let start_path = if let Some(ref path) = config.start_path {
-            path.clone()
-        } else {
+        if config.start_paths.is_empty() {
             return None;
-        };
+        }
 
         Some(Workspace {
             base_dir: config.base_dir.clone(),
             config_path: config.config_path.clone(),
-            start_path: start_path,
+            start_paths: config.start_paths.clone(),
             package_path: config.package_path.clone(),
             package_cpath: config.package_cpath.clone(),
             message_locale: config.message_locale.unwrap_or(default_locale),
@@ -172,8 +177,8 @@ impl Workspace {
         self.config_path.as_ref().map(|p| &**p)
     }
 
-    pub fn start_path(&self) -> &Path {
-        &self.start_path
+    pub fn start_paths(&self) -> &[PathBuf] {
+        &self.start_paths
     }
 
     pub fn message_locale(&self) -> Locale {

@@ -117,7 +117,7 @@ macro_rules! enum_number {
         }
         $($t:tt)*
     ) => (
-        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
         $(#[$attrs])*
         pub enum $name {
             $($variant = $value,)*

@@ -3,8 +3,18 @@
     "type": "object",
     "properties": {
         "start_path": {
-            "type": "string",
-            "description": "Specifies the path of the source file to begin the checking. The path is relative to the workspace directory."
+            "anyOf": [
+                {
+                    "type": "string"
+                },
+                {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            ],
+            "description": "Specifies the path(s) of the source file to begin the checking. The path is relative to the workspace directory. Multiple paths are allowed and individually checked."
         },
         "package_path": {
             "type": "string",

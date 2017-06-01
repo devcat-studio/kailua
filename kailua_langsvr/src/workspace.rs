@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use futures::{future, Future, BoxFuture};
+use futures::{future, stream, Future, Stream, BoxFuture};
 use futures_cpupool::CpuPool;
 use url::Url;
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -493,16 +493,27 @@ struct WorkspaceShared {
 
     base: WorkspaceBase,
 
-    check_output: Option<ReportFuture<Arc<Output>>>,
-    last_check_output: Option<Arc<Output>>,
+    check_outputs: Vec<Option<ReportFuture<Arc<Output>>>>,
+    last_check_outputs: Vec<Option<Arc<Output>>>,
 }
+
+type Shared = Arc<RwLock<WorkspaceShared>>;
+type SharedWrite<'a> = RwLockWriteGuard<'a, WorkspaceShared>;
 
 impl fmt::Debug for WorkspaceShared {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        struct DummyOptionList<'a, T: 'a>(&'a [Option<T>]);
+        impl<'a, T: 'a> fmt::Debug for DummyOptionList<'a, T> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.debug_list().entries(self.0.iter().map(|e| e.as_ref().map(|_| Ellipsis))).finish()
+            }
+        }
+
         f.debug_struct("WorkspaceShared")
          .field("base", &self.base)
          .field("cancel_token", &self.cancel_token)
-         .field("check_output", &self.check_output.as_ref().map(|_| Ellipsis))
+         .field("check_outputs", &DummyOptionList(&self.check_outputs))
+         .field("last_check_outputs", &DummyOptionList(&self.last_check_outputs))
          .finish()
     }
 }
@@ -512,7 +523,9 @@ impl WorkspaceShared {
         self.cancel_token.cancel();
         self.cancel_token = CancelToken::new();
 
-        self.check_output = None;
+        for output in &mut self.check_outputs {
+            *output = None;
+        }
     }
 }
 
@@ -630,8 +643,8 @@ impl Workspace {
             shared: Arc::new(RwLock::new(WorkspaceShared {
                 cancel_token: CancelToken::new(),
                 base: WorkspaceBase::Config(kailua_workspace::Config::from_base_dir(base_dir)),
-                check_output: None,
-                last_check_output: None,
+                check_outputs: Vec::new(),
+                last_check_outputs: Vec::new(),
             })),
         }
     }
@@ -670,7 +683,10 @@ impl Workspace {
             None
         };
         if let Some(ws) = ws {
+            let noutputs = ws.start_paths().len();
             shared.base = WorkspaceBase::Workspace(ws);
+            shared.check_outputs.resize(noutputs, None);
+            shared.last_check_outputs.resize(noutputs, None);
         }
         true
     }
@@ -794,104 +810,145 @@ impl Workspace {
         self.shared.read().cancel_token.future()
     }
 
-    pub fn ensure_check_output(&self) -> WorkspaceResult<ReportFuture<Arc<Output>>> {
+    fn build_future_for_check_output(
+        &self, index: usize, start_path: &Path, spare_shared: Shared, shared: &mut SharedWrite
+    ) -> ReportFuture<Arc<Output>> {
+        let start_chunk_fut = self.ensure_file(start_path).ensure_chunk();
+
+        let files = self.files.clone();
+        let source = self.source.clone();
+        let cancel_token = shared.cancel_token.clone();
+        let message_locale = self.message_locale;
+
+        let fut = start_chunk_fut.map_err(|e| (*e).clone()).and_then(move |chunk_ret| {
+            cancel_token.keep_going()?;
+
+            let start_chunk = (*chunk_ret.0).clone();
+            let diags = ReportTree::new(message_locale, None);
+            diags.add_parent(chunk_ret.1.clone());
+
+            // the actual checking process.
+            //
+            // this will routinely lock the shared, so we avoid locking it from the caller
+            // by cloning required values prematurely.
+            let fssource = WorkspaceFsSource {
+                inner: Rc::new(RefCell::new(WorkspaceFsSourceInner {
+                    cancel_token: cancel_token.clone(),
+                    files: files,
+                    source: source.clone(),
+                    temp_units: Vec::new(),
+                    temp_files: HashMap::new(),
+                    message_locale: message_locale,
+                    root_report: diags.clone(),
+                })),
+            };
+
+            let opts = match spare_shared.read().base {
+                WorkspaceBase::Config(_) => {
+                    // it should not be the case, but if we ever get to this point,
+                    // we cannot proceed at all because there's no start path.
+                    // we should have been alerted though.
+                    return Err(From::from(diags));
+                },
+                WorkspaceBase::Workspace(ref ws) => {
+                    Rc::new(RefCell::new(WorkspaceOptions::new(fssource.clone(), ws)))
+                },
+            };
+
+            let (ok, output) = {
+                // the translation should NOT lock the source (read or write) indefinitely.
+                // we also want to drop the proxy report as fast as possible.
+                let mut context = Context::new(diags.report(|span| {
+                    diags::translate_span(span, &source.read())
+                }));
+                let ok = kailua_check::check_from_chunk(&mut context, start_chunk,
+                                                        opts).is_ok();
+                (ok, context.into_output())
+            };
+
+            // fssource should be owned only by this function; the following should not fail
+            let fssource = Rc::try_unwrap(fssource.inner).ok().expect("no single owner");
+            let fssource = fssource.into_inner();
+
+            // remove all temporarily added chunks from the source
+            // XXX ideally this should be cached as much as possible though
+            let mut source = source.write();
+            for unit in fssource.temp_units {
+                let sourcefile = source.remove(unit);
+                assert!(sourcefile.is_some());
+            }
+
+            // FsSource may have failed from the cancel request, so we should catch it here
+            cancel_token.keep_going()?;
+
+            if ok {
+                let output = Arc::new(output);
+                spare_shared.write().last_check_outputs[index] = Some(output.clone());
+                Ok((output, diags))
+            } else {
+                Err(From::from(diags))
+            }
+        });
+
+        self.pool.spawn(fut).boxed().shared()
+    }
+
+    pub fn ensure_check_outputs(&self) -> WorkspaceResult<Vec<ReportFuture<Arc<Output>>>> {
         let spare_shared = self.shared.clone();
         let mut shared = self.shared.write();
 
-        let start_path = match shared.base {
+        let start_paths = match shared.base {
             WorkspaceBase::Config(_) => {
                 return Err(WorkspaceError("cannot start checking without a start file specified"));
             },
-            WorkspaceBase::Workspace(ref ws) => ws.start_path().to_owned(),
+            WorkspaceBase::Workspace(ref ws) => ws.start_paths().to_owned(),
         };
+        assert_eq!(shared.check_outputs.len(), start_paths.len());
 
-        if shared.check_output.is_none() {
-            // get a future for the entrypoint's chunk
-            let start_chunk_fut = self.ensure_file(&start_path).ensure_chunk();
-
-            let files = self.files.clone();
-            let source = self.source.clone();
-            let cancel_token = shared.cancel_token.clone();
-            let message_locale = self.message_locale;
-
-            let fut = start_chunk_fut.map_err(|e| (*e).clone()).and_then(move |chunk_ret| {
-                cancel_token.keep_going()?;
-
-                let start_chunk = (*chunk_ret.0).clone();
-                let diags = ReportTree::new(message_locale, None);
-                diags.add_parent(chunk_ret.1.clone());
-
-                // the actual checking process.
-                //
-                // this will routinely lock the shared, so we avoid locking it from the caller
-                // by cloning required values prematurely.
-                let fssource = WorkspaceFsSource {
-                    inner: Rc::new(RefCell::new(WorkspaceFsSourceInner {
-                        cancel_token: cancel_token.clone(),
-                        files: files,
-                        source: source.clone(),
-                        temp_units: Vec::new(),
-                        temp_files: HashMap::new(),
-                        message_locale: message_locale,
-                        root_report: diags.clone(),
-                    })),
-                };
-
-                let opts = match spare_shared.read().base {
-                    WorkspaceBase::Config(_) => {
-                        // it should not be the case, but if we ever get to this point,
-                        // we cannot proceed at all because there's no start path.
-                        // we should have been alerted though.
-                        return Err(From::from(diags));
-                    },
-                    WorkspaceBase::Workspace(ref ws) => {
-                        Rc::new(RefCell::new(WorkspaceOptions::new(fssource.clone(), ws)))
-                    },
-                };
-
-                let (ok, output) = {
-                    // the translation should NOT lock the source (read or write) indefinitely.
-                    // we also want to drop the proxy report as fast as possible.
-                    let mut context = Context::new(diags.report(|span| {
-                        diags::translate_span(span, &source.read())
-                    }));
-                    let ok = kailua_check::check_from_chunk(&mut context, start_chunk,
-                                                            opts).is_ok();
-                    (ok, context.into_output())
-                };
-
-                // fssource should be owned only by this function; the following should not fail
-                let fssource = Rc::try_unwrap(fssource.inner).ok().expect("no single owner");
-                let fssource = fssource.into_inner();
-
-                // remove all temporarily added chunks from the source
-                // XXX ideally this should be cached as much as possible though
-                let mut source = source.write();
-                for unit in fssource.temp_units {
-                    let sourcefile = source.remove(unit);
-                    assert!(sourcefile.is_some());
-                }
-
-                // FsSource may have failed from the cancel request, so we should catch it here
-                cancel_token.keep_going()?;
-
-                if ok {
-                    let output = Arc::new(output);
-                    spare_shared.write().last_check_output = Some(output.clone());
-                    Ok((output, diags))
-                } else {
-                    Err(From::from(diags))
-                }
-            });
-
-            shared.check_output = Some(self.pool.spawn(fut).boxed().shared());
+        for (i, path) in start_paths.iter().enumerate() {
+            if shared.check_outputs[i].is_none() {
+                let fut = self.build_future_for_check_output(i, path, spare_shared.clone(),
+                                                             &mut shared);
+                shared.check_outputs[i] = Some(fut);
+            }
         }
 
-        Ok(shared.check_output.as_ref().unwrap().clone())
+        Ok(shared.check_outputs.iter().map(|fut| fut.as_ref().unwrap().clone()).collect())
     }
 
-    pub fn last_check_output(&self) -> Option<Arc<Output>> {
-        self.shared.read().last_check_output.clone()
+    // this is similar to `ensure_check_outputs`, but produces a single future
+    // that returns an array of `Output`s and a single combined diagnostics.
+    // (it is intended that they are not associated to each other, so they are separate)
+    pub fn ensure_combined_check_outputs(&self)
+        -> WorkspaceResult<BoxFuture<(Vec<Arc<Output>>, ReportTree), CancelError<()>>>
+    {
+        let output_futs = self.ensure_check_outputs()?;
+
+        // checking can result in the fatal error (Err) only when cancellation is requested.
+        // so we only need to return Ok when every checking results in Ok,
+        // avoiding the difficulty to combine incomplete reports when one of them fails.
+        let output_stream = stream::iter(output_futs.into_iter().map(Ok)).and_then(|fut| fut);
+        let outputs_fut = output_stream.collect();
+
+        let message_locale = self.message_locale;
+        Ok(outputs_fut.map_err(|_| CancelError::Error(())).map(move |ret| {
+            let mut outputs = Vec::new();
+            let diags = ReportTree::new(message_locale, None);
+            for e in ret.into_iter() {
+                outputs.push(e.0.clone());
+                diags.add_parent(e.1.clone());
+            }
+            (outputs, diags)
+        }).boxed())
+    }
+
+    #[allow(dead_code)]
+    pub fn last_check_outputs(&self) -> Vec<Option<Arc<Output>>> {
+        self.shared.read().last_check_outputs.clone()
+    }
+
+    pub fn last_valid_check_outputs(&self) -> Vec<Arc<Output>> {
+        self.shared.read().last_check_outputs.iter().filter_map(|e| e.clone()).collect()
     }
 }
 

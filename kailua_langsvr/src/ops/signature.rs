@@ -1,15 +1,18 @@
 // signature help: resolve what is the closest function expression for the possible call,
 // then wait for checker outputs to actually return the signature
 
+use std::sync::Arc;
+use std::collections::HashSet;
+
 use kailua_env::Pos;
 use kailua_diag::{Localize, Localized};
 use kailua_syntax::lex::{Tok, Punct, NestedToken};
-use kailua_types::ty::{TypeContext, Display, Nil, Functions};
+use kailua_types::ty::{TypeContext, Display, Nil, Functions, Function};
 use kailua_check::env::Output;
 
 use protocol::*;
 use message as m;
-use super::{get_prefix_expr_slot, last_non_comment, PrefixExprSlot};
+use super::{get_prefix_expr_slot, last_non_comment};
 
 // for the interactivity, the lookbehind is limited to a reasonable number
 const LOOKBEHIND_LIMIT: usize = 4096;
@@ -115,40 +118,45 @@ pub fn locate(tokens: &[NestedToken], pos: Pos) -> Option<Loc> {
     })
 }
 
-pub fn help<F>(tokens: &[NestedToken], loc: &Loc, output: &Output,
+pub fn help<F>(tokens: &[NestedToken], loc: &Loc, outputs: &[Arc<Output>],
                mut localize: F) -> Option<SignatureHelp>
     where F: for<'a> FnMut(&'a Localize) -> Localized<'a, Localize>
 {
-    use std::fmt::Write;
-
     let empty_signature = || {
         SignatureHelp { signatures: Vec::new(), activeSignature: None, activeParameter: None }
     };
 
-    // parameters are highlighted in the signature as a string pattern.
-    // this is darn wrong especially for Kailua
-    // because it fails to highlight, for example, `function(string, string)` correctly.
-    // to deal with this, we prefix a series of invisible characters (again) to each parameter.
-    let write_invisible_num = |s: &mut String, mut n: usize| {
-        s.push('\u{2060}');
-        while n > 0 {
-            s.push(['\u{200b}', '\u{200c}', '\u{200d}'][n % 3]);
-            n /= 3;
-        }
+    let (end_idx, end) = if let Some((idx, tok)) = last_non_comment(&tokens[..loc.args_token_idx]) {
+        (idx, tok.tok.span.end())
+    } else {
+        // fail fast, this is not a prefix expression
+        return Some(empty_signature());
     };
 
-    let res = get_prefix_expr_slot(tokens, loc.args_token_idx, output);
-    debug!("signature_help: get_prefix_expr_slot returns {:?}", res);
+    // now this is definitely a function, so seek more to determine this is a method call or not.
+    // tokens[end_idx] is never a comment, so we are sure that
+    // tokens[end_idx] is a name and preceding non-comment token is `:`
+    // when this is a method call.
+    let mut is_method = false;
+    if let Tok::Name(_) = tokens[end_idx].tok.base {
+        let prev_tok = last_non_comment(&tokens[..end_idx]).map(|(_, tok)| &tok.tok.base);
+        if let Some(&Tok::Punct(Punct::Colon)) = prev_tok {
+            is_method = true;
+        }
+    }
 
-    match res {
-        // fail fast, this is not a prefix expression
-        None => Some(empty_signature()),
+    // for multiple outputs, we deduplicate the identical signatures and
+    // determine the (first possible) active signature from the current parameter index.
+    let mut signatures = Vec::new();
+    let mut seen = HashSet::new();
+    let mut active_sig = None;
+    let mut param_idx = None;
+    for output in outputs {
+        let slot = get_prefix_expr_slot(end, output);
+        debug!("signature_help: get_prefix_expr_slot({:#?}) returns {:?}", end, slot);
 
-        // we may retry for the newer output if there is no slot available
-        Some(PrefixExprSlot::NotFound) => None,
-
-        // check if it's a callable function (otherwise we fail fast)
-        Some(PrefixExprSlot::Found(end_idx, slot)) => {
+        if let Some(slot) = slot {
+            // check if it's a callable function (otherwise we fail fast)
             let ty = if let Some(ty) = output.resolve_exact_type(&slot.unlift()) {
                 ty
             } else {
@@ -166,84 +174,13 @@ pub fn help<F>(tokens: &[NestedToken], loc: &Loc, output: &Output,
                 return Some(empty_signature());
             };
 
-            // seek more to determine this is a method call or not.
-            // tokens[end_idx] is never a comment, so we are sure that
-            // tokens[end_idx] is a name and preceding non-comment token is `:`
-            // when this is a method call.
-            let mut is_method = false;
-            if let Tok::Name(_) = tokens[end_idx].tok.base {
-                let prev_tok = last_non_comment(&tokens[..end_idx]).map(|(_, tok)| &tok.tok.base);
-                if let Some(&Tok::Punct(Punct::Colon)) = prev_tok {
-                    is_method = true;
-                }
+            let (label, params) = format_signature(func, is_method, output, &mut localize);
+            let paramlist: Vec<_> = params.iter().map(|param| param.label.clone()).collect();
+            if !seen.insert((label.clone(), paramlist)) {
+                continue;
             }
 
-            // they should be constructed in a lock step,
-            // as matching params in the label are underlined.
-            let mut label = format!("{}(", if is_method { "method" } else { "function" });
-            let mut params = Vec::new();
-            let types = output.types() as &TypeContext;
-
-            let mut first = true;
-            let mut names = func.argnames.iter();
-            for t in &func.args.head {
-                let implicit;
-                if first {
-                    first = false;
-                    implicit = is_method;
-                    if implicit {
-                        let _ = write!(label, "{} ", localize(&m::OmittedSelfLabel {}));
-                    }
-                } else {
-                    label.push_str(", ");
-                    implicit = false;
-                }
-
-                let mut param = String::new();
-                write_invisible_num(&mut param, params.len());
-                if let Some(name) = names.next() {
-                    if let Some(ref name) = *name {
-                        let _ = write!(param, "{:+}: ", name);
-                    }
-                }
-                let _ = write!(param, "{}", localize(&t.display(types)));
-                label.push_str(&param);
-                if !implicit {
-                    // implicit parameter is not listed
-                    params.push(ParameterInformation { label: param, documentation: None });
-                }
-            }
-
-            if let Some(ref t) = func.args.tail {
-                if !first {
-                    label.push_str(", ");
-                }
-                let mut param = String::new();
-                write_invisible_num(&mut param, params.len());
-                let _ = write!(param, "{:#}...", localize(&t.display(types)));
-                label.push_str(&param);
-                params.push(ParameterInformation { label: param, documentation: None });
-            }
-
-            match func.returns {
-                Some(ref returns) => match (returns.head.len(), returns.tail.is_some()) {
-                    (0, false) => {
-                        label.push_str(")");
-                    }
-                    (1, false) => {
-                        let _ = write!(label, ") --> {}",
-                                       localize(&returns.head[0].display(types)));
-                    }
-                    (_, _) => {
-                        let _ = write!(label, ") --> {}", localize(&returns.display(types)));
-                    }
-                },
-                None => {
-                    label.push_str(") --> !");
-                }
-            }
-
-            let param_idx = if loc.arg_idx < params.len() {
+            let param_idx_for_sig = if loc.arg_idx < params.len() {
                 Some(loc.arg_idx as u32)
             } else if func.args.tail.is_some() {
                 // clamp to the number of parameters listed,
@@ -255,14 +192,114 @@ pub fn help<F>(tokens: &[NestedToken], loc: &Loc, output: &Output,
                 None
             };
 
-            return Some(SignatureHelp {
-                signatures: vec![
-                    SignatureInformation { label: label, documentation: None, parameters: params },
-                ],
-                activeSignature: Some(0),
-                activeParameter: param_idx,
+            if param_idx_for_sig.is_some() {
+                param_idx = param_idx.or(param_idx_for_sig);
+                active_sig = active_sig.or(Some(signatures.len()));
+            }
+
+            signatures.push(SignatureInformation {
+                label: label,
+                documentation: None,
+                parameters: params,
             });
-        },
+        }
     }
+
+    if !signatures.is_empty() {
+        Some(SignatureHelp {
+            signatures: signatures,
+            activeSignature: active_sig.map(|i| i as u32),
+            activeParameter: param_idx,
+        })
+    } else {
+        // we will retry for the newer output if there is no slot available
+        None
+    }
+}
+
+fn format_signature<F>(func: &Function, is_method: bool, output: &Output,
+                       mut localize: F) -> (String, Vec<ParameterInformation>)
+    where F: for<'a> FnMut(&'a Localize) -> Localized<'a, Localize>
+{
+    use std::fmt::Write;
+
+    // parameters are highlighted in the signature as a string pattern.
+    // this is darn wrong especially for Kailua
+    // because it fails to highlight, for example, `function(string, string)` correctly.
+    // to deal with this, we prefix a series of invisible characters (again) to each parameter.
+    fn write_invisible_num(s: &mut String, mut n: usize) {
+        s.push('\u{2060}');
+        while n > 0 {
+            s.push(['\u{200b}', '\u{200c}', '\u{200d}'][n % 3]);
+            n /= 3;
+        }
+    }
+
+    // they should be constructed in a lock step,
+    // as matching params in the label are underlined.
+    let mut label = format!("{}(", if is_method { "method" } else { "function" });
+    let mut params = Vec::new();
+    let types = output.types() as &TypeContext;
+
+    let mut first = true;
+    let mut names = func.argnames.iter();
+    for t in &func.args.head {
+        let implicit;
+        if first {
+            first = false;
+            implicit = is_method;
+            if implicit {
+                let _ = write!(label, "{} ", localize(&m::OmittedSelfLabel {}));
+            }
+        } else {
+            label.push_str(", ");
+            implicit = false;
+        }
+
+        let mut param = String::new();
+        write_invisible_num(&mut param, params.len());
+        if let Some(name) = names.next() {
+            if let Some(ref name) = *name {
+                let _ = write!(param, "{:+}: ", name);
+            }
+        }
+        let _ = write!(param, "{}", localize(&t.display(types)));
+        label.push_str(&param);
+        if !implicit {
+            // implicit parameter is not listed
+            params.push(ParameterInformation { label: param, documentation: None });
+        }
+    }
+
+    if let Some(ref t) = func.args.tail {
+        if !first {
+            label.push_str(", ");
+        }
+        let mut param = String::new();
+        write_invisible_num(&mut param, params.len());
+        let _ = write!(param, "{:#}...", localize(&t.display(types)));
+        label.push_str(&param);
+        params.push(ParameterInformation { label: param, documentation: None });
+    }
+
+    match func.returns {
+        Some(ref returns) => match (returns.head.len(), returns.tail.is_some()) {
+            (0, false) => {
+                label.push_str(")");
+            }
+            (1, false) => {
+                let _ = write!(label, ") --> {}",
+                               localize(&returns.head[0].display(types)));
+            }
+            (_, _) => {
+                let _ = write!(label, ") --> {}", localize(&returns.display(types)));
+            }
+        },
+        None => {
+            label.push_str(") --> !");
+        }
+    }
+
+    (label, params)
 }
 

@@ -202,19 +202,52 @@ fn initialize_workspace(server: &Server) -> Workspace {
     }
 }
 
-fn send_diagnostics(server: Server, root: ReportTree) -> io::Result<()> {
+fn send_diagnostics(server: Server, root: &ReportTree) -> io::Result<()> {
     use std::path::Path;
     use std::collections::HashMap;
     use url::Url;
     use protocol::*;
 
+    // try to deduplicate diagnostics from different paths.
+    // each report tree has at most two reports (parsing & checking) for each path,
+    // since they do not overlap to each other,
+    // any duplication from different report trees can be regarded that
+    // the same file is `require`d through different start paths.
+    // we do count the multiplicity (i.e. one report tree _may_ have duplicate reports) however.
+
+    fn build_key(path: &str, diag: &Diagnostic)
+        -> (String, u64, u64, u64, u64, Option<DiagnosticSeverity>, String)
+    {
+        (path.to_owned(),
+         diag.range.start.line, diag.range.start.character,
+         diag.range.end.line, diag.range.end.character,
+         diag.severity, diag.message.to_owned())
+    }
+
     let mut diags = HashMap::new();
+    let mut counts = HashMap::new(); // key -> multiplicity
     for tree in root.trees() {
         if let Some(path) = tree.path() {
             diags.entry(path.to_owned()).or_insert(Vec::new());
         }
-        for (path, diag) in tree.diagnostics() {
-            diags.entry(path).or_insert(Vec::new()).push(diag);
+
+        // only insert a new diagnostic when the tree multiplicity exceeds the global one;
+        // e.g. if the same diagnostic has been printed 2 times, at most 2 diagnostics
+        // with the same contents will be ignored in the current tree.
+        let tree_diags = tree.diagnostics();
+        let mut tree_counts = HashMap::new(); // key -> multiplicity
+        for (path, diag) in tree_diags {
+            let key = build_key(&path, &diag);
+            let count = counts.entry(key.clone()).or_insert(0);
+            let tree_count = {
+                let v = tree_counts.entry(key).or_insert(0);
+                *v += 1;
+                *v
+            };
+            if *count < tree_count {
+                *count = tree_count;
+                diags.entry(path.to_owned()).or_insert(Vec::new()).push(diag.to_owned());
+            }
         }
     }
 
@@ -243,7 +276,7 @@ fn send_diagnostics_when_available<T, F>(server: Server,
                 CancelError::Error(ref diags) => diags,
             },
         };
-        send_diagnostics(server, diags.clone())
+        send_diagnostics(server, diags)
     });
 
     // this should be forgotten as we won't make use of its result
@@ -277,20 +310,17 @@ fn checking_loop(server: Server, workspace: Arc<RwLock<Workspace>>,
             return checking_loop(server, workspace, timer);
         }
 
-        let output_fut = workspace.read().ensure_check_output();
-        if let Ok(fut) = output_fut {
+        debug!("background checking starts");
+        let outputs_fut = workspace.read().ensure_combined_check_outputs();
+        if let Ok(fut) = outputs_fut {
             let server_ = server.clone();
             fut.then(move |res| {
+                debug!("background checking has finished ({})",
+                       if res.is_ok() { "ok" } else { "err" });
+
                 // send diagnostics for this check
-                let diags = match res {
-                    Ok(ref value_and_diags) => Some(&value_and_diags.1),
-                    Err(ref e) => match **e {
-                        CancelError::Canceled => None,
-                        CancelError::Error(ref diags) => Some(diags),
-                    },
-                };
-                if let Some(diags) = diags {
-                    let _ = send_diagnostics(server_, diags.clone());
+                if let Ok(ref value_and_diags) = res {
+                    let _ = send_diagnostics(server_, &value_and_diags.1);
                 }
                 Ok(())
             }).and_then(move |_| {
@@ -301,6 +331,7 @@ fn checking_loop(server: Server, workspace: Arc<RwLock<Workspace>>,
                 checking_loop(server, workspace, timer)
             }).boxed()
         } else {
+            debug!("background checking couldn't be inititated");
             // the loop terminates, possibly with a message
             if workspace.read().has_read_config() {
                 // avoid a duplicate message if kailua.json is missing
@@ -524,19 +555,25 @@ fn complete(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
             },
 
             Some(completion::Class::Field(idx)) => {
-                let output = workspace.read().last_check_output();
-                let items = output.and_then(|output| {
-                    completion::complete_field(&tokens.0, idx, &output)
-                });
+                // here comes the complication: there may be multiple outputs with varying degrees
+                // of completion, but we have only one chance to return the result.
+                // therefore we should block until *all* outputs are available.
+
+                let outputs = workspace.read().last_valid_check_outputs();
+                let items = if !outputs.is_empty() {
+                    completion::complete_field(&tokens.0, idx, &outputs)
+                } else {
+                    None
+                };
 
                 if let Some(items) = items {
                     send_items(server, id, items);
                     future::ok(()).boxed()
-                } else if let Ok(output_fut) = workspace.read().ensure_check_output() {
-                    output_fut.map_err(|e| e.as_ref().map(|_| ())).and_then(move |output| {
+                } else if let Ok(outputs_fut) = workspace.read().ensure_combined_check_outputs() {
+                    outputs_fut.and_then(move |(outputs, _)| {
                         cancel_token.keep_going()?;
 
-                        let items = completion::complete_field(&tokens.0, idx, &output.0);
+                        let items = completion::complete_field(&tokens.0, idx, &outputs);
                         send_items(server, id, items.unwrap_or(Vec::new()));
                         Ok(())
                     }).boxed()
@@ -569,21 +606,23 @@ fn hover(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id,
         }
 
         let workspace = spare_workspace.clone();
-        let output = workspace.read().last_check_output();
-        let info = output.and_then(|output| {
+        let outputs = workspace.read().last_valid_check_outputs();
+        let info = if !outputs.is_empty() {
             let ws = workspace.read();
-            let info = ops::hover::help(&output, pos, &ws.source(), |s| ws.localize(s));
+            let info = ops::hover::help(&outputs, pos, &ws.source(), |s| ws.localize(s));
             info
-        });
+        } else {
+            None
+        };
         if let Some(info) = info {
             let _ = server.send_ok(id, info);
             future::ok(()).boxed()
-        } else if let Ok(output_fut) = workspace.read().ensure_check_output() {
-            output_fut.map_err(|e| e.as_ref().map(|_| ())).and_then(move |output| {
+        } else if let Ok(outputs_fut) = workspace.read().ensure_combined_check_outputs() {
+            outputs_fut.map_err(|e| e.as_ref().map(|_| ())).and_then(move |(outputs, _diags)| {
                 cancel_token.keep_going()?;
 
                 let ws = spare_workspace.read();
-                let info = ops::hover::help(&output.0, pos, &ws.source(), |s| ws.localize(s));
+                let info = ops::hover::help(&outputs, pos, &ws.source(), |s| ws.localize(s));
                 let info = info.unwrap_or_else(|| Hover { contents: Vec::new(), range: None });
                 let _ = server.send_ok(id, info);
                 Ok(())
@@ -625,17 +664,19 @@ fn signature(server: Server, workspace: Arc<RwLock<Workspace>>, id: protocol::Id
         };
 
         let workspace = spare_workspace.clone();
-        let output = workspace.read().last_check_output();
-        let info = output.and_then(|output| {
+        let outputs = workspace.read().last_valid_check_outputs();
+        let info = if !outputs.is_empty() {
             let ws = workspace.read();
-            let info = ops::signature::help(&tokens.0, &loc, &output, |s| ws.localize(s));
+            let info = ops::signature::help(&tokens.0, &loc, &outputs, |s| ws.localize(s));
             info
-        });
+        } else {
+            None
+        };
         if let Some(info) = info {
             let _ = server.send_ok(id, info);
             future::ok(()).boxed()
-        } else if let Ok(output_fut) = workspace.read().ensure_check_output() {
-            output_fut.map_err(|e| e.as_ref().map(|_| ())).and_then(move |output| {
+        } else if let Ok(outputs_fut) = workspace.read().ensure_combined_check_outputs() {
+            outputs_fut.map_err(|e| e.as_ref().map(|_| ())).and_then(move |output| {
                 cancel_token.keep_going()?;
 
                 let ws = spare_workspace.read();
