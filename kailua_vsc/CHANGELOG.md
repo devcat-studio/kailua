@@ -1,3 +1,13 @@
+## 1.0.5 (2017-06-01)
+
+* Multiple `start_path`s are accepted in `kailua.json`. They result in multiple separate checking contexts, possibly diverging to each other (in which case all possible types and signatures are displayed in the editor). The reports are deduplicated as much as possible, so shared codes should have the identical reports for most cases.
+
+* The `preload` object has been added to `kailua.json`. It can be used to populate the execution environment before checking: a value of `{"open": ["lua51"], "require": ["A", "B"]}` will, for example, execute `--# open lua51`, `require "A"` and `require "B"` in the order. (`Require`s will be affected by `package_path` and so on.)
+
+* Skips the first line as a comment if it starts with `#`, i.e. looks like a shebang line like `#!/usr/bin/lua`. (#10)
+
+* Improved the usage of the extension on non-Windows by trying global `kailua` executables.
+
 ## 1.0.4 (2017-04-25)
 
 The first public, free and open-source version of Kailua.

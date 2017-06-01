@@ -70,6 +70,15 @@
 			"include": "#string-multiline"
 		},
 		{
+			"captures": {
+				"1": {
+					"name": "punctuation.definition.comment.lua"
+				}
+			},
+			"match": "\\A(#!).*$\\n?",
+			"name": "comment.line.shebang.lua"
+		},
+		{
 			"include": "#comment-block"
 		},
 		{
