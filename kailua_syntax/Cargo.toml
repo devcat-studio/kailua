@@ -1,6 +1,6 @@
 [package]
 name = "kailua_syntax"
-version = "1.0.4"
+version = "1.0.5"
 authors = ["Nexon Corporation", "Kang Seonghoon <public+git@mearie.org>"]
 
 description = "AST and parser for Kailua"
