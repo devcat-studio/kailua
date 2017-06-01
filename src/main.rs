@@ -81,29 +81,32 @@ fn parse_and_check(workspace: &Workspace, quiet: bool) -> Result<(), String> {
         quiet: quiet,
         report: ConsoleReport::with_locale(source.clone(), workspace.message_locale()),
     }));
-    let mut context = Context::new(report.clone());
 
-    let start_path = workspace.start_path();
-    let fssource = LocalFsSource { source: source };
-    let filechunk = match fssource.chunk_from_path(start_path.without_loc(), &report) {
-        Ok(Some(chunk)) => chunk,
-        _ => {
-            return Err(format!("Couldn't open a start path `{}`", start_path.display()));
+    // TODO multiple outputs should deduplicate warnings if possible
+    for start_path in workspace.start_paths() {
+        let mut context = Context::new(report.clone());
+
+        let fssource = LocalFsSource { source: source.clone() };
+        let filechunk = match fssource.chunk_from_path((**start_path).without_loc(), &report) {
+            Ok(Some(chunk)) => chunk,
+            _ => {
+                return Err(format!("Couldn't open a start path `{}`", start_path.display()));
+            }
+        };
+
+        // stop after parsing errors (not very useful for CLI usage)
+        if !report.can_continue() {
+            return Err(format!("Stopped due to prior errors"));
         }
-    };
 
-    // stop after parsing errors (not very useful for CLI usage)
-    if !report.can_continue() {
-        return Err(format!("Stopped due to prior errors"));
+        let opts = Rc::new(RefCell::new(WorkspaceOptions::new(fssource, workspace)));
+
+        if !(check_from_chunk(&mut context, filechunk, opts).is_ok() && report.can_continue()) {
+            return Err(format!("Stopped due to prior errors"));
+        }
     }
 
-    let opts = Rc::new(RefCell::new(WorkspaceOptions::new(fssource, workspace)));
-
-    if check_from_chunk(&mut context, filechunk, opts).is_ok() && report.can_continue() {
-        Ok(())
-    } else {
-        Err(format!("Stopped due to prior errors"))
-    }
+    Ok(())
 }
 
 fn build_app() -> App<'static, 'static> {

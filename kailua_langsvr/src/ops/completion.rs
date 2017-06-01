@@ -12,7 +12,7 @@ use kailua_types::ty::Key;
 use kailua_check::env::Output;
 
 use protocol::*;
-use super::{get_prefix_expr_slot, PrefixExprSlot};
+use super::{get_prefix_expr_slot, last_non_comment};
 
 fn index_and_neighbor<T, F>(tokens: &[T], pos: Pos, as_span: F) -> (usize, bool, bool)
     where F: Fn(&T) -> Span
@@ -306,32 +306,42 @@ pub fn complete_name(tokens: &[NestedToken], name_idx: usize, nesting_category: 
 }
 
 pub fn complete_field(tokens: &[NestedToken], sep_idx: usize,
-                      output: &Output) -> Option<Vec<CompletionItem>> {
-    let res = get_prefix_expr_slot(tokens, sep_idx, output);
-    debug!("complete_field: get_prefix_expr_slot returns {:?}", res);
+                      outputs: &[Arc<Output>]) -> Option<Vec<CompletionItem>> {
+    let end = if let Some((_idx, tok)) = last_non_comment(&tokens[..sep_idx]) {
+        tok.tok.span.end()
+    } else {
+        // there is no chance that this will yield completions
+        return Some(Vec::new());
+    };
 
-    match res {
-        // fail fast, this is not a prefix expression
-        None => Some(Vec::new()),
+    // for multiple outputs, we combine all possible fields and deduplicate them
+    let mut items = Vec::new();
+    let mut seen = HashSet::new(); // we never return the same name twice
+    for output in outputs {
+        let slot = get_prefix_expr_slot(end, output);
+        debug!("complete_field: get_prefix_expr_slot({:#?}) returns {:?}", end, slot);
 
-        // we may retry for the newer output if there is no slot available
-        Some(PrefixExprSlot::NotFound) => None,
-
-        // now we've got the closest slot for given position;
-        // check if it's actually a table or similar (if it's not, we will fail fast)
-        Some(PrefixExprSlot::Found(_, slot)) => {
-            let mut items = Vec::new();
+        if let Some(slot) = slot {
+            // now we've got the closest slot for given position;
+            // check if it's actually a table or similar (if it's not, we will fail fast)
             if let Some(fields) = output.get_available_fields(&slot.unlift()) {
                 for (k, _v) in fields {
                     if let Key::Str(ref s) = k {
                         let name = String::from_utf8_lossy(&s).into_owned();
-                        items.push(make_item(name, CompletionItemKind::Field, None));
+                        if seen.insert(name.clone()) {
+                            items.push(make_item(name, CompletionItemKind::Field, None));
+                        }
                     }
                 }
             }
-            Some(items)
-        },
+        } else {
+            // this is the field position but there is no associated slot.
+            // we should retry no matter other outputs return,
+            // as we have only one chance to return the completions.
+            return None;
+        }
     }
-}
 
+    Some(items)
+}
 
