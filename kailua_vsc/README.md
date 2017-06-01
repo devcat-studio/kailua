@@ -7,6 +7,7 @@ checklist:
 * remove "Standalone Checker" section and rename "Installation and Usage" to "Usage"
 * remove "Source Organization" section
 * convert all images into the data URIs
+* reword the non-Windows indications to refer to the repository
 -->
 
 [한국어](https://github.com/devcat-studio/kailua/tree/master/README.ko.md)
@@ -17,9 +18,7 @@ checklist:
 
 ## Usage
 
-**Caution: Currently the extension only works in Windows due to the packaging issue.**
-
-Kailua can be used as an IDE support for [Visual Studio Code][VSCode]. Install Kailua by typing `ext install kailua` from the Quick Launch (`Ctrl-P`).
+Kailua can be used as an IDE support for [Visual Studio Code][VSCode]. Install Kailua by typing `ext install kailua` from the Quick Launch (`Ctrl-P`). **If you are not on Windows, you should also install the [standalone checker](https://github.com/devcat-studio/kailua/#standalone-checker) first.**
 
 You will see a warning that the configuration file is missing when you open a folder containing Lua codes. You need it for real-time checking.
 
@@ -167,22 +166,20 @@ The following content is required for `.vscode/kailua.json`, in case you are edi
 
 ```json5
 {
-    // Unlike a normal JSON, a comment or a stray comma is allowed.
     "start_path": "<path to the entry point>",
 
-    // You can also put the following:
-    //
-    //"package_path": "<the value of `package.path`, determined from assignments if missing>",
-    //"package_cpath": "<the value of `package.cpath`, determined from assignments if missing>",
+    "preload": {
+        // This indicates that we are using Lua 5.1 and all built-in libraries of it.
+        "open": ["lua51"],
+    },
 }
 ```
 
 You need to reload the current window (`Ctrl-R` or `Cmd-R`) to apply the configuration.
 
-Once you've set the entry point, you can write your first Kailua code:
+Once you've set the entry point, you can write your first Kailua code (simple, eh?):
 
 ```lua
---# open lua51
 print('Hello, world!')
 ```
 
@@ -317,6 +314,42 @@ As annotating everything is not practical, Kailua supports two ways to avoid the
   When `require()` was used with a check-time string Kailua makes use of `package.path` and `package.cpath` set. For `package.path`, it will try `F.kailua` first before reading a file `F`. For `package.cpath`, it will always `F.kailua` as `F` would be probably binary. (Note that this will normally result in two extensions `.lua.kailua` unless you have a sole `?` in the search paths.)
 
   `.kailua` files would frequently use `--# assume` as you should *assume* that the original code has given types.
+
+## Configuration Format
+
+You can configure the exact behavior of Kailua with `kailua.json`. It is a JSON with comments (`//`) and stray comma allowed for convenience:
+
+```json5
+{
+    // This indicates where to start. This is the only mandatory field in the file.
+    //
+    // This can be a single string or an array of strings, and in the latter case
+    // multiple paths are separately (but possibly parallelly) checked against.
+    // Checking sessions do not affect others, but reports are merged.
+    "start_path": ["entrypoint.lua", "lib/my_awesome_lib.lua"],
+
+    // These are values for `package.path` and `package.cpath` variables, respectively.
+    // Refer to the Lua manual for the exact format.
+    //
+    // If they are not explicitly set, they are inferred from any assignments to
+    // `package.path` and `package.cpath` variables. This can be handy for scripts,
+    // but will be cumbersome for most other cases.
+    //
+    // It should be also noted that any path in `package_cpath` won't be directly
+    // read by Kailua; only `.kailua` files associated to them will be read.
+    "package_path": "?.lua;contrib/?.lua",
+    "package_cpath": "native/?",
+
+    // The preloading options to populate the environment before checking.
+    // They are executed in the following order, and in each array, in given order.
+    "preload": {
+        // A list of `--# open` arguments.
+        "open": ["lua51"],
+        // A list of `require()` arguments. Affected by `package_*` options.
+        "require": ["depA", "depB.core"],
+    },
+}
+```
 
 <!-- -->
 

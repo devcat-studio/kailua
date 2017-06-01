@@ -15,20 +15,20 @@ Kailua can be used as a standalone checker or an IDE plugin.
 To install a standalone checker, [install Rust] first (1.15 or later required), then type the following:
 
 ```
-cargo install kailua
+cargo install -f kailua
 ```
+
+(`-f` will cause the existing installation to be upgraded.)
 
 You can run `kailua check <path to the entry point>` now.
 
 ![](etc/images/kailua-check.png)
 
-You can also run `kailua check <path to the directory>`, if you have `kailua.json` or `.vscode/kailua.json` in that directory. See the following section on the configuration format.
+You can also run `kailua check <path to the directory>`, if you have `kailua.json` or `.vscode/kailua.json` in that directory. The configuration format is described in the later section.
 
 ### Visual Studio Code
 
-**Caution: Currently the extension only works in Windows due to the packaging issue.**
-
-Kailua can be used as an IDE support for [Visual Studio Code][VSCode]. Install Kailua by typing `ext install kailua` from the Quick Launch (`Ctrl-P`).
+Kailua can be used as an IDE support for [Visual Studio Code][VSCode]. Install Kailua by typing `ext install kailua` from the Quick Launch (`Ctrl-P`). **If you are not on Windows, you should also install the standalone checker as above.**
 
 You will see a warning that the configuration file is missing when you open a folder containing Lua codes. You need it for real-time checking.
 
@@ -44,13 +44,12 @@ The following content is required for `.vscode/kailua.json`, in case you are edi
 
 ```json5
 {
-    // Unlike a normal JSON, a comment or a stray comma is allowed.
     "start_path": "<path to the entry point>",
 
-    // You can also put the following:
-    //
-    //"package_path": "<the value of `package.path`, determined from assignments if missing>",
-    //"package_cpath": "<the value of `package.cpath`, determined from assignments if missing>",
+    "preload": {
+        // This indicates that we are using Lua 5.1 and all built-in libraries of it.
+        "open": ["lua51"],
+    },
 }
 ```
 
@@ -62,6 +61,12 @@ Once you've set the entry point, you can write your first Kailua code:
 
 ```lua
 --# open lua51
+print('Hello, world!')
+```
+
+If you are using the configuration file, the first code can be made much simpler:
+
+```lua
 print('Hello, world!')
 ```
 
@@ -121,7 +126,7 @@ Kailua is a subset of valid Lua code---you don't need any transpilation or compi
 
 * `--# ...` is a special directive for the type checker.
 
-  The most important directive is `--# open <built-in library name>`, which loads the corresponding built-in names and also implicitly specifies what language variant is currently in use. The only supported name so far is `lua51`, for the vanilla Lua 5.1. It is recommended to put it to the first non-comment line in the entry point.
+  `--# open <built-in library name>` loads the corresponding built-in names and also implicitly specifies what language variant is currently in use. The only supported name so far is `lua51`, for the vanilla Lua 5.1. This is what `preload.open` configuration options actually do, and you should probably put it to the first non-comment line in the entry point if you don't have those options.
 
   `--# type [local | global] <name> = <type>` can be used to declare a type alias. There are three flavors of typa alises: `local` is locally scoped (much like `local` statements), `global` is globally scoped (much like `A = ...`), and no modifier indicates that the type is *exported* from the current file and they should be locally visible after `require`. Only local types can be in the inner scopes. Unlike variable names, inner type names should not overwrite outer names.
 
@@ -196,6 +201,42 @@ As annotating everything is not practical, Kailua supports two ways to avoid the
   When `require()` was used with a check-time string Kailua makes use of `package.path` and `package.cpath` set. For `package.path`, it will try `F.kailua` first before reading a file `F`. For `package.cpath`, it will always `F.kailua` as `F` would be probably binary. (Note that this will normally result in two extensions `.lua.kailua` unless you have a sole `?` in the search paths.)
 
   `.kailua` files would frequently use `--# assume` as you should *assume* that the original code has given types.
+
+## Configuration Format
+
+You can configure the exact behavior of Kailua with `kailua.json`. It is a JSON with comments (`//`) and stray comma allowed for convenience:
+
+```json5
+{
+    // This indicates where to start. This is the only mandatory field in the file.
+    //
+    // This can be a single string or an array of strings, and in the latter case
+    // multiple paths are separately (but possibly parallelly) checked against.
+    // Checking sessions do not affect others, but reports are merged.
+    "start_path": ["entrypoint.lua", "lib/my_awesome_lib.lua"],
+
+    // These are values for `package.path` and `package.cpath` variables, respectively.
+    // Refer to the Lua manual for the exact format.
+    //
+    // If they are not explicitly set, they are inferred from any assignments to
+    // `package.path` and `package.cpath` variables. This can be handy for scripts,
+    // but will be cumbersome for most other cases.
+    //
+    // It should be also noted that any path in `package_cpath` won't be directly
+    // read by Kailua; only `.kailua` files associated to them will be read.
+    "package_path": "?.lua;contrib/?.lua",
+    "package_cpath": "native/?",
+
+    // The preloading options to populate the environment before checking.
+    // They are executed in the following order, and in each array, in given order.
+    "preload": {
+        // A list of `--# open` arguments.
+        "open": ["lua51"],
+        // A list of `require()` arguments. Affected by `package_*` options.
+        "require": ["depA", "depB.core"],
+    },
+}
+```
 
 ## See Also
 

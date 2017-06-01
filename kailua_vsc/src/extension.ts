@@ -24,6 +24,12 @@ const INITIAL_CONFIG_FILE = `\
 }\
 `;
 
+const SPAWN_FAILURE = (
+    vscode.env.language === 'ko' ?
+    '카일루아 언어 서버를 실행하는 데 실패했습니다' :
+    'Failed to spawn the Kailua language server'
+)
+
 function isDebugging() {
     // roughly follows the logic in vscode-languageserver client:
     // v8 is launched in the debugging mode, or vs code has received a debugging option
@@ -89,15 +95,27 @@ function initializeLanguageServer(context: vscode.ExtensionContext) {
                     mode = 'release mode w/ local impl';
                     fs.accessSync(executablePath, fs.constants.X_OK);
                 } catch (_) {
-                    executablePath = releasePath + extension;
-                    mode = 'release mode';
+                    try {
+                        executablePath = releasePath + extension;
+                        mode = 'release mode';
+                        fs.accessSync(executablePath, fs.constants.X_OK);
+                    } catch (_) {
+                        // the fallback for platforms where `cargo install` is the only possible installation option.
+                        // in those platforms `extension` will be "", that does not match any bundled executables
+                        // so this branch gets executed.
+                        executablePath = 'kailua' + extension;
+                        mode = 'release mode w/ global installation';
+                    }
                 }
                 env = {RUST_LOG: 'kailua_langsvr=info', RUST_BACKTRACE: '1'};
             }
             languageClient.outputChannel.append(`spawning a language server (${mode})\n`);
 
             const cp = spawn(executablePath, args, {env: env});
-            cp.on('error', e => languageClient.outputChannel.append(`failed to spawn a language server: ${e}\n`));
+            cp.on('error', e => {
+                languageClient.outputChannel.append(`failed to spawn a language server: ${e}\n`);
+                vscode.window.showErrorMessage(`${SPAWN_FAILURE}: ${e}`);
+            });
             cp.stderr.on('data', data => languageClient.outputChannel.append(_.isString(data) ? data : data.toString('utf-8')));
             return cp;
         }
