@@ -34,6 +34,7 @@ pub struct Lexer<'a> {
     lookahead: bool,
     meta: bool,
     meta_span: Span,
+    shebang: Option<Span>,
     eof: bool,
     report: &'a Report,
 }
@@ -42,7 +43,31 @@ impl<'a> Lexer<'a> {
     /// Creates a lexer with given stream of spanned source data and the report receiver.
     pub fn new(bytes: &'a mut Iterator<Item=Spanned<SourceData>>,
                report: &'a Report) -> Lexer<'a> {
-        let first = bytes.next().expect("Lexer should have got at least one token");
+        let mut first = bytes.next().expect("no EOF after the end of input stream");
+
+        // if the first letter is `#`, skip the entire line as a comment
+        // (the resulting comment does not include a newline, but any newline is read anyway)
+        let shebang = if first.base == U8(b'#') || first.base == U16(b'#' as u16) {
+            let begin = first.span.begin();
+            let mut end = first.span.end();
+            loop {
+                first = bytes.next().expect("no EOF after the end of input stream");
+                if first.base == U8(b'\n') || first.base == U16(b'\n' as u16) {
+                    // the next byte is the beginning of the second line
+                    first = bytes.next().expect("no EOF after the end of input stream");
+                    break;
+                } else if first.base == EOF {
+                    // keep the EOF "byte" to emit the EOF token
+                    break;
+                } else {
+                    end = first.span.end();
+                }
+            }
+            Some(Span::new(begin, end))
+        } else {
+            None
+        };
+
         Lexer {
             bytes: bytes,
             pos: first.span.end(),
@@ -51,6 +76,7 @@ impl<'a> Lexer<'a> {
             lookahead: true,
             meta: false,
             meta_span: Span::dummy(),
+            shebang: shebang,
             eof: false,
             report: report,
         }
@@ -315,6 +341,10 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn next_token(&mut self) -> diag::Result<Option<Spanned<Tok>>> {
+        if let Some(span) = self.shebang.take() {
+            return Ok(Some(Tok::Comment.with_loc(span)));
+        }
+
         loop {
             // skip any whitespace
             if self.meta {
