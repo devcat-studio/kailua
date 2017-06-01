@@ -15,6 +15,8 @@ pub enum Tok {
     Error,
 
     /// A comment token. The parser should ignore this.
+    ///
+    /// The shebang line (the first line starting with `#`) is also considered as a comment.
     Comment,
 
     /// A punctuation.

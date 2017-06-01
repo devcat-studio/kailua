@@ -2328,3 +2328,29 @@ g()
 do아햏햏end --@< Error: Unexpected character
 --! [Do([])]
 
+--8<-- first-line-with-hash-1
+#!/usr/bin/env lua
+a = 42
+--! [Assign([`a`_], [42])]
+
+--8<-- first-line-with-hash-2
+####
+a = 42
+--! [Assign([`a`_], [42])]
+
+--8<-- first-line-with-hash-3
+#
+a = 42
+--! [Assign([`a`_], [42])]
+
+--8<-- first-line-with-hash-4
+##
+--&
+--! []
+
+--8<-- non-first-line-with-hash
+a = 42
+####
+b --@^-< Error: Only function calls are allowed as statement-level expressions
+--! [Assign([`a`_], [42]), Void((# (# (# (# `b`_)))))]
+
