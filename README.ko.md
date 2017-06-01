@@ -15,20 +15,20 @@
 독립 검사기를 설치하려면 먼저 [러스트를 설치][install Rust]한 뒤(1.15 이상이 필요합니다), 다음을 입력합니다.
 
 ```
-cargo install kailua
+cargo install -f kailua
 ```
+
+(`-f`는 이미 설치된 검사기도 함께 업그레이드 해 줍니다.)
 
 `kailua check <검사를 시작할 파일 경로>`로 실행할 수 있습니다.
 
 ![](etc/images/kailua-check.png)
 
-또한 `kailua.json`이나 `.vscode/kailua.json`이 해당 디렉토리에 있다면 `kailua check <검사할 디렉토리 경로>`로 실행할 수도 있습니다. 설정 파일의 포맷은 다음 장을 참고하십시오.
+또한 `kailua.json`이나 `.vscode/kailua.json`이 해당 디렉토리에 있다면 `kailua check <검사할 디렉토리 경로>`로 실행할 수도 있습니다. 설정 파일의 포맷은 이 문서의 뒷부분을 참고하세요.
 
 ### Visual Studio Code
 
-**주의: 현재 VS Code용 확장은 (배포의 문제로) 윈도에서만 동작합니다.**
-
-카일루아는 [Visual Studio Code][VSCode]에서 IDE로 사용할 수 있습니다. 빠른 실행(`Ctrl-P`)에서 `ext install kailua`를 입력해서 설치합니다.
+카일루아는 [Visual Studio Code][VSCode]에서 IDE로 사용할 수 있습니다. 빠른 실행(`Ctrl-P`)에서 `ext install kailua`를 입력해서 설치합니다. **윈도 이외의 환경에서는 앞에서 설명된 대로 독립 검사기를 먼저 설치해야 합니다.**
 
 루아 코드를 포함하는 폴더를 열면 설정 파일을 찾을 수 없다는 오류가 나옵니다. 이 설정 파일은 실시간으로 검사를 수행하는 데 필요합니다.
 
@@ -44,13 +44,12 @@ cargo install kailua
 
 ```json5
 {
-    // 보통의 JSON과는 다르게 주석이나 마지막 쉼표도 허용됩니다.
     "start_path": "<검사를 시작할 파일 경로>",
 
-    // 다음 필드도 지정할 수 있습니다.
-    //
-    //"package_path": "<`package.path`의 값, 없다면 해당 필드에 대입되는 값들로부터 추론됨>",
-    //"package_cpath": "<`package.cpath`의 값, 없다면 해당 필드에 대입되는 값들로부터 추론됨>",
+    "preload": {
+        // 아래는 우리가 루아 5.1와 모든 기본 라이브러리를 사용함을 나타냅니다.
+        "open": ["lua51"],
+    },
 }
 ```
 
@@ -62,6 +61,12 @@ cargo install kailua
 
 ```lua
 --# open lua51
+print('Hello, world!')
+```
+
+설정 파일을 사용하고 있다면 좀 더 간단한 코드도 가능합니다.
+
+```lua
 print('Hello, world!')
 ```
 
@@ -196,6 +201,42 @@ print('Hello, world!')
   `require()`가 검사 시간에 확인되는 문자열로 호출될 경우 카일루아는 `package.path`와 `package.cpath`에 설정된 값을 사용합니다. `package.path`의 경우 파일 `F`를 읽기 전에 `F.kailua`를 먼저 읽어 봅니다. `package.cpath`의 경우 파일 `F`는 아마 실행 파일일테니 `F.kailua`만 읽습니다. (검색 경로에 `?`라고 써 놓은 게 아닌 이상 이런 파일들에는 두 개의 확장자 `.lua.kailua`가 붙게 됩니다.)
 
   `.kailua` 파일에는 원래 대응되는 코드가 주어진 타입을 가지고 있다고 *가정*하기 위해 `--# assume` 명령을 많이 쓰게 됩니다.
+
+## 설정 포맷
+
+카일루아의 정확한 동작은 `kailua.json` 파일에 옵션으로 설정할 수 있습니다. 이 파일은 JSON 파일이지만 편의를 위해 주석(`//`)을 지원하고, 배열과 오브젝트 맨 뒤에 쉼표가 따라 붙을 수 있습니다:
+
+```json5
+{
+    // 어디서 검사를 시작할 지 나타냅니다. 생략될 수 없습니다.
+    //
+    // 하나의 문자열이나 문자열 배열이 될 수 있습니다. 배열일 경우, 여러 시작 경로들에서
+    // 각각 (하지만 가능할 경우 병렬로) 검사가 진행됩니다. 각 검사 세션은 다른 세션과
+    // 독립적이지만 오류 등은 병합되어 보고됩니다.
+    "start_path": ["entrypoint.lua", "lib/my_awesome_lib.lua"],
+
+    // `package.path`와 `package.cpath` 변수의 값을 나타냅니다.
+    // 정확한 포맷은 루아 설명서를 참고하세요.
+    //
+    // 만약 여기서 명시적으로 설정되지 않았을 경우, 이들 설정은 `package.path`와
+    // `package.cpath`에 설정되는 값으로부터 추론됩니다. 이 동작은 스크립트에서는
+    // 편리할 수 있으나 라이브러리와 같이 다른 경우 꽤 귀찮을 것입니다.
+    //
+    // 또한 카일루아는 `package_cpath`에 있는 어떤 경로도 읽지 않음에 유의하세요.
+    // 해당 경로에 대응되는 `.kailua` 파일만 읽게 됩니다.
+    "package_path": "?.lua;contrib/?.lua",
+    "package_cpath": "native/?",
+
+    // 검사 전에 검사 환경을 초기화하기 위한 옵션들입니다.
+    // 각 옵션은 아래 나와 있는 순서대로 실행되고, 배열 안에서는 주어진 순서대로 실행됩니다.
+    "preload": {
+        // `--# open` 인자들의 목록.
+        "open": ["lua51"],
+        // `require()` 인자들의 목록. `package_*` 옵션의 영향을 받습니다.
+        "require": ["depA", "depB.core"],
+    },
+}
+```
 
 ## 같이 보기
 
