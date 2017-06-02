@@ -815,6 +815,7 @@ impl Workspace {
     ) -> ReportFuture<Arc<Output>> {
         let start_chunk_fut = self.ensure_file(start_path).ensure_chunk();
 
+        let start_path = start_path.to_owned();
         let files = self.files.clone();
         let source = self.source.clone();
         let cancel_token = shared.cancel_token.clone();
@@ -851,8 +852,8 @@ impl Workspace {
                     return Err(From::from(diags));
                 },
                 WorkspaceBase::Workspace(ref ws) => {
-                    (Rc::new(RefCell::new(WorkspaceOptions::new(fssource.clone(), ws))),
-                     ws.preload().clone())
+                    let opts = WorkspaceOptions::new(fssource.clone(), &start_path, ws);
+                    (Rc::new(RefCell::new(opts)), ws.preload().clone())
                 },
             };
 

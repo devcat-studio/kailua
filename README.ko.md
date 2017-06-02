@@ -216,7 +216,14 @@ print('Hello, world!')
     "start_path": ["entrypoint.lua", "lib/my_awesome_lib.lua"],
 
     // `package.path`와 `package.cpath` 변수의 값을 나타냅니다.
+    // 이 경로는 항상 기준 디렉토리(`.vscode`나 `kailua.json`을 담는 디렉토리)에 상대적입니다.
     // 정확한 포맷은 루아 설명서를 참고하세요.
+    //
+    // 설정 파일에서는 `{start_dir}` 문자열을 쓰면 *현재* 시작 경로를 담은 디렉토리로
+    // 치환됩니다. 따라서 만약 시작 경로가 `foo/a.lua`와 `bar/b.lua` 두 개라면,
+    // `{start_dir}/?.lua`는 각 시작 경로에 대해 `foo/?.lua`와 `bar/?.lua`로 확장됩니다.
+    // 이 기능은 여러 프로젝트를 각자의 디렉토리에 넣고 일부 공통되는 파일만
+    // 공유하고 싶을 때 유용합니다.
     //
     // 만약 여기서 명시적으로 설정되지 않았을 경우, 이들 설정은 `package.path`와
     // `package.cpath`에 설정되는 값으로부터 추론됩니다. 이 동작은 스크립트에서는

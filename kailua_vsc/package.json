@@ -2,7 +2,7 @@
   "name": "kailua",
   "displayName": "Kailua",
   "description": "A type checker and IDE support for Lua",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "publisher": "devCAT",
   "license": "(MIT OR Apache-2.0)",
   "homepage": "https://github.com/devcat-studio/kailua",
