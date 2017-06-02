@@ -900,6 +900,9 @@ pub enum Target {
 pub fn main(target: Target) -> io::Result<()> {
     use std::net::TcpStream;
 
+    info!("starting kailua_langsvr {}",
+          option_env!("CARGO_PKG_VERSION").unwrap_or("unknown version"));
+
     let server = match target {
         Target::Stdio => Server::from_stdio(),
         Target::TCP(addr) => {

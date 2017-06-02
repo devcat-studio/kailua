@@ -1,6 +1,6 @@
 [package]
 name = "kailua_workspace"
-version = "1.0.5"
+version = "1.0.7"
 authors = ["Nexon Corporation", "Kang Seonghoon <public+git@mearie.org>"]
 
 description = "Workspace support for Kailua"

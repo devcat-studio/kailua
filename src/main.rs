@@ -99,7 +99,7 @@ fn parse_and_check(workspace: &Workspace, quiet: bool) -> Result<(), String> {
             return Err(format!("Stopped due to prior errors"));
         }
 
-        let opts = Rc::new(RefCell::new(WorkspaceOptions::new(fssource, workspace)));
+        let opts = Rc::new(RefCell::new(WorkspaceOptions::new(fssource, start_path, workspace)));
 
         let output = check_from_chunk_with_preloading(&mut context, filechunk, opts,
                                                       workspace.preload());
@@ -239,8 +239,10 @@ pub fn main() {
             }
         };
 
-        config.package_path = parse_package_paths("set_package_path", "add_package_path");
-        config.package_cpath = parse_package_paths("set_package_cpath", "add_package_cpath");
+        config.package_path =
+            parse_package_paths("set_package_path", "add_package_path").or(config.package_path);
+        config.package_cpath =
+            parse_package_paths("set_package_cpath", "add_package_cpath").or(config.package_cpath);
 
         let quiet = matches.is_present("quiet");
 

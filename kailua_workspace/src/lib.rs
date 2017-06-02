@@ -15,6 +15,7 @@ extern crate kailua_env;
 extern crate kailua_syntax;
 extern crate kailua_check;
 
+use std::error::Error;
 use std::io::{self, Read};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -118,24 +119,56 @@ impl Config {
             #[serde(default)] require: Vec<String>,
         }
 
+        fn invalid_data<E: Into<Box<Error + Send + Sync>>>(e: E) -> io::Error {
+            io::Error::new(io::ErrorKind::InvalidData, e)
+        }
+
+        fn verify_search_paths(search_paths: &[u8], start_paths: &[PathBuf]) -> bool {
+            if apply_search_paths_template(search_paths, &Path::new("example.lua")).is_none() {
+                return false;
+            }
+            for path in start_paths {
+                // we need this step to ensure that start_paths have proper parent dirs as well
+                if apply_search_paths_template(search_paths, path).is_none() {
+                    return false;
+                }
+            }
+            true
+        }
+
         let mut data = String::new();
         File::open(&path)?.read_to_string(&mut data)?;
         let data = dehumanize_json(&data);
-        let data: ConfigData = serde_json::de::from_str(&data).map_err(|e| {
-            io::Error::new(io::ErrorKind::InvalidData, e)
-        })?;
+        let data: ConfigData = serde_json::de::from_str(&data).map_err(invalid_data)?;
+
         self.config_path = Some(path);
         self.start_paths = match data.start_path {
             StartPath::Single(p) => vec![self.base_dir.join(p)],
             StartPath::Multi(pp) => pp.into_iter().map(|p| self.base_dir.join(p)).collect(),
         };
-        self.package_path = data.package_path.map(|s| s.into_bytes());
-        self.package_cpath = data.package_cpath.map(|s| s.into_bytes());
+        self.package_path = if let Some(s) = data.package_path {
+            let s = s.into_bytes();
+            if !verify_search_paths(&s, &self.start_paths) {
+                return Err(invalid_data("bad format for `package_path`"));
+            }
+            Some(s)
+        } else {
+            None
+        };
+        self.package_cpath = if let Some(s) = data.package_cpath {
+            let s = s.into_bytes();
+            if !verify_search_paths(&s, &self.start_paths) {
+                return Err(invalid_data("bad format for `package_cpath`"));
+            }
+            Some(s)
+        } else {
+            None
+        };
         self.message_locale = if let Some(lang) = data.message_lang {
             if let Some(locale) = Locale::new(&lang) {
                 Some(locale)
             } else {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid message language"));
+                return Err(invalid_data("invalid message language"));
             }
         } else {
             None
@@ -221,12 +254,18 @@ pub struct WorkspaceOptions<S> {
 }
 
 impl<S: FsSource> WorkspaceOptions<S> {
-    pub fn new(source: S, workspace: &Workspace) -> WorkspaceOptions<S> {
+    pub fn new(source: S, start_path: &Path, workspace: &Workspace) -> WorkspaceOptions<S> {
         let mut options = FsOptions::new(source, workspace.base_dir.clone());
         if let Some(ref path) = workspace.package_path {
+            let path = apply_search_paths_template(path, start_path).expect(
+                "apply_search_paths_template should not fail in this stage"
+            );
             let _ = options.set_package_path((&path[..]).without_loc(), &NoReport);
         }
         if let Some(ref path) = workspace.package_cpath {
+            let path = apply_search_paths_template(path, start_path).expect(
+                "apply_search_paths_template should not fail in this stage"
+            );
             let _ = options.set_package_cpath((&path[..]).without_loc(), &NoReport);
         }
 
@@ -313,5 +352,74 @@ fn test_dehumanize_json() {
     assert_eq!(dehumanize_json("[3, 4//5, 6]\n7"), "[3 ,4 \n7");
     assert_eq!(dehumanize_json(r#"[3, "4//5", "/*6*/"]"#), r#"[3 ,"4//5" ,"/*6*/"]"#);
     assert_eq!(dehumanize_json("[3, 4, 5,\n/*wat*/\n// ???\n]"), "[3 ,4 ,5\n \n \n]");
+}
+
+fn apply_search_paths_template(mut search_paths: &[u8], start_path: &Path) -> Option<Vec<u8>> {
+    let start_dir = if let Some(dir) = start_path.parent() {
+        if dir == Path::new("") {
+            Path::new(".")
+        } else {
+            dir
+        }
+    } else {
+        return None;
+    };
+
+    let mut ret = Vec::new();
+    loop {
+        if let Some(i) = search_paths.iter().position(|&c| c == b'{' || c == b'}') {
+            if search_paths[i] == b'}' {
+                return None;
+            }
+            ret.extend_from_slice(&search_paths[..i]);
+            search_paths = &search_paths[i+1..];
+            if let Some(i) = search_paths.iter().position(|&c| c == b'{' || c == b'}') {
+                if search_paths[i] == b'{' {
+                    return None;
+                }
+                let var = &search_paths[..i];
+                search_paths = &search_paths[i+1..];
+                match var {
+                    b"start_dir" => {
+                        ret.extend_from_slice(start_dir.display().to_string().as_bytes());
+                    }
+                    _ => {
+                        return None;
+                    }
+                }
+            } else {
+                return None;
+            }
+        } else {
+            ret.extend_from_slice(search_paths);
+            return Some(ret);
+        }
+    }
+}
+
+#[test]
+fn test_apply_search_paths_template() {
+    assert_eq!(apply_search_paths_template(b"?.lua", Path::new("foo/bar.lua")),
+               Some(b"?.lua".to_vec()));
+    assert_eq!(apply_search_paths_template(b"{start_dir}/?.lua", Path::new("foo/bar.lua")),
+               Some(b"foo/?.lua".to_vec()));
+    assert_eq!(apply_search_paths_template(b"{start_dir}/?.lua", Path::new("bar.lua")),
+               Some(b"./?.lua".to_vec()));
+    assert_eq!(apply_search_paths_template(b"a/{start_dir}/?;?/{start_dir}.lua", Path::new("p//q")),
+               Some(b"a/p/?;?/p.lua".to_vec()));
+
+    // parsing error
+    assert_eq!(apply_search_paths_template(b"{{start_dir}}/?.lua", Path::new("foo/bar.lua")),
+               None);
+    assert_eq!(apply_search_paths_template(b"?.lua;{start_dir", Path::new("foo/bar.lua")),
+               None);
+    assert_eq!(apply_search_paths_template(b"?.lua;{no_dir}/?.lua", Path::new("foo/bar.lua")),
+               None);
+    assert_eq!(apply_search_paths_template(b"?.lua;{}/?.lua", Path::new("foo/bar.lua")),
+               None);
+    assert_eq!(apply_search_paths_template(b"?.lua;{", Path::new("foo/bar.lua")),
+               None);
+    assert_eq!(apply_search_paths_template(b"?.lua;}/?.lua", Path::new("foo/bar.lua")),
+               None);
 }
 

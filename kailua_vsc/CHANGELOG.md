@@ -1,3 +1,7 @@
+## 1.0.7 (2017-06-02)
+
+* `package_[c]path` configuration values now support a special syntax for specifying paths relative to the start path, not the base dir. (See the manual for the exact format.) This is useful when you are working with multiple projects with individual directories, only sharing a portion of common codes.
+
 ## 1.0.6 (2017-06-02)
 
 * Fixed the environment used for the global `kailua` executable. The bug had caused that the executable installed by the normal method (`cargo install -f kailua`) is unavailable to the extension for many cases due to the lack of the user-local `$PATH` environment variable.

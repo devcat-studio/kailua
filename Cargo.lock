@@ -1,6 +1,6 @@
 [root]
 name = "kailua_workspace"
-version = "1.0.5"
+version = "1.0.7"
 dependencies = [
  "kailua_check 1.0.5",
  "kailua_diag 1.0.4",
@@ -107,16 +107,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "kailua"
-version = "1.0.5"
+version = "1.0.7"
 dependencies = [
  "clap 2.24.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "kailua_check 1.0.5",
  "kailua_diag 1.0.4",
  "kailua_env 1.0.4",
- "kailua_langsvr 1.0.5",
+ "kailua_langsvr 1.0.7",
  "kailua_syntax 1.0.5",
- "kailua_workspace 1.0.5",
+ "kailua_workspace 1.0.7",
 ]
 
 [[package]]
@@ -154,7 +154,7 @@ version = "1.0.4"
 
 [[package]]
 name = "kailua_langsvr"
-version = "1.0.5"
+version = "1.0.7"
 dependencies = [
  "futures 0.1.13 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures-cpupool 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -164,7 +164,7 @@ dependencies = [
  "kailua_langsvr_protocol 1.0.5",
  "kailua_syntax 1.0.5",
  "kailua_types 1.0.5",
- "kailua_workspace 1.0.5",
+ "kailua_workspace 1.0.7",
  "log 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "num_cpus 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "owning_ref 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",

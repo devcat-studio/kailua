@@ -329,7 +329,16 @@ You can configure the exact behavior of Kailua with `kailua.json`. It is a JSON 
     "start_path": ["entrypoint.lua", "lib/my_awesome_lib.lua"],
 
     // These are values for `package.path` and `package.cpath` variables, respectively.
+    // They are always relative to the base directory
+    // (a directory containing `.vscode` or `kailua.json` whichever being used).
     // Refer to the Lua manual for the exact format.
+    //
+    // In the configuration one can use a special `{start_dir}` sequence
+    // which gets replaced by the directory containing the *current* start path.
+    // so if there are two start paths `foo/a.lua` and `bar/b.lua`,
+    // the path of `{start_dir}/?.lua` will expand to `foo/?.lua` or `bar/?.lua`
+    // for each start path. This is useful when you are working with multiple projects
+    // with individual directories, only sharing a portion of common codes.
     //
     // If they are not explicitly set, they are inferred from any assignments to
     // `package.path` and `package.cpath` variables. This can be handy for scripts,
