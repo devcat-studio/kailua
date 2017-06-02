@@ -1,3 +1,7 @@
+## 1.0.6 (2017-06-02)
+
+* Fixed the environment used for the global `kailua` executable. The bug had caused that the executable installed by the normal method (`cargo install -f kailua`) is unavailable to the extension for many cases due to the lack of the user-local `$PATH` environment variable.
+
 ## 1.0.5 (2017-06-01)
 
 * Multiple `start_path`s are accepted in `kailua.json`. They result in multiple separate checking contexts, possibly diverging to each other (in which case all possible types and signatures are displayed in the editor). The reports are deduplicated as much as possible, so shared codes should have the identical reports for most cases.
