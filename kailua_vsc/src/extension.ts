@@ -111,6 +111,7 @@ function initializeLanguageServer(context: vscode.ExtensionContext) {
             }
             languageClient.outputChannel.append(`spawning a language server (${mode})\n`);
 
+            env = Object.assign({}, process.env, env);
             const cp = spawn(executablePath, args, {env: env});
             cp.on('error', e => {
                 languageClient.outputChannel.append(`failed to spawn a language server: ${e}\n`);
