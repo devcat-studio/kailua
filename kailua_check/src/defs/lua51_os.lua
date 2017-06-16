@@ -25,7 +25,7 @@
 --#         -- TODO sequence conditional union: (true) | (nil, string)
 --#         `rename`: function(oldname: string, newname: string) --> (boolean, string);
 --#         `setlocale`: function(locale: string?, category: string?) --> string;
---#         `time`: function(table: tm?) --> number;
+--#         `time`: function(table: tm?) --> integer;
 --#         `tmpname`: function() --> string;
 --#         ...
 --#     }

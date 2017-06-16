@@ -439,3 +439,9 @@ error('whatever')
 print(42) --@< Warning: This code will never execute
 --! ok
 
+--8<-- lua51-randomseed-with-time
+-- issue #16
+--# open lua51
+math.randomseed(os.time())
+--! ok
+
