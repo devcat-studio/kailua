@@ -163,8 +163,8 @@ define_msg! { pub NoTableSep<'a> { read: &'a Tok }:
 }
 
 define_msg! { pub NoForInSep<'a> { read: &'a Tok }:
-    "ko" => "`=`, `,`, `in`이나 `--:`가 나와야 하는데 {read}이(가) 나왔습니다",
-    _    => "Expected `=`, `,`, `in` or `--:` after `for NAME`, got {read}",
+    "ko" => "`for NAME` 뒤에 `=`, `,` 또는 `in`이 나와야 하는데 {read}이(가) 나왔습니다",
+    _    => "Expected `=`, `,` or `in` after `for NAME`, got {read}",
 }
 
 define_msg! { pub NoFuncArgs<'a> { read: &'a Tok }:
