@@ -1779,13 +1779,36 @@ f()
 --! [KailuaAssume(`p`$1, `p`_, _, Integer)$1, Void(`f`_()), \
 --!  KailuaAssume(`q`$2, `q`_, _, Integer)$2]
 
+--8<-- for
+for a = 1, 2 do
+    for b = 1, 2, 3 do
+    end
+end
+--! [For(`a`$1, 1, 2, None, $1[\
+--!      For(`b`$2, 1, 2, Some(3), $2[])\
+--!  ])]
+
+--8<-- for-no-spec
+for a --: integer --@< Error: Expected `=`, `,` or `in` after `for NAME`, got `--:`
+    = 1, 2 do -- fails to parse as any statement
+end --@< Error: Expected a statement, got a keyword `end`
+--! [Oops, Oops]
+
 --8<-- for-of
-for a of x --@< Error: Expected `=`, `,`, `in` or `--:` after `for NAME`, got a name
+for a of x --@< Error: Expected `=`, `,` or `in` after `for NAME`, got a name
 --! [Oops]
 
 --8<-- for-in
 for a, b, c in pairs({}) do end
 --! [ForIn([`a`$1, `b`$1, `c`$1], [`pairs`_({})], $1[])]
+
+--8<-- for-in-no-spec
+for a, --: integer --@< Error: Expected a name, got `--:`
+                   --@^ Error: Expected a statement, got `--:`
+    b  --: string -- interpreted as `b <spec>, c = ...`
+  , c in pairs({}) do end --@< Error: Expected `=`, got a keyword `in`
+                          --@^ Error: Expected a statement, got a keyword `in`
+--! [Oops, Oops, Assign([`b`_: _ String, `c`_], _), Oops, Void(`pairs`_({})), Do([])]
 
 --8<-- local-seq
 local (x, y) = (1, 2) --@< Error: Expected a name or `function` after `local`, got `(`
