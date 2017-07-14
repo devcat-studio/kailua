@@ -614,3 +614,24 @@ end
 --# type X = integer
 --! ok
 
+--8<-- module-order
+local a = {} --: module
+local b = {} --: module
+local t = {}
+
+-- they should be checked in this exact order
+
+--v function()
+function a.one() t.a = 0 end
+
+--v function()
+function b.two() t.b = t.a end
+
+--v function()
+function a.three() t.c = t.b end
+
+--v function()
+function b.four() t.d = t.c end
+
+--! ok
+
