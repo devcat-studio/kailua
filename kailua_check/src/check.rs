@@ -1012,11 +1012,9 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                                })
                         .done()?;
             }
-
-            // assignment can alter its flexibility if the slot is newly created, so we need this
-            self.register_module_if_needed(&lvalue.slot);
         }
 
+        self.register_module_if_needed(&lvalue.slot);
         Ok(())
     }
 
@@ -1258,19 +1256,21 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
 
             match varref {
                 VarRef::Name(nameref) => {
-                    if let Some(specinfo) = specinfo {
+                    let varslot = if let Some(specinfo) = specinfo {
                         // variable declaration
-                        self.env.add_var(nameref, Some(specinfo), info)?;
+                        self.env.add_var(nameref, Some(specinfo), info)?
                     } else {
                         // variable assignment
                         if let Some(info) = info {
-                            self.env.assign_to_var(nameref, info)?;
+                            Some(self.env.assign_to_var(nameref, info)?)
+                        } else {
+                            None
                         }
-                    }
+                    };
 
                     // map the name span to the resulting slot
-                    if let Some(varslot) = self.env.get_var(nameref)
-                                                   .and_then(|var| var.slot.slot().cloned()) {
+                    if let Some(varslot) = varslot {
+                        self.register_module_if_needed(&varslot);
                         let varslot = varslot.with_loc(nameref);
                         self.context().spanned_slots_mut().insert(varslot);
                     }
@@ -1568,7 +1568,10 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 let mut scope = self.scoped(Scope::new());
                 let indty = Slot::var(Ty::new(indty));
                 let nameref = NameRef::Local(localname.base.clone()).with_loc(localname);
-                scope.env.add_var(&nameref, None, Some(indty.without_loc()))?;
+                if let Some(varslot) = scope.env.add_var(&nameref, None,
+                                                         Some(indty.without_loc()))? {
+                    scope.register_module_if_needed(&varslot);
+                }
 
                 exit &= scope.visit_block(block)?;
                 Ok(exit.loop_boundary(Exit::None))
@@ -1643,7 +1646,10 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 for (localname, ty) in names.iter().zip(indtys.into_iter_with_nil()) {
                     let ty = Slot::var(ty);
                     let nameref = NameRef::Local(localname.base.clone()).with_loc(localname);
-                    scope.env.add_var(&nameref, None, Some(ty.without_loc()))?;
+                    if let Some(varslot) = scope.env.add_var(&nameref, None,
+                                                             Some(ty.without_loc()))? {
+                        scope.register_module_if_needed(&varslot);
+                    }
                 }
 
                 exit &= scope.visit_block(block)?;
@@ -1656,15 +1662,19 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 // `name` itself is available to the inner scope
                 let funcv = self.types().gen_tvar();
                 let info = Slot::just(Ty::new(T::TVar(funcv))).with_loc(stmt);
-                if let (&NameRef::Local(..), None) = (&name.base, nextscope) {
+                let varslot = if let (&NameRef::Local(..), None) = (&name.base, nextscope) {
                     // this is very rare but valid case where the local variable is
                     // overwritten by a local function decl (so the NameRef is local
                     // but there is no new sibling scope). it's equivalent to assignment.
-                    self.env.assign_to_var(name, info)?;
+                    Some(self.env.assign_to_var(name, info)?)
                 } else {
                     // otherwise it is a new variable.
-                    self.env.add_var(name, None, Some(info))?;
+                    self.env.add_var(name, None, Some(info))?
+                };
+                if let Some(varslot) = varslot {
+                    self.register_module_if_needed(&varslot);
                 }
+
                 let (tag, no_check) = self.visit_sig_attrs(&sig.attrs)?;
                 let functy = self.visit_func_body(tag, no_check, None, sig, block,
                                                   stmt.span, None)?;
@@ -1768,7 +1778,9 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 for ((localname, specinfo), info) in nameinfos.into_iter()
                                                               .zip(infos.into_iter_with_none()) {
                     let nameref = NameRef::Local(localname.base.clone()).with_loc(localname);
-                    self.env.add_var(&nameref, specinfo, info)?;
+                    if let Some(varslot) = self.env.add_var(&nameref, specinfo, info)? {
+                        self.register_module_if_needed(&varslot);
+                    }
                 }
                 Ok(exit)
             }
@@ -1822,7 +1834,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
 
             St::KailuaAssume(ref newname, ref name, kindm, ref kind, _nextscope) => {
                 let slot = self.visit_kind(kindm, kind)?;
-                self.env.assume_var(&newname.clone().with_loc(name), slot)?;
+                let varslot = self.env.assume_var(&newname.clone().with_loc(name), slot)?;
+                self.register_module_if_needed(&varslot);
                 Ok(Exit::None)
             }
 
@@ -1833,7 +1846,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                     let rootslot = self.env.ensure_var(rootname)?.with_loc(rootname);
                     let newslot = self.assume_field_slot(static_, rootslot, names, span,
                                                          slot.base)?;
-                    self.env.assume_var(rootname, newslot.with_loc(rootname))?;
+                    let varslot = self.env.assume_var(rootname, newslot.with_loc(rootname))?;
+                    self.register_module_if_needed(&varslot);
                 } else {
                     self.env.error(rootname, m::NoVar { name: self.env.get_name(rootname) })
                             .done()?;
@@ -1863,7 +1877,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
 
                     // the final slot should be static
                     let newslot = self.assume_field_slot(true, rootslot, names, span, slot)?;
-                    self.env.assume_var(rootname, newslot.with_loc(rootname))?;
+                    let varslot = self.env.assume_var(rootname, newslot.with_loc(rootname))?;
+                    self.register_module_if_needed(&varslot);
                 } else {
                     self.env.error(rootname, m::NoVar { name: self.env.get_name(rootname) })
                             .done()?;
@@ -2104,7 +2119,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
         if let Some((selfparam, selfinfo)) = selfparam {
             let ty = selfinfo.unlift().clone();
             let selfid = selfparam.clone().map(|param| param.0);
-            scope.env.add_local_var_already_set(&selfid, selfinfo.without_loc())?;
+            let varslot = scope.env.add_local_var_already_set(&selfid, selfinfo.without_loc())?;
+            scope.register_module_if_needed(&varslot);
             argshead.push(ty);
             argnames.push(Some(Name::from(&b"self"[..]).with_loc(selfparam)));
         }
@@ -2156,7 +2172,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 }
             }
 
-            scope.env.add_local_var_already_set(&param.base, sty.without_loc())?;
+            let varslot = scope.env.add_local_var_already_set(&param.base, sty.without_loc())?;
+            scope.register_module_if_needed(&varslot);
             argshead.push(ty);
 
             let name = param.base.name(scope.env.scope_map());
@@ -2167,7 +2184,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
         if let Some(Varargs { legacy_arg: Some(ref argid), .. }) = sig.args.tail {
             let argtab = Tables::ArrayN(Slot::var(vatype.as_ref().unwrap().clone()));
             let arginfo = Slot::var(Ty::new(T::Tables(Cow::Owned(argtab)))).with_loc(argid);
-            scope.env.add_local_var_already_set(argid, arginfo)?;
+            let varslot = scope.env.add_local_var_already_set(argid, arginfo)?;
+            scope.register_module_if_needed(&varslot);
         }
 
         let args = TySeq { head: argshead, tail: vatype };

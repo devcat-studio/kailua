@@ -391,7 +391,7 @@ function M.b() M.a() end
 
 --! error
 
---8<-- module-mutual-sharing-1
+--8<-- module-mutual-sharing-by-assign-1
 local N = {}
 local M = {} --: module
 N = M -- this is fine
@@ -403,10 +403,9 @@ function N.a() N.b() end --@< Error: Missing key "b" in `{a: <not initialized>, 
 function N.b() N.a() end
 --! error
 
---8<-- module-mutual-sharing-2
-local N = {}
+--8<-- module-mutual-sharing-by-assign-2
 local M = {} --: module
-N = M
+local N = M
 
 --v function()
 function M.a() M.b() end
@@ -416,6 +415,33 @@ function N.b() N.a() end
 
 M.b()
 N.a()
+--! ok
+
+--8<-- module-mutual-sharing-by-local-1
+local N = {}
+local M = {} --: module
+N = M -- this is fine
+
+--v function()
+function M.a() M.b() end
+
+--v function()
+function N.b() N.a() end
+
+M.b()
+N.a()
+--! ok
+
+--8<-- module-mutual-sharing-by-local-2
+local M = {} --: module
+local N = M -- this is fine
+
+-- since N is *also* `module`, this is fine as well
+--v function()
+function N.a() N.b() end
+
+--v function()
+function N.b() N.a() end
 --! ok
 
 --8<-- module-nested-decl-1

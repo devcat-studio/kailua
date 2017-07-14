@@ -986,6 +986,8 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         Ok(())
     }
 
+    /// Ensures that the variable has been initialized (possibly implicitly to `nil`).
+    /// Raises an appropriate error when the implicit initialization was impossible.
     pub fn ensure_var(&mut self, nameref: &Spanned<NameRef>) -> Result<Slot> {
         trace!("ensuring {:?} has been initialized", nameref);
         let id = self.id_from_nameref(nameref);
@@ -1069,9 +1071,12 @@ impl<'ctx, R: Report> Env<'ctx, R> {
     }
 
     /// Adds a local variable with the explicit type `specinfo` and the implicit type `initinfo`.
+    ///
+    /// Returns the resulting slot of that variable, if the variable has been indeed added.
+    /// The slot is referentially identical to what one will get from using it as an r-value.
     pub fn add_var(&mut self, nameref: &Spanned<NameRef>,
                    specinfo: Option<SlotSpec>,
-                   initinfo: Option<Spanned<Slot>>) -> Result<()> {
+                   initinfo: Option<Spanned<Slot>>) -> Result<Option<Slot>> {
         let id = self.id_from_nameref(nameref);
         debug!("adding a variable {} with {:?} (specified) and {:?} (initialized)",
                id.display(&self.context), specinfo, initinfo);
@@ -1082,7 +1087,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         if self.context.ids.get(&id).is_some() {
             let name = id.name(&self.context);
             self.error(nameref, m::CannotRedefineVar { name: name }).done()?;
-            return Ok(());
+            return Ok(None);
         }
 
         let slot = if let Some(initinfo) = initinfo {
@@ -1102,12 +1107,23 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             NameSlot::None
         };
 
-        self.context.ids.insert(id.base, NameDef { span: id.span, slot: slot });
-        Ok(())
+        self.context.ids.insert(id.base, NameDef { span: id.span, slot: slot.clone() });
+
+        match slot {
+            NameSlot::Set(slot) | NameSlot::Unset(slot) => Ok(Some(slot)),
+            NameSlot::None => Ok(None),
+        }
     }
 
+    /// Adds a local variable with that has been already initialized with the type `info`.
+    ///
+    /// This is necessary for non-assignment statements that introduce a new variable
+    /// without assignment semantics. Currently function arguments are the only such case.
+    ///
+    /// Returns the resulting slot of that variable.
+    /// The slot is referentially identical to what one will get from using it as an r-value.
     pub fn add_local_var_already_set(&mut self, scoped_id: &Spanned<ScopedId>,
-                                     info: Spanned<Slot>) -> Result<()> {
+                                     info: Spanned<Slot>) -> Result<Slot> {
         let id = Id::Local(self.map_index, scoped_id.base.clone()).with_loc(scoped_id);
         debug!("adding a local variable {} already set to {:?}", id.display(&self.context), info);
 
@@ -1120,14 +1136,19 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
         let varname = id.name(self.context).clone().with_loc(scoped_id);
         let info = info.base.set_display(DisplayName::Var(varname));
-        self.context.ids.insert(id.base, NameDef { span: id.span, slot: NameSlot::Set(info) });
-        Ok(())
+        self.context.ids.insert(id.base,
+                                NameDef { span: id.span, slot: NameSlot::Set(info.clone()) });
+        Ok(info)
     }
 
     /// Assigns to a global or local variable with a right-hand-side type of `info`.
     ///
     /// This may create a new global variable if there is no variable with that name.
-    pub fn assign_to_var(&mut self, nameref: &Spanned<NameRef>, info: Spanned<Slot>) -> Result<()> {
+    ///
+    /// Returns the slot of that variable.
+    /// The slot is referentially identical to what one will get from using it as an r-value.
+    pub fn assign_to_var(&mut self, nameref: &Spanned<NameRef>,
+                         info: Spanned<Slot>) -> Result<Slot> {
         let id = self.id_from_nameref(nameref);
 
         let (previnfo, prevset, needslotassign) = if self.context.ids.contains_key(&id.base) {
@@ -1153,7 +1174,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             self.assign_(&previnfo.with_loc(&id), &info, !prevset)?;
         }
         self.name_class_if_any(&id, &info)?;
-        Ok(())
+        Ok(info.base)
     }
 
     fn assume_special(&mut self, info: &Spanned<Slot>) -> Result<()> {
@@ -1174,7 +1195,12 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         Ok(())
     }
 
-    pub fn assume_var(&mut self, name: &Spanned<NameRef>, info: Spanned<Slot>) -> Result<()> {
+    /// Adds a new global or local variable with given type.
+    /// It entirely skips the assignment phase and forces the variable to be exactly *that* type.
+    ///
+    /// Returns the resulting slot of that variable.
+    /// The slot is referentially identical to what one will get from using it as an r-value.
+    pub fn assume_var(&mut self, name: &Spanned<NameRef>, info: Spanned<Slot>) -> Result<Slot> {
         let id = Id::from(self.map_index, name.base.clone());
         debug!("(force) adding a variable {} as {:?}", id.display(&self.context), info);
 
@@ -1186,9 +1212,9 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         let mut def = self.context.ids.entry(id).or_insert_with(|| {
             NameDef { span: name.span, slot: NameSlot::None }
         });
-        def.slot = NameSlot::Set(info);
+        def.slot = NameSlot::Set(info.clone());
 
-        Ok(())
+        Ok(info)
     }
 
     pub fn get_tvar_bounds(&self, tvar: TVar) -> (Flags /*lb*/, Flags /*ub*/) {
