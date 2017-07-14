@@ -195,15 +195,20 @@ struct PendingFuncBody<'inp> {
     declspan: Span,
 }
 
+// represents all delay-checked function bodies and associated module slots in a single scope
 #[derive(Clone, Debug)]
-struct PendingModule<'inp> {
-    slot: Slot,
+struct PendingModules<'inp> {
+    // this list (technically a weak-key map) is used for
+    // - determining when the function body should be checked (modules may be at outer scopes)
+    // - stripping module slots' flexibility after checking
+    module_slots: HashMap<*const Ty, Slot>,
+
     func_bodies: Vec<PendingFuncBody<'inp>>,
 }
 
-impl<'inp> PendingModule<'inp> {
-    fn new(slot: Slot) -> PendingModule<'inp> {
-        PendingModule { slot: slot, func_bodies: Vec::new() }
+impl<'inp> PendingModules<'inp> {
+    fn new() -> PendingModules<'inp> {
+        PendingModules { module_slots: HashMap::new(), func_bodies: Vec::new() }
     }
 }
 
@@ -216,7 +221,7 @@ impl<'inp> PendingModule<'inp> {
 /// but it internally creates nested `Env` and checkers to load other modules.
 pub struct Checker<'inp, 'envr, 'env: 'envr, R: 'env> {
     env: &'envr mut Env<'env, R>,
-    pending_modules: Vec<HashMap<*const Ty, PendingModule<'inp>>>,
+    pending_modules: Vec<PendingModules<'inp>>,
 }
 
 impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
@@ -1317,7 +1322,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
 
     fn visit_block(&mut self, block: &'inp Spanned<Block>) -> Result<Exit> {
         // `self.pending_modules` should be kept in sync, even when the checking fails
-        self.pending_modules.push(HashMap::new());
+        self.pending_modules.push(PendingModules::new());
         let exit;
         let ret;
         {
@@ -1338,15 +1343,14 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             // drain pending declarations
             let bodies: Vec<_> = {
                 let mut modules = self.pending_modules.last_mut().unwrap();
-                if !modules.is_empty() {
-                    debug!("finishing pending type checking for {:?}", modules.values());
-                }
-                modules.iter_mut().flat_map(|(_, module)| module.func_bodies.drain(..)).collect()
+                modules.func_bodies.drain(..).collect()
             };
 
             if bodies.is_empty() {
                 break; // we are done
             }
+
+            debug!("finishing pending type checking for {:?}", bodies);
 
             // handle the pending type checking
             for body in bodies {
@@ -1359,8 +1363,9 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
 
         // remove the module flexibility from remaining slots
         // (done here to avoid non-determistic error messages in the test)
-        for (_, module) in self.pending_modules.last().unwrap().iter() {
-            module.slot.unmark_as_module();
+        let mut modules = self.pending_modules.last_mut().unwrap();
+        for (_, module_slot) in modules.module_slots.drain() {
+            module_slot.unmark_as_module();
         }
 
         Ok(())
@@ -1742,11 +1747,11 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 if no_check == Some(NoCheck::Module) {
                     debug!("adding a pending type checking to {:?}", info);
                     let key = &*info.unlift() as *const Ty;
-                    let modules = self.pending_modules.iter_mut().rev();
-                    let module = modules.filter_map(|modules| modules.get_mut(&key)).next().expect(
+                    let mut modules_iter = self.pending_modules.iter_mut().rev();
+                    let modules = modules_iter.find(|m| m.module_slots.contains_key(&key)).expect(
                         "slots with F::Module not registered in the current checker"
                     );
-                    module.func_bodies.push(PendingFuncBody {
+                    modules.func_bodies.push(PendingFuncBody {
                         tag: tag, selfparam: selfinfo, sig: sig, block: block, declspan: stmt.span,
                     });
                 }
@@ -2877,8 +2882,8 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
         if slot.flex() == F::Module {
             debug!("registering {:?} to the current scope", slot);
             let key = &*slot.unlift() as *const Ty;
-            let modules = self.pending_modules.last_mut().unwrap();
-            modules.insert(key, PendingModule::new(slot.clone()));
+            let mut modules = self.pending_modules.last_mut().expect("missing PendingModules");
+            modules.module_slots.insert(key, slot.clone());
         }
     }
 
