@@ -1,0 +1,254 @@
+<!DOCTYPE HTML>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Classes - Kailua 1.1.0 documentation</title>
+        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+
+        <base href="">
+
+        <link rel="stylesheet" href="book.css">
+        <link href="https://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800" rel="stylesheet" type="text/css">
+        <link href="https://fonts.googleapis.com/css?family=Source+Code+Pro:500" rel="stylesheet" type="text/css">
+
+        <link rel="shortcut icon" href="favicon.png">
+
+        <!-- Font Awesome -->
+        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme -->
+        
+        <link rel="stylesheet" href="kailua.css">
+        
+
+        
+
+        <!-- Fetch Clipboard.js from CDN but have a local fallback -->
+        <script src="https://cdn.jsdelivr.net/clipboard.js/1.6.1/clipboard.min.js"></script>
+        <script>
+            if (typeof Clipboard == 'undefined') {
+                document.write(unescape("%3Cscript src='clipboard.min.js'%3E%3C/script%3E"));
+            }
+        </script>
+
+        <!-- Fetch JQuery from CDN but have a local fallback -->
+        <script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+        <script>
+            if (typeof jQuery == 'undefined') {
+                document.write(unescape("%3Cscript src='jquery.js'%3E%3C/script%3E"));
+            }
+        </script>
+
+        <!-- Fetch store.js from local - TODO add CDN when 2.x.x is available on cdnjs -->
+        <script src="store.js"></script>
+
+        <!-- Custom JS script -->
+        
+        <script type="text/javascript" src="kailua.js"></script>
+        
+
+    </head>
+    <body class="light">
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script type="text/javascript">
+            var theme = store.get('theme');
+            if (theme === null || theme === undefined) { theme = 'light'; }
+            $('body').removeClass().addClass(theme);
+        </script>
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script type="text/javascript">
+            var sidebar = store.get('sidebar');
+            if (sidebar === "hidden") { $("html").addClass("sidebar-hidden") }
+            else if (sidebar === "visible") { $("html").addClass("sidebar-visible") }
+        </script>
+
+        <div id="sidebar" class="sidebar">
+            <ul class="chapter"><li class="affix"><a href="./overview.html">Overview</a></li><li><a href="./classes.html" class="active"><strong>1.</strong> Classes</a></li><li><ul class="section"><li><a href="./classes-gideros.html"><strong>1.1.</strong> Gideros Support</a></li></ul></li><li><a href="./internals.html"><strong>2.</strong> Internals</a></li><li class="affix"><a href="./license.html">License</a></li></ul>
+        </div>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page" tabindex="-1">
+                <div id="menu-bar" class="menu-bar">
+                    <div class="left-buttons">
+                        <i id="sidebar-toggle" class="fa fa-bars"></i>
+                        <i id="theme-toggle" class="fa fa-paint-brush"></i>
+                    </div>
+
+                    <h1 class="menu-title">Kailua 1.1.0 documentation</h1>
+
+                    <div class="right-buttons">
+                        <i id="print-button" class="fa fa-print" title="Print this book"></i>
+                    </div>
+                </div>
+
+                <div id="content" class="content">
+                    <a class="header" href="print.html#class system" id="class system"><h1>Class System</h1></a>
+<p>Lua normally does not natively support classes and any other object-oriented features. Instead, it defers the difficult job of designing a class system to the users (or library authors). Consequently there are multiple <strong>class systems</strong> used in the wild, and whatever Kailua supports has to cover all of them.</p>
+<p>This is close to impossible, so Kailua offers a customizable class system support. Currently the feature is in the early stage of development and not all possible features are implemented, mainly due to the authors' inability to analyze all of them. Analyses and suggestions for other class systems will be appreciated.</p>
+<a class="header" href="print.html#declaring the class system" id="declaring the class system"><h2>Declaring the class system</h2></a>
+<p>The class systems available in the current session are identified with unique global names, and have to be explicitly declared.</p>
+<pre><code class="language-lua">--# class system gideros
+</code></pre>
+<p>Currently the name of each class system is fixed and should be chosen from the following list:</p>
+<table><thead><tr><th> Name </th><th> Description </th><th> Inheritance </th><th> <code>[make_class]</code> </th></tr></thead><tbody>
+<tr><td> <code>gideros</code> </td><td> <a href="classes-gideros.html">Gideros class system</a> </td><td> Single </td><td> Supported </td></tr>
+</tbody></table>
+<a class="header" href="print.html#declaring a class" id="declaring a class"><h2>Declaring a class</h2></a>
+<p>The class can be declared in two ways.</p>
+<ol>
+<li><code>--# assume class</code> directive can declare and assume the existing class.</li>
+<li>If the class system has a support, a function with a <code>[make_class(&lt;class system&gt;)]</code> attribute will generate a new class whenever called.</li>
+</ol>
+<a class="header" href="print.html#-- assume class directive" id="-- assume class directive"><h3><code>--# assume class</code> directive</h3></a>
+<p>The <code>--# assume class</code> directive can declare a class without class system. This is useful for defining a simple class with no inheritance and special semantics.</p>
+<pre><code class="language-lua">-- defines a global name `Hello` to be a class prototype for
+-- the newly defined global class `Hello`.
+
+--# assume global class Hello
+</code></pre>
+<p>Since this is an ordinary directive (that is going to be ignored by Lua), a local class (without <code>global</code>) requires the name to be already a local name.</p>
+<pre><code class="language-lua">local Hello = {}
+--# assume class Hello
+</code></pre>
+<p>The class system, if any, should be enclosed with parentheses. If the class system supports inhertiance the parent class can be also specified.</p>
+<pre><code class="language-lua">--# assume global class(gideros) Object
+--# assume global class(gideros) Sprite: Object
+</code></pre>
+<p>In general different class systems (including those with no class system) do not mix.</p>
+<a class="header" href="print.html#make_class attribute" id="make_class attribute"><h3><code>[make_class]</code> attribute</h3></a>
+<p>A function with the <code>[make_class]</code> attribute is much closer to how ordinary Lua code defines a new class. This attribute is exclusive to class systems, and such a function can be <code>--# assume</code>d like this:</p>
+<pre><code class="language-lua">--# assume global `class`: [make_class(gideros)] function() --&gt; table
+</code></pre>
+<p>Or can be explicitly declared with a function specification:</p>
+<pre><code class="language-lua">--v [NO_CHECK] -- because the gory detail of classes is hard to check
+--v [make_class(gideros)]
+--v function() --&gt; table
+function make_class()
+    -- ...
+end
+</code></pre>
+<p>In many cases calling without any arguments will define a new class without explicit parents, and calling with an argument of the parent class prototype will do the inheritance. The exact interpretation of those arguments is however up to the class system.</p>
+<p>A new class prototype returned by the <code>[make_class]</code> function should be assigned to the variable as soon as possible. This is when the class receives its name:</p>
+<pre><code class="language-lua">local Hello = class() -- will also define a local type `Hello`
+
+Sprite = class() -- will also define a global type `Sprite`
+</code></pre>
+<p>It is possible but not recommended to use a class without name (there are some backdoors). Such classes will be uniquely identified in the messages.</p>
+<a class="header" href="print.html#defining fields and methods" id="defining fields and methods"><h3>Defining fields and methods</h3></a>
+<p>Once the class is declared, fields and methods can be freely added to them as long as it does not break the class system's own limitations:</p>
+<pre><code class="language-lua">--# assume global class Person
+
+--v function(name: string) --&gt; Person
+function Person.new(name)
+    local person = {}
+    set_metaclass_for_person(person) -- up to your imagination
+    --# assume person: Person
+
+    person.name = name -- will define a new field
+    return person
+end
+
+-- declares a new class field
+Person.HELLO = 'Hello'
+
+-- declares a new method (which is just a class field with a function receiving `self`)
+--v method()
+function Person:greet()
+    print(self.HELLO .. ', ' .. self.name)
+end
+
+local person = Person.new('J. Random Hacker')
+person:greet()
+</code></pre>
+<p>As one can observe:</p>
+<ul>
+<li>
+<p>Without a class system, <code>--# assume</code> is essential to produce a new instance type. On the other hands, class systems will typically have their own ways to automatically derive a <code>new</code> method or similar from a constructor.</p>
+</li>
+<li>
+<p>The instance field can be created via assignments. Reading a missing field still errors, so if we have transmuted the <code>person</code> variable <em>after</em> setting a <code>name</code> field the checker will miss its existence.</p>
+</li>
+<li>
+<p>The method can be defined with the same syntax as functions, but it uses the <code>method</code> keyword and the <code>self</code> argument is omitted (and inferred).</p>
+</li>
+</ul>
+<p><code>--# assume</code> also works for classes. The code above will look like the following if we can assume they already exist and we only want to add types:</p>
+<pre><code class="language-lua">--# assume global class Person
+--# assume static Person.new: function(name: string) --&gt; Person
+--# assume static Person.HELLO: string
+--# assume Person.greet: method()
+
+local person = Person.new('J. Random Hacker')
+person:greet()
+</code></pre>
+<p>This is same to ordinary <code>--# assume</code>, but please note several differences:</p>
+<ul>
+<li>
+<p>Conceptually <code>Person.greet</code> should be a <code>static</code> function with the first argument typed as <code>Person</code>. The <code>method</code> keyword was used here for the convenience (it is not a true type).</p>
+</li>
+<li>
+<p>Fields of globally defined class can be only <code>--# assume</code>d in the topmost scope. This is because <code>--# assume</code> generally creates a copy of given name in the current local scope, but creating a new field will globally affect that class.</p>
+</li>
+<li>
+<p>Some fields can simply not be defined depending on the class system.</p>
+</li>
+</ul>
+<!-- TODO: mention that the classes prototypes are automatically subject to delayed type checking (needs to explain this first) -->
+
+                </div>
+
+                <!-- Mobile navigation buttons -->
+                
+                    <a rel="prev" href="./overview.html" class="mobile-nav-chapters previous">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+                
+
+                
+                    <a rel="next" href="./classes-gideros.html" class="mobile-nav-chapters next">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+                
+
+            </div>
+
+            
+                <a href="./overview.html" class="nav-chapters previous" title="You can navigate through the chapters using the arrow keys">
+                    <i class="fa fa-angle-left"></i>
+                </a>
+            
+
+            
+                <a href="./classes-gideros.html" class="nav-chapters next" title="You can navigate through the chapters using the arrow keys">
+                    <i class="fa fa-angle-right"></i>
+                </a>
+            
+
+        </div>
+
+
+        <!-- Local fallback for Font Awesome -->
+        <script>
+            if ($(".fa").css("font-family") !== "FontAwesome") {
+                $('<link rel="stylesheet" type="text/css" href="_FontAwesome/css/font-awesome.css">').prependTo('head');
+            }
+        </script>
+
+        <!-- Livereload script (if served using the cli tool) -->
+        
+
+        
+
+
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+    </body>
+</html>

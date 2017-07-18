@@ -1,0 +1,167 @@
+<!DOCTYPE HTML>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Gideros Support - Kailua 1.1.0 documentation</title>
+        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+
+        <base href="">
+
+        <link rel="stylesheet" href="book.css">
+        <link href="https://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800" rel="stylesheet" type="text/css">
+        <link href="https://fonts.googleapis.com/css?family=Source+Code+Pro:500" rel="stylesheet" type="text/css">
+
+        <link rel="shortcut icon" href="favicon.png">
+
+        <!-- Font Awesome -->
+        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme -->
+        
+        <link rel="stylesheet" href="kailua.css">
+        
+
+        
+
+        <!-- Fetch Clipboard.js from CDN but have a local fallback -->
+        <script src="https://cdn.jsdelivr.net/clipboard.js/1.6.1/clipboard.min.js"></script>
+        <script>
+            if (typeof Clipboard == 'undefined') {
+                document.write(unescape("%3Cscript src='clipboard.min.js'%3E%3C/script%3E"));
+            }
+        </script>
+
+        <!-- Fetch JQuery from CDN but have a local fallback -->
+        <script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+        <script>
+            if (typeof jQuery == 'undefined') {
+                document.write(unescape("%3Cscript src='jquery.js'%3E%3C/script%3E"));
+            }
+        </script>
+
+        <!-- Fetch store.js from local - TODO add CDN when 2.x.x is available on cdnjs -->
+        <script src="store.js"></script>
+
+        <!-- Custom JS script -->
+        
+        <script type="text/javascript" src="kailua.js"></script>
+        
+
+    </head>
+    <body class="light">
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script type="text/javascript">
+            var theme = store.get('theme');
+            if (theme === null || theme === undefined) { theme = 'light'; }
+            $('body').removeClass().addClass(theme);
+        </script>
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script type="text/javascript">
+            var sidebar = store.get('sidebar');
+            if (sidebar === "hidden") { $("html").addClass("sidebar-hidden") }
+            else if (sidebar === "visible") { $("html").addClass("sidebar-visible") }
+        </script>
+
+        <div id="sidebar" class="sidebar">
+            <ul class="chapter"><li class="affix"><a href="./overview.html">Overview</a></li><li><a href="./classes.html"><strong>1.</strong> Classes</a></li><li><ul class="section"><li><a href="./classes-gideros.html" class="active"><strong>1.1.</strong> Gideros Support</a></li></ul></li><li><a href="./internals.html"><strong>2.</strong> Internals</a></li><li class="affix"><a href="./license.html">License</a></li></ul>
+        </div>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page" tabindex="-1">
+                <div id="menu-bar" class="menu-bar">
+                    <div class="left-buttons">
+                        <i id="sidebar-toggle" class="fa fa-bars"></i>
+                        <i id="theme-toggle" class="fa fa-paint-brush"></i>
+                    </div>
+
+                    <h1 class="menu-title">Kailua 1.1.0 documentation</h1>
+
+                    <div class="right-buttons">
+                        <i id="print-button" class="fa fa-print" title="Print this book"></i>
+                    </div>
+                </div>
+
+                <div id="content" class="content">
+                    <a class="header" href="print.html#gideros support" id="gideros support"><h1>Gideros Support</h1></a>
+<p>The <code>gideros</code> class system mimics the behavior of <a href="http://docs.giderosmobile.com/classes_in_gideros.html">Gideros classes</a>. This class system was chosen because, besides from the existing requirements, it represents a typical instance of naively defined class system that can be problematic for the type checker.</p>
+<p>A typical declaration for the <code>gideros</code> class system is as follows:</p>
+<pre><code class="language-lua">--# class system gideros
+--# assume global class(gideros) Object
+--# assume global Core: {}
+--# assume Core.class: [make_class(gideros)] function(parent: table?) --&gt; table
+</code></pre>
+<p>This defines the <code>Object</code> class and a <code>Core.class</code> class-generating function.</p>
+<a class="header" href="print.html#constructor" id="constructor"><h2>Constructor</h2></a>
+<p>The <code>new</code> method is automatically created when the <code>init</code> method is created.</p>
+<pre><code class="language-lua">--# assume global class(gideros) Foo: Object
+
+--v method(text: string)
+function Foo:init(text)
+    self.text = text
+end
+
+local x = Foo.new('string')
+</code></pre>
+<p>Note that the actual creation currently occurs at the first invocation of <code>new</code>, so the error may be delayed to the usage site.</p>
+<a class="header" href="print.html#inheritance" id="inheritance"><h2>Inheritance</h2></a>
+<p>The Gideros class system supports the single inheritance and shares the general syntax and behavior described in the <a href="classes.html">earlier section</a>.</p>
+<p>Fields in child classes simply shadows a previously defined field in a parent, which would break the subtyping (using a child class to the place expecting a parent class) if not restricted. <strong>Therefore in Kailua fields cannot be normally overriden.</strong> The exception is made for constructors (<code>init</code>), which cannot be explicitly called through instances anyway.</p>
+<p>In Gideros every class is assumed to be a descendant of the <code>Object</code> class. <strong>Kailua recognizes the first (and only) class defined without a parent as such a class and disallows multiple such classes.</strong> The <code>Core.class</code> function will use <code>Object</code> as a parent if no other parent is specified. Since this implicit behavior is confusing otherwise, though, <code>--# assume class</code> should always specify the parent class even when it would be <code>Object</code>.</p>
+
+                </div>
+
+                <!-- Mobile navigation buttons -->
+                
+                    <a rel="prev" href="./classes.html" class="mobile-nav-chapters previous">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+                
+
+                
+                    <a rel="next" href="./internals.html" class="mobile-nav-chapters next">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+                
+
+            </div>
+
+            
+                <a href="./classes.html" class="nav-chapters previous" title="You can navigate through the chapters using the arrow keys">
+                    <i class="fa fa-angle-left"></i>
+                </a>
+            
+
+            
+                <a href="./internals.html" class="nav-chapters next" title="You can navigate through the chapters using the arrow keys">
+                    <i class="fa fa-angle-right"></i>
+                </a>
+            
+
+        </div>
+
+
+        <!-- Local fallback for Font Awesome -->
+        <script>
+            if ($(".fa").css("font-family") !== "FontAwesome") {
+                $('<link rel="stylesheet" type="text/css" href="_FontAwesome/css/font-awesome.css">').prependTo('head');
+            }
+        </script>
+
+        <!-- Livereload script (if served using the cli tool) -->
+        
+
+        
+
+
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+    </body>
+</html>

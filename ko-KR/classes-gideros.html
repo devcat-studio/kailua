@@ -1,0 +1,167 @@
+<!DOCTYPE HTML>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>기데로스 지원 - 카일루아 1.1.0 문서</title>
+        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+
+        <base href="">
+
+        <link rel="stylesheet" href="book.css">
+        <link href="https://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800" rel="stylesheet" type="text/css">
+        <link href="https://fonts.googleapis.com/css?family=Source+Code+Pro:500" rel="stylesheet" type="text/css">
+
+        <link rel="shortcut icon" href="favicon.png">
+
+        <!-- Font Awesome -->
+        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme -->
+        
+        <link rel="stylesheet" href="kailua.css">
+        
+
+        
+
+        <!-- Fetch Clipboard.js from CDN but have a local fallback -->
+        <script src="https://cdn.jsdelivr.net/clipboard.js/1.6.1/clipboard.min.js"></script>
+        <script>
+            if (typeof Clipboard == 'undefined') {
+                document.write(unescape("%3Cscript src='clipboard.min.js'%3E%3C/script%3E"));
+            }
+        </script>
+
+        <!-- Fetch JQuery from CDN but have a local fallback -->
+        <script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+        <script>
+            if (typeof jQuery == 'undefined') {
+                document.write(unescape("%3Cscript src='jquery.js'%3E%3C/script%3E"));
+            }
+        </script>
+
+        <!-- Fetch store.js from local - TODO add CDN when 2.x.x is available on cdnjs -->
+        <script src="store.js"></script>
+
+        <!-- Custom JS script -->
+        
+        <script type="text/javascript" src="kailua.js"></script>
+        
+
+    </head>
+    <body class="light">
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script type="text/javascript">
+            var theme = store.get('theme');
+            if (theme === null || theme === undefined) { theme = 'light'; }
+            $('body').removeClass().addClass(theme);
+        </script>
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script type="text/javascript">
+            var sidebar = store.get('sidebar');
+            if (sidebar === "hidden") { $("html").addClass("sidebar-hidden") }
+            else if (sidebar === "visible") { $("html").addClass("sidebar-visible") }
+        </script>
+
+        <div id="sidebar" class="sidebar">
+            <ul class="chapter"><li class="affix"><a href="./overview.html">개요</a></li><li><a href="./classes.html"><strong>1.</strong> 클래스</a></li><li><ul class="section"><li><a href="./classes-gideros.html" class="active"><strong>1.1.</strong> 기데로스 지원</a></li></ul></li><li><a href="./internals.html"><strong>2.</strong> 내부</a></li><li class="affix"><a href="./license.html">라이선스</a></li></ul>
+        </div>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page" tabindex="-1">
+                <div id="menu-bar" class="menu-bar">
+                    <div class="left-buttons">
+                        <i id="sidebar-toggle" class="fa fa-bars"></i>
+                        <i id="theme-toggle" class="fa fa-paint-brush"></i>
+                    </div>
+
+                    <h1 class="menu-title">카일루아 1.1.0 문서</h1>
+
+                    <div class="right-buttons">
+                        <i id="print-button" class="fa fa-print" title="Print this book"></i>
+                    </div>
+                </div>
+
+                <div id="content" class="content">
+                    <a class="header" href="print.html#기데로스 지원" id="기데로스 지원"><h1>기데로스 지원</h1></a>
+<p><code>gideros</code> 클래스 시스템은 <a href="http://docs.giderosmobile.com/classes_in_gideros.html">기데로스 클래스</a>의 동작을 모방합니다. 이 클래스 시스템은, 물론 이미 필요했다는 사실은 차치하고, 너무 단순하게 설계되어 타입 체킹에서 문제가 될 수 있는 흔한 예제라 선택되었습니다.</p>
+<p>다음은 <code>gideros</code> 클래스 시스템에서 흔히 쓰이게 될 초기 선언입니다.</p>
+<pre><code class="language-lua">--# class system gideros
+--# assume global class(gideros) Object
+--# assume global Core: {}
+--# assume Core.class: [make_class(gideros)] function(parent: table?) --&gt; table
+</code></pre>
+<p>이 명령들은 <code>Object</code> 최상위 클래스와, 클래스를 생성해 내는 <code>Core.class</code> 함수를 선언합니다.</p>
+<a class="header" href="print.html#생성자" id="생성자"><h2>생성자</h2></a>
+<p><code>init</code> 메소드가 선언되면 자동으로 <code>new</code> 메소드도 함께 생성됩니다.</p>
+<pre><code class="language-lua">--# assume global class(gideros) Foo: Object
+
+--v method(text: string)
+function Foo:init(text)
+    self.text = text
+end
+
+local x = Foo.new('string')
+</code></pre>
+<p>참고로, 현재 실제로 <code>new</code> 메소드가 생성되는 시점은 <code>new</code>가 처음으로 불렸을 때입니다. 따라서 오류가 <code>init</code>의 선언보다 늦어져서 사용하는 위치에서 날 수 있습니다.</p>
+<a class="header" href="print.html#상속" id="상속"><h2>상속</h2></a>
+<p>기데로스 클래스 시스템은 단일 상속을 지원하며, <a href="classes.html">이전 장</a>에서 설명한 일반적인 문법과 동작을 따릅니다.</p>
+<p>자식 클래스에서 선언된 필드는 부모 클래스에서 이미 선언된 필드를 단순히 감추게 되는데, 이를 제약하지 않으면 서브타이핑(부모 클래스를 예상하는 곳에 자식 클래스를 쓸 수 있는 기능)이 깨지게 됩니다. 따라서 <strong>카일루아에서 필드들은 일반적으로 오버라이딩할 수 없습니다.</strong> 다만 생성자(<code>init</code>)에 한해서 오버라이딩이 가능한데, 대신 생성자는 인스턴스를 통해서는 접근할 수 없습니다.</p>
+<p>기데로스에서 모든 클래스는 <code>Object</code> 최상위 클래스의 자식으로 가정됩니다. <strong>카일루아는 부모 클래스 없이 선언된 첫번째 (그리고 마지막) 클래스를 인식하며 그러한 클래스가 여럿 생기는 걸 금지합니다.</strong> <code>Core.class</code> 함수는 부모 클래스가 없을 경우 <code>Object</code>를 대신 쓸 것입니다. 하지만 이런 경우가 아니라면 암묵적인 동작이 혼란스럽기 때문에, <code>--# assume class</code>의 경우 부모 클래스가 <code>Object</code>더라도 무조건 명시적으로 제시해야 합니다.</p>
+
+                </div>
+
+                <!-- Mobile navigation buttons -->
+                
+                    <a rel="prev" href="./classes.html" class="mobile-nav-chapters previous">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+                
+
+                
+                    <a rel="next" href="./internals.html" class="mobile-nav-chapters next">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+                
+
+            </div>
+
+            
+                <a href="./classes.html" class="nav-chapters previous" title="You can navigate through the chapters using the arrow keys">
+                    <i class="fa fa-angle-left"></i>
+                </a>
+            
+
+            
+                <a href="./internals.html" class="nav-chapters next" title="You can navigate through the chapters using the arrow keys">
+                    <i class="fa fa-angle-right"></i>
+                </a>
+            
+
+        </div>
+
+
+        <!-- Local fallback for Font Awesome -->
+        <script>
+            if ($(".fa").css("font-family") !== "FontAwesome") {
+                $('<link rel="stylesheet" type="text/css" href="_FontAwesome/css/font-awesome.css">').prependTo('head');
+            }
+        </script>
+
+        <!-- Livereload script (if served using the cli tool) -->
+        
+
+        
+
+
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+    </body>
+</html>

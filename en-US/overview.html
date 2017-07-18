@@ -1,0 +1,353 @@
+<!DOCTYPE HTML>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Overview - Kailua 1.1.0 documentation</title>
+        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+
+        <base href="">
+
+        <link rel="stylesheet" href="book.css">
+        <link href="https://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800" rel="stylesheet" type="text/css">
+        <link href="https://fonts.googleapis.com/css?family=Source+Code+Pro:500" rel="stylesheet" type="text/css">
+
+        <link rel="shortcut icon" href="favicon.png">
+
+        <!-- Font Awesome -->
+        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme -->
+        
+        <link rel="stylesheet" href="kailua.css">
+        
+
+        
+
+        <!-- Fetch Clipboard.js from CDN but have a local fallback -->
+        <script src="https://cdn.jsdelivr.net/clipboard.js/1.6.1/clipboard.min.js"></script>
+        <script>
+            if (typeof Clipboard == 'undefined') {
+                document.write(unescape("%3Cscript src='clipboard.min.js'%3E%3C/script%3E"));
+            }
+        </script>
+
+        <!-- Fetch JQuery from CDN but have a local fallback -->
+        <script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+        <script>
+            if (typeof jQuery == 'undefined') {
+                document.write(unescape("%3Cscript src='jquery.js'%3E%3C/script%3E"));
+            }
+        </script>
+
+        <!-- Fetch store.js from local - TODO add CDN when 2.x.x is available on cdnjs -->
+        <script src="store.js"></script>
+
+        <!-- Custom JS script -->
+        
+        <script type="text/javascript" src="kailua.js"></script>
+        
+
+    </head>
+    <body class="light">
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script type="text/javascript">
+            var theme = store.get('theme');
+            if (theme === null || theme === undefined) { theme = 'light'; }
+            $('body').removeClass().addClass(theme);
+        </script>
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script type="text/javascript">
+            var sidebar = store.get('sidebar');
+            if (sidebar === "hidden") { $("html").addClass("sidebar-hidden") }
+            else if (sidebar === "visible") { $("html").addClass("sidebar-visible") }
+        </script>
+
+        <div id="sidebar" class="sidebar">
+            <ul class="chapter"><li class="affix"><a href="./overview.html" class="active">Overview</a></li><li><a href="./classes.html"><strong>1.</strong> Classes</a></li><li><ul class="section"><li><a href="./classes-gideros.html"><strong>1.1.</strong> Gideros Support</a></li></ul></li><li><a href="./internals.html"><strong>2.</strong> Internals</a></li><li class="affix"><a href="./license.html">License</a></li></ul>
+        </div>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page" tabindex="-1">
+                <div id="menu-bar" class="menu-bar">
+                    <div class="left-buttons">
+                        <i id="sidebar-toggle" class="fa fa-bars"></i>
+                        <i id="theme-toggle" class="fa fa-paint-brush"></i>
+                    </div>
+
+                    <h1 class="menu-title">Kailua 1.1.0 documentation</h1>
+
+                    <div class="right-buttons">
+                        <i id="print-button" class="fa fa-print" title="Print this book"></i>
+                    </div>
+                </div>
+
+                <div id="content" class="content">
+                    <a class="header" href="print.html# kailua" id=" kailua"><h1>🌴 Kailua</h1></a>
+<p><strong>Kailua</strong> is an experimental type checker and integrated development environment (IDE) for the <a href="https://www.lua.org/">Lua</a> programming language (currently only Lua 5.1 is supported).</p>
+<p><strong><em>THIS IS VERY EXPERIMENTAL PROJECT AND NO WARRANTY OR SUPPORT IS PROVIDED!</em></strong></p>
+<a class="header" href="print.html#installation and usage" id="installation and usage"><h2>Installation and Usage</h2></a>
+<p>Kailua can be used as a standalone checker or an IDE plugin.</p>
+<a class="header" href="print.html#standalone checker" id="standalone checker"><h3>Standalone Checker</h3></a>
+<p>To install a standalone checker, <a href="https://www.rust-lang.org/install.html">install Rust</a> first (1.15 or later required), then type the following:</p>
+<pre><code>cargo install -f kailua
+</code></pre>
+<p>(<code>-f</code> will cause the existing installation to be upgraded.)</p>
+<p>You can run <code>kailua check &lt;path to the entry point&gt;</code> now.</p>
+<p><img src="res/kailua-check.png" alt="" /></p>
+<p>You can also run <code>kailua check &lt;path to the directory&gt;</code>, if you have <code>kailua.json</code> or <code>.vscode/kailua.json</code> in that directory. The configuration format is described in the later section.</p>
+<a class="header" href="print.html#visual studio code" id="visual studio code"><h3>Visual Studio Code</h3></a>
+<p>Kailua can be used as an IDE support for <a href="https://code.visualstudio.com/">Visual Studio Code</a>. Install Kailua by typing <code>ext install kailua</code> from the Quick Launch (<code>Ctrl-P</code>). <strong>If you are not on Windows, you should also install the standalone checker as above.</strong></p>
+<p>You will see a warning that the configuration file is missing when you open a folder containing Lua codes. You need it for real-time checking.</p>
+<p><img src="res/kailua-vsc-missing-config.png" alt="" /></p>
+<p>You can either create <code>.vscode/kailua.json</code> by hand, or search &quot;Kailua&quot; from the Command Palette (<code>Ctrl-Shift-P</code>) to edit one.</p>
+<p><img src="res/kailua-vsc-edit-config.png" alt="" /></p>
+<p>The following content is required for <code>.vscode/kailua.json</code>, in case you are editing it by hand:</p>
+<!-- what Kailua really supports is not exactly JSON5, but probably it's closer than JSON. -->
+<pre><code class="language-json5">{
+    &quot;start_path&quot;: &quot;&lt;path to the entry point&gt;&quot;,
+
+    &quot;preload&quot;: {
+        // This indicates that we are using Lua 5.1 and all built-in libraries of it.
+        &quot;open&quot;: [&quot;lua51&quot;],
+    },
+}
+</code></pre>
+<p>You need to reload the current window (<code>Ctrl-R</code> or <code>Cmd-R</code>) to apply the configuration.</p>
+<a class="header" href="print.html#your first kailua code" id="your first kailua code"><h3>Your First Kailua Code</h3></a>
+<p>Once you've set the entry point, you can write your first Kailua code:</p>
+<pre><code class="language-lua">--# open lua51
+print('Hello, world!')
+</code></pre>
+<p>If you are using the configuration file, the first code can be made much simpler:</p>
+<pre><code class="language-lua">print('Hello, world!')
+</code></pre>
+<p>Play a bit with this code to see which errors Kailua can detect.</p>
+<a class="header" href="print.html#supported ide functions" id="supported ide functions"><h3>Supported IDE Functions</h3></a>
+<ul>
+<li>
+<p>Real-time syntax checking (for all files).</p>
+</li>
+<li>
+<p>Real-time type checking, starting from given start path.</p>
+</li>
+<li>
+<p>Auto-completions for names and fields.</p>
+</li>
+<li>
+<p>Help for function signatures.</p>
+</li>
+<li>
+<p>Help for types of most subexpressions on hover.</p>
+</li>
+<li>
+<p>Go to definition for local and global names.</p>
+</li>
+<li>
+<p>Mass renaming of local and global names.</p>
+</li>
+</ul>
+<a class="header" href="print.html#kailua the language" id="kailua the language"><h2>Kailua the Language</h2></a>
+<a class="header" href="print.html#special comments" id="special comments"><h3>Special Comments</h3></a>
+<p>Kailua is a subset of valid Lua code---you don't need any transpilation or compilation. The additional annotations are described in special comments:</p>
+<ul>
+<li>
+<p><code>--: &lt;type&gt;</code> describes the type(s) of preceding item(s).</p>
+<p>It is valid anywhere a new name can be possibly defined: <code>local</code> (either individual names or statement), <code>function</code> (arguments), <code>for</code> (individual names) and assignment (either individual names or statement).</p>
+<p>When used right after the name, for the ease of typing, you can put a comma or closing parenthesis <em>before</em> the type like this:</p>
+<pre><code class="language-lua">function f(x, --: integer
+           y, --: integer
+           z) --: integer
+    -- ...
+end
+</code></pre>
+<p>For the common case of defining multiple names you can put types after the statement. In this case types are delimited by commas.</p>
+</li>
+<li>
+<p><code>--&gt; &lt;type&gt;</code> describes the type(s) of function returns.</p>
+<p>It is valid only after the closing parenthesis of function arguments. It is valid to put <code>--:</code> (for the last argument) and <code>--&gt;</code> in the same line.</p>
+</li>
+<li>
+<p><code>--v function(&lt;name&gt;: &lt;type&gt; ...) [--&gt; &lt;type&gt;]</code> describes a function type.</p>
+<p>It is valid before the <code>function</code> keyword (yes, also for anonymous functions). This is equivalent to <code>--:</code> and <code>--&gt;</code>, but much more readable. All names should be identical to the corresponding declarations. Variadic arguments can be written as <code>...: &lt;type&gt;</code> at the end of arguments. Multiple returns need parentheses.</p>
+<p>The general rule of the thumb is that all functions have to be typed with either <code>--v</code> or <code>--:/--&gt;</code> unless it is obvious from the preceding context. This allows you to write a code like <code>f(function(a, b) ... end)</code>, but only when <code>f</code> is known to accept such a function.</p>
+</li>
+<li>
+<p><code>--v method(&lt;name&gt;: &lt;type&gt; ...) [--&gt; &lt;type&gt;]</code> describes a method type.</p>
+<p>It is same to <code>function</code>, but for declarations like <code>function A:b(...)</code>. Kailua tries to infer the type of <code>self</code>, and if it's not possible you should use <code>function A.b(self, ...)</code> and <code>--v function(...)</code> instead for the clarity.</p>
+</li>
+<li>
+<p><code>--# ...</code> is a special directive for the type checker.</p>
+<p><code>--# open &lt;built-in library name&gt;</code> loads the corresponding built-in names and also implicitly specifies what language variant is currently in use. The only supported name so far is <code>lua51</code>, for the vanilla Lua 5.1. This is what <code>preload.open</code> configuration options actually do, and you should probably put it to the first non-comment line in the entry point if you don't have those options.</p>
+<p><code>--# type [local | global] &lt;name&gt; = &lt;type&gt;</code> can be used to declare a type alias. There are three flavors of typa alises: <code>local</code> is locally scoped (much like <code>local</code> statements), <code>global</code> is globally scoped (much like <code>A = ...</code>), and no modifier indicates that the type is <em>exported</em> from the current file and they should be locally visible after <code>require</code>. Only local types can be in the inner scopes. Unlike variable names, inner type names should not overwrite outer names.</p>
+<p><code>--# assume [global] &lt;name&gt;: &lt;type&gt;</code> <em>overrides</em> the type for given name. The <code>global</code> keyword forces the global assignment, otherwise a new scope is created like <code>local</code> statements. It is useful for sidestepping the checker issue, but it is also highly unsafe. <strong>Use at your own risk.</strong></p>
+<p>More directives are likely to come.</p>
+</li>
+</ul>
+<p>The equal kind of special comments can span multiple lines.</p>
+<pre><code class="language-lua">--# type Date = {
+--#     hour: integer;
+--#     min: integer;
+--#     sec: integer;
+--# }
+</code></pre>
+<a class="header" href="print.html#types" id="types"><h3>Types</h3></a>
+<p>The following basic types are recognized:</p>
+<ul>
+<li>
+<p><code>nil</code>, <code>boolean</code> (or <code>bool</code>), <code>number</code>, <code>string</code>, <code>function</code>, <code>userdata</code>, <code>thread</code>, <code>table</code> for primitive Lua types.</p>
+</li>
+<li>
+<p><code>integer</code> (or <code>int</code>) for a check-time integral subset of <code>number</code>. (In the future, in the Lua 5.3 mode or later, it will be also recognized as primitive.)</p>
+</li>
+<li>
+<p><code>true</code> or <code>false</code>, integer and string literals are valid subtypes of <code>boolean</code>, <code>integer</code> and <code>string</code>, respectively.</p>
+</li>
+<li>
+<p>The table type is divided into four useful cases.</p>
+<p>Importantly, first two cases are not automatically inferred from the use and should be explicitly annotated like <code>local tab = {} --: vector&lt;integer&gt;</code>.</p>
+<ul>
+<li>
+<p><code>vector&lt;T&gt;</code> for a table with consecutive integer keys.</p>
+</li>
+<li>
+<p><code>map&lt;Key, Value&gt;</code> for a homogeneous associative table.</p>
+</li>
+<li>
+<p><code>{ key1: T1, key2: T2 }</code> for records, whose keys are strings and fixed at the check time. You can use semicolons in place of commas.</p>
+<p>Explicitly declared records are &quot;inextensible&quot; by default, meaning that the list of fields is complete and cannot be altered. You can make it extensible by putting <code>...</code> at the end of fields; this allows a lazy initialization of records like <code>table.field = 'string'</code>. On the other hands, a normal Lua table is implicitly typed as extensible records, only made inextensible when required.</p>
+</li>
+<li>
+<p><code>{ T1, T2, T3 }</code> for tuples, whose keys are consecutive integers. Otherwise they are similar to records.</p>
+</li>
+</ul>
+</li>
+<li>
+<p><code>function(Arg, ...)</code> or <code>function(Arg, ...) --&gt; Ret</code> for functions. <code>Ret</code> can be multiple types, in which case you need parentheses (<code>function(vector&lt;T&gt;, integer) --&gt; (integer, string)</code>). Arguments can be named like <code>function(a: string, b: number)</code>.</p>
+</li>
+<li>
+<p><code>T | T | ...</code> for union types. They are mostly useful for literal types (e.g. <code>&quot;read&quot; | &quot;write&quot; | &quot;execute&quot;</code>). Kailua has very limited support for checking other kinds of union types.</p>
+</li>
+<li>
+<p><code>any</code> has no type information. <code>--# assume</code> is the only way to make it useful.</p>
+</li>
+<li>
+<p><code>WHATEVER</code> (note the case) is a <em>hole</em> that the type checker always accepts. <code>map&lt;integer, WHATEVER&gt;</code> and <code>map&lt;WHATEVER, string&gt;</code> are compatible; <code>map&lt;integer, WHATEVER&gt;</code> and <code>map&lt;string, string&gt;</code> are not. As this thwarts the basic of type checking, <strong>use at your own risk.</strong></p>
+</li>
+</ul>
+<p>The Kailua types are by default <em>not checked for <code>nil</code></em>. That is, you can assign <code>nil</code> to <code>integer</code> but you can also add two <code>integer</code>s; the valid Kailua code can still result in a runtime error therefore. This restriction was required for making a practical type checker without changing the source programming language.</p>
+<p>You can opt in two other <code>nil</code>-handling modes if you need to make it explicit. As they are (transitively) freely assignable, consider them more a machine-readable documentation.</p>
+<ul>
+<li>
+<p><code>T?</code> also accepts <code>nil</code> but it is aware that it can contain <code>nil</code>. Two <code>integer?</code>s cannot be added. It also allows for missing fields and missing arguments (they are not allowed otherwise): the type <code>{a: integer?, b: integer}</code> can contain either <code>{a = 42, b = 54}</code> or <code>{b = 54}</code>, but not <code>{a = 42}</code>.</p>
+</li>
+<li>
+<p><code>T!</code> guarantees that it cannot contain <code>nil</code>.</p>
+</li>
+</ul>
+<p>Also, the table values are always <code>T</code> or <code>T?</code> (for the obvious reason).</p>
+<p>Finally, types for the names and table values can optionally have a <code>const</code> prefix. You cannot modify the innard of <code>const</code> types: <code>map&lt;integer, const vector&lt;string&gt;&gt;</code>. You can still assign to them (otherwise this type won't be useful at all).</p>
+<a class="header" href="print.html#avoiding the type checker" id="avoiding the type checker"><h3>Avoiding the type checker</h3></a>
+<p>As annotating everything is not practical, Kailua supports two ways to avoid the type checking with more localized guarantees:</p>
+<ul>
+<li>
+<p><code>--v [NO_CHECK] function(...)</code> disables the type checking for the following function.</p>
+<p>Kailua essentially <em>believes</em> the specified function type, which can be no longer omitted.</p>
+</li>
+<li>
+<p>You can override what file to check by having <code>.kailua</code> files.</p>
+<p>When <code>require()</code> was used with a check-time string Kailua makes use of <code>package.path</code> and <code>package.cpath</code> set. For <code>package.path</code>, it will try <code>F.kailua</code> first before reading a file <code>F</code>. For <code>package.cpath</code>, it will always <code>F.kailua</code> as <code>F</code> would be probably binary. (Note that this will normally result in two extensions <code>.lua.kailua</code> unless you have a sole <code>?</code> in the search paths.)</p>
+<p><code>.kailua</code> files would frequently use <code>--# assume</code> as you should <em>assume</em> that the original code has given types.</p>
+</li>
+</ul>
+<a class="header" href="print.html#configuration format" id="configuration format"><h2>Configuration Format</h2></a>
+<p>You can configure the exact behavior of Kailua with <code>kailua.json</code>. It is a JSON with comments (<code>//</code>) and stray comma allowed for convenience:</p>
+<pre><code class="language-json5">{
+    // This indicates where to start. This is the only mandatory field in the file.
+    //
+    // This can be a single string or an array of strings, and in the latter case
+    // multiple paths are separately (but possibly parallelly) checked against.
+    // Checking sessions do not affect others, but reports are merged.
+    &quot;start_path&quot;: [&quot;entrypoint.lua&quot;, &quot;lib/my_awesome_lib.lua&quot;],
+
+    // These are values for `package.path` and `package.cpath` variables, respectively.
+    // They are always relative to the base directory
+    // (a directory containing `.vscode` or `kailua.json` whichever being used).
+    // Refer to the Lua manual for the exact format.
+    //
+    // In the configuration one can use a special `{start_dir}` sequence
+    // which gets replaced by the directory containing the *current* start path.
+    // so if there are two start paths `foo/a.lua` and `bar/b.lua`,
+    // the path of `{start_dir}/?.lua` will expand to `foo/?.lua` or `bar/?.lua`
+    // for each start path. This is useful when you are working with multiple projects
+    // with individual directories, only sharing a portion of common codes.
+    //
+    // If they are not explicitly set, they are inferred from any assignments to
+    // `package.path` and `package.cpath` variables. This can be handy for scripts,
+    // but will be cumbersome for most other cases.
+    //
+    // It should be also noted that any path in `package_cpath` won't be directly
+    // read by Kailua; only `.kailua` files associated to them will be read.
+    &quot;package_path&quot;: &quot;?.lua;contrib/?.lua&quot;,
+    &quot;package_cpath&quot;: &quot;native/?&quot;,
+
+    // The preloading options to populate the environment before checking.
+    // They are executed in the following order, and in each array, in given order.
+    &quot;preload&quot;: {
+        // A list of `--# open` arguments.
+        &quot;open&quot;: [&quot;lua51&quot;],
+        // A list of `require()` arguments. Affected by `package_*` options.
+        &quot;require&quot;: [&quot;depA&quot;, &quot;depB.core&quot;],
+    },
+}
+</code></pre>
+<!-- -->
+
+                </div>
+
+                <!-- Mobile navigation buttons -->
+                
+
+                
+                    <a rel="next" href="./classes.html" class="mobile-nav-chapters next">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+                
+
+            </div>
+
+            
+
+            
+                <a href="./classes.html" class="nav-chapters next" title="You can navigate through the chapters using the arrow keys">
+                    <i class="fa fa-angle-right"></i>
+                </a>
+            
+
+        </div>
+
+
+        <!-- Local fallback for Font Awesome -->
+        <script>
+            if ($(".fa").css("font-family") !== "FontAwesome") {
+                $('<link rel="stylesheet" type="text/css" href="_FontAwesome/css/font-awesome.css">').prependTo('head');
+            }
+        </script>
+
+        <!-- Livereload script (if served using the cli tool) -->
+        
+
+        
+
+
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+    </body>
+</html>
