@@ -6,5 +6,10 @@ This documentation is also available at the [separate website](https://devcat-st
 
 [Overview](src/overview.md)
 
+- [Classes](src/classes.md)
+    - [Gideros Support](src/classes-gideros.md)
+
+- [Internals](src/internals.md)
+
 [License](src/license.md)
 

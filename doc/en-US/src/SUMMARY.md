@@ -2,7 +2,10 @@
 
 [Overview](./overview.md)
 
-[Internals](./internals.md)
+- [Classes](./classes.md)
+    - [Gideros Support](./classes-gideros.md)
+
+- [Internals](./internals.md)
 
 [License](./license.md)
 

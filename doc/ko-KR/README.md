@@ -6,5 +6,10 @@
 
 [개요](src/overview.md)
 
+- [클래스](src/classes.md)
+    - [기데로스 지원](src/classes-gideros.md)
+
+- [내부](src/internals.md)
+
 [라이선스](src/license.md)
 
