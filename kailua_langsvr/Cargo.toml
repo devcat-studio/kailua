@@ -1,6 +1,6 @@
 [package]
 name = "kailua_langsvr"
-version = "1.0.7"
+version = "1.1.0"
 authors = ["Nexon Corporation", "Kang Seonghoon <public+git@mearie.org>"]
 
 description = "Language server implementation for Kailua"
@@ -22,14 +22,14 @@ futures-cpupool = "0.1.5"
 tokio-timer = "0.1.0"
 owning_ref = "0.2"
 num_cpus = "1.2"
-parking_lot = "0.3"
+parking_lot = "0.4"
 walkdir = "1"
 parse-generics-shim = "0.1.0"
 kailua_env = { version = "1.0.4", path = "../kailua_env" }
 kailua_diag = { version = "1.0.4", path = "../kailua_diag" }
-kailua_syntax = { version = "1.0.5", path = "../kailua_syntax" }
-kailua_types = { version = "1.0.5", path = "../kailua_types" }
-kailua_check = { version = "1.0.5", path = "../kailua_check" }
-kailua_workspace = { version = "1.0.7", path = "../kailua_workspace" }
+kailua_syntax = { version = "1.1.0", path = "../kailua_syntax" }
+kailua_types = { version = "1.1.0", path = "../kailua_types" }
+kailua_check = { version = "1.1.0", path = "../kailua_check" }
+kailua_workspace = { version = "1.1.0", path = "../kailua_workspace" }
 kailua_langsvr_protocol = { version = "1.0.5", path = "../kailua_langsvr_protocol" }
 

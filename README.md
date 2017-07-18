@@ -8,7 +8,7 @@
 
 **Kailua** is an experimental type checker and integrated development environment (IDE) for the [Lua] programming language (currently only Lua 5.1 is supported).
 
-***THIS IS VERY EXPERIMENTAL PROJECT AND NO WARRANTY OR SUPPORT IS PROVIDED!***
+**The detailed documentation is available [here][docs].**
 
 ## Installation and Usage
 

@@ -1,3 +1,11 @@
+## 1.1.0 (2017-07-18)
+
+* **The class system is officially supported.** This affects a non-trivial amount of type checking routines, and is described in a brand new documentation. (#14)
+
+* The brand new documentation based on [mdBook](https://github.com/azerupi/mdBook) is available, finally desynchronizing new versions of Kailua and documentation updates.
+
+* Fixed the return type of `os.time` to `integer`. (#16)
+
 ## 1.0.7 (2017-06-02)
 
 * `package_[c]path` configuration values now support a special syntax for specifying paths relative to the start path, not the base dir. (See the manual for the exact format.) This is useful when you are working with multiple projects with individual directories, only sharing a portion of common codes.

@@ -1,6 +1,6 @@
 [package]
 name = "kailua_types"
-version = "1.0.5"
+version = "1.1.0"
 authors = ["Nexon Corporation", "Kang Seonghoon <public+git@mearie.org>"]
 
 description = "Type system for Kailua"
@@ -19,8 +19,8 @@ vec_map = "0.7.0"
 take_mut = "0.1"
 parse-generics-shim = "0.1.0"
 atomic = "0.3"
-parking_lot = "0.3"
+parking_lot = "0.4"
 kailua_env = { version = "1.0.4", path = "../kailua_env" }
 kailua_diag = { version = "1.0.4", path = "../kailua_diag" }
-kailua_syntax = { version = "1.0.5", path = "../kailua_syntax" }
+kailua_syntax = { version = "1.1.0", path = "../kailua_syntax" }
 
