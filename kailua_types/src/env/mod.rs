@@ -2,6 +2,7 @@
 
 use std::mem;
 use std::str;
+use std::fmt;
 use std::collections::{HashMap, HashSet};
 use vec_map::{self, VecMap};
 use atomic::Atomic;
@@ -12,7 +13,7 @@ use kailua_diag::Locale;
 use kailua_syntax::Name;
 use diag::{Origin, TypeReport, TypeResult};
 use ty::{Ty, T, Slot, TVar, RVar, Lattice};
-use ty::{TypeContext, ClassId, Key};
+use ty::{TypeContext, ClassId, Key, DisplayState};
 use ty::flags::*;
 use self::partitions::{Partition, Partitions};
 
@@ -443,32 +444,6 @@ impl Types {
             Ok(())
         }
     }
-
-    /// Returns a pair of type flags that is an exact lower and upper bound for that type.
-    ///
-    /// Used as an approximate type bound testing like arithmetics.
-    /// If possible, however, better be replaced with a non-instantiating assertion though.
-    pub fn get_type_bounds(&self, ty: &Ty) -> (/*lb*/ Flags, /*ub*/ Flags) {
-        let flags = ty.flags();
-        let (lb, ub) = ty.get_tvar().map_or((T_NONE, T_NONE), |v| self.get_tvar_bounds(v));
-        (flags | lb, flags | ub)
-    }
-
-    /// Exactly resolves the type variable inside `ty` if possible.
-    ///
-    /// This is a requirement for table indexing and function calls.
-    pub fn resolve_exact_type(&self, ty: &Ty) -> Option<Ty> {
-        if let T::TVar(tv) = **ty {
-            if let Some(ty2) = self.get_tvar_exact_type(tv) {
-                let tag = ty.tag().or(ty2.tag());
-                Some(ty2.union_nil(ty.nil()).with_tag(tag))
-            } else {
-                None
-            }
-        } else {
-            Some(ty.clone())
-        }
-    }
 }
 
 impl TypeContext for Types {
@@ -745,8 +720,16 @@ impl TypeContext for Types {
         }
     }
 
-    fn get_class_name(&self, cid: ClassId) -> Option<&Name> {
-        self.classes.get(cid.0 as usize).and_then(|cls| cls.name.as_ref().map(|name| &name.base))
+    fn fmt_class_name(&self, cid: ClassId, f: &mut fmt::Formatter,
+                      st: &DisplayState) -> fmt::Result {
+        let name = self.classes.get(cid.0 as usize).and_then(|cls| {
+            cls.name.as_ref().map(|name| &name.base)
+        });
+        match (&st.locale[..], name) {
+            (_,    Some(ref name)) => write!(f, "{:+}", name),
+            ("ko", None) => write!(f, "이름 없는 클래스 #{}", cid.0),
+            (_,    None) => write!(f, "unnamed class #{}", cid.0),
+        }
     }
 
     fn is_subclass_of(&self, mut lhs: ClassId, rhs: ClassId) -> bool {
