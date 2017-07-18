@@ -2481,6 +2481,13 @@ function foo(x) end
 function foo(x) end
 --! ok
 
+--8<-- bad-attr-value
+--# assume foo: [type] WHATEVER
+--# assume bar: [type()] WHATEVER --@< Error: The type attribute `type` cannot have any values
+--# assume baz: [type(hello)] WHATEVER --@< Error: The type attribute `type` cannot have any values
+--# assume quux: [type(hello, goodbye)] WHATEVER --@< Error: The type attribute `type` cannot have any values
+--! error
+
 --8<-- builtin-with-subtyping-1
 --# assume x: [`internal subtype`] number
 --# assume y: number

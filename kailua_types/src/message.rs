@@ -184,6 +184,16 @@ define_msg! { pub UnknownAttrName<'a> { name: &'a Name }:
     _    => "{name} is an unknown type attribute and ignored",
 }
 
+define_msg! { pub AttrCannotHaveAnyValues<'a> { name: &'a Name }:
+    "ko" => "{name} 타입 속성에는 아무 값도 붙을 수 없습니다",
+    _    => "The type attribute {name} cannot have any values",
+}
+
+define_msg! { pub AttrRequiresFixedNumOfValues<'a> { name: &'a Name, count: usize }:
+    "ko" => "{name} 타입 속성에는 정확히 {count}개의 값이 붙어야 합니다",
+    _    => "The type attribute {name} requires exactly {count} value(s)",
+}
+
 define_msg! { pub DuplicateAttr<'a> { ty: Ty<'a> }:
     "ko" => "이미 속성이 붙어 있는 `{ty}` 타입에 속성을 더 붙일 수 없습니다",
     _    => "Cannot add an attribute to a type `{ty}` with an existing attribute",

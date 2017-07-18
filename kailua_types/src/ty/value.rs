@@ -1797,7 +1797,7 @@ impl Display for Ty {
         let nil = if f.alternate() { nil.with_nil() } else { nil };
 
         if let Some(tag) = tag {
-            write!(f, "[{}] ", tag.name())?;
+            write!(f, "[{}] ", tag.display(st))?;
         }
 
         if let Some(name) = name {
@@ -1828,7 +1828,7 @@ impl fmt::Debug for Ty {
         let nil = if f.alternate() { nil.with_nil() } else { nil };
 
         if let Some(tag) = tag {
-            write!(f, "[{}] ", tag.name())?;
+            write!(f, "[{:?}] ", tag)?;
         }
 
         let nil_repr = |nil| {
@@ -1853,7 +1853,7 @@ impl fmt::Debug for Ty {
         if let Some(hint) = self.inner.display_hint() {
             write!(f, " <hint: ")?;
             if let Some(tag) = hint.includes_tag {
-                write!(f, "[{}] ", tag.name())?;
+                write!(f, "[{:?}] ", tag)?;
             }
             write!(f, "_{} = {:?}>", nil_repr(hint.includes_nil), hint.name)?;
         }
@@ -1869,7 +1869,7 @@ mod tests {
     use kailua_syntax::Str;
     use std::borrow::Cow;
     use ty::{Lattice, Union, TypeContext, NoTypeContext, F, Slot, Tag};
-    use env::Types;
+    use env::{Types, DummyClassProvider};
     use super::*;
 
     macro_rules! hash {
@@ -1888,7 +1888,7 @@ mod tests {
         (@explicitness implicit) => (false);
 
         ($l:expr, $r:expr; [$e:tt]=_) => ({
-            let mut types = Types::new(Locale::dummy());
+            let mut types = Types::new(Locale::dummy(), Box::new(DummyClassProvider));
             let actualunion = $l.union(&$r, check_base!(@explicitness $e), &mut types);
             if actualunion.is_ok() {
                 panic!("{:?} | {:?} ({}) = expected Err(_), actual {:?}",
@@ -1898,7 +1898,7 @@ mod tests {
 
         ($l:expr, $r:expr; [$e:tt]=$u:expr) => ({
             let union = $u;
-            let mut types = Types::new(Locale::dummy());
+            let mut types = Types::new(Locale::dummy(), Box::new(DummyClassProvider));
             let actualunion = $l.union(&$r, check_base!(@explicitness $e), &mut types);
             if actualunion.is_err() || *actualunion.as_ref().unwrap() != union {
                 panic!("{:?} | {:?} ({}) = expected Ok({:?}), actual {:?}",
@@ -2170,7 +2170,7 @@ mod tests {
         assert!(nosubboolorstr.assert_sub(&substr, &mut NoTypeContext).is_err());
         assert!(nosubboolorstr.assert_sub(&nosubboolorstr, &mut NoTypeContext).is_ok());
 
-        let mut types = Types::new(Locale::dummy());
+        let mut types = Types::new(Locale::dummy(), Box::new(DummyClassProvider));
 
         {
             let v1 = types.gen_tvar();

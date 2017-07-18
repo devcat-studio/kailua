@@ -419,8 +419,7 @@ local x = _G.x --@< Error: Cannot index `[genv] table` without further type info
 
 --8<-- lua51-assert-class-instance
 --# open lua51
---# assume `class`: [make_class] function() --> table
-Hello = class()
+--# assume global class Hello
 
 --v method()
 function Hello:init()

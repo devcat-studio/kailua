@@ -631,6 +631,13 @@ pub enum St {
     /// This is distinct from `St::KailuaAssumeField` because it is not possible to
     /// desugar it without knowing the type of `self`.
     KailuaAssumeMethod(Spanned<(Spanned<NameRef>, Vec<Spanned<Name>>)>, M, Spanned<FuncKind>),
+
+    /// `--# class system ...`.
+    KailuaClassSystem(Spanned<Name>),
+
+    /// `--# assume [global] class[(...)] ClassName[: ParentClassName]`.
+    KailuaAssumeClass(Option<Spanned<Name>> /*system*/, Spanned<RenameRef> /*variable & type name*/,
+                      Option<Spanned<Name>> /*parent type name*/, Option<Scope>),
 }
 
 /// In the debugging output scopes are printed in two ways:
@@ -698,6 +705,12 @@ impl fmt::Debug for St {
                 write!(f, "KailuaAssumeMethod(({:?}", i)?;
                 for i in ii { write!(f, ".{:?}", i)?; }
                 write!(f, "){:?}, {:?}, {:?})", span, m, fk)
+            },
+            St::KailuaClassSystem(ref sys) => write!(f, "KailuaClassSystem({:?})", sys),
+            St::KailuaAssumeClass(ref sys, ref i, ref pi, is) => {
+                write!(f, "KailuaAssumeClass({:?}, {:?}, {:?})", sys, i, pi)?;
+                if let Some(is) = is { write!(f, "{:?}", is)?; }
+                Ok(())
             },
         }
     }

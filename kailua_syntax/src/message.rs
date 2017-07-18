@@ -466,9 +466,20 @@ define_msg! { pub AssumeGlobalInLocalScope:
     _    => "`--# assume global` should be in the top-level scope",
 }
 
+// `--# assume class` only, normal `--# assume` doesn't have this problem
+define_msg! { pub AssumeShadowsGlobalScope<'a> { name: &'a Name }:
+    "ko" => "`--# assume`이 전역에 선언된 {name} 변수를 감추려 했습니다",
+    _    => "`--# assume` tried to shadow a globally defined variable {name}",
+}
+
 define_msg! { pub AssumeFieldGlobalInLocalScope<'a> { name: &'a Name }:
     "ko" => "전역 변수 {name}의 필드에 대한 `--# assume`은 최상위 블록에서만 쓸 수 있습니다",
     _    => "`--# assume` for fields in a global variable {name} should be in the top-level scope",
+}
+
+define_msg! { pub AssumeClassStatic:
+    "ko" => "`--# assume static`은 클래스 프로토타입의 필드를 설정하는 데만 쓸 수 있습니다",
+    _    => "`--# assume static` can only be used to set fields in class prototypes",
 }
 
 define_msg! { pub TypeGlobalInLocalScope:

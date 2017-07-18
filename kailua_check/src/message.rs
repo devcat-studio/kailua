@@ -425,19 +425,14 @@ define_msg! { pub CannotNameUnknownClass<'a> { cls: Slot<'a> }:
     _    => "The type `{cls}` cannot be resolved to a single class so cannot be named",
 }
 
-define_msg! { pub CannotDefineMethodsWithoutCtor:
-    "ko" => "생성자(`init` 메소드)가 없는 상태에서 메소드를 선언할 수 없습니다",
-    _    => "Cannot define methods without a constructor (`init` method) defined",
+define_msg! { pub NoCtor:
+    "ko" => "생성자(`init` 메소드)가 없이 `new` 메소드를 호출할 수 없습니다",
+    _    => "The `new` method cannot be called with no constructor (`init` method) defined",
 }
 
-define_msg! { pub CannotRedefineCtor:
-    "ko" => "이미 선언된 생성자(`init` 메소드)를 바꿀 수 없습니다",
-    _    => "Cannot replace an already defined constructor (`init` method)",
-}
-
-define_msg! { pub SelfCannotBeAssignedInCtor:
-    "ko" => "생성자(`init` 메소드)에서는 `self` 변수에 대입을 할 수 없습니다",
-    _    => "`self` variable cannot be assigned in a constructor (`init` method)",
+define_msg! { pub CannotAccessCtorThruInstance:
+    "ko" => "생성자(`init` 메소드)는 클래스 인스턴스를 통해 접근할 수 없습니다",
+    _    => "The constructor (`init` method) should not be accessed through instances",
 }
 
 define_msg! { pub InexactInitMethod<'a> { init: Slot<'a> }:
@@ -462,20 +457,24 @@ define_msg! { pub BadSelfInInitMethod<'a> { init: Slot<'a> }:
              doesn't have a correct type for the first argument",
 }
 
-define_msg! { pub CannotCallCtor:
-    "ko" => "생성자(`init` 메소드)는 내부적으로만 호출되며 바깥에서 호출되어서는 안됩니다",
-    _    => "The constructor (`init` method) is only internally called and \
-             should not be called outside",
-}
-
 define_msg! { pub ReservedNewMethod:
     "ko" => "`new` 메소드는 예약되어 있으며 선언될 수 없습니다",
     _    => "`new` method is reserved and cannot be defined",
 }
 
-define_msg! { pub CannotAddFieldsToInstance:
-    "ko" => "생성자 바깥에서는 클래스 인스턴스에 새 필드가 추가될 수 없습니다",
-    _    => "Cannot add a new field to the class instance outside of the constructor",
+define_msg! { pub NoInheritanceInDumbClassSystem:
+    "ko" => "클래스 시스템에 속하지 않은 클래스는 상속이 지원되지 않습니다",
+    _    => "No inheritance is supported for classes without a class system",
+}
+
+define_msg! { pub CannotCreateFieldDefinedInInstance<'a> { key: &'a Key }:
+    "ko" => "인스턴스에 `{key}` 키가 이미 선언되어 있어 클래스에 같은 키를 선언할 수 없습니다",
+    _    => "Cannot create a class field with the key `{key}` already defined in instances",
+}
+
+define_msg! { pub CannotCreateFieldDefinedInChildren<'a> { key: &'a Key }:
+    "ko" => "하위 클래스에 `{key}` 키가 이미 선언되어 있어 같은 키를 선언할 수 없습니다",
+    _    => "Cannot create a field with the key `{key}` already defined in ancestor classes",
 }
 
 define_msg! { pub NoCheckRequiresTypedSelf:
@@ -564,6 +563,64 @@ define_msg! { pub AssumeFieldToMissing:
     _    => "`--# assume` directive tried to access a missing field",
 }
 
+define_msg! { pub AssumeExistingField:
+    "ko" => "`--# assume` 명령이 이미 있는 필드를 덮어 씌우려 합니다",
+    _    => "`--# assume` directive tried to overwrite an existing field",
+}
+
+// this error should be avoided as much as possible, it doesn't give the exact reason
+define_msg! { pub AssumeCannotCreateNewField:
+    "ko" => "`--# assume` 명령이 새 필드를 생성할 수 없습니다",
+    _    => "`--# assume` directive cannot create a new field",
+}
+
+define_msg! { pub NoSuchClassSystem<'a> { name: &'a Name }:
+    "ko" => "{name} 클래스 시스템이 정의되지 않았습니다",
+    _    => "{name} class system hasn't been defined",
+}
+
+define_msg! { pub ClassSystemAlreadyExists<'a> { name: &'a Name }:
+    "ko" => "{name} 클래스 시스템이 이미 존재합니다",
+    _    => "{name} class system already exists",
+}
+
+define_msg! { pub PreviousClassSystem:
+    "ko" => "클래스 시스템이 여기에서 이미 선언되었습니다",
+    _    => "Previous definition of the class system here",
+}
+
+define_msg! { pub NoSuchPredefinedClassSystem<'a> { name: &'a Name }:
+    "ko" => "{name} 클래스 시스템은 아직 지원되지 않습니다",
+    _    => "{name} class system is not yet supported",
+}
+
+define_msg! { pub TooManyClassSystems:
+    "ko" => "클래스 시스템은 최대 256개까지 선언할 수 있습니다",
+    _    => "There may be at most 256 class systems defined",
+}
+
+define_msg! { pub BadClassParent<'a> { ty: Ty<'a> }:
+    "ko" => "클래스가 아닌 `{ty}` 타입은 부모 클래스가 될 수 없습니다",
+    _    => "The non-class type `{ty}` cannot be a parent class",
+}
+
+define_msg! { pub NotSubtypeOfParentField<'a> { key: &'a Key, sub: Slot<'a>, sup: Slot<'a> }:
+    "ko" => "부모 클래스의 `{key}` 필드를 오버라이드하려 했으나 \
+             변경 가능한 클래스 안에서는 `{sub}`이(가) 기존 타입 `{sup}`의 서브타입이 아닙니다",
+    _    => "Tried to override a field `{key}` in a parent class \
+             but `{sub}` is not a subtype of `{sup}` when being inside the mutable class",
+}
+
+define_msg! { pub PreviousParentFieldType:
+    "ko" => "기존 타입은 여기에서 선언되었습니다",
+    _    => "Previous definition of the field type here",
+}
+
+define_msg! { pub MissingParentClassForGideros:
+    "ko" => "`gideros` 클래스 시스템에서 부모가 없는 클래스는 하나만 존재할 수 있습니다",
+    _    => "There should be a single class without a parent in the `gideros` class system",
+}
+
 define_msg! { pub NotTVar<'a> { slot: Slot<'a> }:
     "ko" => "내부 오류: `{slot}` 타입이 타입 변수가 아닙니다",
     _    => "Internal Error: A type `{slot}` is not a type variable",
@@ -598,5 +655,10 @@ define_msg! { pub DivergingInExpr:
 define_msg! { pub ReturnInDivergingFunc:
     "ko" => "반환하지 않도록 지정된 함수 안에서 반환하려고 했습니다",
     _    => "Tried to return from a function that is marked that it never returns",
+}
+
+define_msg! { pub ClassInheritFromDifferentClassSystem:
+    "ko" => "이 클래스는 다른 클래스 시스템을 쓰는 클래스에서 상속받을 수 없습니다",
+    _    => "The class cannot inherit from a class using a different class system",
 }
 

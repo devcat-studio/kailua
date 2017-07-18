@@ -8,12 +8,10 @@ use vec_map::{self, VecMap};
 use atomic::Atomic;
 use atomic::Ordering::Relaxed;
 
-use kailua_env::Spanned;
 use kailua_diag::Locale;
-use kailua_syntax::Name;
 use diag::{Origin, TypeReport, TypeResult};
-use ty::{Ty, T, Slot, TVar, RVar, Lattice};
-use ty::{TypeContext, ClassId, Key, DisplayState};
+use ty::{Ty, T, Slot, TVar, RVar, Lattice, Key};
+use ty::{TypeContext, ClassId, ClassSystemId, DisplayState};
 use ty::flags::*;
 use self::partitions::{Partition, Partitions};
 
@@ -149,10 +147,65 @@ impl RowInfo {
     }
 }
 
-#[derive(Debug)]
-struct ClassDef {
-    name: Option<Spanned<Name>>,
-    parent: Option<ClassId>,
+/// Provides the specific knowledge about defined classes and class systems.
+pub trait ClassProvider: Send + Sync {
+    /// Should print a type name for given nominal identifier to the formatter.
+    fn fmt_class_name(&self, cid: ClassId, f: &mut fmt::Formatter,
+                      st: &DisplayState) -> fmt::Result;
+
+    /// Should print a type name for given nominal set identifier to the formatter.
+    fn fmt_class_system_name(&self, csid: ClassSystemId, f: &mut fmt::Formatter,
+                             st: &DisplayState) -> fmt::Result;
+
+    /// Should return true if the nominal identifier `lhs` is
+    /// a subtype of another nominal identifier `rhs`.
+    fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool;
+}
+
+impl<'a, T: ClassProvider + ?Sized> ClassProvider for &'a T {
+    fn fmt_class_name(&self, cid: ClassId, f: &mut fmt::Formatter,
+                      st: &DisplayState) -> fmt::Result {
+        (**self).fmt_class_name(cid, f, st)
+    }
+    fn fmt_class_system_name(&self, csid: ClassSystemId, f: &mut fmt::Formatter,
+                             st: &DisplayState) -> fmt::Result {
+        (**self).fmt_class_system_name(csid, f, st)
+    }
+    fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool {
+        (**self).is_subclass_of(lhs, rhs)
+    }
+}
+
+impl<T: ClassProvider + ?Sized> ClassProvider for Box<T> {
+    fn fmt_class_name(&self, cid: ClassId, f: &mut fmt::Formatter,
+                      st: &DisplayState) -> fmt::Result {
+        (**self).fmt_class_name(cid, f, st)
+    }
+    fn fmt_class_system_name(&self, csid: ClassSystemId, f: &mut fmt::Formatter,
+                             st: &DisplayState) -> fmt::Result {
+        (**self).fmt_class_system_name(csid, f, st)
+    }
+    fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool {
+        (**self).is_subclass_of(lhs, rhs)
+    }
+}
+
+/// A dummy `ClassProvider` which allows no nominal types.
+#[derive(Clone, Debug)]
+pub struct DummyClassProvider;
+
+impl ClassProvider for DummyClassProvider {
+    fn fmt_class_name(&self, cid: ClassId, f: &mut fmt::Formatter,
+                      _st: &DisplayState) -> fmt::Result {
+        write!(f, "<BAD CLASS ID {:?}>", cid)
+    }
+    fn fmt_class_system_name(&self, csid: ClassSystemId, f: &mut fmt::Formatter,
+                             _st: &DisplayState) -> fmt::Result {
+        write!(f, "<BAD CLASS SYSTEM ID {:?}>", csid)
+    }
+    fn is_subclass_of(&self, _lhs: ClassId, _rhs: ClassId) -> bool {
+        false
+    }
 }
 
 /// The type environment.
@@ -169,13 +222,13 @@ pub struct Types {
     next_rvar: RVar,
     row_infos: VecMap<Box<RowInfo>>,
 
-    // classes defined (only has shallow informations here)
-    classes: Vec<ClassDef>,
+    // classes and class systems are handled in a separate subsystem, encapsulated as ClassProvider
+    classes: Box<ClassProvider>,
 }
 
 impl Types {
     /// Creates a new fresh type environment.
-    pub fn new(locale: Locale) -> Types {
+    pub fn new(locale: Locale, classes: Box<ClassProvider>) -> Types {
         Types {
             message_locale: locale,
             next_tvar: TVar(1), // TVar(0) for the top-level return
@@ -184,7 +237,7 @@ impl Types {
             tvar_eq: Constraints::new("="),
             next_rvar: RVar::new(1), // RVar::new(0) == RVar::empty()
             row_infos: VecMap::new(),
-            classes: Vec::new(),
+            classes: classes,
         }
     }
 
@@ -196,35 +249,6 @@ impl Types {
     /// Sets the current message locale.
     pub fn set_locale(&mut self, locale: Locale) {
         self.message_locale = locale;
-    }
-
-    /// Registers a new class (a nominal instantiable type) with an optional parent class.
-    pub fn make_class(&mut self, parent: Option<ClassId>) -> ClassId {
-        assert!(parent.map_or(true, |cid| (cid.0 as usize) < self.classes.len()));
-
-        let cid = ClassId(self.classes.len() as u32);
-        self.classes.push(ClassDef { name: None, parent: parent });
-        cid
-    }
-
-    /// Names an existing class with given name.
-    ///
-    /// Returns an `Err` with a previous nmae when the same class is named twice.
-    /// The span is mostly used to give an appropriate error in this case.
-    pub fn name_class(&mut self, cid: ClassId, name: Spanned<Name>) -> Result<(), &Spanned<Name>> {
-        let cls = &mut self.classes[cid.0 as usize];
-        if let Some(ref prevname) = cls.name {
-            Err(prevname)
-        } else {
-            info!("named {:?} as {:?}", cid, name);
-            cls.name = Some(name);
-            Ok(())
-        }
-    }
-
-    /// Returns a parent class of given class, if any.
-    pub fn get_parent_class(&self, cid: ClassId) -> Option<ClassId> {
-        self.classes.get(cid.0 as usize).and_then(|cls| cls.parent)
     }
 
     fn assert_rvar_rel(&mut self, lhs: RVar, rhs: RVar, is_sub: bool) -> TypeResult<()> {
@@ -722,26 +746,16 @@ impl TypeContext for Types {
 
     fn fmt_class_name(&self, cid: ClassId, f: &mut fmt::Formatter,
                       st: &DisplayState) -> fmt::Result {
-        let name = self.classes.get(cid.0 as usize).and_then(|cls| {
-            cls.name.as_ref().map(|name| &name.base)
-        });
-        match (&st.locale[..], name) {
-            (_,    Some(ref name)) => write!(f, "{:+}", name),
-            ("ko", None) => write!(f, "이름 없는 클래스 #{}", cid.0),
-            (_,    None) => write!(f, "unnamed class #{}", cid.0),
-        }
+        self.classes.fmt_class_name(cid, f, st)
     }
 
-    fn is_subclass_of(&self, mut lhs: ClassId, rhs: ClassId) -> bool {
-        if lhs == rhs { return true; }
+    fn fmt_class_system_name(&self, csid: ClassSystemId, f: &mut fmt::Formatter,
+                             st: &DisplayState) -> fmt::Result {
+        self.classes.fmt_class_system_name(csid, f, st)
+    }
 
-        while let Some(parent) = self.classes[lhs.0 as usize].parent {
-            assert!(parent < lhs);
-            lhs = parent;
-            if lhs == rhs { return true; }
-        }
-
-        false
+    fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool {
+        self.classes.is_subclass_of(lhs, rhs)
     }
 }
 
@@ -750,13 +764,13 @@ fn test_types_is_send_and_sync() {
     fn _assert_send<T: Send>(_x: T) {}
     fn _assert_sync<T: Sync>(_x: T) {}
 
-    _assert_send(Types::new(Locale::dummy()));
-    _assert_sync(Types::new(Locale::dummy()));
+    _assert_send(Types::new(Locale::dummy(), Box::new(DummyClassProvider)));
+    _assert_sync(Types::new(Locale::dummy(), Box::new(DummyClassProvider)));
 }
 
 #[test]
 fn test_types_tvar() {
-    let mut types = Types::new(Locale::dummy());
+    let mut types = Types::new(Locale::dummy(), Box::new(DummyClassProvider));
 
     { // idempotency of bounds
         let v1 = types.gen_tvar();

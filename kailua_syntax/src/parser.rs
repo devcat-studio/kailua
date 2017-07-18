@@ -102,6 +102,21 @@ impl Expectable for EOF {
     fn check_token(&self, tok: &Tok) -> bool { tok == &Tok::EOF }
 }
 
+#[derive(Copy, Clone, Debug)]
+struct FixedName(&'static str);
+
+impl Localize for FixedName {
+    fn fmt_localized(&self, f: &mut fmt::Formatter, _locale: Locale) -> fmt::Result {
+        write!(f, "`{}`", self.0)
+    }
+}
+
+impl Expectable for FixedName {
+    fn check_token(&self, tok: &Tok) -> bool {
+        if let Tok::Name(ref name) = *tok { **name == *self.0.as_bytes() } else { false } 
+    }
+}
+
 // superset of Expectable, used for auto-recovery delimiter
 trait ExpectableDelim {
     fn expect_delim<'a>(self, parser: &mut Parser<'a>) -> Result<()>;
@@ -3002,7 +3017,7 @@ impl<'a> Parser<'a> {
     }
 
     fn resolve_kailua_assume_rename(&mut self, global: bool, scopespan: Span,
-                                    name: Spanned<IndexedName>)
+                                    name: Spanned<IndexedName>, allow_local_shadowing: bool)
         -> Result<(Spanned<RenameRef>, Option<Scope>)>
     {
         if global {
@@ -3042,7 +3057,13 @@ impl<'a> Parser<'a> {
                         _ => LocalNameKind::AssumedToLocal(scoped_id.clone()),
                     }
                 },
-                NameRef::Global(_) => LocalNameKind::AssumedToGlobal,
+                NameRef::Global(_) => {
+                    if !allow_local_shadowing {
+                        self.error(&name, m::AssumeShadowsGlobalScope { name: &rawname.name })
+                            .done()?;
+                    }
+                    LocalNameKind::AssumedToGlobal
+                },
             };
             let scoped_id = self.add_spanned_local_name_with_kind(scope, rawname, kind)?;
             let rename = name.map(move |n| {
@@ -3055,6 +3076,7 @@ impl<'a> Parser<'a> {
     // assume [global] NAME ":" MODF KIND
     // assume [static] NAME {"." NAME} ":" MODF KIND
     // assume NAME {"." NAME} ":" MODF "method" ...
+    // assume [global] class ["(" NAME ")"] NAME [":" NAME] ["=" MODF]
     //
     // returns a sibling scope if created.
     fn try_parse_kailua_assume(&mut self) -> Result<(Stmt, Option<Scope>)> {
@@ -3077,86 +3099,115 @@ impl<'a> Parser<'a> {
         };
         let scope = scope.with_loc(scopebegin..self.last_pos());
 
-        let namesbegin = self.pos();
-        let rootname = self.parse_name()?;
-        let mut names = Vec::new();
-        while self.may_expect(Punct::Dot) {
-            let name = self.parse_name()?;
-            names.push(name.map(|n| n.name));
-        }
-        let namesend = self.last_pos();
-
-        self.expect(Punct::Colon)?;
-        let modf = self.parse_kailua_modf()?.base;
-        let kindbegin = self.pos();
-        let kind = if self.may_expect(Keyword::Method) {
-            let funckind = self.recover_upto_with(|p| {
-                p.parse_kailua_funckind().map(Some)
-            }, || None)?;
-            // if the parsing fails later, we need a span to construct K::Func
-            Kindlike::Method(Span::new(kindbegin, self.last_pos()), funckind)
-        } else {
-            Kindlike::Kind(self.recover_upto(Self::parse_kailua_kind)?)
-        };
-
-        if names.is_empty() {
-            // method() special form is not available for non-fields;
-            // assume that it is a typo of function()
-            let kind = match kind {
-                Kindlike::Kind(kind) => kind,
-                Kindlike::Method(kindspan, funckind) => {
-                    self.error(kindspan, m::AssumeMethodToNonInstanceField {})
-                          .done()?;
-                    if let Some(funckind) = funckind {
-                        Box::new(K::Func(funckind)).with_loc(kindspan)
-                    } else {
-                        Kind::recover().with_loc(kindspan)
-                    }
-                }
+        if self.may_expect(Keyword::Class) {
+            let system = if self.may_expect(Punct::LParen) {
+                self.recover_with(|parser| {
+                    parser.parse_name().map(|n| Some(n.map(|n| n.name)))
+                }, Punct::RParen, || None)?
+            } else {
+                None
+            };
+            let classname = self.parse_name()?;
+            let parenttype = if self.may_expect(Punct::Colon) {
+                self.recover_upto_with(|parser| {
+                    parser.parse_name().map(|n| Some(n.map(|n| n.name)))
+                }, || None)?
+            } else {
+                None
             };
 
             // ignore `static`
             if scope.base == Scope::Static {
-                self.error(&scope, m::AssumeNameStatic {}).done()?;
+                self.error(&scope, m::AssumeClassStatic {}).done()?;
             }
+
             let (renameref, sibling_scope) =
                 self.resolve_kailua_assume_rename(scope.base == Scope::Global,
-                                                  scope.span, rootname)?;
-            Ok((Box::new(St::KailuaAssume(renameref, modf, kind, sibling_scope)),
+                                                  scope.span, classname, false)?;
+            Ok((Box::new(St::KailuaAssumeClass(system, renameref, parenttype, sibling_scope)),
                 sibling_scope))
         } else {
-            if scope.base == Scope::Global {
-                self.error(&scope, m::AssumeFieldGlobal {}).done()?;
-                // and treated as like Scope::Implied
+            let namesbegin = self.pos();
+            let rootname = self.parse_name()?;
+            let mut names = Vec::new();
+            while self.may_expect(Punct::Dot) {
+                let name = self.parse_name()?;
+                names.push(name.map(|n| n.name));
             }
+            let namesend = self.last_pos();
 
-            let rootname0 = rootname.clone();
-            let rootname = rootname.map(|name| self.resolve_name(name));
-            if let NameRef::Global(_) = rootname.base {
-                if self.block_depth > 0 {
-                    self.error(&rootname0,
-                               m::AssumeFieldGlobalInLocalScope { name: &rootname0.name })
-                        .done()?;
-                }
-            }
-
-            let is_static = scope.base == Scope::Static;
-            let names = (rootname, names).with_loc(namesbegin..namesend);
-            let st = match kind {
-                Kindlike::Kind(kind) => St::KailuaAssumeField(is_static, names, modf, kind),
-                Kindlike::Method(kindspan, funckind) =>{
-                    if scope.base != Scope::Implied {
-                        self.error(kindspan, m::AssumeMethodToNonInstanceField {}).done()?;
-                    }
-                    if let Some(funckind) = funckind {
-                        St::KailuaAssumeMethod(names, modf, funckind)
-                    } else {
-                        St::KailuaAssumeField(is_static, names, modf,
-                                              Kind::recover().without_loc())
-                    }
-                },
+            self.expect(Punct::Colon)?;
+            let modf = self.parse_kailua_modf()?.base;
+            let kindbegin = self.pos();
+            let kind = if self.may_expect(Keyword::Method) {
+                let funckind = self.recover_upto_with(|p| {
+                    p.parse_kailua_funckind().map(Some)
+                }, || None)?;
+                // if the parsing fails later, we need a span to construct K::Func
+                Kindlike::Method(Span::new(kindbegin, self.last_pos()), funckind)
+            } else {
+                Kindlike::Kind(self.recover_upto(Self::parse_kailua_kind)?)
             };
-            Ok((Box::new(st), None))
+
+            if names.is_empty() {
+                // method() special form is not available for non-fields;
+                // assume that it is a typo of function()
+                let kind = match kind {
+                    Kindlike::Kind(kind) => kind,
+                    Kindlike::Method(kindspan, funckind) => {
+                        self.error(kindspan, m::AssumeMethodToNonInstanceField {})
+                              .done()?;
+                        if let Some(funckind) = funckind {
+                            Box::new(K::Func(funckind)).with_loc(kindspan)
+                        } else {
+                            Kind::recover().with_loc(kindspan)
+                        }
+                    }
+                };
+
+                // ignore `static`
+                if scope.base == Scope::Static {
+                    self.error(&scope, m::AssumeNameStatic {}).done()?;
+                }
+                let (renameref, sibling_scope) =
+                    self.resolve_kailua_assume_rename(scope.base == Scope::Global,
+                                                      scope.span, rootname, true)?;
+                Ok((Box::new(St::KailuaAssume(renameref, modf, kind, sibling_scope)),
+                    sibling_scope))
+            } else {
+                if scope.base == Scope::Global {
+                    self.error(&scope, m::AssumeFieldGlobal {}).done()?;
+                    // and treated as like Scope::Implied
+                }
+
+                let rootname0 = rootname.clone();
+                let rootname = rootname.map(|name| self.resolve_name(name));
+                if let NameRef::Global(_) = rootname.base {
+                    if self.block_depth > 0 {
+                        self.error(&rootname0,
+                                   m::AssumeFieldGlobalInLocalScope { name: &rootname0.name })
+                            .done()?;
+                    }
+                }
+
+                let is_static = scope.base == Scope::Static;
+                let names = (rootname, names).with_loc(namesbegin..namesend);
+                let st = match kind {
+                    Kindlike::Kind(kind) => St::KailuaAssumeField(is_static, names, modf, kind),
+                    Kindlike::Method(kindspan, funckind) =>{
+                        if scope.base != Scope::Implied {
+                            self.error(kindspan, m::AssumeMethodToNonInstanceField {}).done()?;
+                        }
+                        if let Some(funckind) = funckind {
+                            St::KailuaAssumeMethod(names, modf, funckind)
+                        } else {
+                            St::KailuaAssumeField(is_static, names, modf,
+                                                  Kind::recover().without_loc())
+                        }
+                    },
+                };
+                Ok((Box::new(st), None))
+            }
         }
     }
 
@@ -3175,6 +3226,13 @@ impl<'a> Parser<'a> {
                         let (stmt, new_sibling_scope) = parser.try_parse_kailua_assume()?;
                         sibling_scope = new_sibling_scope;
                         Some(stmt)
+                    };
+
+                    // class system ...
+                    Tok::Keyword(Keyword::Class) => {
+                        parser.expect(FixedName("system"))?;
+                        let name = parser.parse_name()?;
+                        Some(Box::new(St::KailuaClassSystem(name.map(|n| n.name))))
                     };
 
                     // open NAME
