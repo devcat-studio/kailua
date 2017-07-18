@@ -1837,9 +1837,9 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 Ok(Exit::None)
             }
 
-            St::KailuaAssume(ref newname, ref name, kindm, ref kind, _nextscope) => {
+            St::KailuaAssume(ref name, kindm, ref kind, _nextscope) => {
                 let slot = self.visit_kind(kindm, kind)?;
-                let varslot = self.env.assume_var(&newname.clone().with_loc(name), slot)?;
+                let varslot = self.env.assume_var(&name.after.clone().with_loc(name), slot)?;
                 self.register_module_if_needed(&varslot);
                 Ok(Exit::None)
             }

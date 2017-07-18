@@ -59,15 +59,56 @@ impl fmt::Debug for NameRef {
     }
 }
 
+/// Similar to `NameRef` but redefines a local name in the current scope.
+///
+/// This is required for `--# assume`-like statements,
+/// where the same local name (if any) can be redefined for the purpose of typing.
+/// It is also possible to redefine global as local and vice versa,
+/// though local to global would be essentially forbidden by Lua semantics.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RenameRef {
+    pub before: NameRef,
+    pub after: NameRef,
+}
+
+impl fmt::Debug for RenameRef {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?} => {:?}", self.before, self.after)
+    }
+}
+
 /// An `[attribute]` syntax in the Kailua types.
 #[derive(Clone, PartialEq)]
 pub struct Attr {
     pub name: Spanned<Name>,
+    pub values: Option<Spanned<Vec<Spanned<AttrValue>>>>,
 }
 
 impl fmt::Debug for Attr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "[{:?}]", self.name)
+        if let Some(ref values) = self.values {
+            write!(f, "[{:?}(", self.name)?;
+            let comma = Comma::new();
+            for v in &values.base { write!(f, "{}{:?}", comma, v)?; }
+            write!(f, "){:?}]", values.span)
+        } else {
+            write!(f, "[{:?}]", self.name)
+        }
+    }
+}
+
+/// Any value that can be in the attribute.
+#[derive(Clone, PartialEq)]
+pub enum AttrValue {
+    /// A name, as like `foo` in `[make_class(foo)]`.
+    Name(Spanned<Name>),
+}
+
+impl fmt::Debug for AttrValue {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            AttrValue::Name(ref name) => write!(f, "{:?}", name),
+        }
     }
 }
 
@@ -576,10 +617,8 @@ pub enum St {
 
     /// `--# assume [global] name: type`.
     ///
-    /// The first `NameRef` is a final name to be created,
-    /// while the second `NameRef` is a name being updated (and won't be used from that point).
     /// The sibling scope only exists when the statement is redefining a local name.
-    KailuaAssume(NameRef, Spanned<NameRef>, M, Spanned<Kind>, Option<Scope>),
+    KailuaAssume(Spanned<RenameRef>, M, Spanned<Kind>, Option<Scope>),
 
     /// `--# assume [static] name.field.field: type`.
     ///
@@ -645,8 +684,8 @@ impl fmt::Debug for St {
             St::KailuaOpen(ref lib) => write!(f, "KailuaOpen({:?})", lib),
             St::KailuaType(scope, ref t, ref k) =>
                 write!(f, "KailuaType({:?}, {:?}, {:?})", scope, t, k),
-            St::KailuaAssume(ref i_, ref i, m, ref k, is) => {
-                write!(f, "KailuaAssume({:?}, {:?}, {:?}, {:?})", i_, i, m, k)?;
+            St::KailuaAssume(ref i, m, ref k, is) => {
+                write!(f, "KailuaAssume({:?}, {:?}, {:?})", i, m, k)?;
                 if let Some(is) = is { write!(f, "{:?}", is)?; }
                 Ok(())
             },

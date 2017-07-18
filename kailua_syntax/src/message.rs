@@ -202,6 +202,11 @@ define_msg! { pub NoFunctionOrMethodBeforeSig<'a> { read: &'a Tok }:
     _    => "Expected a `function` or `method` before the function specification, got {read}",
 }
 
+define_msg! { pub NoAttrValue<'a> { read: &'a Tok }:
+    "ko" => "속성 인자 값이 나와야 하는데 {read}이(가) 나왔습니다",
+    _    => "Expected a parameter value to the attribute, got {read}",
+}
+
 define_msg! { pub DuplicateNameInSameScope:
     "ko" => "이 변수는 같은 블록에 있고 이름이 같은 다른 변수를 덮어 씌웁니다",
     _    => "This variable will overwrite another same-named variable in the same scope",

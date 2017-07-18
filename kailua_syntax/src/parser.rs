@@ -13,7 +13,7 @@ use message as m;
 use lang::{Language, Lua, Kailua};
 use lex::{Tok, Punct, Keyword, NestedToken, NestingCategory, NestingSerial};
 use string::{Str, Name};
-use ast::{NameRef, Var, Seq, Sig, Attr, Args, Table};
+use ast::{NameRef, RenameRef, Var, Seq, Sig, Attr, AttrValue, Args, Table};
 use ast::{Ex, Exp, UnOp, BinOp, SelfParam, TypeScope, St, Stmt, Block};
 use ast::{M, MM, K, Kind, SlotKind, FuncKind, TypeSpec, Varargs, Returns};
 use ast::{LocalName, LocalNameKind, TokenAux, Chunk};
@@ -2169,14 +2169,48 @@ impl<'a> Parser<'a> {
     fn try_parse_kailua_attr(&mut self) -> Result<Option<Spanned<Attr>>> {
         let begin = self.pos();
         if self.may_expect(Punct::LBracket) {
-            // `[` NAME `]`
-            let name = self.recover_retry(false, false,
-                lastly!(Parser::try_name_or_keyword => Punct::RBracket),
-            )?;
-            let attr = Attr { name: name };
-            Ok(Some(attr.with_loc(begin..self.last_pos())))
+            // `[` NAME [`(` VALUE ... `)` ] `]`
+            let attr = self.recover_with(|parser| {
+                let name = parser.try_name_or_keyword()?;
+                let begin = parser.pos();
+                let values = if parser.may_expect(Punct::LParen) {
+                    let mut values = Vec::new();
+                    parser.recover(|parser| {
+                        if let Some(value) = parser.try_parse_kailua_attr_value()? {
+                            values.push(value);
+                            while parser.may_expect(Punct::Comma) {
+                                values.push(parser.parse_kailua_attr_value()?);
+                            }
+                        }
+                        Ok(())
+                    }, Punct::RParen)?;
+                    Some(values.with_loc(begin..parser.last_pos()))
+                } else {
+                    None
+                };
+                Ok(Some(Attr { name: name, values: values }))
+            }, Punct::RBracket, || None)?;
+            Ok(attr.map(|attr| attr.with_loc(begin..self.last_pos())))
         } else {
             Ok(None)
+        }
+    }
+
+    fn try_parse_kailua_attr_value(&mut self) -> Result<Option<Spanned<AttrValue>>> {
+        match_next! { self;
+            Tok::Name(name) in span => {
+                Ok(Some(AttrValue::Name(Name::from(name).with_loc(span)).with_loc(span)))
+            };
+            'unread: _ => Ok(None);
+        }
+    }
+
+    fn parse_kailua_attr_value(&mut self) -> Result<Spanned<AttrValue>> {
+        if let Some(value) = self.try_parse_kailua_attr_value()? {
+            Ok(value)
+        } else {
+            error_with!(self, m::NoAttrValue);
+            Err(Stop::Recover)
         }
     }
 
@@ -2967,6 +3001,57 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn resolve_kailua_assume_rename(&mut self, global: bool, scopespan: Span,
+                                    name: Spanned<IndexedName>)
+        -> Result<(Spanned<RenameRef>, Option<Scope>)>
+    {
+        if global {
+            let local_shadowing =
+                self.resolve_local_name_without_idx(&name.name).is_some();
+            if self.block_depth > 0 {
+                self.error(scopespan, m::AssumeGlobalInLocalScope {}).done()?;
+            }
+            if local_shadowing {
+                self.error(&name, m::AssumeShadowedGlobal { name: &name.name }).done()?;
+            }
+
+            self.set_token_aux(name.base.idx, TokenAux::GlobalVarName);
+            if self.block_depth == 0 && !local_shadowing {
+                // only register a new global variable when it didn't error
+                self.global_scope.entry(name.base.name.clone())
+                                 .or_insert(name.span);
+            }
+
+            let rename = name.map(|n| {
+                RenameRef {
+                    before: NameRef::Global(n.name.clone()),
+                    after: NameRef::Global(n.name),
+                }
+            });
+            Ok((rename, None))
+        } else {
+            let scope = self.generate_sibling_scope();
+            let rawname = name.clone();
+            let name = name.map(|name| self.resolve_name(name));
+            let kind = match name.base {
+                NameRef::Local(ref scoped_id) => {
+                    // the scoped id itself can be assumed!
+                    let def = self.local_names.get(scoped_id).expect("unregistered scoped id");
+                    match def.kind {
+                        LocalNameKind::AssumedToGlobal => LocalNameKind::AssumedToGlobal,
+                        _ => LocalNameKind::AssumedToLocal(scoped_id.clone()),
+                    }
+                },
+                NameRef::Global(_) => LocalNameKind::AssumedToGlobal,
+            };
+            let scoped_id = self.add_spanned_local_name_with_kind(scope, rawname, kind)?;
+            let rename = name.map(move |n| {
+                RenameRef { before: n, after: NameRef::Local(scoped_id.base) }
+            });
+            Ok((rename, Some(scope)))
+        }
+    }
+
     // assume [global] NAME ":" MODF KIND
     // assume [static] NAME {"." NAME} ":" MODF KIND
     // assume NAME {"." NAME} ":" MODF "method" ...
@@ -3030,52 +3115,14 @@ impl<'a> Parser<'a> {
                 }
             };
 
-            let sibling_scope;
-            let (newnameref, rootname) = if scope.base == Scope::Global {
-                // assume global NAME ":" MODF KIND
-                let local_shadowing = self.resolve_local_name_without_idx(&rootname.name).is_some();
-                if self.block_depth > 0 {
-                    self.error(&scope, m::AssumeGlobalInLocalScope {}).done()?;
-                }
-                if local_shadowing {
-                    self.error(&rootname, m::AssumeShadowedGlobal { name: &rootname.name }).done()?;
-                }
-
-                self.set_token_aux(rootname.base.idx, TokenAux::GlobalVarName);
-                if self.block_depth == 0 && !local_shadowing {
-                    // only register a new global variable when it didn't error
-                    self.global_scope.entry(rootname.base.name.clone()).or_insert(rootname.span);
-                }
-
-                sibling_scope = None;
-                (NameRef::Global(rootname.base.name.clone()),
-                 rootname.map(|n| NameRef::Global(n.name)))
-            } else {
-                // assume [static] NAME ":" MODF KIND (`static` is ignored)
-                if scope.base == Scope::Static {
-                    self.error(&scope, m::AssumeNameStatic {}).done()?;
-                }
-
-                let scope = self.generate_sibling_scope();
-                sibling_scope = Some(scope);
-                let rawrootname = rootname.clone();
-                let rootname = rootname.map(|name| self.resolve_name(name));
-                let kind = match rootname.base {
-                    NameRef::Local(ref scoped_id) => {
-                        // the scoped id itself can be assumed!
-                        let def = self.local_names.get(scoped_id).expect("unregistered scoped id");
-                        match def.kind {
-                            LocalNameKind::AssumedToGlobal => LocalNameKind::AssumedToGlobal,
-                            _ => LocalNameKind::AssumedToLocal(scoped_id.clone()),
-                        }
-                    },
-                    NameRef::Global(_) => LocalNameKind::AssumedToGlobal,
-                };
-                let scoped_id = self.add_spanned_local_name_with_kind(scope, rawrootname, kind)?;
-                (NameRef::Local(scoped_id.base), rootname)
-            };
-
-            Ok((Box::new(St::KailuaAssume(newnameref, rootname, modf, kind, sibling_scope)),
+            // ignore `static`
+            if scope.base == Scope::Static {
+                self.error(&scope, m::AssumeNameStatic {}).done()?;
+            }
+            let (renameref, sibling_scope) =
+                self.resolve_kailua_assume_rename(scope.base == Scope::Global,
+                                                  scope.span, rootname)?;
+            Ok((Box::new(St::KailuaAssume(renameref, modf, kind, sibling_scope)),
                 sibling_scope))
         } else {
             if scope.base == Scope::Global {
