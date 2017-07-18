@@ -1,6 +1,9 @@
 # Rust-specific
 target
 
+# Mdbook-specific
+book
+
 # Node-specific
 out
 node_modules

@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+<meta charset=utf-8>
+<title>👉🌴ℹ️📚👈</title>
+</head>
+<body>
+<ul>
+<li><a lang="en-US" href="en-US/">Kailua documentation in English</a></li>
+<li><a lang="ko-KR" href="ko-KR/">한국어 카일루아 문서</a></li>
+</ul>
+<script>
+if (document.querySelectorAll) {
+	var currentLang = navigator.language || '';
+	var links = document.querySelectorAll('a[lang]');
+	var closest = null;
+	var maxlen = 0;
+	for (var i = 0; links[i]; ++i) {
+		closest = closest || links[i].href;
+		var lang = links[i].getAttribute('lang');
+		for (var j = maxlen + 1; j <= lang.length; ++j) {
+			if (currentLang.substring(0, j) === lang.substring(0, j)) {
+				closest = links[i].href;
+				maxlen = j;
+			} else {
+				break;
+			}
+		}
+	}
+	if (closest) location.replace(closest);
+}
+</script>
+</body>
+</html>
