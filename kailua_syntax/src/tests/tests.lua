@@ -845,6 +845,78 @@ local c = a
 --! [KailuaAssume(`a`_ => `a`$1, _, Func((`x`: String, `y`: Integer?) --> Boolean))$1, \
 --!  KailuaAssume(`b`_ => `b`$2, Const, Func((Dynamic) --> ()))$2]
 
+--8<-- assume-class-local
+local A
+--# assume class A
+--! [Local([`A`$1], [])$1, \
+--!  KailuaAssumeClass(None, `A`$1 => `A`$2, None)$2]
+
+--8<-- assume-class-local-shadowing
+--# assume class A --@< Error: `--# assume` tried to shadow a globally defined variable `A`
+--! [KailuaAssumeClass(None, `A`_ => `A`$1, None)$1]
+
+--8<-- assume-class-global
+local A
+--# assume global class A --@< Error: `--# assume` directive tried to set a global variable `A`, but it was shadowed by a local variable of the same name
+--! [Local([`A`$1], [])$1, \
+--!  KailuaAssumeClass(None, `A`_ => `A`_, None)]
+
+--8<-- assume-class-global-shadowing
+--# assume global class A
+--! [KailuaAssumeClass(None, `A`_ => `A`_, None)]
+
+--8<-- assume-class-for
+local A
+--# assume class(something) A
+--# assume global class(another) B
+--! [Local([`A`$1], [])$1, \
+--!  KailuaAssumeClass(Some(`something`), `A`$1 => `A`$2, None)$2, \
+--!  KailuaAssumeClass(Some(`another`), `B`_ => `B`_, None)]
+
+--8<-- assume-class-for-recover-1
+--# assume global class() A --@< Error: Expected a name, got `)`
+--! [KailuaAssumeClass(None, `A`_ => `A`_, None)]
+
+--8<-- assume-class-for-recover-2
+--# assume global class(not a name) A --@< Error: Expected a name, got a keyword `not`
+--! [KailuaAssumeClass(None, `A`_ => `A`_, None)]
+
+--8<-- assume-class-for-recover-3
+--# assume global class(really?) A --@< Error: Expected `)`, got `?`
+--! [KailuaAssumeClass(None, `A`_ => `A`_, None)]
+
+--8<-- assume-class-for-recover-4
+                         --@v-vv Error: Expected a name, got a newline
+--# assume global class( --@<-v Error: Expected a name, got a newline
+x = 42
+--! [Oops, Assign([`x`_], [42])]
+
+--8<-- assume-class-inherit
+--# assume global class A: B
+--! [KailuaAssumeClass(None, `A`_ => `A`_, Some(`B`))]
+
+--8<-- assume-class-inherit-recover
+--# assume global class A: --@<-v Error: Expected a name, got a newline
+x = 42
+--! [KailuaAssumeClass(None, `A`_ => `A`_, None), \
+--!  Assign([`x`_], [42])]
+
+--8<-- class-system
+--# class system foo
+--# class system bar
+--! [KailuaClassSystem(`foo`), \
+--!  KailuaClassSystem(`bar`)]
+
+--8<-- class-system-missing-name
+--# class system --@<-v Error: Expected a name, got a newline
+x = 42
+--! [Oops, Assign([`x`_], [42])]
+
+--8<-- class-no-system
+--# class --@<-v Error: Expected `system`, got a newline
+x = 42
+--! [Oops, Assign([`x`_], [42])]
+
 --8<-- kind-int
 local x --: int
 --! [Local([`x`$1: _ Integer], [])$1]

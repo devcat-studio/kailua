@@ -74,14 +74,27 @@ impl fmt::Debug for RVar {
     }
 }
 
+/// Identifiers for disjoint set of nominal types
+/// (currently used for classes with different metaclasses, i.e. class systems).
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ClassSystemId(pub u8);
+
+/// In the debugging output the nominal set identifier is denoted
+/// <code>&lt;%%<i>csid</i>&gt;</code>.
+impl fmt::Debug for ClassSystemId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "%{}", self.0)
+    }
+}
+
 /// Identifiers for nominal types (currently only used for instantiable classes).
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ClassId(pub u32);
+pub struct ClassId(pub ClassSystemId, pub u32);
 
 /// In the debugging output the nominal identifier is denoted <code>&lt;%<i>cid</i>&gt;</code>.
 impl fmt::Debug for ClassId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "<%{}>", self.0)
+        write!(f, "<%{}.{}>", (self.0).0, self.1)
     }
 }
 
@@ -93,6 +106,15 @@ pub enum Class {
 
     /// A class instance.
     Instance(ClassId),
+}
+
+impl Class {
+    /// Returns the class system the nominal type refers to.
+    pub fn system(&self) -> ClassSystemId {
+        match *self {
+            Class::Prototype(cid) | Class::Instance(cid) => cid.0,
+        }
+    }
 }
 
 impl Display for Class {
@@ -113,8 +135,8 @@ impl Display for Class {
 impl fmt::Debug for Class {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Class::Prototype(cid) => write!(f, "<%{} prototype>", cid.0),
-            Class::Instance(cid) => write!(f, "<%{}>", cid.0),
+            Class::Prototype(cid) => write!(f, "<%{}.{} prototype>", (cid.0).0, cid.1),
+            Class::Instance(cid) => write!(f, "<%{}.{}>", (cid.0).0, cid.1),
         }
     }
 }
@@ -131,6 +153,9 @@ pub trait TypeResolver: Report {
 
     /// Resolves a type name to a type if any. The span is used for error reporting.
     fn ty_from_name(&self, name: &Spanned<Name>) -> Result<Ty>;
+
+    /// Resolves a class system name to an identifier if any. The span is used for error reporting.
+    fn class_system_from_name(&self, name: &Spanned<Name>) -> Result<Option<ClassSystemId>>;
 }
 
 impl<'a, R: TypeResolver + ?Sized> TypeResolver for &'a mut R {
@@ -142,6 +167,9 @@ impl<'a, R: TypeResolver + ?Sized> TypeResolver for &'a mut R {
     }
     fn ty_from_name(&self, name: &Spanned<Name>) -> Result<Ty> {
         (**self).ty_from_name(name)
+    }
+    fn class_system_from_name(&self, name: &Spanned<Name>) -> Result<Option<ClassSystemId>> {
+        (**self).class_system_from_name(name)
     }
 }
 
@@ -237,6 +265,10 @@ pub trait TypeContext {
     /// Prints a type name for given nominal identifier to the formatter.
     fn fmt_class_name(&self, cid: ClassId, f: &mut fmt::Formatter,
                       st: &DisplayState) -> fmt::Result;
+
+    /// Prints a type name for given nominal set identifier to the formatter.
+    fn fmt_class_system_name(&self, csid: ClassSystemId, f: &mut fmt::Formatter,
+                             st: &DisplayState) -> fmt::Result;
 
     /// Returns true if given nominal instance type is a subtype of another nominal instance type.
     fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool;
@@ -415,6 +447,10 @@ impl TypeContext for NoTypeContext {
     fn fmt_class_name(&self, cid: ClassId, _f: &mut fmt::Formatter,
                       _st: &DisplayState) -> fmt::Result {
         panic!("fmt_class_name({:?}, ...) is not supposed to be called here", cid);
+    }
+    fn fmt_class_system_name(&self, csid: ClassSystemId, _f: &mut fmt::Formatter,
+                             _st: &DisplayState) -> fmt::Result {
+        panic!("fmt_class_system_name({:?}, ...) is not supposed to be called here", csid);
     }
     fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool {
         panic!("is_subclass_of({:?}, {:?}) is not supposed to be called here", lhs, rhs);

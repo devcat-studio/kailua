@@ -24,7 +24,9 @@ extern crate kailua_env;
 extern crate kailua_syntax;
 extern crate kailua_types;
 #[macro_use] extern crate log;
+extern crate vec_map;
 extern crate take_mut;
+extern crate parking_lot;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -37,6 +39,7 @@ mod message;
 pub mod options;
 pub mod env;
 mod defs;
+mod class_system;
 mod check;
 
 /// Options to populate the execution environment before checking.

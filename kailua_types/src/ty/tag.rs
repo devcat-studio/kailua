@@ -1,13 +1,15 @@
+use std::fmt;
+use kailua_env::Spanned;
 use kailua_diag::{Result, Reporter};
-use kailua_syntax::ast::Attr;
-use super::TypeResolver;
+use kailua_syntax::ast::{Attr, AttrValue};
+use super::{Display, DisplayState, TypeResolver, ClassSystemId};
 use message as m;
 
 /// A type tag for giving a type special meanings.
 ///
 /// Generally a type with a tag is equal to or a subtype of a specific form of types;
 /// it is safe to put a tag to an non-conforming type, but that won't work well in general.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Tag {
     // only used to test tags requiring subtypes and those not.
     #[doc(hidden)] _Subtype,
@@ -111,24 +113,9 @@ pub enum Tag {
     ///
     /// The prototype is initially unnamed; the first assignment to a local or global variable
     /// will set its name, and the name cannot be changed thereafter.
-    MakeClass,
-
-    /// `<class instance type>`
     ///
-    /// This is a type of `self` in the constructor method.
-    /// At the end of the constructor, the checker collects the current type of `self` and
-    /// uses it as a template for every other usage of given class instance type.
-    ///
-    /// This is internally created and cannot be constructed in normal ways.
-    Constructible,
-
-    /// `function([constructible] <class instance type>, ...) -> any`
-    ///
-    /// The constructor method is marked specially so that the (likely only) assignment to
-    /// that method collects the function signature and create an appropriate `new` method.
-    ///
-    /// This is internally created and cannot be constructed in normal ways.
-    Constructor,
+    /// There may be additional behaviors depending on the class system used.
+    MakeClass(ClassSystemId),
 
     /// `function() -> any`
     ///
@@ -146,27 +133,61 @@ pub enum Tag {
 
 impl Tag {
     pub fn from(attr: &Attr, resolv: &mut TypeResolver) -> Result<Option<Tag>> {
+        let no_values = |resolv: &mut TypeResolver, tag| {
+            if let Some(ref values) = attr.values {
+                resolv.error(values, m::AttrCannotHaveAnyValues { name: &attr.name }).done()?;
+            }
+            Ok(Some(tag))
+        };
+
+        let values = |resolv: &mut TypeResolver, count| {
+            if let Some(ref values) = attr.values {
+                if values.len() != count {
+                    resolv.error(values, m::AttrRequiresFixedNumOfValues { name: &attr.name,
+                                                                           count: count })
+                          .done()?;
+                }
+                Ok(&values[..])
+            } else {
+                // since we have no usable values span, use the name span instead
+                resolv.error(&attr.name, m::AttrRequiresFixedNumOfValues { name: &attr.name,
+                                                                           count: count })
+                      .done()?;
+                const EMPTY: &'static [Spanned<AttrValue>] = &[];
+                Ok(EMPTY)
+            }
+        };
+
         match &attr.name.base[..] {
-            b"internal subtype"     => Ok(Some(Tag::_Subtype)),
-            b"internal no_subtype"  => Ok(Some(Tag::_NoSubtype)),
-            b"internal no_subtype2" => Ok(Some(Tag::_NoSubtype2)),
+            b"internal subtype"     => no_values(resolv, Tag::_Subtype),
+            b"internal no_subtype"  => no_values(resolv, Tag::_NoSubtype),
+            b"internal no_subtype2" => no_values(resolv, Tag::_NoSubtype2),
 
-            b"require"       => Ok(Some(Tag::Require)),
-            b"type"          => Ok(Some(Tag::Type)),
-            b"assert"        => Ok(Some(Tag::Assert)),
-            b"assert_not"    => Ok(Some(Tag::AssertNot)),
-            b"assert_type"   => Ok(Some(Tag::AssertType)),
-            b"generic_pairs" => Ok(Some(Tag::GenericPairs)),
-            b"genv"          => Ok(Some(Tag::GlobalEnv)),
-            b"geval"         => Ok(Some(Tag::GlobalEval)),
-            b"become_module" => Ok(Some(Tag::BecomeModule)),
-            b"package_path"  => Ok(Some(Tag::PackagePath)),
-            b"package_cpath" => Ok(Some(Tag::PackageCpath)),
-            b"string_meta"   => Ok(Some(Tag::StringMeta)),
-            b"make_class"    => Ok(Some(Tag::MakeClass)),
+            b"require"       => no_values(resolv, Tag::Require),
+            b"type"          => no_values(resolv, Tag::Type),
+            b"assert"        => no_values(resolv, Tag::Assert),
+            b"assert_not"    => no_values(resolv, Tag::AssertNot),
+            b"assert_type"   => no_values(resolv, Tag::AssertType),
+            b"generic_pairs" => no_values(resolv, Tag::GenericPairs),
+            b"genv"          => no_values(resolv, Tag::GlobalEnv),
+            b"geval"         => no_values(resolv, Tag::GlobalEval),
+            b"become_module" => no_values(resolv, Tag::BecomeModule),
+            b"package_path"  => no_values(resolv, Tag::PackagePath),
+            b"package_cpath" => no_values(resolv, Tag::PackageCpath),
+            b"string_meta"   => no_values(resolv, Tag::StringMeta),
 
-            b"internal kailua_gen_tvar"    => Ok(Some(Tag::KailuaGenTvar)),
-            b"internal kailua_assert_tvar" => Ok(Some(Tag::KailuaAssertTvar)),
+            b"make_class" => {
+                let values = values(resolv, 1)?;
+                if let Some(&AttrValue::Name(ref system)) = values.get(0).map(|v| &v.base) {
+                    if let Some(system) = resolv.class_system_from_name(system)? {
+                        return Ok(Some(Tag::MakeClass(system)));
+                    }
+                }
+                Ok(None)
+            },
+
+            b"internal kailua_gen_tvar"    => no_values(resolv, Tag::KailuaGenTvar),
+            b"internal kailua_assert_tvar" => no_values(resolv, Tag::KailuaAssertTvar),
 
             _ => {
                 resolv.warn(&attr.name, m::UnknownAttrName { name: &attr.name.base }).done()?;
@@ -189,13 +210,11 @@ impl Tag {
             Tag::PackagePath  => "package_path",
             Tag::PackageCpath => "package_cpath",
             Tag::StringMeta   => "string_meta",
-            Tag::MakeClass    => "make_class",
+            Tag::MakeClass(_) => "make_class",
 
             Tag::_Subtype         => "internal subtype",
             Tag::_NoSubtype       => "internal no_subtype",
             Tag::_NoSubtype2      => "internal no_subtype2",
-            Tag::Constructible    => "internal constructible",
-            Tag::Constructor      => "internal constructor",
             Tag::KailuaGenTvar    => "internal kailua_gen_tvar",
             Tag::KailuaAssertTvar => "internal kailua_assert_tvar",
         }
@@ -213,9 +232,7 @@ impl Tag {
             Tag::AssertNot |
             Tag::AssertType |
             Tag::GenericPairs |
-            Tag::MakeClass |
-            Tag::Constructible |
-            Tag::Constructor |
+            Tag::MakeClass(_) |
             Tag::KailuaGenTvar |
             Tag::KailuaAssertTvar => true,
             _ => false,
@@ -235,11 +252,41 @@ impl Tag {
             Tag::_NoSubtype2 => false,
 
             Tag::PackagePath |
-            Tag::PackageCpath |
-            Tag::Constructible |
-            Tag::Constructor => false,
+            Tag::PackageCpath => false,
             _ => true,
         }
+    }
+}
+
+impl fmt::Debug for Tag {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.name())?;
+
+        match *self {
+            Tag::MakeClass(csid) => {
+                write!(f, "({:?})", csid)?;
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+}
+
+impl Display for Tag {
+    fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
+        write!(f, "{}", self.name())?;
+
+        match *self {
+            Tag::MakeClass(csid) => {
+                write!(f, "(")?;
+                st.context.fmt_class_system_name(csid, f, st)?;
+                write!(f, ")")?;
+            }
+            _ => {}
+        }
+
+        Ok(())
     }
 }
 

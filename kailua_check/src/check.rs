@@ -1,6 +1,7 @@
 use std::i32;
 use std::cmp;
 use std::ops;
+use std::str;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use take_mut::take;
@@ -11,13 +12,14 @@ use kailua_syntax::{Str, Name};
 use kailua_syntax::ast::{self, NameRef, Var, TypeSpec, Kind, Sig, Ex, Exp, UnOp, BinOp, Table};
 use kailua_syntax::ast::{SelfParam, TypeScope, Args, St, Stmt, Block, K, Attr, M, MM, Varargs};
 use kailua_types::diag::{TypeReport, TypeReportHint, TypeReportMore};
-use kailua_types::ty::{Displayed, Display};
-use kailua_types::ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, Dummy, TypeContext};
+use kailua_types::ty::{Displayed, Display, TypeContext, TypeResolver};
+use kailua_types::ty::{Dyn, Nil, T, Ty, TySeq, SpannedTySeq, Lattice, Union, Dummy};
 use kailua_types::ty::{Key, Tables, Function, Functions};
 use kailua_types::ty::{F, Slot, SlotSeq, SpannedSlotSeq, Tag, Class, ClassId};
 use kailua_types::ty::flags::*;
 use kailua_types::env::Types;
 use env::{Env, Returns, Frame, Scope, Module, Context, SlotSpec};
+use class_system::make_predefined_class_system;
 use message as m;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -512,13 +514,6 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
         debug!("checking if {:?} can be called with {:?} ({})",
                func, args, if methodcall { "method call" } else { "func call" });
 
-        // check for `[internal constructor] <#x>`
-        // (should be done before the resolution, as it is likely to fail!)
-        if func.tag() == Some(Tag::Constructor) {
-            self.env.error(func, m::CannotCallCtor {}).done()?;
-            return Ok(Exitable::dummy());
-        }
-
         // visit_func_call also does this, but check_callable can be called in the other way
         let functy = if let Some(func) = self.env.resolve_exact_type(&func) {
             func
@@ -686,27 +681,14 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
             return Ok(Index::dummy());
         };
 
-        let clsinfo = match *ety {
-            T::Class(Class::Prototype(cid)) => Some((cid, true)),
-            T::Class(Class::Instance(cid)) => Some((cid, false)),
-            T::Union(ref u) if !u.classes.is_empty() => {
-                // the union is assumed to be simplified, so even if `u.classes` has one type
-                // it is mixed with other types so it cannot be indexed.
-                self.env.error(&*ety0, m::IndexToUnknownClass { cls: self.display(&*ety0) })
-                        .done()?;
-                return Ok(Index::dummy());
-            },
-            _ => None,
-        };
-
-        // nominal types cannot be indexed with non-compile-time values
-        // (in some sense, nominal types are isomorphic to records)
-        if let Some((cid, proto)) = clsinfo {
-            let litkey =
-                if let Some(key) = kty.as_integer() {
-                    key.into()
+        match *ety {
+            T::Class(cls) => {
+                // nominal types cannot be indexed with non-compile-time values
+                // (in some sense, nominal types are isomorphic to records)
+                let litkey = if let Some(key) = kty.as_integer() {
+                    Key::from(key)
                 } else if let Some(key) = kty.as_string() {
-                    key.into()
+                    Key::from(key)
                 } else {
                     self.env.error(expspan,
                                    m::IndexToClassWithUnknown { cls: self.display(&*ety0),
@@ -715,101 +697,41 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                     return Ok(Index::dummy());
                 };
 
-            // this "template" is used to make a reconstructed record type for indexing.
-            // we can in principle reconstruct the record type out of that,
-            // but we need to record any change back to the class definition
-            // so we duplicate the core logic here.
-            macro_rules! fields {
-                ($x:ident) => (
-                    self.env.context().get_class_fields_mut(cid).expect("invalid ClassId").$x
-                )
-            }
+                trace!("{} to a field {:?} of {:?}",
+                       if lval { "assigning" } else { "indexing" }, litkey, cls);
 
-            if lval {
-                // l-values. there are strong restrictions over class prototypes and instances.
-
-                let (vslot, new) = if proto {
-                    debug!("assigning to a field {:?} of the class prototype of {:?}", litkey, cid);
-
-                    if litkey == &b"init"[..] {
-                        // this method is special, and should be the first method defined ever
-                        // it cannot be replaced later, so the duplicate check is skipped
-                        if !fields!(class_ty).is_empty() {
-                            // since `init` should be the first method ever defined,
-                            // non-empty class_ty should always contain `init`.
-                            self.env.error(expspan, m::CannotRedefineCtor {}).done()?;
-                            return Ok(Index::dummy());
+                // any further interaction is delegated to the class system
+                let litkey = (&litkey).with_loc(kty0);
+                if lval {
+                    if let Some((new, vslot)) = self.context().index_class_lval(cls, litkey,
+                                                                                expspan, None)? {
+                        vslot.adapt(ety0.flex(), self.types());
+                        if new {
+                            return Ok(Index::Created(vslot));
+                        } else {
+                            return Ok(Index::Found(vslot));
                         }
-
-                        // should have a [constructor] tag to create a `new` method
-                        let ty = T::TVar(self.types().gen_tvar());
-                        let slot = Slot::new(F::Var, Ty::new(ty).with_tag(Tag::Constructor));
-                        fields!(class_ty).insert(litkey, slot.clone());
-                        (slot, true)
-                    } else if litkey == &b"new"[..] {
-                        // `new` is handled from the assignment (it cannot be copied from `init`
-                        // because it initially starts as as a type variable, i.e. unknown)
-                        // see also `Env::create_new_method_from_init`
-                        self.env.error(expspan, m::ReservedNewMethod {}).done()?;
-                        return Ok(Index::dummy());
-                    } else if let Some(v) = fields!(class_ty).get(&litkey).cloned() {
-                        // for other methods, it should be used as is...
-                        (v, false)
                     } else {
-                        // ...or created only when the `init` method is available.
-                        if fields!(class_ty).is_empty() {
-                            self.env.error(expspan, m::CannotDefineMethodsWithoutCtor {}).done()?;
-                            return Ok(Index::dummy());
-                        }
-
-                        // prototypes always use Var slots; it is in principle append-only.
-                        let slot = new_slot(F::Var, self.types());
-                        fields!(class_ty).insert(litkey, slot.clone());
-                        (slot, true)
+                        return Ok(Index::dummy());
                     }
                 } else {
-                    debug!("assigning to a field {:?} of the class instance of {:?}", litkey, cid);
-
-                    if let Some(v) = fields!(instance_ty).get(&litkey).cloned() {
-                        // existing fields can be used as is
-                        (v, false)
-                    } else if ety.tag() != Some(Tag::Constructible) {
-                        // otherwise, only the constructor can add new fields
-                        self.env.error(expspan, m::CannotAddFieldsToInstance {}).done()?;
-                        return Ok(Index::dummy());
-                    } else {
-                        // the constructor (checked earlier) can add slots to instances.
-                        let slot = new_slot(F::Var, self.types());
-                        fields!(instance_ty).insert(litkey, slot.clone());
-                        (slot, true)
-                    }
-                };
-
-                vslot.adapt(ety0.flex(), self.types());
-                if new {
-                    return Ok(Index::Created(vslot));
-                } else {
-                    return Ok(Index::Found(vslot));
-                }
-            } else {
-                // r-values. we just pick the method from the template.
-                trace!("indexing to a field {:?} of the class {} of {:?}",
-                       litkey, if proto { "prototype" } else { "instance" }, cid);
-
-                let fields = self.env.context().get_class_fields_mut(cid).expect("invalid ClassId");
-                // TODO should we re-adapt methods?
-                if !proto {
-                    // instance fields have a precedence over class fields
-                    if let Some(info) = fields.instance_ty.get(&litkey).map(|v| (*v).clone()) {
+                    if let Some(info) = self.context().index_class_rval(cls, litkey, expspan)? {
                         return Ok(Index::Found(info));
+                    } else {
+                        return Ok(Index::Missing);
                     }
                 }
-                if let Some(info) = fields.class_ty.get(&litkey).map(|v| (*v).clone()) {
-                    return Ok(Index::Found(info));
-                } else {
-                    return Ok(Index::Missing);
-                }
             }
+
+            T::Union(ref u) if !u.classes.is_empty() => {
+                // the union is assumed to be simplified, so even if `u.classes` has one type
+                // it is mixed with other types so it cannot be indexed.
+                self.env.error(&*ety0, m::IndexToUnknownClass { cls: self.display(&*ety0) })
+                        .done()?;
+                return Ok(Index::dummy());
+            }
+
+            _ => {}
         }
 
         // if ety is a string, we go through the previously defined string metatable
@@ -1120,13 +1042,27 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                     return Ok(root);
                 }
 
-                let mut fields =
-                    self.env.context().get_class_fields_mut(cid).expect("invalid ClassId");
-                let firstname = Key::Str(firstname.base.clone().into());
-                if static_ {
-                    fields.class_ty.insert(firstname, slot);
-                } else {
-                    fields.instance_ty.insert(firstname, slot);
+                // simulate the l-value assignment,
+                // so that we can enforce subtyping constraints (if any)
+                let cls = if static_ { Class::Prototype(cid) } else { Class::Instance(cid) };
+                let key = firstname.clone().map(Str::from).map(Key::Str);
+                match self.env.context().index_class_lval(cls, key.as_ref(), namespan,
+                                                          Some(&slot))? {
+                    Some((false, _)) => {
+                        self.env.error(namespan, m::AssumeExistingField {}).done()?;
+                    }
+                    Some((true, vslot)) => {
+                        // vslot should be a fresh type variable, so the only possible error is
+                        // the constraint mismatch (normally with parent fields).
+                        // note that we have supplied the hint but its use is not guaranteed,
+                        // so we have to still check for the equivalence.
+                        if let Err(r) = vslot.assert_eq(&slot, self.types()) {
+                            self.env.error(namespan, m::AssumeCannotCreateNewField {})
+                                    .report_types(r, TypeReportHint::None)
+                                    .done()?;
+                        }
+                    }
+                    None => {}
                 }
 
                 return Ok(root);
@@ -1891,6 +1827,67 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
 
                 Ok(Exit::None)
             }
+
+            St::KailuaClassSystem(ref name) => {
+                if let Some(system) =
+                        str::from_utf8(&name.base).ok().and_then(make_predefined_class_system) {
+                    self.env.define_class_system(name, system)?;
+                } else {
+                    self.env.error(name, m::NoSuchPredefinedClassSystem { name: name }).done()?;
+                }
+
+                Ok(Exit::None)
+            }
+
+            St::KailuaAssumeClass(ref system, ref name, ref parent, _scope) => {
+                let csid = if let Some(ref system) = *system {
+                    self.env.class_system_from_name(system)?
+                } else {
+                    None
+                };
+
+                let parent = if let Some(ref parent) = *parent {
+                    // the parent class should be a defined type...
+                    if let Some(def) = self.env.get_named_type(parent) {
+                        // and should be a plain class instance (no `?` or `!` as well).
+                        // (we have no visible type for prototypes, so this choice is mandatory)
+                        // note that this should NOT be a type variable;
+                        // such variable is impossible with the type definition.
+                        if let (Nil::Silent, &T::Class(Class::Instance(cid))) = (def.ty.nil(),
+                                                                                 &*def.ty) {
+                            Some(cid.with_loc(parent))
+                        } else {
+                            self.env.error(parent, m::BadClassParent { ty: self.display(&def.ty) })
+                                    .done()?;
+                            None
+                        }
+                    } else {
+                        self.env.error(parent, m::NoType { name: &parent.base }).done()?;
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // defaults to the (publicly invisible) "dumb" class system
+                let csid = csid.unwrap_or_else(|| self.env.dumb_class_system());
+                if let Some(cid) = self.context().assume_class(csid, parent, stmt.span)? {
+                    let name = name.after.clone().with_loc(name);
+
+                    // immediately name the class.
+                    // this may fail when a type with the same name already exists; doesn't hurt.
+                    let id = self.env.id_from_nameref(&name);
+                    self.env.name_class_and_type(cid, &id)?;
+
+                    // the variable has been also renamed so it should be reflected.
+                    // classes are implicitly delay-checked, just like the `[make_class]` attribute
+                    let slot = Slot::new(F::Module, Ty::new(T::Class(Class::Prototype(cid))));
+                    self.register_module_if_needed(&slot);
+                    self.env.assume_var(&name, slot.with_loc(&name))?;
+                }
+
+                Ok(Exit::None)
+            }
         }
     }
 
@@ -1970,7 +1967,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
     }
 
     fn visit_self_param(&mut self, selfparamspan: Span, tableinfo: &Spanned<Slot>,
-                        no_check: Option<NoCheck>, method: &Spanned<Name>) -> Result<Slot> {
+                        no_check: Option<NoCheck>, _method: &Spanned<Name>) -> Result<Slot> {
         // try to infer the type for `self`:
         // - if `tableinfo` is a class prototype `self` should be a corresponding instance
         // - if `tableinfo` is a string metatable `self` should be a string
@@ -1982,13 +1979,7 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                     inferred = Some(Ty::new(T::String));
                 } else if let T::Class(Class::Prototype(cid)) = *tableinfo {
                     let inst = T::Class(Class::Instance(cid));
-                    if *method.base == *b"init" {
-                        // [constructible] <class instance #cid>
-                        inferred = Some(Ty::new(inst).with_tag(Tag::Constructible));
-                    } else {
-                        // <class instance #cid>
-                        inferred = Some(Ty::new(inst));
-                    }
+                    inferred = Some(Ty::new(inst));
                 }
             }
         }
@@ -2337,10 +2328,16 @@ impl<'inp, 'envr, 'env, R: Report> Checker<'inp, 'envr, 'env, R> {
                 }
             }
 
-            // class()
-            Some(Tag::MakeClass) => {
-                let cid = self.context().make_class(None, expspan); // TODO parent
-                return Ok(exit.with(SlotSeq::from(T::Class(Class::Prototype(cid)))));
+            // class([parent])
+            Some(Tag::MakeClass(system)) => {
+                if let Some(cid) = self.context().make_class(system, argtys, expspan)? {
+                    // classes are implicitly delay-checked
+                    let slot = Slot::new(F::Module, Ty::new(T::Class(Class::Prototype(cid))));
+                    self.register_module_if_needed(&slot);
+                    return Ok(exit.with(SlotSeq::from(slot)));
+                } else {
+                    return Ok(exit.with_dummy());
+                }
             }
 
             // kailua_test.gen_tvar()

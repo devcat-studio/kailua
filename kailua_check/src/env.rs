@@ -7,18 +7,23 @@ use std::result;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::collections::{hash_map, HashMap, HashSet};
+use std::sync::Arc;
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use kailua_env::{self, Span, Spanned, WithLoc, ScopedId, ScopeMap, SpanMap};
 use kailua_diag::{Result, Kind, Report, Reporter, Locale, Localize};
 use kailua_syntax::{Str, Name};
 use kailua_syntax::ast::NameRef;
 use kailua_types::diag::{TypeReportHint, TypeReportMore};
-use kailua_types::ty::{Displayed, Display, DisplayName};
-use kailua_types::ty::{Ty, TySeq, Nil, T, Slot, F, TVar, Lattice, Union, Tag};
-use kailua_types::ty::{TypeContext, TypeResolver, ClassId, Class, Tables, Functions, Function, Key};
+use kailua_types::ty::{Displayed, Display, DisplayState, DisplayName};
+use kailua_types::ty::{Ty, TySeq, Nil, T, Slot, SpannedSlotSeq, F, TVar, Lattice, Union, Tag};
+use kailua_types::ty::{TypeContext, TypeResolver, ClassId, ClassSystemId, Class};
+use kailua_types::ty::{Tables, Key};
 use kailua_types::ty::flags::*;
-use kailua_types::env::Types;
+use kailua_types::env::{Types, ClassProvider};
 use defs::get_defs;
+use class_system::ClassSystem;
+use class_system::dumb::DumbClassSystem;
 use options::Options;
 use check::Checker;
 use message as m;
@@ -207,26 +212,6 @@ pub struct TypeDef {
     pub ty: Ty,
 }
 
-/// A (extended) class definition.
-///
-/// The type environment also has its class definition (mostly for names);
-/// this type is distinguished by having a list of class and instance fields, hence the name.
-#[derive(Clone, Debug)]
-pub struct ClassFields {
-    /// The definition span.
-    pub span: Span,
-
-    /// A list of class fields.
-    ///
-    /// This can be updated by assigning to the class prototype type.
-    pub class_ty: HashMap<Key, Slot>,
-
-    /// A list of instance fields.
-    ///
-    /// This can be updated by assigning to the class instance type.
-    pub instance_ty: HashMap<Key, Slot>,
-}
-
 /// A scope.
 ///
 /// This is currently used to track the function frame and type names.
@@ -324,6 +309,84 @@ impl SlotSpec {
     }
 }
 
+#[derive(Clone)]
+struct ClassContext {
+    inner: Arc<RwLock<ClassContextInner>>,
+}
+
+struct ClassContextInner {
+    class_systems: Vec<(Option<Spanned<Name>>, Box<ClassSystem>)>,
+    class_system_names: HashMap<Name, Spanned<ClassSystemId>>,
+}
+
+impl ClassContext {
+    fn new() -> ClassContext {
+        // the "dumb" class context is used when no class system is specified
+        let dumb = DumbClassSystem::new();
+        ClassContext {
+            inner: Arc::new(RwLock::new(ClassContextInner {
+                class_systems: vec![(None, Box::new(dumb) as Box<ClassSystem>)],
+                class_system_names: HashMap::new(),
+            })),
+        }
+    }
+
+    fn dumb_class_system(&self) -> ClassSystemId {
+        ClassSystemId(0)
+    }
+
+    fn read<'a>(&'a self) -> RwLockReadGuard<'a, ClassContextInner> {
+        self.inner.read()
+    }
+
+    fn write<'a>(&'a mut self) -> RwLockWriteGuard<'a, ClassContextInner> {
+        self.inner.write()
+    }
+}
+
+impl ClassContextInner {
+    fn get(&self, csid: ClassSystemId) -> Option<&Box<ClassSystem>> {
+        self.class_systems.get(csid.0 as usize).map(|&(_, ref system)| system)
+    }
+}
+
+impl ClassProvider for ClassContext {
+    fn fmt_class_name(&self, cid: ClassId, f: &mut fmt::Formatter,
+                      st: &DisplayState) -> fmt::Result {
+        let inner = self.inner.read();
+        if let Some(&(_, ref system)) = inner.class_systems.get((cid.0).0 as usize) {
+            system.fmt_class(cid, f, st)
+        } else {
+            match &st.locale[..] {
+                "ko" => write!(f, "<잘못된 클래스 {:?}>", cid),
+                _ =>    write!(f, "<Bad class {:?}>", cid),
+            }
+        }
+    }
+
+    fn fmt_class_system_name(&self, csid: ClassSystemId, f: &mut fmt::Formatter,
+                             st: &DisplayState) -> fmt::Result {
+        let inner = self.inner.read();
+        if let Some(&(ref name, _)) = inner.class_systems.get(csid.0 as usize) {
+            fmt::Debug::fmt(name, f)
+        } else {
+            match &st.locale[..] {
+                "ko" => write!(f, "<잘못된 클래스 시스템 {:?}>", csid),
+                _ =>    write!(f, "<Bad class system {:?}>", csid),
+            }
+        }
+    }
+
+    fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool {
+        let inner = self.inner.read();
+        if let Some(&(_, ref system)) = inner.class_systems.get((lhs.0).0 as usize) {
+            system.is_subclass_of(lhs, rhs)
+        } else {
+            false
+        }
+    }
+}
+
 /// The global context, which also contains the type context.
 ///
 /// Anything that has to be retained across multiple files should be here.
@@ -354,13 +417,14 @@ pub struct Output {
     // runtime information
     string_meta: Option<Spanned<Slot>>,
 
-    // class fields
-    class_fields: HashMap<ClassId, ClassFields>,
+    // class and class system (shared with Types)
+    classes: ClassContext,
 }
 
 impl<R: Report> Context<R> {
     pub fn new(report: R) -> Context<R> {
         let locale = report.message_locale();
+        let classes = ClassContext::new();
         let mut ctx = Context {
             report: report,
             output: Output {
@@ -368,11 +432,11 @@ impl<R: Report> Context<R> {
                 scope_maps: Vec::new(),
                 spanned_slots: SpanMap::new(),
                 global_scope: Scope::new(),
-                types: Types::new(locale),
+                types: Types::new(locale, Box::new(classes.clone())),
                 opened: HashSet::new(),
                 loaded: HashMap::new(),
                 string_meta: None,
-                class_fields: HashMap::new(),
+                classes: classes,
             }
         };
 
@@ -423,24 +487,44 @@ impl<R: Report> Context<R> {
         self.loaded.entry(name.to_owned()).or_insert(LoadStatus::Ongoing(span));
     }
 
-    pub fn make_class(&mut self, parent: Option<ClassId>, span: Span) -> ClassId {
-        let cid = self.types.make_class(parent);
-        self.class_fields.insert(cid, ClassFields {
-            span: span,
-            class_ty: HashMap::new(),
-            instance_ty: HashMap::new(),
-        });
-        cid
+    pub fn make_class(&mut self, csid: ClassSystemId, argtys: SpannedSlotSeq,
+                      outerspan: Span) -> Result<Option<ClassId>> {
+        let classes = self.output.classes.inner.read();
+        let cls = classes.get(csid).expect("bad class system id");
+        cls.make_class(csid, argtys, outerspan, &mut self.output.types, &self.report)
+    }
+
+    pub fn assume_class(&mut self, csid: ClassSystemId, parent: Option<Spanned<ClassId>>,
+                        outerspan: Span) -> Result<Option<ClassId>> {
+        let classes = self.output.classes.inner.read();
+        let cls = classes.get(csid).expect("bad class system id");
+        cls.assume_class(csid, parent, outerspan, &mut self.output.types, &self.report)
     }
 
     pub fn name_class(&mut self, cid: ClassId, name: Spanned<Name>) -> Result<()> {
+        let classes = self.classes.inner.read();
+        let cls = classes.get(cid.0).expect("bad class system id");
         let namespan = name.span;
-        if let Err(prevspan) = self.types.name_class(cid, name).map_err(|name| name.span) {
+        if let Err(prevspan) = cls.name_class(cid, name).map_err(|name| name.span) {
             self.report.warn(namespan, m::RedefinedClassName {})
                        .note(prevspan, m::PreviousClassName {})
                        .done()?;
         }
         Ok(())
+    }
+
+    pub fn index_class_rval(&mut self, cls: Class, key: Spanned<&Key>,
+                            expspan: Span) -> Result<Option<Slot>> {
+        let classes = self.output.classes.inner.read();
+        let c = classes.get(cls.system()).expect("bad class system id");
+        c.index_rval(cls, key, expspan, &mut self.output.types, &self.report)
+    }
+
+    pub fn index_class_lval(&mut self, cls: Class, key: Spanned<&Key>,
+                            expspan: Span, hint: Option<&Slot>) -> Result<Option<(bool, Slot)>> {
+        let classes = self.output.classes.inner.read();
+        let c = classes.get(cls.system()).expect("bad class system id");
+        c.index_lval(cls, key, expspan, hint, &mut self.output.types, &self.report)
     }
 
     pub fn into_output(self) -> Output {
@@ -485,14 +569,6 @@ impl Output {
         self.ids.iter()
     }
 
-    pub fn get_class_fields<'a>(&'a self, cid: ClassId) -> Option<&'a ClassFields> {
-        self.class_fields.get(&cid)
-    }
-
-    pub fn get_class_fields_mut<'a>(&'a mut self, cid: ClassId) -> Option<&'a mut ClassFields> {
-        self.class_fields.get_mut(&cid)
-    }
-
     pub fn get_string_meta(&self) -> Option<Spanned<Slot>> {
         self.string_meta.clone()
     }
@@ -506,44 +582,18 @@ impl Output {
             }
 
             // nominal types
-            match *ty {
-                T::Class(Class::Prototype(cid)) => {
-                    let mut fields = HashMap::new();
-                    let mut cid = Some(cid);
-                    while let Some(cid_) = cid {
-                        if let Some(def) = self.get_class_fields(cid_) {
-                            // do not update the existing (children's) fields
-                            for (k, v) in def.class_ty.iter() {
-                                fields.entry(k.clone()).or_insert(v.clone());
-                            }
-                        }
-                        cid = self.get_parent_class(cid_);
-                    }
-                    return Some(fields);
-                }
+            if let T::Class(clsid) = *ty {
+                let csid = match clsid {
+                    Class::Prototype(cid) | Class::Instance(cid) => cid.0,
+                };
 
-                T::Class(Class::Instance(cid)) => {
-                    // instance fields take preference over class fields, which get overwritten
-                    let mut instfields = HashMap::new();
-                    let mut fields = HashMap::new();
-                    let mut cid = Some(cid);
-                    while let Some(cid_) = cid {
-                        if let Some(def) = self.get_class_fields(cid_) {
-                            // do not update the existing (children's) fields
-                            for (k, v) in def.instance_ty.iter() {
-                                instfields.entry(k.clone()).or_insert(v.clone());
-                            }
-                            for (k, v) in def.class_ty.iter() {
-                                fields.entry(k.clone()).or_insert(v.clone());
-                            }
-                        }
-                        cid = self.get_parent_class(cid_);
-                    }
-                    fields.extend(instfields.into_iter());
-                    return Some(fields);
-                }
-
-                _ => {}
+                let classes = self.classes.read();
+                let mut fields = HashMap::new();
+                classes.get(csid).expect("bad class system").list_fields(clsid, &mut |k, v| {
+                    fields.insert(k.clone(), v.clone());
+                    Ok(())
+                }).expect("no early exit");
+                return Some(fields);
             }
 
             // string types (use the current metatable instead)
@@ -796,74 +846,6 @@ impl<'ctx, R: Report> Env<'ctx, R> {
         self.context.get_string_meta()
     }
 
-    // why do we need this special method?
-    // conceptually, assigning to the placeholder `<prototype>.init` should give
-    // the exact type for the `init` method, thus also a type for automatically created `new`.
-    // in reality we instead get a type bound which cannot be exactly resolved;
-    // we instead put [constructor] tag to the placeholder and
-    // catch the exact type being assigned (method definitions guarantee the resolvability).
-    fn create_new_method_from_init(&mut self, init: &Spanned<Slot>) -> Result<()> {
-        // ensure that the type can be resolved...
-        let ty = if let Some(ty) = self.resolve_exact_type(&init.unlift()) {
-            ty
-        } else {
-            self.error(init, m::InexactInitMethod { init: self.display(init) }).done()?;
-            return Ok(());
-        };
-
-        // ...and is a function...
-        let mut func = match *ty {
-            T::Functions(ref func) => match **func {
-                Functions::Simple(ref f) => f.to_owned(),
-                _ => {
-                    self.error(init, m::OverloadedFuncInitMethod { init: self.display(init) })
-                        .done()?;
-                    return Ok(());
-                }
-            },
-            _ => {
-                self.error(init, m::NonFuncInitMethod { init: self.display(init) }).done()?;
-                return Ok(());
-            },
-        };
-
-        // ...and has the first argument readily known as a [constructible] class instance type.
-        let mut cid = None;
-        if !func.args.head.is_empty() {
-            let selfarg = func.args.head.remove(0);
-            if let Some(selfarg) = self.resolve_exact_type(&selfarg) {
-                if selfarg.tag() == Some(Tag::Constructible) {
-                    if let T::Class(Class::Instance(cid_)) = *selfarg {
-                        cid = Some(cid_);
-                    }
-                }
-            }
-        }
-        if let Some(cid) = cid {
-            if !func.argnames.is_empty() {
-                func.argnames.remove(0);
-            }
-
-            // now `init` is: function(/* removed: [constructible] <%cid> */, ...) -> any
-            // fix the return type to make a signature for the `new` method
-            let returns = T::Class(Class::Instance(cid));
-            let ctor = Function { args: func.args, argnames: func.argnames,
-                                  returns: Some(TySeq::from(returns)) };
-            let ctor = Slot::new(F::Const, Ty::new(T::func(ctor)));
-
-            debug!("implicitly setting the `new` method of {:?} as {:?}", cid, ctor);
-            let cfields = self.context.get_class_fields_mut(cid).expect("invalid ClassId");
-            let key = Key::Str(b"new"[..].into());
-            let prevctor = cfields.class_ty.insert(key, ctor);
-            assert_eq!(prevctor, None); // should have been prevented
-        } else {
-            self.error(init, m::BadSelfInInitMethod { init: self.display(init) }).done()?;
-            return Ok(());
-        }
-
-        Ok(())
-    }
-
     // returns false if the assignment is failed and constraints should not be added
     fn assign_special(&mut self, lhs: &Spanned<Slot>, rhs: &Spanned<Slot>) -> Result<bool> {
         match lhs.tag() {
@@ -891,15 +873,6 @@ impl<'ctx, R: Report> Env<'ctx, R> {
                 } else {
                     self.warn(rhs, m::UnknownAssignToPackagePath { name: b.name() }).done()?;
                 }
-            }
-
-            Some(Tag::Constructible) => {
-                self.error(lhs, m::SelfCannotBeAssignedInCtor {}).done()?;
-                return Ok(false);
-            }
-
-            Some(Tag::Constructor) => {
-                self.create_new_method_from_init(rhs)?;
             }
 
             _ => {}
@@ -964,8 +937,11 @@ impl<'ctx, R: Report> Env<'ctx, R> {
     /// This is required because the slot itself is generated before doing any assignment;
     /// the usual notion of accepting by subtyping does not work well here.
     /// This is technically two assignments, of which the latter is done via the strict equality.
+    ///
+    /// Returns a resulting slot. (This is important for some features relying on
+    /// the strict referential slot identity, e.g. delayed type checking.)
     pub fn assign_new(&mut self, lhs: &Spanned<Slot>, initrhs: &Spanned<Slot>,
-                      specrhs: Option<&SlotSpec>) -> Result<()> {
+                      specrhs: Option<&SlotSpec>) -> Result<Slot> {
         trace!("assigning {:?} to a new slot {:?} with type {:?}", initrhs, lhs, specrhs);
 
         // first assignment of initrhs to specrhs, if any
@@ -983,7 +959,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
             }
         }
 
-        Ok(())
+        Ok(specrhs.base)
     }
 
     /// Ensures that the variable has been initialized (possibly implicitly to `nil`).
@@ -1033,26 +1009,7 @@ impl<'ctx, R: Report> Env<'ctx, R> {
     fn name_class_if_any(&mut self, id: &Spanned<Id>, info: &Spanned<Slot>) -> Result<()> {
         match **info.unlift() {
             T::Class(Class::Prototype(cid)) => {
-                let name = id.name(&self.context).clone().with_loc(id);
-
-                // check if the name conflicts in the type namespace earlier
-                // note that even when the type is defined in the global scope
-                // we check both the local and global scope for the type name
-                if let Some(def) = self.get_named_type(&name) {
-                    self.error(&name, m::CannotRedefineTypeAsClass { name: &name.base })
-                        .note(def.span, m::AlreadyDefinedType {})
-                        .done()?;
-                    return Ok(());
-                }
-
-                self.context.name_class(cid, name.clone())?;
-
-                let scope = match id.base {
-                    Id::Local(..) => self.current_scope_mut(),
-                    Id::Global(..) => self.global_scope_mut(),
-                };
-                let ret = scope.put_type(name, Ty::new(T::Class(Class::Instance(cid))));
-                assert!(ret, "failed to insert the type");
+                self.name_class_and_type(cid, id)?;
             }
 
             T::Union(ref u) => {
@@ -1066,6 +1023,31 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
             _ => {}
         }
+
+        Ok(())
+    }
+
+    pub fn name_class_and_type(&mut self, cid: ClassId, id: &Spanned<Id>) -> Result<()> {
+        let name = id.name(&self.context).clone().with_loc(id);
+
+        // check if the name conflicts in the type namespace earlier
+        // note that even when the type is defined in the global scope
+        // we check both the local and global scope for the type name
+        if let Some(def) = self.get_named_type(&name) {
+            self.error(&name, m::CannotRedefineTypeAsClass { name: &name.base })
+                .note(def.span, m::AlreadyDefinedType {})
+                .done()?;
+            return Ok(());
+        }
+
+        self.context.name_class(cid, name.clone())?;
+
+        let scope = match id.base {
+            Id::Local(..) => self.current_scope_mut(),
+            Id::Global(..) => self.global_scope_mut(),
+        };
+        let ret = scope.put_type(name, Ty::new(T::Class(Class::Instance(cid))));
+        assert!(ret, "failed to insert the type");
 
         Ok(())
     }
@@ -1376,6 +1358,34 @@ impl<'ctx, R: Report> Env<'ctx, R> {
 
         Ok(())
     }
+
+    pub fn define_class_system(&mut self, name: &Spanned<Name>,
+                               system: Box<ClassSystem>) -> Result<Option<ClassSystemId>> {
+        let ctx = &mut self.context;
+
+        let mut classes = ctx.output.classes.write();
+
+        if let Some(csid) = classes.class_system_names.get(&name.base) {
+            ctx.report.error(name, m::ClassSystemAlreadyExists { name: name })
+                      .note(csid, m::PreviousClassSystem {})
+                      .done()?;
+            return Ok(None);
+        }
+
+        if classes.class_systems.len() < 256 {
+            let csid = ClassSystemId(classes.class_systems.len() as u8);
+            classes.class_systems.push((Some(name.clone()), system));
+            classes.class_system_names.insert(name.base.clone(), csid.with_loc(name));
+            Ok(Some(csid))
+        } else {
+            ctx.report.error(name, m::TooManyClassSystems {}).done()?;
+            Ok(None)
+        }
+    }
+
+    pub fn dumb_class_system(&self) -> ClassSystemId {
+        self.context.classes.dumb_class_system()
+    }
 }
 
 impl<'ctx, R: Report> Report for Env<'ctx, R> {
@@ -1403,6 +1413,15 @@ impl<'ctx, R: Report> TypeResolver for Env<'ctx, R> {
         } else {
             self.error(name, m::NoType { name: &name.base }).done()?;
             Ok(Ty::dummy())
+        }
+    }
+
+    fn class_system_from_name(&self, name: &Spanned<Name>) -> Result<Option<ClassSystemId>> {
+        if let Some(csid) = self.context.classes.read().class_system_names.get(name) {
+            Ok(Some(csid.base))
+        } else {
+            self.error(name, m::NoSuchClassSystem { name: name }).done()?;
+            Ok(None)
         }
     }
 }

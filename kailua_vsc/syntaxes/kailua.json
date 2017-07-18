@@ -430,6 +430,17 @@
 					"name": "storage.type.kailua"
 				},
 				{
+					"match": "(?<=--#)\\s*\\b(class)\\s+(system)\\b",
+					"captures": {
+						"1": {
+							"name": "keyword.control.kailua"
+						},
+						"2": {
+							"name": "keyword.control.kailua.contextual"
+						}
+					}
+				},
+				{
 					"match": "\\b(assume|class|const|global|map|method|module|open|static|type|var|vector)\\b",
 					"name": "keyword.control.kailua"
 				},

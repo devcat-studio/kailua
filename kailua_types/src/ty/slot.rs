@@ -250,6 +250,21 @@ impl S {
         self.map_ty(|t| t.generalize(ctx))
     }
 
+    fn resolve_unknown_flex(&self, other: &S) -> (Bits, Bits) {
+        // if one flex is unknown, use the other's flex (this should be atomic)
+        let mut lbits = self.bits();
+        let mut rbits = other.bits();
+        if lbits.flex() != rbits.flex() {
+            while lbits.flex() == F::Unknown {
+                lbits.try_set_flex(rbits.flex(), &self.bits);
+            }
+            while rbits.flex() == F::Unknown {
+                rbits.try_set_flex(lbits.flex(), &other.bits);
+            }
+        }
+        (lbits, rbits)
+    }
+
     // self and other may be possibly different slots and being merged by union
     // mainly used by `and`/`or` operators and table lifting
     pub fn union(&self, other: &S, explicit: bool, ctx: &mut TypeContext) -> TypeResult<S> {
@@ -302,7 +317,9 @@ impl S {
         debug!("asserting a constraint {:?} <: {:?}", *self, *other);
 
         (|| {
-            match (self.flex(), other.flex()) {
+            let (lbits, rbits) = self.resolve_unknown_flex(other);
+
+            match (lbits.flex(), rbits.flex()) {
                 (_, F::Dynamic(_)) | (F::Dynamic(_), _) => Ok(()),
 
                 (F::Just, _) | (_, F::Const) =>
@@ -315,22 +332,11 @@ impl S {
         })().map_err(|r: TypeReport| r.not_sub(Origin::Slot, self, other, ctx))
     }
 
-    // this can replace F::Unknown, and thus is mutable
     pub fn assert_eq(&self, other: &S, ctx: &mut TypeContext) -> TypeResult<()> {
         debug!("asserting a constraint {:?} = {:?}", *self, *other);
 
         (|| {
-            // if one flex is unknown, use the other's flex (this should be atomic)
-            let mut lbits = self.bits();
-            let mut rbits = other.bits();
-            if lbits.flex() != rbits.flex() {
-                while lbits.flex() == F::Unknown {
-                    lbits.try_set_flex(rbits.flex(), &self.bits);
-                }
-                while rbits.flex() == F::Unknown {
-                    rbits.try_set_flex(lbits.flex(), &other.bits);
-                }
-            }
+            let (lbits, rbits) = self.resolve_unknown_flex(other);
 
             match (lbits.flex(), rbits.flex()) {
                 (_, F::Dynamic(_)) | (F::Dynamic(_), _) => Ok(()),
