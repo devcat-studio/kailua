@@ -1,0 +1,7 @@
+title = "Kailua 1.1.0 documentation"
+
+[output.html]
+mathjax_support = false
+additional-css = ["kailua.css"]
+additional-js = ["kailua.js"]
+

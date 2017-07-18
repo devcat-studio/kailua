@@ -1,0 +1,92 @@
+.sidebar::before {
+	display: block;
+	position: relative;
+	height: 10em;
+	content: '';
+	background: #252525 url(res/kailua.png) top/10em no-repeat;
+	margin: 0.2em;
+	box-shadow: 0 0 0.4em #929292;
+	opacity: 0.7;
+}
+
+.theme-popup {
+	position: absolute !important;
+}
+
+/* language buttons */
+
+.language-popup {
+  position: absolute;
+  left: 50px;
+  z-index: 1000;
+  border-radius: 4px;
+  font-size: 0.7em;
+}
+.language-popup .language {
+  margin: 0;
+  padding: 2px 10px;
+  line-height: 25px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.language-popup .language:hover:first-child,
+.language-popup .language:hover:last-child {
+  border-top-left-radius: inherit;
+  border-top-right-radius: inherit;
+}
+.light .language-popup {
+  color: #333;
+  background: #fafafa;
+  border: 1px solid #ccc;
+}
+.light .language-popup .language:hover {
+  background-color: #e6e6e6;
+}
+.light .language-popup .default {
+  color: #ccc;
+}
+.coal .language-popup {
+  color: #98a3ad;
+  background: #141617;
+  border: 1px solid #43484d;
+}
+.coal .language-popup .language:hover {
+  background-color: #1f2124;
+}
+.coal .language-popup .default {
+  color: #43484d;
+}
+.navy .language-popup {
+  color: #bcbdd0;
+  background: #161923;
+  border: 1px solid #737480;
+}
+.navy .language-popup .language:hover {
+  background-color: #282e40;
+}
+.navy .language-popup .default {
+  color: #737480;
+}
+.rust .language-popup {
+  color: #262625;
+  background: #e1e1db;
+  border: 1px solid #b38f6b;
+}
+.rust .language-popup .language:hover {
+  background-color: #99908a;
+}
+.rust .language-popup .default {
+  color: #737480;
+}
+.ayu .language-popup {
+  color: #c5c5c5;
+  background: #14191f;
+  border: 1px solid #5c6773;
+}
+.ayu .language-popup .language:hover {
+  background-color: #191f26;
+}
+.ayu .language-popup .default {
+  color: #737480;
+}
+

@@ -1,0 +1,7 @@
+title = "카일루아 1.1.0 문서"
+
+[output.html]
+mathjax_support = false
+additional-css = ["kailua.css"]
+additional-js = ["kailua.js"]
+
