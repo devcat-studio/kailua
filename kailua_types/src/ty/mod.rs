@@ -97,20 +97,16 @@ pub enum Class {
 
 impl Display for Class {
     fn fmt_displayed(&self, f: &mut fmt::Formatter, st: &DisplayState) -> fmt::Result {
-        match *self {
-            Class::Prototype(cid) => match (&st.locale[..], st.context.get_class_name(cid)) {
-                ("ko", Some(name)) => write!(f, "<{:+} 프로토타입>", name),
-                (_,    Some(name)) => write!(f, "<prototype for {:+}>", name),
-                ("ko", None) => write!(f, "<이름 없는 클래스 #{}의 프로토타입>", cid.0),
-                (_,    None) => write!(f, "<prototype for unnamed class #{}>", cid.0),
-            },
+        let (pre, cid, post) = match (*self, &st.locale[..]) {
+            (Class::Prototype(cid), "ko") => ("<", cid, " 프로토타입>"),
+            (Class::Prototype(cid), _)    => ("<prototype for ", cid, ">"),
+            (Class::Instance(cid),  _)    => ("", cid, ""),
+        };
 
-            Class::Instance(cid) => match (&st.locale[..], st.context.get_class_name(cid)) {
-                (_,    Some(name)) => write!(f, "{:+}", name),
-                ("ko", None) => write!(f, "<이름 없는 클래스 #{}>", cid.0),
-                (_,    None) => write!(f, "<unnamed class #{}>", cid.0),
-            },
-        }
+        write!(f, "{}", pre)?;
+        st.context.fmt_class_name(cid, f, st)?;
+        write!(f, "{}", post)?;
+        Ok(())
     }
 }
 
@@ -238,11 +234,39 @@ pub trait TypeContext {
         fields // do not return the last rvar, to which operations are no-ops
     }
 
-    /// Returns a type name for given nominal identifier, if any.
-    fn get_class_name(&self, cid: ClassId) -> Option<&Name>;
+    /// Prints a type name for given nominal identifier to the formatter.
+    fn fmt_class_name(&self, cid: ClassId, f: &mut fmt::Formatter,
+                      st: &DisplayState) -> fmt::Result;
 
     /// Returns true if given nominal instance type is a subtype of another nominal instance type.
     fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool;
+
+    /// Returns a pair of type flags that is an exact lower and upper bound for that type.
+    ///
+    /// Used as an approximate type bound testing like arithmetics.
+    /// If possible, however, better be replaced with a non-instantiating assertion though.
+    fn get_type_bounds(&self, ty: &Ty) -> (/*lb*/ flags::Flags, /*ub*/ flags::Flags) {
+        let flags = ty.flags();
+        let (lb, ub) = ty.get_tvar().map_or((flags::T_NONE, flags::T_NONE),
+                                            |v| self.get_tvar_bounds(v));
+        (flags | lb, flags | ub)
+    }
+
+    /// Exactly resolves the type variable inside `ty` if possible.
+    ///
+    /// This is a requirement for table indexing and function calls.
+    fn resolve_exact_type(&self, ty: &Ty) -> Option<Ty> {
+        if let T::TVar(tv) = **ty {
+            if let Some(ty2) = self.get_tvar_exact_type(tv) {
+                let tag = ty.tag().or(ty2.tag());
+                Some(ty2.union_nil(ty.nil()).with_tag(tag))
+            } else {
+                None
+            }
+        } else {
+            Some(ty.clone())
+        }
+    }
 }
 
 /// Any types that can produce a union type, which is a supertype of two input types.
@@ -388,8 +412,9 @@ impl TypeContext for NoTypeContext {
         panic!("list_rvar_fields({:?}, ...) is not supposed to be called here", rvar)
     }
 
-    fn get_class_name(&self, cid: ClassId) -> Option<&Name> {
-        panic!("get_class_name({:?}) is not supposed to be called here", cid);
+    fn fmt_class_name(&self, cid: ClassId, _f: &mut fmt::Formatter,
+                      _st: &DisplayState) -> fmt::Result {
+        panic!("fmt_class_name({:?}, ...) is not supposed to be called here", cid);
     }
     fn is_subclass_of(&self, lhs: ClassId, rhs: ClassId) -> bool {
         panic!("is_subclass_of({:?}, {:?}) is not supposed to be called here", lhs, rhs);
