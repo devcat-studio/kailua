@@ -167,7 +167,6 @@ fn build_app() -> App<'static, 'static> {
             (@group target =>
                 (@attributes +required)
                 (@arg tcp: --tcp [ADDR]
-                    conflicts_with[stdio]
                     "Connect to the client via given `host:port`.")
                 (@arg stdio: --stdio
                     "Connect to the client via standard input and output.")
