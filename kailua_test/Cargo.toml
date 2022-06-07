@@ -14,7 +14,7 @@ license = "MIT/Apache-2.0"
 [dependencies]
 log = "0.3"
 term = "0.4.4"
-regex = "0.2.1"
+regex = "1.5.5"
 lazy_static = "0.2"
 clap = "2"
 kailua_env = { version = "1.0.4", path = "../kailua_env" }

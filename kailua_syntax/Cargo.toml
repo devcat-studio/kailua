@@ -27,6 +27,6 @@ kailua_diag = { version = "1.0.4", path = "../kailua_diag" }
 
 [dev-dependencies]
 env_logger = "0.4.2"
-regex = "0.2.1"
+regex = "1.5.5"
 clap = "2"
 kailua_test = { version = "1.0.4", path = "../kailua_test" }
